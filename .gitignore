@@ -1,0 +1,12 @@
+# Data, outputs, and local caches (keep docs/ for GitHub Pages)
+data/
+Drive/
+drive/
+logs/
+*.duckdb
+*.pkl
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
