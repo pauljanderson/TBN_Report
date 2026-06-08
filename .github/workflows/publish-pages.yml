@@ -11,6 +11,7 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - ".github/workflows/publish-pages.yml"
   workflow_dispatch:
 
 permissions:
