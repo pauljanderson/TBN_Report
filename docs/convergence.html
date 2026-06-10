@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Convergence Report</title>
+<style>
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:24px; color:#0f172a; max-width:1200px; }
+h1 { font-size:1.5rem; margin:0 0 8px; }
+.sub { color:#64748b; margin-bottom:20px; font-size:0.95rem; line-height:1.45; }
+.cards { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0 24px; }
+.card { flex:1 1 180px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px; }
+.card h3 { margin:0 0 6px; font-size:13px; color:#475569; }
+.metric { font-size:1.5rem; font-weight:700; }
+.small { font-size:12px; color:#64748b; }
+section { margin-top:28px; }
+.table-wrap { overflow-x:auto; margin:12px 0; }
+table { width:100%; border-collapse:collapse; font-size:12px; min-width:720px; }
+th, td { border:1px solid #e2e8f0; padding:8px; text-align:left; vertical-align:top; }
+th { background:#f1f5f9; }
+ul.sources { font-size:12px; color:#475569; line-height:1.5; }
+</style></head><body>
+<h1>IND / BRT / RL — Watchlist &amp; Scanner Convergence</h1>
+<p class="sub">Generated 2026-06-10 15:01 ET · Symbols listed when they appear on <strong>2+ lists</strong> across the latest IND, BRT, and RL watchlist/scanner outputs.</p>
+<div class="cards">
+  <div class="card"><h3>Cross-system overlaps</h3><div class="metric">4</div><div class="small">2+ engines (IND/BRT/RL)</div></div>
+  <div class="card"><h3>3-engine overlaps</h3><div class="metric">0</div><div class="small">On all three systems</div></div>
+  <div class="card"><h3>Same-system only</h3><div class="metric">2</div><div class="small">Watchlist + scanner, one engine</div></div>
+</div>
+<section>
+<h2>Sources</h2>
+<ul class="sources"><li>BRT_Scanner: BRT_LatestRun_Scanner.csv · run 260610143535 · 1 symbols</li><li>BRT_Watchlist: BRT_LatestRun_Watchlist.csv · run 260610143535 · 8 symbols</li><li>IND_Scanner: IND_LatestRun_Scanner.csv · run 260610143559 · 1 symbols</li><li>IND_Watchlist: IND_LatestRun_Watchlist.csv · run 260610143559 · 250 symbols</li><li>RL_Scanner: RL_LatestRun_Scanner.csv · run 260610143449 · 1 symbols</li><li>RL_Watchlist: RL_LatestRun_Watchlist.csv · run 260610143449 · 23 symbols</li></ul>
+</section>
+<section>
+<h2>Cross-system convergence</h2>
+<p class="small">Example: symbol on both IND Watchlist and BRT Watchlist. W=watchlist, S=scanner in per-system detail columns.</p>
+<div class="table-wrap"><table class="sortable"><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">SYMBOL<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">SYSTEMS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">N_SYSTEMS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">LISTS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">CURRENT_PRICE<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">TARGET<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">STOP<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">UPSIDE_TO_TARGET<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">RISK_TO_STOP<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">IND_SCORE<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">IND_DIFF<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">RL_SCORE<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">RL_TIER<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">BRT_ZONE<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">ENTRY_BAND<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">IND_STATUS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">BRT_STATUS<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>IDXX</td><td>IND, RL</td><td>2</td><td>IND_Watchlist, RL_Watchlist</td><td>563.02</td><td></td><td></td><td></td><td></td><td></td><td>W:11</td><td>W:55</td><td>W:NEAR_50_ZONE</td><td></td><td>W:<= 591.5067</td><td>W:NEAR_GATE</td><td></td></tr><tr><td>KEY</td><td>IND, RL</td><td>2</td><td>IND_Watchlist, RL_Watchlist</td><td>21.86</td><td></td><td></td><td></td><td></td><td></td><td>W:11</td><td>W:63</td><td>W:NEAR_50_ZONE</td><td></td><td>W:<= 22.9903</td><td>W:NEAR_GATE</td><td></td></tr><tr><td>LEN</td><td>IND, RL</td><td>2</td><td>IND_Watchlist, RL_Watchlist</td><td>89.69</td><td></td><td></td><td></td><td></td><td></td><td>W:13</td><td>W:63</td><td>W:NEAR_50_ZONE</td><td></td><td>W:<= 96.1405</td><td>W:NEAR_GATE</td><td></td></tr><tr><td>TPR</td><td>IND, RL</td><td>2</td><td>IND_Watchlist, RL_Watchlist</td><td>141.41</td><td></td><td></td><td></td><td></td><td></td><td>W:16</td><td>W:55</td><td>W:NEAR_50_ZONE</td><td></td><td>W:<= 150.5640</td><td>W:NEAR_GATE</td><td></td></tr></tbody></table></div>
+</section>
+<section>
+<h2>Same-system watchlist + scanner</h2>
+<p class="small">Symbol on both watchlist and scanner for a single engine (e.g. BRT_Watchlist + BRT_Scanner).</p>
+<div class="table-wrap"><table class="sortable"><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">SYMBOL<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">SYSTEMS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">LISTS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">CURRENT_PRICE<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">TARGET<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">STOP<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">ENTRY_BAND<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">IND_STATUS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">BRT_STATUS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">RL_TIER<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>AMKR</td><td>RL</td><td>RL_Watchlist, RL_Scanner</td><td>70.43</td><td>79.33</td><td>60.90</td><td></td><td></td><td></td><td>W:NEAR_50_ZONE</td></tr><tr><td>SHOP</td><td>BRT</td><td>BRT_Watchlist, BRT_Scanner</td><td>109.57</td><td>140.41</td><td>104.78</td><td>W:<= 112.5712 · S:<= 120.9664</td><td></td><td>W:PENDING_MATURITY_NOT_ENTERED</td><td></td></tr></tbody></table></div>
+</section>
+<p class="small"><a href="investment.html">Investment report</a> · <a href="index.html">Scanner open report</a></p>
+</body></html>
