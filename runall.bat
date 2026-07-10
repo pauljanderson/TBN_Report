@@ -1,0 +1,3 @@
+python stock_analysis/rocket_brt.py data/newdata/data -o drive -w 5 --aggressive -v target_pct=1.21 -v atr_target=0 -v atr_stop=3 -v trailing_stop_increment=12 -v strong_pre_pivot_pct=.081 -v strong_post_pivot_pct=.108 -v atr_progress=1.1 -v atr_days=14 -v band_pct_atr=0.466 -v relative_strength_enabled=false -v compute_beta=true -v min_avg_volume_10d_at_entry=0 -v min_atr_pct_at_entry=0 -v max_market_cap=111111164166115120 -v post_entry_gain_pct=20 -v post_entry_gain_calendar_days=75 
+REM-s "AAPL,ABBV,ABT,ACN,ADBE,ADI,AMAT,AMD,AMZN,AU,AVGO,AXP,BABA,BAC,BKR,CDNS,CGC,CI,CRM,CRWD,DIS,GILD,GOOG,GOOGL,HD,JPM,KO,KR,LOW,LYV,META,MPC,MS,MSFT,MU,NEM,NFLX,NVDA,OMER,ORCL,PFE,PG,PLTR,PM,PPTA,SHOP,TMUS,TSLA,TSM,UNH,V,WFC,WMT,XOM" 
+

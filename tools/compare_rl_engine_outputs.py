@@ -181,7 +181,11 @@ def compare_rl_runs(output_dir: Path, awk_ts: str, python_ts: str) -> tuple[bool
         if base == "RL_Closed":
             diffs = _compare_closed(awk_path, py_path)
         elif base == "RL_Open":
-            diffs = _compare_table("RL_Open", awk_path, py_path, _row_key_open, float_cols=("ENTRY PRICE", "CURRENT PRICE", "STOP LOSS", "TARGET", "PNL %"))
+            diffs = _compare_table("RL_Open", awk_path, py_path, _row_key_open, float_cols=(
+                "ENTRY PRICE", "CURRENT PRICE", "STOP LOSS", "TARGET", "PNL %",
+                "DISTANCE COVERED TO TARGET", "PREVIOUS EXP TO TARGET",
+                "MOST RECENT EXP", "MOST RECENT RESET",
+            ))
         elif base == "RL_Scanner":
             diffs = _compare_table(
                 "RL_Scanner",

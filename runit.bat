@@ -1,0 +1,1 @@
+awk -v SMA_QUAL=1 -v RL_CASH=6000 -v RL_DIP_PCT=1.0205 -v RL_STOP_PCT=0.95 -v RL_TARGET_PCT=1.2 -v RS_DAYS=5 -v ADD_PCT=0.33 -f stock_analysis/portfolio_audit.awk "Accounts_History - total Accounts_History.csv" SPY.csv data\*.csv > look.csv

@@ -1,0 +1,7 @@
+# DailyRun / rocket_brt stack (python.org Python 3.10 under Task Scheduler)
+numpy>=2.2,<3
+pandas>=2.3,<3
+yfinance>=1.0
+duckdb>=1.5
+matplotlib>=3.10
+requests>=2.32

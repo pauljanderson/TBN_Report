@@ -10,3 +10,44 @@ __pycache__/
 .env
 .venv/
 venv/
+
+# IDE / local editor
+.cursor/
+
+# Run outputs (code check-in via git_checkin.bat skips these)
+*.csv
+!docs/**
+*.png
+!docs/**
+*.jpg
+!docs/**
+*.tsv
+*.xls
+*.log
+yfinance_cache.json
+
+# Windows artifact filenames
+NUL
+CON
+PATH
+STDERR
+
+# Temp / debug workspaces
+_prof_*/
+temp_*/
+drive_*/
+spy_probe*/
+_brt_validate_run/
+sheet_ce_ground_truth/
+winners/
+ind_avg*/
+d/
+yh_mode_cmp/
+
+# Per-symbol optimizer timestamped runs (keep *_Latest.json via git_checkin.bat)
+stock_analysis/Per_Symbol_*_[0-9]*.*
+stock_analysis/Per_Symbol_Optimizer_*
+stock_analysis/Per_Symbol_All_Runs_*
+stock_analysis/Per_Symbol_WF_Folds_*
+stock_analysis/Per_Symbol_Param_Value_Counts_*
+stock_analysis/MTS_optimizer_progress.json
