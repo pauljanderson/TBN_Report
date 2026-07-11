@@ -46,12 +46,9 @@ git add -- .gitignore .github requirements.txt DUCKDB_SETUP.md 2>nul
 rem --- root launchers and libraries ---
 git add -- *.bat *.py *.ps1 *.awk *.md 2>nul
 
-rem --- main code tree ---
-git add -- stock_analysis/*.py stock_analysis/*.bat stock_analysis/*.awk stock_analysis/*.md 2>nul
-git add -- stock_analysis/MTS_Final_Optimized_Settings.json 2>nul
-git add -- stock_analysis/MTS_MarkTen_Benchmark.json 2>nul
-git add -- stock_analysis/Per_Symbol_Optimized_Settings_Latest.json 2>nul
-git add -- stock_analysis/Per_Symbol_Optimized_Settings_Approved_Latest.json 2>nul
+rem --- main code tree (recursive; unstage optimizer artifacts below) ---
+git add -- stock_analysis/
+git add -- SETUP_NEW_PC.md setup_new_pc.bat tickers.txt 2>nul
 
 rem --- scripts and parity tools ---
 git add -- scripts/ 2>nul
@@ -75,12 +72,12 @@ for %%P in (
   "stock_analysis/Per_Symbol_WF_Folds_*"
   "stock_analysis/Per_Symbol_Param_Value_Counts_*"
   "stock_analysis/MTS_optimizer_progress.json"
-  "_*"
   "temp_*"
   "drive_*"
   "spy_probe*"
   ".cursor"
 ) do git reset HEAD -- %%P 2>nul
+rem Do NOT reset "_*" at repo root — that drops _compare_*.py and other real scripts.
 
 echo Staged changes:
 git diff --cached --stat
