@@ -1,5 +1,5 @@
 @echo off
-rem Live stop/target for open positions — params aligned with run_brt.bat / run_ind.bat / run_yh.bat / run_rl.bat
+rem Live stop/target for open positions — params aligned with run_brt.bat / run_ind.bat / run_yh.bat / run_mts.bat / run_rl.bat
 setlocal EnableExtensions
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"
@@ -29,6 +29,14 @@ if exist "%~dp0%PER_SYMBOL_SETTINGS%" set "PS_ARGS=--per-symbol-settings %PER_SY
   --yh-atr-days=0 ^
   "--yh-target-pct=1.27" ^
   "--yh-stop-pct=0.923" ^
+  --mts-atr-target=0 ^
+  --mts-atr-stop=0 ^
+  --mts-atr-increment=0 ^
+  --mts-atr-progress=0 ^
+  --mts-atr-days=0 ^
+  "--mts-target-pct=1.22" ^
+  "--mts-stop-pct=0.934" ^
+  --mts-stop-anchor=signal_low ^
   "--rl-target-pct=1.20" ^
   "--rl-stop-pct=0.934" ^
   --rl-use-sma50 ^
