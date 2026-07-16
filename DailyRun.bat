@@ -5,8 +5,9 @@ setlocal EnableExtensions
 rem --- Project root (batch always cds here; Task Scheduler "Start in" is optional) ---
 cd /d "C:\Users\songg\Downloads\stockresearch"
 
-rem --- Shared RL/BRT symbol lists (daily_run_env.bat); override before calling if needed ---
-call "%~dp0daily_run_env.bat"
+rem --- Each run_*.bat owns its default symbol list (standalone). Override before calling, e.g.:
+rem     set BRT_SYMBOLS=AAPL,MSFT
+rem     set RL_SYMBOLS=TSLA,AMD
 
 rem --- Log file (one per run) ---
 set "LOGDIR=%~dp0logs"
@@ -84,7 +85,7 @@ if errorlevel 1 goto :fail
 
 rem --- 3a) Audit (legacy AWK Rocket Launcher) ---
 echo [3/9] run_audit (AWK RL)>>"%LOG%"
-call "%~dp0run_audit.bat" -AllowRegression -s "%RL_SYMBOLS%" >>"%LOG%" 2>&1
+call "%~dp0run_audit.bat" -AllowRegression >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_AWK_TS=%%a"
 if not defined RL_AWK_TS (

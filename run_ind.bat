@@ -1,5 +1,6 @@
 @echo off
 rem IND indicator-only backtest (full DuckDB universe) — outputs IND_Closed|Open|... in drive\
+rem Standalone: double-click or call from DailyRun. No -s filter (full universe by design).
 setlocal EnableExtensions
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"

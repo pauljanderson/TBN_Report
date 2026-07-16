@@ -115,7 +115,7 @@ Production DailyRun uses:
 stock_analysis\Per_Symbol_Optimized_Settings_Approved_Latest.json
 ```
 
-Set in `daily_run_env.bat` via `PER_SYMBOL_SETTINGS`. Copy from old laptop or regenerate:
+Set in each engine bat that uses it (`run_brt.bat`, `run_rl.bat`, `run_gettarget.bat`) via `PER_SYMBOL_SETTINGS`. Copy from old laptop or regenerate:
 
 ```bat
 run_per_symbol_optimizer.bat --wf-mode rolling --systems RL --workers 5
