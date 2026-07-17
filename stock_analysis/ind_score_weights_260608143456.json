@@ -1,0 +1,385 @@
+{
+  "source": "IND_Correlation_260605105137.csv",
+  "trades": 33816,
+  "description": "Weight per indicator = R_PNL_PCT(IND_<id>_LAST vs PNL_PCT) \u00d7 scale (777.3999); scale = avg_pnl / mean(positive r)",
+  "weights": {
+    "SMA20_OVER_SMA50": 1.67263,
+    "SMA50_OVER_SMA200": 0.997269,
+    "PRICE_OVER_SMA20": 1.055955,
+    "PRICE_OVER_SMA50": 1.67263,
+    "PRICE_OVER_SMA200": 0.997269,
+    "EMA12_OVER_EMA26": 1.055955,
+    "RSI14": 0.948013,
+    "MACD_HIST": 1.055955,
+    "MACD_LINE_OVER_SIGNAL": 1.055955,
+    "STOCH_K_OVER_D": 1.056105,
+    "WILLR14": 1.055955,
+    "CCI20": 1.055955,
+    "MFI14": 1.055961,
+    "ROC10": 1.055972,
+    "CMO14": 1.056029,
+    "ADX_DI": -0.242715,
+    "BB_PCTB": 0.739722,
+    "ATR_RATIO": 2.311903,
+    "OBV_SLOPE10": 1.055953,
+    "VOL_SURGE": 0.423414,
+    "DOUBLE_BOTTOM": -7.7587,
+    "DOUBLE_TOP": -6.024849,
+    "HEAD_SHOULDERS_BOTTOM": 0.746483,
+    "HEAD_SHOULDERS_TOP": 3.958939,
+    "SYMMETRICAL_TRI": 1.828234,
+    "WEDGE_FALLING_CONT": 1.744152,
+    "WEDGE_RISING_CONT": 4.169606,
+    "FLAG_CONT": -26.433394,
+    "MEGAPHONE": 1.356715,
+    "DIAMOND": 6.150408,
+    "TRI_ASCENDING": -27.934355,
+    "TRI_DESCENDING": -6.301139,
+    "UPSIDE_BREAKOUT": -0.660681,
+    "DIAMOND_BOTTOM": 2.572273,
+    "DIAMOND_TOP": 2.557431,
+    "BOTTOM_TRI": -27.934355,
+    "TOP_TRI": -6.301139,
+    "PENNANT_CONT": -26.433394,
+    "CANDLE_HAMMER": 1.460754,
+    "CANDLE_SHOOTING_STAR": 2.116775,
+    "CANDLE_BULL_ENGULF": 1.769164,
+    "CANDLE_BEAR_ENGULF": 2.0684,
+    "CANDLE_MORNING_STAR": 0.959601,
+    "CANDLE_EVENING_STAR": 0.755162,
+    "CANDLE_THREE_SOLDIERS": 0.476277,
+    "CANDLE_THREE_CROWS": 2.286255,
+    "CANDLE_DOJI": 0.0
+  },
+  "meta": {
+    "SMA20_OVER_SMA50": {
+      "r_pnl_pct": 0.002152,
+      "r_total": -0.0023,
+      "weight": 1.67263,
+      "scale": 777.39988,
+      "n_bull": 25978
+    },
+    "SMA50_OVER_SMA200": {
+      "r_pnl_pct": 0.001283,
+      "r_total": 0.0008,
+      "weight": 0.997269,
+      "scale": 777.39988,
+      "n_bull": 20801
+    },
+    "PRICE_OVER_SMA20": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 33793
+    },
+    "PRICE_OVER_SMA50": {
+      "r_pnl_pct": 0.002152,
+      "r_total": -0.0023,
+      "weight": 1.67263,
+      "scale": 777.39988,
+      "n_bull": 33025
+    },
+    "PRICE_OVER_SMA200": {
+      "r_pnl_pct": 0.001283,
+      "r_total": 0.0008,
+      "weight": 0.997269,
+      "scale": 777.39988,
+      "n_bull": 27180
+    },
+    "EMA12_OVER_EMA26": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 31952
+    },
+    "RSI14": {
+      "r_pnl_pct": 0.001219,
+      "r_total": -0.0049,
+      "weight": 0.948013,
+      "scale": 777.39988,
+      "n_bull": 30321
+    },
+    "MACD_HIST": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 28683
+    },
+    "MACD_LINE_OVER_SIGNAL": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 28683
+    },
+    "STOCH_K_OVER_D": {
+      "r_pnl_pct": 0.001359,
+      "r_total": -0.0047,
+      "weight": 1.056105,
+      "scale": 777.39988,
+      "n_bull": 23297
+    },
+    "WILLR14": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 32717
+    },
+    "CCI20": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055955,
+      "scale": 777.39988,
+      "n_bull": 33726
+    },
+    "MFI14": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055961,
+      "scale": 777.39988,
+      "n_bull": 30599
+    },
+    "ROC10": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055972,
+      "scale": 777.39988,
+      "n_bull": 32875
+    },
+    "CMO14": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.056029,
+      "scale": 777.39988,
+      "n_bull": 33052
+    },
+    "ADX_DI": {
+      "r_pnl_pct": -0.000312,
+      "r_total": -0.0077,
+      "weight": -0.242715,
+      "scale": 777.39988,
+      "n_bull": 20215
+    },
+    "BB_PCTB": {
+      "r_pnl_pct": 0.000952,
+      "r_total": -0.0052,
+      "weight": 0.739722,
+      "scale": 777.39988,
+      "n_bull": 17099
+    },
+    "ATR_RATIO": {
+      "r_pnl_pct": 0.002974,
+      "r_total": 0.0002,
+      "weight": 2.311903,
+      "scale": 777.39988,
+      "n_bull": 6794
+    },
+    "OBV_SLOPE10": {
+      "r_pnl_pct": 0.001358,
+      "r_total": -0.0047,
+      "weight": 1.055953,
+      "scale": 777.39988,
+      "n_bull": 30071
+    },
+    "VOL_SURGE": {
+      "r_pnl_pct": 0.000545,
+      "r_total": -0.004,
+      "weight": 0.423414,
+      "scale": 777.39988,
+      "n_bull": 4337
+    },
+    "DOUBLE_BOTTOM": {
+      "r_pnl_pct": -0.00998,
+      "r_total": -0.0599,
+      "weight": -7.7587,
+      "scale": 777.39988,
+      "n_bull": 2877
+    },
+    "DOUBLE_TOP": {
+      "r_pnl_pct": -0.00775,
+      "r_total": -0.0364,
+      "weight": -6.024849,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "HEAD_SHOULDERS_BOTTOM": {
+      "r_pnl_pct": 0.00096,
+      "r_total": -0.0054,
+      "weight": 0.746483,
+      "scale": 777.39988,
+      "n_bull": 5685
+    },
+    "HEAD_SHOULDERS_TOP": {
+      "r_pnl_pct": 0.005093,
+      "r_total": 0.0088,
+      "weight": 3.958939,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "SYMMETRICAL_TRI": {
+      "r_pnl_pct": 0.002352,
+      "r_total": -0.0024,
+      "weight": 1.828234,
+      "scale": 777.39988,
+      "n_bull": 7041
+    },
+    "WEDGE_FALLING_CONT": {
+      "r_pnl_pct": 0.002244,
+      "r_total": -0.0035,
+      "weight": 1.744152,
+      "scale": 777.39988,
+      "n_bull": 785
+    },
+    "WEDGE_RISING_CONT": {
+      "r_pnl_pct": 0.005364,
+      "r_total": 0.0048,
+      "weight": 4.169606,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "FLAG_CONT": {
+      "r_pnl_pct": -0.034002,
+      "r_total": -0.1189,
+      "weight": -26.433394,
+      "scale": 777.39988,
+      "n_bull": 21
+    },
+    "MEGAPHONE": {
+      "r_pnl_pct": 0.001745,
+      "r_total": -0.003,
+      "weight": 1.356715,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "DIAMOND": {
+      "r_pnl_pct": 0.007912,
+      "r_total": 0.0135,
+      "weight": 6.150408,
+      "scale": 777.39988,
+      "n_bull": 2044
+    },
+    "TRI_ASCENDING": {
+      "r_pnl_pct": -0.035933,
+      "r_total": -0.1585,
+      "weight": -27.934355,
+      "scale": 777.39988,
+      "n_bull": 17
+    },
+    "TRI_DESCENDING": {
+      "r_pnl_pct": -0.008105,
+      "r_total": 0.0242,
+      "weight": -6.301139,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "UPSIDE_BREAKOUT": {
+      "r_pnl_pct": -0.00085,
+      "r_total": -0.0068,
+      "weight": -0.660681,
+      "scale": 777.39988,
+      "n_bull": 2727
+    },
+    "DIAMOND_BOTTOM": {
+      "r_pnl_pct": 0.003309,
+      "r_total": -0.0034,
+      "weight": 2.572273,
+      "scale": 777.39988,
+      "n_bull": 2933
+    },
+    "DIAMOND_TOP": {
+      "r_pnl_pct": 0.00329,
+      "r_total": -0.0105,
+      "weight": 2.557431,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "BOTTOM_TRI": {
+      "r_pnl_pct": -0.035933,
+      "r_total": -0.1585,
+      "weight": -27.934355,
+      "scale": 777.39988,
+      "n_bull": 17
+    },
+    "TOP_TRI": {
+      "r_pnl_pct": -0.008105,
+      "r_total": 0.0242,
+      "weight": -6.301139,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "PENNANT_CONT": {
+      "r_pnl_pct": -0.034002,
+      "r_total": -0.1189,
+      "weight": -26.433394,
+      "scale": 777.39988,
+      "n_bull": 21
+    },
+    "CANDLE_HAMMER": {
+      "r_pnl_pct": 0.001879,
+      "r_total": -0.0054,
+      "weight": 1.460754,
+      "scale": 777.39988,
+      "n_bull": 518
+    },
+    "CANDLE_SHOOTING_STAR": {
+      "r_pnl_pct": 0.002723,
+      "r_total": -0.0021,
+      "weight": 2.116775,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "CANDLE_BULL_ENGULF": {
+      "r_pnl_pct": 0.002276,
+      "r_total": -0.0027,
+      "weight": 1.769164,
+      "scale": 777.39988,
+      "n_bull": 3054
+    },
+    "CANDLE_BEAR_ENGULF": {
+      "r_pnl_pct": 0.002661,
+      "r_total": -0.0003,
+      "weight": 2.0684,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "CANDLE_MORNING_STAR": {
+      "r_pnl_pct": 0.001234,
+      "r_total": -0.0046,
+      "weight": 0.959601,
+      "scale": 777.39988,
+      "n_bull": 4493
+    },
+    "CANDLE_EVENING_STAR": {
+      "r_pnl_pct": 0.000971,
+      "r_total": -0.0041,
+      "weight": 0.755162,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "CANDLE_THREE_SOLDIERS": {
+      "r_pnl_pct": 0.000613,
+      "r_total": -0.0056,
+      "weight": 0.476277,
+      "scale": 777.39988,
+      "n_bull": 4080
+    },
+    "CANDLE_THREE_CROWS": {
+      "r_pnl_pct": 0.002941,
+      "r_total": 0.0002,
+      "weight": 2.286255,
+      "scale": 777.39988,
+      "n_bull": 0
+    },
+    "CANDLE_DOJI": {
+      "r_pnl_pct": 0.0,
+      "r_total": 0.0,
+      "weight": 0.0,
+      "scale": 777.39988,
+      "n_bull": 0
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Require each indicator to be in the listed state (BULL, BEAR, or NEUTRAL) on the trigger bar. Enable with -v mandatory_ind_states_path=mandatory_ind_states2.json (empty = off). Edit rules below; invalid IDs are ignored at load time.",
+  "rules": {
+    "ATR_RATIO": "BULL",
+    "DIAMOND": "BULL",
+    "MACD_HIST": "BULL",
+    "MACD_LINE_OVER_SIGNAL": "BULL",
+    "VOL_SURGE": "BULL",
+    "STOCH_K_OVER_D": "BULL",
+    "CCI20": "BULL",
+    "WEDGE_FALLING_CONT": "BULL",
+    "PRICE_OVER_SMA20": "BULL"
+  }
+}

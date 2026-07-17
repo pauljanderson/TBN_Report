@@ -1,0 +1,88 @@
+diff --git a/portfolio_audit.awk b/portfolio_audit.awk
+index bb8a486..1c4b918 100644
+--- a/portfolio_audit.awk
++++ b/portfolio_audit.awk
+@@ -335,6 +335,8 @@ function perform_audit(sym) {
+       acc_rolling_hits = 0; acc100_rolling_hits = 0
+       rl_trail_active = 0
+       sym_hwm = 0; max_sym_dd = 0
++      s_50_wins = s_50_losses = s_50_BEs = 0
++      s_100_wins = s_100_losses = s_100_BEs = 0
+ 
+       for (j = 1; j <= d_ptr[sym]; j++) 
+       {
+@@ -435,14 +437,20 @@ function perform_audit(sym) {
+                         if (trade_pnl > 0) 
+                         { 
+                               rl_wins++; 
++                              s_50_wins++;
+                               rl_sum_wins += trade_pnl 
+                         }
+                         else if (trade_pnl < 0)
+                         { 
+                               rl_losses++; 
++                              s_50_losses++
+                               rl_sum_losses += trade_pnl 
+                         }
+-                        else rl_BEs++
++                        else 
++                        {
++                              s_50_BEs++
++                              rl_BEs++
++                        }
+ 
+                         hold_days = days_diff(rl_entry_iso[sym], iso)
+                         too_high_threshold = (sma50[dates[sym, rl_entry_idx[sym]-1]] > 0 ? (rl_entry_p[sym]-sma50[dates[sym, rl_entry_idx[sym]-1]])/sma50[dates[sym, rl_entry_idx[sym]-1]] : 0)
+@@ -536,9 +544,21 @@ function perform_audit(sym) {
+                     rl100_sell = (raw_lo[sym, iso] <= rl100_stop) ? rl100_stop : rl100_target
+                     pnl100 = (rl100_inv * rl100_sell) - RL_CASH
+                     
+-                    if (pnl100 > 0) { rl100_wins++; rl100_sum_wins += pnl100 } else { rl100_losses++; rl100_sum_losses += pnl100 }
++                        if (pnl100 > 0) 
++                        { 
++                              rl100_wins++; s_100_wins++; rl100_sum_wins += pnl100 
++                        } 
++                        else if (pnl100 < 0) 
++                        { 
++                              rl100_losses++; 
++                              s_100_losses++; 
++                              rl100_sum_losses += pnl100 
++                        } 
++                        else 
++                        { 
++                              s_100_BEs++ # 100-day BE counter
++                        }
+                     
+-                    # NEW: Requirement 1 - Add "100-trigger" label to Closed File
+                     printf"\n\n4:atr_roll:" atr_roll
+                     rl_closed_list[++rl_closed_ptr] = sprintf(sym "," rl100_entry_iso ","  rl100_entry_p ",0,0,0,0," rl100_stop ",0," iso "," days_diff(rl100_entry_iso, iso)+1 "," rl100_sell "," (pnl100/RL_CASH)*100 "," exit100_type "," max_sym_dd ",100-trigger," entry100_peak_hi[sym] "," entry100_peak_cl[sym] "," entry100_peak_lo[sym] "," atr_roll)
+                     
+@@ -604,6 +624,9 @@ function perform_audit(sym) {
+ 
+       # SUCCESS: rocket_pnl now captures both closed and floating profit
+       rocket_pnl[sym] = rl_pnl + rl100_pnl + _open_val
++      
++      final_50_w[sym] = s_50_wins; final_50_l[sym] = s_50_losses; final_50_b[sym] = s_50_BEs
++      final_100_w[sym] = s_100_wins; final_100_l[sym] = s_100_losses; final_100_b[sym] = s_100_BEs
+ 
+       # Memory Release Pass
+       mem_count = 0
+@@ -681,8 +704,7 @@ END {
+ 
+       if (DEBUG_SYM != "") print trace[DEBUG_SYM]
+        
+-      # NEW: Requirement 3 - Updated Summary Header with Trigger counts
+-      printf "SYMBOL,ROCKET_L,50-TRIG,100-TRIG\n" > "RL_Summary.csv"
++      printf "SYMBOL,ROCKET_L,50_TRIG,50_W,50_L,50_BE,100_TRIG,100_W,100_L,100_BE\n" > "RL_Summary.csv"
+       n = asorti(all_syms, sorted_list)
+       
+ for (i = 1; i <= n; i++) {
+@@ -705,7 +727,7 @@ for (i = 1; i <= n; i++) {
+             # This check must be OUTSIDE the 'id' loop but INSIDE the 'i' loop
+             if (t50_cnt[s] > 0 || t100_cnt[s] > 0 || rocket_pnl[s] != 0) 
+             {
+-                  printf "%s,%.2f,%d,%d\n", s, rocket_pnl[s], t50_cnt[s], t100_cnt[s] >> "RL_Summary.csv"
++                  printf "%s,%.2f,%d,%d,%d,%d,%d,%d,%d,%d\n", s, rocket_pnl[s], t50_cnt[s], final_50_w[s], final_50_l[s], final_50_b[s], t100_cnt[s], final_100_w[s], final_100_l[s], final_100_b[s] >> "RL_Summary.csv"
+                   tm += sp; 
+             }
+       }

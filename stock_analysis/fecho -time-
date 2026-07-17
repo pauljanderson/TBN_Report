@@ -1,0 +1,408 @@
+[1mdiff --git a/portfolio_audit.awk b/portfolio_audit.awk[m
+[1mindex 0b94894..383f1e0 100644[m
+[1m--- a/portfolio_audit.awk[m
+[1m+++ b/portfolio_audit.awk[m
+[36m@@ -116,19 +116,19 @@[m [mBEGIN {[m
+     T_START = get_ms()[m
+     INST_FILE = "instrument.txt"[m
+     print "--- THROUGHPUT INSTRUMENTATION START ---" > INST_FILE[m
+[31m-      ts = strftime("%y%m%d%H%M%S", systime())[m
+[31m-      closed_file = "drive\\RL_Closed_" ts ".csv"[m
+[31m-      open_file = "drive\\RL_Open_" ts ".csv"[m
+[31m-      scanner_file = "drive\\RL_Scanner_" ts ".csv"[m
+[31m-      summary_file = "drive\\RL_Summary_" ts ".csv"[m
+[32m+[m[32m    ts = strftime("%y%m%d%H%M%S", systime())[m
+[32m+[m[32m    closed_file = "drive\\RL_Closed_" ts ".csv"[m
+[32m+[m[32m    open_file = "drive\\RL_Open_" ts ".csv"[m
+[32m+[m[32m    scanner_file = "drive\\RL_Scanner_" ts ".csv"[m
+[32m+[m[32m    summary_file = "drive\\RL_Summary_" ts ".csv"[m
+       [m
+[31m-      FS = ","; OFS = "\t"  [m
+[32m+[m[32m    FS = ","; OFS = "\t"[m[41m  [m
+ [m
+[31m-      # Default values if not passed via command line[m
+[31m-      if (RS_DAYS == "") RS_DAYS = 5[m
+[31m-      if (ADD_PCT == "") ADD_PCT = 0.33[m
+[31m-      if (RL_CASH == "") RL_CASH = 47500[m
+[31m-      if (RL_DIP_PCT == "") RL_DIP_PCT = 1.024[m
+[32m+[m[32m    # Default values if not passed via command line[m
+[32m+[m[32m    if (RS_DAYS == "") RS_DAYS = 5[m
+[32m+[m[32m    if (ADD_PCT == "") ADD_PCT = 0.33[m
+[32m+[m[32m    if (RL_CASH == "") RL_CASH = 47500[m
+[32m+[m[32m    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.024[m
+       if (RL_STOP_PCT == "") RL_STOP_PCT = 0.931[m
+       if (RL_TARGET_PCT == "") RL_TARGET_PCT = 1.26[m
+       if (SMA_QUAL == "") SMA_QUAL = 1[m
+[36m@@ -515,7 +515,7 @@[m [mfunction perform_audit(sym) {[m
+                 if (j > 1 && sma50[dates[sym, j-1]] > 0) [m
+                     {[m
+                     rl_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT[m
+[31m-                    if (DEBUG_SYM = sym)[m
+[32m+[m[32m                    if (DEBUG_SYM == sym)[m
+                         printf"\nSETTING RL_TARGET:\nrl_target:" rl_target "\niso:" iso "\ndates[sym, j-1]:" dates[sym, j-1] "\nraw_hi[sym, iso]:" raw_hi[sym, iso] "\nexecute_exit:" execute_exit[m
+                     }[m
+                 # Reset exit flag for the current day's bar[m
+[36m@@ -549,20 +549,11 @@[m [mfunction perform_audit(sym) {[m
+                         if (DEBUG_SYM == sym)[m
+                             printf"\nSection 5:sym:" sym "\nexit_type:" exit_type "\ncurr_profit_pct:" curr_profit_pct "\nRL_EXIT_PERCENT:" RL_EXIT_PERCENT[m
+ [m
+[31m-                if (has_hit_time_trigger[sym] == 1) {[m
+[31m-                    if (RL_EXIT_DAYS == 0) {[m
+[31m-                        exit_type = "RL_EXIT_DAYS"[m
+[31m-                        execute_exit = 1[m
+[31m-                    } else {[m
+[32m+[m[32m                if (has_hit_time_trigger[sym] == 1)[m[41m [m
+                         time_trigger_counter[sym]++[m
+[31m-                        if (time_trigger_counter[sym] >= RL_EXIT_DAYS) {[m
+[31m-                            exit_type = "RL_EXIT_DAYS"[m
+[31m-                            execute_exit = 1[m
+[31m-                        }[m
+[31m-                    }[m
+                 }[m
+[31m-                        if (DEBUG_SYM == sym)[m
+[31m-                            printf"\nSection 6:sym:" sym "\nexit_type:" exit_type[m
+[32m+[m[32m                if (DEBUG_SYM == sym)[m
+[32m+[m[32m                    printf"\nSection 6:sym:" sym "\nexit_type:" exit_type[m
+ [m
+                 # --- PARTIAL EXIT LOGIC ---[m
+                 if (execute_exit == 0 && has_hit_milestone[sym] == 0 && PARTIAL_EXIT_TARGET > 0 && curr_profit_pct >= PARTIAL_EXIT_TARGET) {[m
+[36m@@ -607,172 +598,148 @@[m [mfunction perform_audit(sym) {[m
+                       rl_stop = rl_entry_p[sym] * (1 + RL_TRAIL_STOP2)[m
+                   }[m
+ [m
+[31m-                  # Check for Stop Loss or Dynamic Target[m
+[31m-                  if (execute_exit == 0) { [m
+[31m-                    [m
+[31m-                    # Add the check: only check SMA target if we aren't already exiting via Timer[m
+[31m-                    # --- 3. PRIORITY THREE: STANDARD STOPS/TARGETS ---[m
+[31m-                        if (raw_lo[sym, iso] <= rl_stop) {[m
+[31m-                            execute_exit = 1[m
+[31m-                            if (rl_trail_active == 2) exit_type = "TRAIL_STOP2"[m
+[31m-                            else if (rl_trail_active == 1) exit_type = "TRAIL_STOP"[m
+[31m-                            else exit_type = "STOP_LOSS"[m
+[31m-                        } [m
+[31m-                        # Check the SMA-based target (rl_target)[m
+[31m-                        else if (raw_hi[sym, iso] >= rl_target) {[m
+[31m-                            execute_exit = 1[m
+[31m-                            exit_type = "TARGET"[m
+[31m-                        }[m
+[31m-                        # Check the Hard Target set by Partials/Timed (current_target)[m
+[31m-                        else if (current_target[sym] > 0 && raw_hi[sym, iso] >= current_target[sym] && PARTIAL_EXIT_TARGET != 0) {[m
+[31m-                            execute_exit = 1[m
+[31m-                            exit_type = "HARD_TARGET" # Distinct label to help troubleshooting[m
+[31m-                        }[m
+[31m-                    [m
+[31m-                        if (DEBUG_SYM == sym)[m
+[31m-                            printf"\nSection 4:sym:" sym "\nexit_type:" exit_type "\ncurrent_target[sym]:" current_target[sym] "\nraw_hi[sym, iso]:" raw_hi[sym, iso] "\nraw_lo[sym, iso]:" raw_lo[sym, iso] "\nrl_stop:" rl_stop "\nraw_hi[sym, iso]:" raw_hi[sym, iso] "\nrl_target:" rl_target[m
+[31m-[m
+[32m+[m[32m# --- PROFIT RACE & DEFENSE DECISION BLOCK ---[m
+[32m+[m[32m                if (execute_exit == 0) {[m
+[32m+[m[32m                # --- 1. UPDATE TARGETS & COUNTDOWN ---[m
+[32m+[m[32m                timed_exit_px = rl_entry_p[sym] * (1 + RL_EXIT_PERCENT)[m
+[32m+[m[32m                sma_target_px = rl_target[m
+[32m+[m[41m                [m
+[32m+[m[32m                # Update Countdown State[m
+[32m+[m[32m                if (has_hit_time_trigger[sym] == 0 && RL_EXIT_PERCENT > 0 && curr_profit_pct >= RL_EXIT_PERCENT) {[m
+[32m+[m[32m                    has_hit_time_trigger[sym] = 1[m
+[32m+[m[32m                    time_trigger_counter[sym] = 0[m[41m [m
+                 }[m
+[31m-                  # If any trigger hit (Timed, Stop, or Target), execute the close[m
+[32m+[m[32m                if (has_hit_time_trigger[sym] == 1) time_trigger_counter[sym]++[m
+[32m+[m
+[32m+[m[32m                # EXECUTION DECISION[m
+[32m+[m[32m                # 1. Check STOP LOSS (Defense First)[m
+[32m+[m[32m                if (raw_lo[sym, iso] <= rl_stop) {[m
+[32m+[m[32m                    execute_exit = 1[m
+[32m+[m[32m                    rl_sell = (rl_stop > raw_op[sym, iso]) ? rl_stop : raw_op[sym, iso][m
+[32m+[m[32m                        exit_type = (rl_trail_active == 2) ? "TRAIL_STOP2" : (rl_trail_active == 1 ? "TRAIL_STOP" : "STOP_LOSS")[m
+[32m+[m[32m                }[m[41m [m
+[32m+[m[32m                # 2. Check PROFIT RACE (Only if Stop wasn't hit)[m
+[32m+[m[32m                else {[m
+[32m+[m[32m                    hit_sma = (sma_target_px > 0 && raw_hi[sym, iso] >= sma_target_px)[m
+[32m+[m[32m                    hit_timed = (has_hit_time_trigger[sym] == 1 && time_trigger_counter[sym] >= RL_EXIT_DAYS)[m
+[32m+[m
+[32m+[m[32m                    if (hit_sma && hit_timed) {[m
+[32m+[m[32m                        execute_exit = 1[m
+[32m+[m[32m                        # ESOA Case: Price climbed from Open. Use lower price (hit first).[m
+[32m+[m[32m                        if (sma_target_px < timed_exit_px) {[m
+[32m+[m[32m                                rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso][m
+[32m+[m[32m                                exit_type = "TARGET"[m
+[32m+[m[32m                            } else {[m
+[32m+[m[32m                                rl_sell = (timed_exit_px > raw_op[sym, iso]) ? timed_exit_px : raw_op[sym, iso][m
+[32m+[m[32m                                exit_type = "RL_EXIT_DAYS"[m
+[32m+[m[32m                            }[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    else if (hit_sma) {[m
+[32m+[m[32m                        execute_exit = 1; exit_type = "TARGET"[m
+[32m+[m[32m                        rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso][m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    else if (hit_timed) {[m
+[32m+[m[32m                        execute_exit = 1; exit_type = "RL_EXIT_DAYS"[m
+[32m+[m[32m                        rl_sell = (timed_exit_px > raw_op[sym, iso]) ? timed_exit_px : raw_op[sym, iso][m
+[32m+[m[32m                    }[m
+[32m+[m[32m                }[m
+[32m+[m[32m            }[m
+[32m+[m[32m# If any trigger hit (Timed, Stop, or Target), execute the close[m
+                   if (execute_exit == 1) {[m
+                     [m
+[31m-                    # Determine execution price[m
+[32m+[m[32m                    # 1. PRICE DETERMINATION (ESOA Priority Correction)[m
+                     if (exit_type == "RL_EXIT_DAYS") [m
+                     {[m
+[31m-                                                if (DEBUG_SYM == sym)[m
+[32m+[m[32m                        if (DEBUG_SYM == sym)[m
+                             printf "\nSTATE1:curr_profit_pct:" curr_profit_pct "\nRL_EXIT_PERCENT:" RL_EXIT_PERCENT[m
+ [m
+                         if (raw_op[sym, iso] > (rl_entry_p[sym] * (1+RL_EXIT_PERCENT)))[m
+                             rl_sell = raw_op[sym, iso][m
+                         else    [m
+                             rl_sell = (rl_entry_p[sym] * (1+RL_EXIT_PERCENT))[m
+[31m-                        if (DEBUG_SYM == sym)[m
+[31m-                            printf "\nSTATE1:curr_profit_pct:" curr_profit_pct "\nRL_EXIT_PERCENT:" RL_EXIT_PERCENT[m
+                         [m
+                         timed_exit_count++[m
+                     }[m
+[31m-                        [m
+                     else if (exit_type == "TARGET") [m
+[31m-                        {[m
+[32m+[m[32m                    {[m
+                         if (DEBUG_SYM == sym)[m
+                             printf "\ncurrent_target[sym]:" current_target[sym] "\nraw_op[sym, iso]:" raw_op[sym, iso] "\nrl_target:" rl_target "\niso:" iso[m
+[31m-                        rl_sell = (rl_target > raw_op[sym, iso]) ? rl_target : raw_op[sym, iso] # This accounts for when the stock gaps up and we would sell higher than the target[m
+[31m-                        }[m
+[32m+[m[32m                        rl_sell = (rl_target > raw_op[sym, iso]) ? rl_target : raw_op[sym, iso][m
+[32m+[m[32m                    }[m
+                     else [m
+                         rl_sell = rl_stop # Stop Loss / Trailing Stop[m
+[31m-                      [m
+[31m-                    # Add final proceeds and shares[m
+[31m-                    total_exit_proceeds[sym] += (rl_inv * rl_sell)[m
+[31m-                    total_shares_sold[sym] += rl_inv[m
+ [m
+[31m-                    # Calculate TRUE Weighted Average Exit Price[m
+[31m-                    avg_exit_price = total_exit_proceeds[sym] / initial_shares_at_entry[sym][m
+[32m+[m[32m                    # 2. CORE ACCOUNTING (Calculated once per exit)[m
+[32m+[m[32m                    trade_val = (rl_inv * rl_sell)[m
+[32m+[m[32m                    total_exit_proceeds[sym] += trade_val[m
+[32m+[m[32m                    total_shares_sold[sym] += rl_inv[m
+ [m
+[31m-                    # Calculate TRUE Total Trade PnL (Including Partials)[m
+[31m-                    # Total Dollars Out - Total Dollars In[m
+[32m+[m[32m                    if (DEBUG_SYM == sym)[m
+[32m+[m[32m                        printf "\ninitial_shares_at_entry[sym]:" initial_shares_at_entry[sym] "\nraw_op[sym, iso]:" raw_op[sym, iso] "\nrl_target:" rl_target "\niso:" iso[m
+[32m+[m[32m                    if (initial_shares_at_entry[sym] > 0)[m
+[32m+[m[32m                        avg_exit_price = total_exit_proceeds[sym] / initial_shares_at_entry[sym][m
+                     trade_pnl = total_exit_proceeds[sym] - (initial_shares_at_entry[sym] * rl_entry_p[sym])[m
+[31m-[m
+                     sys_total_pnl_pct += (trade_pnl / RL_CASH) * 100[m
+ [m
+[31m-                    # --- TIMED EXIT LOGIC ---[m
+[31m-                    # Check if we hit the percentage trigger[m
+[31m-                    if (has_hit_time_trigger[sym] == 0 && curr_profit_pct >= RL_EXIT_PERCENT) {[m
+[31m-                        if (DEBUG_SYM == sym)[m
+[31m-                            printf "\nSTATE1:curr_profit_pct:" curr_profit_pct "\nRL_EXIT_PERCENT:" RL_EXIT_PERCENT[m
+[31m-                        has_hit_time_trigger[sym] = 1[m
+[31m-                        time_trigger_counter[sym] = 0  # Start the clock[m
+[32m+[m[32m                    # 3. PORTFOLIO & STREAK TRACKING[m
+[32m+[m[32m                    p_exit_results[++p_trade_ptr] = trade_pnl[m
+[32m+[m[32m                    p_exit_dates[p_trade_ptr] = iso[m
+[32m+[m[41m                    [m
+[32m+[m[32m                    if (trade_pnl > 0) {[m
+[32m+[m[32m                          rl_wins++; s_50_wins++; rl_sum_wins += trade_pnl; cur_loss_streak = 0[m[41m [m
+[32m+[m[32m                    } else if (trade_pnl < 0) {[m
+[32m+[m[32m                          rl_losses++; s_50_losses++; rl_sum_losses += trade_pnl; cur_loss_streak++[m
+[32m+[m[32m                          if (cur_loss_streak > max_loss_streak) max_loss_streak = cur_loss_streak[m
+[32m+[m[32m                    } else {[m
+[32m+[m[32m                          rl_BEs++; s_50_BEs++; cur_loss_streak = 0[m
+                     }[m
+ [m
+[31m-                        # If the trigger was previously hit, handle the countdown[m
+[31m-                        if (has_hit_time_trigger[sym] == 1) {[m
+[31m-                            if (RL_EXIT_DAYS == 0) {[m
+[31m-                                # Sell immediately[m
+[31m-                                exit_type = "RL_EXIT_DAYS"[m
+[31m-                                execute_exit = 1[m
+[31m-                        if (DEBUG_SYM == sym)[m
+[31m-                            printf "\nSTATE2:curr_profit_pct:" curr_profit_pct "\nRL_EXIT_PERCENT:" RL_EXIT_PERCENT[m
+[31m-                            } else {[m
+[31m-                                time_trigger_counter[sym]++[m
+[31m-                                if (time_trigger_counter[sym] >= RL_EXIT_DAYS) {[m
+[31m-                                    exit_type = "RL_EXIT_DAYS"[m
+[31m-                                    execute_exit = 1[m
+[31m-                                }[m
+[31m-                            }[m
+[31m-                        }[m
+[31m-[m
+[31m-                        # --- PORTFOLIO STREAK TRACKING ---[m
+[31m-                        # Record every trade result and its date for global sorting[m
+[31m-                        p_exit_results[++p_trade_ptr] = trade_pnl[m
+[31m-                        p_exit_dates[p_trade_ptr] = iso[m
+[31m-                        [m
+[31m-                        # Consolidated Win/Loss/BE Accounting[m
+[31m-                        if (trade_pnl > 0) {[m
+[31m-                              rl_wins++[m
+[31m-                              s_50_wins++[m
+[31m-                              rl_sum_wins += trade_pnl[m
+[31m-                              cur_loss_streak = 0 [m
+[31m-                        } [m
+[31m-                        else if (trade_pnl < 0) {[m
+[31m-                              rl_losses++[m
+[31m-                              s_50_losses++[m
+[31m-                              rl_sum_losses += trade_pnl[m
+[31m-                              # Streak Logic[m
+[31m-                              cur_loss_streak++[m
+[31m-                              if (cur_loss_streak > max_loss_streak) max_loss_streak = cur_loss_streak[m
+[31m-                        } [m
+[31m-                        else {[m
+[31m-                              rl_BEs++[m
+[31m-                              s_50_BEs++[m
+[31m-                              cur_loss_streak = 0 # BEs typically break a loss streak[m
+[31m-                        }[m
+[31m-[m
+[31m-                        # Capture final equity for drawdown math [m
+[31m-                        day_exit_equity_50 = trade_pnl [m
+[31m-[m
+[31m-                        # Calculate specific ROR for this individual trade[m
+[31m-                        trade_return = (trade_pnl / RL_CASH)[m
+[31m-                        mae_pct = (rl_entry_p[sym] - rl_min_p) / rl_entry_p[sym][m
+[31m-                        daily_realized_pnl[iso] += trade_pnl[m
+[31m-[m
+[31m-                        hold_days = days_diff(rl_entry_iso[sym], iso) + 1[m
+[31m-                        if (hold_days > 0 && trade_return > -1) {[m
+[31m-                              annualizedROR = ((1 + trade_return)^(365 / hold_days)) - 1[m
+[31m-                        } else {[m
+[31m-                              annualizedROR = 0[m
+[31m-                        }[m
+[31m-                        [m
+[31m-                        # 1. Populate both arrays at the SAME index[m
+[31m-                        sys_closed_trades++[m
+[31m-                        all_hold_days[sys_closed_trades] = hold_days[m
+[31m-                        [m
+[31m-                        # 3. Rest of your existing logic[m
+[31m-                        too_high_threshold = (sma50[dates[sym, rl_entry_idx[sym]-1]] > 0 ? (rl_entry_p[sym]-sma50[dates[sym, rl_entry_idx[sym]-1]])/sma50[dates[sym, rl_entry_idx[sym]-1]] : 0)[m
+[31m-                        max_gain = (rl_max_p - rl_entry_p[sym])/rl_entry_p[sym][m
+[31m-                        sys_total_hold_days += hold_days[m
+[31m-[m
+[31m-                        # Calculate milestone to close deltas (only if milestone was hit)[m
+[31m-                        m10_to_close = (m10_days > 0) ? (hold_days - m10_days) : 0[m
+[31m-                        m20_to_close = (m20_days > 0) ? (hold_days - m20_days) : 0[m
+[31m-                        m30_to_close = (m30_days > 0) ? (hold_days - m30_days) : 0[m
+[31m-                        m40_to_close = (m40_days > 0) ? (hold_days - m40_days) : 0[m
+[31m-                        m50_to_close = (m50_days > 0) ? (hold_days - m50_days) : 0[m
+[31m-                        m60_to_close = (m60_days > 0) ? (hold_days - m60_days) : 0[m
+[31m-[m
+[31m-                        if (hold_days > 0) {[m
+[31m-                            # Individual Trade CES: PnL % divided by duration[m
+[31m-                            # Example: 10% gain in 5 days = 2.00 CES[m
+[31m-                            trade_ces = ((trade_pnl/RL_CASH)*100) / hold_days[m
+[31m-                            } else {[m
+[31m-                                # Handle same-day exits to avoid division by zero[m
+[31m-                                trade_ces = ((trade_pnl/RL_CASH)*100)[m
+[31m-                        }  [m
+[32m+[m[32m                    day_exit_equity_50 = trade_pnl[m[41m [m
+[32m+[m[32m                    trade_return = (trade_pnl / RL_CASH)[m
+[32m+[m[32m                    mae_pct = (rl_entry_p[sym] - rl_min_p) / rl_entry_p[sym][m
+[32m+[m[32m                    daily_realized_pnl[iso] += trade_pnl[m
+ [m
+[31m-                        rl_closed_list[++rl_closed_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%s,%d,%.2f,%.2f%%,%.4f,%s,%.4f,%.4f,%s,%.4f,%.4f,%.4f,%.2f,%.4f,%.4f,%d,%s,%s,%.4f,%.2f,%.2f,%.2f,%d,%.4f,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%s,%.2f", sym, rl_entry_iso[sym], rl_entry_p[sym], rl_close_to_high, rl_max_p, max_gain, rl_min_p, too_high_threshold, original_stop, rl_stop, original_target, (rl_stop > 0 ? (rl_entry_p[sym]-rl_stop)/rl_stop: 0), iso, hold_days, rl_sell, (trade_pnl/RL_CASH)*100, annualizedROR, exit_type, mae_pct, max_sym_dd, "50-trigger", entry_peak_hi[sym], entry_peak_cl[sym], entry_peak_lo[sym], entry_atr_stop[sym], entry_atr_val[sym], entry_atr_val[sym]/rl_entry_p[sym], entry_exp_hits[sym], entry_last_exp[sym], entry_last_reset[sym], entry_slope[sym], entry_spy50[sym], entry_spy100[sym], entry_spy200[sym], entry_active_shocks[sym], entry_last_shock_mag[sym], entry_rehab_cooldown[sym], entry_close, raw_op[sym, iso], m10_days, m20_days, m30_days, m40_days, m50_days, m60_days, m10_to_close, m20_to_close, m30_to_close, m40_to_close, m50_to_close, m60_to_close, trade_ces, partial_exit_date[sym], partial_exit_amount[sym],avg_exit_price)[m
+[31m-                        [m
+[31m-                        rl_pnl += trade_pnl[m
+[31m-                        trl += trade_pnl[m
+[31m-                        rl_inv = rl_max_p = rl_min_p = rl_trail_active = m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0[m
+[31m-                        }[m
+[32m+[m[32m                    hold_days = days_diff(rl_entry_iso[sym], iso) + 1[m
+[32m+[m[32m                    if (hold_days > 0 && trade_return > -1) {[m
+[32m+[m[32m                          annualizedROR = ((1 + trade_return)^(365 / hold_days)) - 1[m
+[32m+[m[32m                    } else {[m
+[32m+[m[32m                          annualizedROR = 0[m
+[32m+[m[32m                    }[m
+[32m+[m[41m                    [m
+[32m+[m[32m                    sys_closed_trades++[m
+[32m+[m[32m                    all_hold_days[sys_closed_trades] = hold_days[m
+[32m+[m[41m                    [m
+[32m+[m[32m                    too_high_threshold = (sma50[dates[sym, rl_entry_idx[sym]-1]] > 0 ? (rl_entry_p[sym]-sma50[dates[sym, rl_entry_idx[sym]-1]])/sma50[dates[sym, rl_entry_idx[sym]-1]] : 0)[m
+[32m+[m[32m                    max_gain = (rl_max_p - rl_entry_p[sym])/rl_entry_p[sym][m
+[32m+[m[32m                    sys_total_hold_days += hold_days[m
+[32m+[m
+[32m+[m[32m                    m10_to_close = (m10_days > 0) ? (hold_days - m10_days) : 0[m
+[32m+[m[32m                    m20_to_close = (m20_days > 0) ? (hold_days - m20_days) : 0[m
+[32m+[m[32m                    m30_to_close = (m30_days > 0) ? (hold_days - m30_days) : 0[m
+[32m+[m[32m                    m40_to_close = (m40_days > 0) ? (hold_days - m40_days) : 0[m
+[32m+[m[32m                    m50_to_close = (m50_days > 0) ? (hold_days - m50_days) : 0[m
+[32m+[m[32m                    m60_to_close = (m60_days > 0) ? (hold_days - m60_days) : 0[m
+[32m+[m
+[32m+[m[32m                    if (hold_days > 0) {[m
+[32m+[m[32m                        trade_ces = ((trade_pnl/RL_CASH)*100) / hold_days[m
+[32m+[m[32m                    } else {[m
+[32m+[m[32m                        trade_ces = ((trade_pnl/RL_CASH)*100)[m
+[32m+[m[32m                    }[m[41m  [m
+[32m+[m
+[32m+[m[32m                    # 4. DATA LOGGING (RL_CLOSED LIST)[m
+[32m+[m[32m                    rl_closed_list[++rl_closed_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%s,%d,%.2f,%.2f%%,%.4f,%s,%.4f,%.4f,%s,%.4f,%.4f,%.4f,%.2f,%.4f,%.4f,%d,%s,%s,%.4f,%.2f,%.2f,%.2f,%d,%.4f,%d,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%s,%.2f", sym, rl_entry_iso[sym], rl_entry_p[sym], rl_close_to_high, rl_max_p, max_gain, rl_min_p, too_high_threshold, original_stop, rl_stop, original_target, (rl_stop > 0 ? (rl_entry_p[sym]-rl_stop)/rl_stop: 0), iso, hold_days, rl_sell, (trade_pnl/RL_CASH)*100, annualizedROR, exit_type, mae_pct, max_sym_dd, "50-trigger", entry_peak_hi[sym], entry_peak_cl[sym], entry_peak_lo[sym], entry_atr_stop[sym], entry_atr_val[sym], entry_atr_val[sym]/rl_entry_p[sym], entry_exp_hits[sym], entry_last_exp[sym], entry_last_reset[sym], entry_slope[sym], entry_spy50[sym], entry_spy100[sym], entry_spy200[sym], entry_active_shocks[sym], entry_last_shock_mag[sym], entry_rehab_cooldown[sym], entry_close, raw_op[sym, iso], m10_days, m20_days, m30_days, m40_days, m50_days, m60_days, m10_to_close, m20_to_close, m30_to_close, m40_to_close, m50_to_close, m60_to_close, trade_ces, partial_exit_date[sym], partial_exit_amount[sym], avg_exit_price)[m
+[32m+[m
+[32m+[m[32m                    # 5. CRITICAL STATE RESET (Zero out for next trade)[m
+[32m+[m[32m                    rl_pnl += trade_pnl[m
+[32m+[m[32m                    trl += trade_pnl[m
+[32m+[m[32m                    rl_inv = rl_max_p = rl_min_p = rl_trail_active = m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0[m
+[32m+[m[32m                    has_hit_time_trigger[sym] = 0[m
+[32m+[m[32m                    time_trigger_counter[sym] = 0[m
+[32m+[m[32m                    has_hit_milestone[sym] = 0[m
+[32m+[m[32m                    total_exit_proceeds[sym] = 0[m
+[32m+[m[32m                    total_shares_sold[sym] = 0[m
+[32m+[m[32m                    initial_shares_at_entry[sym] = 0[m
+[32m+[m[32m                    execute_exit = 0[m
+             } else if (SMA_QUAL == 1 && j > 50+RL_50_SMA_LOOKBACK) {[m
+                         sma50rising = sma50[dates[sym, j]] > sma50[dates[sym, j-RL_50_SMA_LOOKBACK]][m
+                         inthe50zone = (raw_lo[sym, iso] < (y_sma * RL_DIP_PCT) && (raw_lo[sym, iso] > y_sma * (1-(RL_DIP_PCT-1))))[m
+[36m@@ -861,6 +828,7 @@[m [mfunction perform_audit(sym) {[m
+                                     entry_peak_lo[sym] = peak_lo[sym][m
+ [m
+                                     rl_inv = RL_CASH / raw_op[sym, next_day_iso]; [m
+[32m+[m[32m                                    initial_shares_at_entry[sym] = rl_inv # Capture the 100% count[m
+                                     entry_atr_stop[sym] = raw_op[sym, next_day_iso] - (atr_rolling * 2)[m
+                                     entry_atr_val[sym] = atr_rolling[m
+                                     rl_stop = raw_lo[sym, iso] * RL_STOP_PCT; [m
+[36m@@ -879,8 +847,7 @@[m [mfunction perform_audit(sym) {[m
+                                     max_sym_dd = 0; sym_hwm = 0;[m
+                                     total_exit_proceeds[sym] = 0[m
+                                     total_shares_sold[sym] = 0[m
+[31m-                                    initial_shares_at_entry[sym] = rl_inv # Capture the 100% count[m
+[31m-[m
+[32m+[m[41m                                    [m
+                                     entry_spy50[sym] = spy_sma50[next_day_iso][m
+                                     entry_spy100[sym] = spy_sma100[next_day_iso][m
+                                     entry_spy200[sym] = spy_sma200[next_day_iso][m
+[36m@@ -1033,7 +1000,7 @@[m [mfunction perform_audit(sym) {[m
+             last_cl = raw_cl[sym, dates[sym, d_ptr[sym]]][m
+             _open_val = (rl_inv * last_cl) - RL_CASH[m
+             distance_covered_to_target = (last_cl-rl_entry_p[sym])/(rl_target-rl_entry_p[sym])[m
+[31m-            printf "\n\ndistance_covered_to_target:" distance_covered_to_target[m
+[32m+[m[41m            [m
+             if (_open_val > 0) { rl_open_wins++; rl_val_open_wins += _open_val }[m
+             else { rl_open_losses++; rl_val_open_losses += _open_val }[m
+             rl_open_list[++rl_open_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f%%,%d,50-trigger,%.2f,%.2f,%.4f,%.0f,%s,%s", sym, rl_entry_iso[sym], rl_entry_p[sym], last_cl, (_open_val/RL_CASH)*100, (d_ptr[sym] - rl_entry_idx[sym]), rl_stop, rl_target, distance_covered_to_target, entry_hist_hits[sym], entry_hist_exp[sym], entry_hist_reset[sym])[m
+[36m@@ -1205,14 +1172,11 @@[m [mEND {[m
+       initial_account_size = RL_CASH * 10 [m
+ [m
+       k_dates = asorti(all_trading_dates, sorted_dates)[m
+[31m-      printf("\nk_dates:" k_dates)[m
+[32m+[m[41m      [m
+       # --- CALCULATE PORTFOLIO DRAWDOWN ---[m
+       for (idx=1; idx<=k_dates; idx++) {[m
+             d_iso = sorted_dates[idx]                    # 1. Get the current date in chronological order[m
+             [m
+[31m-            # TROUBLESHOOTING: Uncomment next line to see daily PnL hits[m
+[31m-            printf "Date: %s | Daily PnL: %.2f\n", d_iso, daily_realized_pnl[d_iso][m
+[31m-[m
+             m_realized += daily_realized_pnl[d_iso]      # 2. Add today's closed trade PnL to the running total[m
+             port_equity = initial_account_size + m_realized # 3. Current Equity = Starting Cash + All Gains/Losses so far[m
+             [m
+[36m@@ -1225,8 +1189,6 @@[m [mEND {[m
+                 if (p_dd > max_port_dd) {                # 8. If today's drop is the worst we've ever seen...[m
+                     max_port_dd = p_dd                    # 9. ...update the Maximum Portfolio Drawdown[m
+                     [m
+[31m-                    # TROUBLESHOOTING: Uncomment next line to find the exact date/value of the worst drop[m
+[31m-                    printf "NEW MAX DD: %.2f%% on %s | Equity: %.2f | HWM: %.2f\n", p_dd*100, d_iso, port_equity, port_hwm[m
+                 }[m
+             }[m
+       }[m

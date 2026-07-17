@@ -1,0 +1,115 @@
+{
+  "source": "IND_Correlation_260605105137.csv",
+  "closed_source": "IND_Closed_260605105137.csv",
+  "trades": 33816,
+  "variables": [
+    "IND_ENTRY_BULL_N",
+    "IND_TRI_ASCENDING_LAST",
+    "IND_BOTTOM_TRI_LAST",
+    "IND_ENTRY_NEUTRAL_N",
+    "IND_FLAG_CONT_LAST",
+    "IND_PENNANT_CONT_LAST",
+    "IND_DOUBLE_BOTTOM_LAST",
+    "IND_ENTRY_BEAR_N",
+    "IND_DOUBLE_TOP_LAST",
+    "IND_TRI_DESCENDING_LAST",
+    "IND_TOP_TRI_LAST"
+  ],
+  "description": "Subset weights from IND_Correlation_260605105137: 11 variables only. Pattern IND_*_LAST -> weights[<id>]; summary counts in summary_weights. scale = avg_pnl (1.6210) / mean(positive r among selected)",
+  "avg_pnl_pct": 1.620979,
+  "scale": 18.702321,
+  "weights": {
+    "TRI_ASCENDING": -0.672032,
+    "BOTTOM_TRI": -0.672032,
+    "FLAG_CONT": -0.635922,
+    "PENNANT_CONT": -0.635922,
+    "DOUBLE_BOTTOM": -0.186655,
+    "DOUBLE_TOP": -0.144943,
+    "TRI_DESCENDING": -0.15159,
+    "TOP_TRI": -0.15159
+  },
+  "summary_weights": {
+    "IND_ENTRY_BULL_N": 1.620979,
+    "IND_ENTRY_NEUTRAL_N": -1.64182,
+    "IND_ENTRY_BEAR_N": -0.195106
+  },
+  "meta": {
+    "IND_ENTRY_BULL_N": {
+      "variable": "IND_ENTRY_BULL_N",
+      "r_pnl_pct": 0.086673,
+      "r_total": 0.1668,
+      "weight": 1.620979,
+      "scale": 18.702321
+    },
+    "IND_TRI_ASCENDING_LAST": {
+      "variable": "IND_TRI_ASCENDING_LAST",
+      "r_pnl_pct": -0.035933,
+      "r_total": -0.1585,
+      "weight": -0.672032,
+      "scale": 18.702321
+    },
+    "IND_BOTTOM_TRI_LAST": {
+      "variable": "IND_BOTTOM_TRI_LAST",
+      "r_pnl_pct": -0.035933,
+      "r_total": -0.1585,
+      "weight": -0.672032,
+      "scale": 18.702321
+    },
+    "IND_ENTRY_NEUTRAL_N": {
+      "variable": "IND_ENTRY_NEUTRAL_N",
+      "r_pnl_pct": -0.087787,
+      "r_total": -0.1519,
+      "weight": -1.64182,
+      "scale": 18.702321
+    },
+    "IND_FLAG_CONT_LAST": {
+      "variable": "IND_FLAG_CONT_LAST",
+      "r_pnl_pct": -0.034002,
+      "r_total": -0.1189,
+      "weight": -0.635922,
+      "scale": 18.702321
+    },
+    "IND_PENNANT_CONT_LAST": {
+      "variable": "IND_PENNANT_CONT_LAST",
+      "r_pnl_pct": -0.034002,
+      "r_total": -0.1189,
+      "weight": -0.635922,
+      "scale": 18.702321
+    },
+    "IND_DOUBLE_BOTTOM_LAST": {
+      "variable": "IND_DOUBLE_BOTTOM_LAST",
+      "r_pnl_pct": -0.00998,
+      "r_total": -0.0599,
+      "weight": -0.186655,
+      "scale": 18.702321
+    },
+    "IND_ENTRY_BEAR_N": {
+      "variable": "IND_ENTRY_BEAR_N",
+      "r_pnl_pct": -0.010432,
+      "r_total": -0.0423,
+      "weight": -0.195106,
+      "scale": 18.702321
+    },
+    "IND_DOUBLE_TOP_LAST": {
+      "variable": "IND_DOUBLE_TOP_LAST",
+      "r_pnl_pct": -0.00775,
+      "r_total": -0.0364,
+      "weight": -0.144943,
+      "scale": 18.702321
+    },
+    "IND_TRI_DESCENDING_LAST": {
+      "variable": "IND_TRI_DESCENDING_LAST",
+      "r_pnl_pct": -0.008105,
+      "r_total": 0.0242,
+      "weight": -0.15159,
+      "scale": 18.702321
+    },
+    "IND_TOP_TRI_LAST": {
+      "variable": "IND_TOP_TRI_LAST",
+      "r_pnl_pct": -0.008105,
+      "r_total": 0.0242,
+      "weight": -0.15159,
+      "scale": 18.702321
+    }
+  }
+}

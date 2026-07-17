@@ -1,0 +1,14 @@
+{
+  "description": "Require each indicator to be in the listed state (BULL, BEAR, or NEUTRAL) on the trigger bar. Enable with -v mandatory_ind_states_path=mandatory_ind_states_orig.json (empty = off). Edit rules below; invalid IDs are ignored at load time.",
+  "rules": {
+    "PRICE_OVER_SMA200": "BULL",
+    "STOCH_K_OVER_D": "BEAR",
+    "UPSIDE_BREAKOUT": "NEUTRAL",
+    "EMA12_OVER_EMA26": "BULL",
+    "DIAMOND": "NEUTRAL",
+    "SMA20_OVER_SMA50": "BULL",
+    "CANDLE_BEAR_ENGULF": "NEUTRAL",
+    "CANDLE_THREE_SOLDIERS": "NEUTRAL",
+    "WILLR14": "BULL"
+  }
+}

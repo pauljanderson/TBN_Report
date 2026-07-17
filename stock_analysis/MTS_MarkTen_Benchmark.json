@@ -1,0 +1,66 @@
+{
+  "baseline": {
+    "total_trades": 112,
+    "win_rate_pct": 46.43,
+    "avg_profit_pct": 5.32,
+    "win_loss_ratio": 0.881,
+    "avg_days_in_trade": 37.4,
+    "total_profit": 282991.72,
+    "wins": 52,
+    "losses": 59,
+    "profit_factor": 2.0,
+    "max_drawdown_pct": "N/A",
+    "params": {
+      "band_pct": 0.02,
+      "touch_threshold": 2,
+      "strong_post_pivot_bars": 7,
+      "strong_post_pivot_pct": 0.09,
+      "strong_pre_pivot_bars": 7,
+      "strong_pre_pivot_pct": 0.12,
+      "target_pct": 1.22,
+      "stop_pct": 0.934,
+      "stop_pct_is_multiplier": true,
+      "stop_anchor": "signal_low",
+      "compute_equity_metrics": true,
+      "brt_cash": 47500
+    },
+    "symbols": [
+      "AAPL",
+      "AMZN",
+      "GOOGL",
+      "META",
+      "MSFT",
+      "NVDA",
+      "TSLA",
+      "AU",
+      "AMD",
+      "NFLX"
+    ]
+  },
+  "optimized": {
+    "total_trades": 121,
+    "win_rate_pct": 52.89,
+    "avg_profit_pct": 7.57,
+    "win_loss_ratio": 1.123,
+    "avg_days_in_trade": 34.5,
+    "total_profit": 435084.79,
+    "wins": 64,
+    "losses": 57,
+    "profit_factor": 2.64,
+    "max_drawdown_pct": "N/A",
+    "params": {
+      "band_pct": 0.018,
+      "touch_threshold": 2,
+      "strong_post_pivot_bars": 7,
+      "strong_post_pivot_pct": 0.06,
+      "strong_pre_pivot_bars": 7,
+      "strong_pre_pivot_pct": 0.12,
+      "target_pct": 1.22,
+      "stop_pct": 0.934,
+      "stop_pct_is_multiplier": true,
+      "stop_anchor": "signal_low",
+      "compute_equity_metrics": true,
+      "brt_cash": 47500
+    }
+  }
+}
