@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 pushd "%~dp0"
 
-REM Merge audit CSVs into drive\all.csv (or all_yh / all_vec / all_pbr for mode filters).
+REM Merge audit CSVs into drive\all.csv (or all_yh / all_vec / all_wpbr for mode filters).
 REM NOTE: This script does NOT modify cell contents. Timestamp_Drive uses =HYPERLINK(...)
 REM   for click-through in Excel; Excel may show a leading "'" in the formula bar.
 REM
@@ -10,11 +10,12 @@ REM Usage:
 REM   concat.bat                  merge BRT+IND+MTS Audit_Report_*.csv -> all.csv
 REM   concat.bat yh               merge YH_Audit_Report_*.csv -> all_yh.csv
 REM   concat.bat vec              merge VEC_Audit_Report_*.csv -> all_vec.csv
-REM   concat.bat pbr              merge PBR_Audit_Report_*.csv -> all_pbr.csv
-REM   concat.bat 26062211         merge BRT+IND+YH+VEC+PBR+MTS *_Audit_Report_26062211*.csv -> all.csv
+REM   concat.bat wpbr             merge WPBR_Audit_Report_*.csv -> all_wpbr.csv
+REM   concat.bat pbr              legacy alias for wpbr (also matches old PBR_Audit_Report_*)
+REM   concat.bat 26062211         merge BRT+IND+YH+VEC+WPBR+MTS *_Audit_Report_26062211*.csv -> all.csv
 REM   concat.bat yh 26062211      merge YH_Audit_Report_26062211*.csv -> all_yh.csv
 REM   concat.bat vec 26062211     merge VEC_Audit_Report_26062211*.csv -> all_vec.csv
-REM   concat.bat pbr 26062211     merge PBR_Audit_Report_26062211*.csv -> all_pbr.csv
+REM   concat.bat wpbr 26062211    merge WPBR_Audit_Report_26062211*.csv -> all_wpbr.csv
 REM
 REM If the first file alphabetically has different columns than later files, narrow the filter
 REM or move older CSVs out of the folder before merging.
@@ -42,9 +43,14 @@ if /I "%~1"=="yh" (
   set "MODE=vec"
   set "OUT_NAME=all_vec.csv"
   if not "%~2"=="" set "TS_FILTER=%~2"
+) else if /I "%~1"=="wpbr" (
+  set "MODE=wpbr"
+  set "OUT_NAME=all_wpbr.csv"
+  if not "%~2"=="" set "TS_FILTER=%~2"
 ) else if /I "%~1"=="pbr" (
-  set "MODE=pbr"
-  set "OUT_NAME=all_pbr.csv"
+  rem Legacy alias for wpbr
+  set "MODE=wpbr"
+  set "OUT_NAME=all_wpbr.csv"
   if not "%~2"=="" set "TS_FILTER=%~2"
 ) else if not "%~1"=="" (
   set "TS_FILTER=%~1"
@@ -62,17 +68,17 @@ if "!MODE!"=="yh" (
   ) else (
     set "PATS=VEC_Audit_Report_!TS_FILTER!*.csv"
   )
-) else if "!MODE!"=="pbr" (
+) else if "!MODE!"=="wpbr" (
   if "!TS_FILTER!"=="" (
-    set "PATS=PBR_Audit_Report_*.csv"
+    set "PATS=WPBR_Audit_Report_*.csv;PBR_Audit_Report_*.csv"
   ) else (
-    set "PATS=PBR_Audit_Report_!TS_FILTER!*.csv"
+    set "PATS=WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv"
   )
 ) else (
   if "!TS_FILTER!"=="" (
     set "PATS=BRT_Audit_Report_*.csv;IND_Audit_Report_*.csv;MTS_Audit_Report_*.csv"
   ) else (
-    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv"
+    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv"
   )
 )
 

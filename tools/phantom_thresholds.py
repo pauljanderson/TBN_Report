@@ -19,7 +19,7 @@ o, h, l, c = [df[x].to_numpy(float) for x in "Open High Low Close".split()]
 
 pre_bars = int(cfg.strong_pre_pivot_bars)      # 7
 pre_pct = float(cfg.strong_pre_pivot_pct)      # 0.12
-tpb = int(getattr(cfg, "sheet_touch_pullback_bars", 10) or 10)
+tpb = int(getattr(cfg, "strong_post_pivot_bars", 7) or 7)
 tp_pct = float(cfg.strong_post_pivot_pct)      # 0.09
 post_bars = int(cfg.strong_post_pivot_bars)    # 7
 disp = float(cfg.pivot_disp)                   # 0.06

@@ -1,0 +1,11 @@
+IND Optimizer Status
+started_at:     2026-07-18 10:27:30
+updated_at:     2026-07-18 12:28:37
+elapsed:        2h 01m 07s
+current_param:  (complete)
+current_value:  
+trials:         48/48 (100.0%)
+eta:            0s (done)
+note:           finished in 2h 01m 07s
+
+Watch live: Get-Content -Wait stock_analysis\IND_optimizer_status.txt

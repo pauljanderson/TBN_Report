@@ -44,7 +44,6 @@ BRT_BASELINE: dict[str, Any] = {
     "tight_range_threshold_pct": 0.35,
     "tight_range_lookback": 105,
     "sheet_breakout_scan_start_row_delta": 2,
-    "sheet_touch_pullback_bars": 10,
     "brt_sheet_touch": True,
     "max_positions": 16,
     "min_spy_compare_1y_at_trigger": -1000.0,
@@ -104,7 +103,8 @@ MTS_BASELINE: dict[str, Any] = {
     "target_pct": 1.22,
     "stop_pct": 0.934,
     "stop_pct_is_multiplier": True,
-    "stop_anchor": "signal_low",
+    "stop_loss_based": "trigger_low",
+    "stop_anchor": "signal_low",  # legacy alias of trigger_low
     "compute_equity_metrics": True,
     "brt_zones": True,
     "yh_zones": False,
@@ -208,42 +208,48 @@ VEC_PLAN: dict[str, tuple[Any, ...]] = {
     "target_pct": (1.18, 1.21, 1.24, 1.27, 1.30),
 }
 
-# run_pbr.bat — Weekly pivot break + daily retest
-PBR_BASELINE: dict[str, Any] = {
+# run_wpbr.bat — Weekly pivot break + daily retest
+WPBR_BASELINE: dict[str, Any] = {
     "brt_cash": 47_500.0,
-    "pbr_zones": True,
+    "wpbr_zones": True,
     "brt_zones": False,
     "yh_zones": False,
     "vec_zones": False,
     "band_pct": 0.015,
+    "band_pct_atr": 0.0,
     "strong_pre_pivot_bars": 3,
     "strong_pre_pivot_pct": 0.10,
     "strong_post_pivot_bars": 3,
     "strong_post_pivot_pct": 0.10,
     "strong_pivot_mode": "either",
-    "pbr_breakout_confirmation": 0.03,
-    "pbr_max_days_after_retest": 2,
+    "wpbr_breakout_confirmation": 0.03,
+    "wpbr_max_days_after_retest": 2,
+    "wpbr_second_chance_after_win": True,
     "growth_filter_enabled": False,
     "entry_from_retest_only": True,
     "min_spy_compare_1y_at_trigger": -1000.0,
     "too_high_multiplier": 0.0,
-    "target_pct": 1.24,
-    "stop_pct": 0.927,
+    "target_pct": 1.22,
+    "stop_pct": 0.91,
     "stop_pct_is_multiplier": True,
+    "entry_start_date": "2016-01-01",
+    "sheet_no_entry_same_bar_after_exit": False,
     "compute_equity_metrics": True,
 }
 
-PBR_PLAN: dict[str, tuple[Any, ...]] = {
-    "band_pct": (0.012, 0.014, 0.015, 0.016, 0.018),
+WPBR_PLAN: dict[str, tuple[Any, ...]] = {
+    # band_pct_atr>0 overrides fixed band_pct (mutually exclusive modes)
+    "band_pct": (0.010, 0.012, 0.014, 0.015, 0.016, 0.018, 0.020, 0.022, 0.025),
+    "band_pct_atr": (0.0, 0.20, 0.30, 0.40, 0.466, 0.55, 0.65, 0.80, 1.00),
     "strong_pre_pivot_pct": (0.08, 0.10, 0.12),
     "strong_post_pivot_pct": (0.08, 0.10, 0.12),
-    "pbr_breakout_confirmation": (0.0, 0.02, 0.03, 0.04),
-    "pbr_max_days_after_retest": (1, 2, 3),
+    "wpbr_breakout_confirmation": (0.0, 0.02, 0.03, 0.04),
+    "wpbr_max_days_after_retest": (1, 2, 3),
     "stop_pct": (0.910, 0.923, 0.927, 0.934),
-    "target_pct": (1.20, 1.24, 1.27, 1.30),
+    "target_pct": (1.20, 1.22, 1.24, 1.27),
 }
 
-MARKTEN_PBR = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA", "AU", "AMD", "NFLX"]
+MARKTEN_WPBR = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA", "AU", "AMD", "NFLX"]
 
 
 @dataclass(frozen=True)
@@ -314,18 +320,20 @@ SYSTEMS: dict[str, SystemSpec] = {
         min_trades_wf_train_universe=12, min_trades_wf_val_universe=6,
         daily_symbols=lambda: list(BRT_SYMBOLS),
     ),
-    "PBR": SystemSpec(
-        "PBR", "brt", PBR_BASELINE, PBR_PLAN,
+    "WPBR": SystemSpec(
+        "WPBR", "brt", WPBR_BASELINE, WPBR_PLAN,
         min_trades_symbol=2, min_trades_universe=15,
         min_trades_wf_train_symbol=1, min_trades_wf_val_symbol=1,
         min_trades_wf_train_universe=8, min_trades_wf_val_universe=4,
-        daily_symbols=lambda: list(MARKTEN_PBR),
+        daily_symbols=lambda: list(MARKTEN_WPBR),
     ),
 }
 
 
 def get_system_spec(system: str) -> SystemSpec:
     key = str(system).strip().upper()
+    if key == "PBR":
+        key = "WPBR"  # legacy alias
     if key not in SYSTEMS:
         raise ValueError(f"Unknown system {system!r}; expected one of {sorted(SYSTEMS)}")
     return SYSTEMS[key]

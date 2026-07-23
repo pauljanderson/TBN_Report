@@ -3,6 +3,10 @@ Stable column order for BRT_Report / BRT_Audit_Report / BRT_Audit_Report_RL and 
 
 This tuple matches the column order emitted by ``rocket_brt.write_brt_audit_report`` on a full
 BRT run (legacy ``brt_audit_columns`` layout + trailing config fields from ``_AUDIT_CFG_COLS``).
+
+Trade-level IND / Trading Central horizon fields (``IND_*``, ``IND_TC_*``) are **not** listed
+here — they append to Closed / Open / Scanner via ``brt_entry_indicators.entry_indicator_csv_headers``
+when ``use_indicators`` is on (report/audit only for ``IND_TC_*``; no entry gates).
 """
 
 from __future__ import annotations
@@ -27,10 +31,12 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "zones_from_pivot_lows_enabled",
     "brt_zones",
     "yh_zones",
-    "pbr_zones",
-    "pbr_breakout_confirmation",
-    "pbr_max_days_after_retest",
-    "pbr_second_chance_after_win",
+    "wpbr_zones",
+    "wpbr_breakout_confirmation",
+    "wpbr_max_days_after_retest",
+    "wpbr_second_chance_after_win",
+    "wpbr_merge_overlapping_zones",
+    "mts_mode",
     "yh_lookback",
     "yh_move_away_pct",
     "yh_memory_mode",
@@ -118,6 +124,7 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "sheet_dw_countif_entry_enabled",
     "sheet_dw_countif_include_prior_bar_date",
     "retest_multi_zone_pick",
+    "breakout_zone_pick",
     "entry_retest_bullish_growth_only",
     "do_gate_enabled",
     "do_good_for_bars",
@@ -202,11 +209,15 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "max_touch_count_short",
     "max_ind_entry_neutral_n",
     "min_ind_entry_bull_n",
+    "max_ind_diff_at_trigger",
+    "entry_start_date",
+    "entry_end_date",
     "use_indicators",
     "use_ind_score",
     "ind_score_weights_path",
     "min_ind_score",
     "mandatory_ind_states_path",
+    "exclude_ind_states_path",
     "indicator_buy",
     "indicator_diff",
     "sell_ind_diff_below",

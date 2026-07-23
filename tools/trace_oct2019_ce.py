@@ -42,7 +42,7 @@ def main() -> None:
         pre_pivot_bars=cfg.strong_pre_pivot_bars,
         pre_pivot_pct=cfg.strong_pre_pivot_pct,
         touch_pullback_pct=cfg.strong_post_pivot_pct,
-        touch_pullback_bars=int(cfg.sheet_touch_pullback_bars or 10),
+        touch_pullback_bars=int(cfg.strong_post_pivot_bars or 7),
         maturity_lag=lag,
         warmup_bars=int(getattr(cfg, "brt_sheet_warmup_bars", 9) or 9),
         zone_price_round_decimals=cfg.zone_price_round_decimals,
@@ -54,7 +54,7 @@ def main() -> None:
     tp = touch["touch_price"].to_numpy(float)
     mat = touch["matured"].to_numpy(bool) if "matured" in touch else None
 
-    print("cfg: touch_pullback_bars=", cfg.sheet_touch_pullback_bars, "C15=", cfg.strong_post_pivot_pct)
+    print("cfg: touch_pullback_bars=", cfg.strong_post_pivot_bars, "C15=", cfg.strong_post_pivot_pct)
     print(f"{'date':12} {'H':>7} {'L':>7} {'ph':5} {'pl':5} {'AF':>8} {'CE':>8} {'mat':5}")
     for i, d in enumerate(dates):
         if d < "2019-09-20" or d > "2019-10-15":

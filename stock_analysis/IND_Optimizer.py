@@ -35,6 +35,7 @@ BEST_SETTINGS_FILE = "IND_Final_Optimized_Settings.json"
 GLOBAL_AUDIT_LOG = "IND_Optimization_Audit.csv"
 OPTIMIZER_SUMMARY_FILE = "IND_Optimizer_Summary.csv"
 PROGRESS_FILE = "IND_optimizer_progress.json"
+STATUS_FILE = "IND_optimizer_status.txt"
 
 MAX_WORKERS = 2  # parallel param sweeps (each backtest uses BACKTEST_WORKERS)
 BACKTEST_WORKERS = 6  # symbol parallelism inside each backtest
@@ -75,7 +76,7 @@ AUDIT_COLS_ORDER = (
     + ["Score"]
 )
 
-# Baseline from DailyRun.bat IND section
+# Baseline = prior IND_Final_Optimized_Settings winners (profitability-focused re-sweep)
 current_best_params = {
     "target_pct": 1.21,
     "trailing_stop_increment": 0,
@@ -89,13 +90,13 @@ current_best_params = {
     "max_atr_pct_at_trigger": 0,
     "use_indicators": True,
     "indicator_buy": "only",
-    "indicator_diff": 11,
+    "indicator_diff": 9,
     "indicator_sides": "long",
     "transaction_type": "long",
-    "atr_target": 2.4,
-    "atr_stop": 1.1,
-    "max_ind_entry_neutral_n": 29,
-    "min_ind_score": 0.0,
+    "atr_target": 2.0,
+    "atr_stop": 1.2,
+    "max_ind_entry_neutral_n": 35,
+    "min_ind_score": -1,
     "yh_zones": False,
     "brt_zones": False,
     "stop_pct": 0,
@@ -104,13 +105,16 @@ current_best_params = {
     "compute_equity_metrics": True,
 }
 
+# Expanded grid around prior winners + profitability levers (target / sizing)
 OPTIMIZATION_PLAN = {
-    "indicator_diff": (8, 9, 10, 11, 12, 13, 14),
-    "atr_target": (2.0, 2.2, 2.4, 2.6, 2.8, 3.0),
-    "atr_stop": (0.9, 1.0, 1.1, 1.2, 1.3),
-    "min_atr_pct_at_trigger": (6.0, 7.0, 8.1, 9.0, 10.0),
-    "max_ind_entry_neutral_n": (20, 25, 29, 35, 40, 50),
-    "min_ind_score": (-1, 0, 5, 10, 15, 20),
+    "indicator_diff": (7, 8, 9, 10, 11, 12),
+    "atr_target": (1.6, 1.8, 2.0, 2.2, 2.4, 2.6),
+    "atr_stop": (0.9, 1.0, 1.1, 1.2, 1.3, 1.4),
+    "min_atr_pct_at_trigger": (5.0, 6.0, 7.0, 8.1, 9.0, 10.0, 11.0),
+    "max_ind_entry_neutral_n": (25, 30, 35, 40, 45, 50),
+    "min_ind_score": (-2, -1, 0, 5, 10, 15),
+    "target_pct": (1.15, 1.18, 1.21, 1.24, 1.27, 1.30),
+    "aggressive_avg_positions": (15, 20, 25, 30, 35),
 }
 
 
@@ -318,6 +322,65 @@ def save_progress(completed_params: list, best_params: dict) -> None:
         }, f, indent=2)
 
 
+def _fmt_dur(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    return f"{m}m {s:02d}s"
+
+
+def _plan_trial_counts(completed_params: list) -> tuple[int, int]:
+    """Return (already_done_trials_from_completed_params, remaining_trials)."""
+    done = sum(len(OPTIMIZATION_PLAN[p]) for p in completed_params if p in OPTIMIZATION_PLAN)
+    remaining = sum(
+        len(vals) for p, vals in OPTIMIZATION_PLAN.items() if p not in completed_params
+    )
+    return done, remaining
+
+
+def write_status(
+    *,
+    started_at: str,
+    session_start: float,
+    current_param: str,
+    current_value,
+    trials_done: int,
+    trials_total: int,
+    note: str = "",
+) -> None:
+    elapsed = time.time() - session_start
+    remaining = max(0, trials_total - trials_done)
+    if trials_done > 0 and remaining > 0:
+        eta_sec = (elapsed / trials_done) * remaining
+        eta_str = _fmt_dur(eta_sec)
+    elif remaining == 0:
+        eta_str = "0s (done)"
+    else:
+        eta_str = "estimating..."
+    pct = (100.0 * trials_done / trials_total) if trials_total else 100.0
+    lines = [
+        "IND Optimizer Status",
+        f"started_at:     {started_at}",
+        f"updated_at:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"elapsed:        {_fmt_dur(elapsed)}",
+        f"current_param:  {current_param}",
+        f"current_value:  {current_value}",
+        f"trials:         {trials_done}/{trials_total} ({pct:.1f}%)",
+        f"eta:            {eta_str}",
+        f"note:           {note}".rstrip(),
+        "",
+        f"Watch live: Get-Content -Wait stock_analysis\\{STATUS_FILE}",
+    ]
+    path = SCRIPT_DIR / STATUS_FILE
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(
+        f"  [status] elapsed={_fmt_dur(elapsed)}  trials={trials_done}/{trials_total}  "
+        f"ETA={eta_str}  ({current_param}={current_value})"
+    )
+
+
 def main() -> int:
     import argparse
 
@@ -357,7 +420,21 @@ def main() -> int:
     print(f"[OK] Param workers: {workers}, backtest workers: {backtest_workers}")
     print(f"[OK] Completed: {completed_params}")
     print(f"[OK] Remaining: {[p for p in OPTIMIZATION_PLAN if p not in completed_params]}")
+    prior_done, remaining_trials = _plan_trial_counts(completed_params)
+    trials_total = prior_done + remaining_trials
+    trials_done = prior_done
+    print(f"[OK] Grid trials: {trials_done}/{trials_total} already done; {remaining_trials} remaining")
+    print(f"[OK] Status file: {SCRIPT_DIR / STATUS_FILE}")
     print("(Ctrl+C to stop; progress is saved so you can resume later)")
+    write_status(
+        started_at=ts_start,
+        session_start=session_start,
+        current_param="(starting)",
+        current_value="",
+        trials_done=trials_done,
+        trials_total=trials_total,
+        note="session start",
+    )
 
     try:
         for param_name, values in OPTIMIZATION_PLAN.items():
@@ -365,6 +442,15 @@ def main() -> int:
                 continue
 
             print(f"\n--- Optimizing {param_name} ({len(values)} values) ---")
+            write_status(
+                started_at=ts_start,
+                session_start=session_start,
+                current_param=param_name,
+                current_value="(running)",
+                trials_done=trials_done,
+                trials_total=trials_total,
+                note=f"sweeping {len(values)} values",
+            )
             tasks = [
                 ({**best_params, param_name: v}, param_name, v, i, data_dir, backtest_workers)
                 for i, v in enumerate(values)
@@ -374,6 +460,7 @@ def main() -> int:
             with ProcessPoolExecutor(max_workers=workers) as ex:
                 for future in as_completed(ex.submit(run_one_param, t) for t in tasks):
                     param_value, row = future.result()
+                    trials_done += 1
                     if row:
                         cfg_full = {**best_params, param_name: sanitize_value(param_value)}
                         for k in IND_CFG_COLS:
@@ -385,6 +472,17 @@ def main() -> int:
                             f"pf={_safe_num(row['Profit_Factor']):.2f} "
                             f"ppcd={_safe_num(row['Profit_Per_Capital_Day']):.2f}"
                         )
+                    else:
+                        print(f"  fail {param_name}={param_value}")
+                    write_status(
+                        started_at=ts_start,
+                        session_start=session_start,
+                        current_param=param_name,
+                        current_value=param_value,
+                        trials_done=trials_done,
+                        trials_total=trials_total,
+                        note="trial complete",
+                    )
 
             if not batch_results:
                 print(f"  [WARN] No valid results for {param_name}")
@@ -442,6 +540,15 @@ def main() -> int:
         final = {k: sanitize_value(v) for k, v in best_params.items()}
         with open(BEST_SETTINGS_FILE, "w") as f:
             json.dump(final, f, indent=2)
+        write_status(
+            started_at=ts_start,
+            session_start=session_start,
+            current_param="(interrupted)",
+            current_value="",
+            trials_done=trials_done,
+            trials_total=trials_total,
+            note="Ctrl+C — progress saved",
+        )
         print(f"[OK] Progress saved to {PROGRESS_FILE}")
         return 130
 
@@ -450,6 +557,15 @@ def main() -> int:
         json.dump(final, f, indent=2)
 
     elapsed = time.time() - session_start
+    write_status(
+        started_at=ts_start,
+        session_start=session_start,
+        current_param="(complete)",
+        current_value="",
+        trials_done=trials_total,
+        trials_total=trials_total,
+        note=f"finished in {_fmt_dur(elapsed)}",
+    )
     print("\n" + "=" * 60)
     print(f"[OK] IND OPTIMIZATION COMPLETE ({elapsed/60:.1f} min)")
     print(f"[OK] Settings saved to {BEST_SETTINGS_FILE}")

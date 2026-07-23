@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS systems.
+Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR systems.
 
 Data sources:
   - Accounts_History full exports in Downloads (numbered or timestamped; recent-history sells merged in)
@@ -8,8 +8,8 @@ Data sources:
   - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows)
   - closed_positions_log.csv — append-only permanent closed round-trips (survives rolling Fidelity export windows)
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
-  - Latest IND/BRT/RL/YH/MTS Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
-  - Latest IND/BRT/RL/YH/MTS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
+  - Latest IND/BRT/RL/YH/MTS/WPBR Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
+  - Latest IND/BRT/RL/YH/MTS/WPBR_Scanner_*.csv in Drive/ (matched to latest core run per engine)
 """
 from __future__ import annotations
 
@@ -82,8 +82,15 @@ CLOSED_SINCE = date(2026, 5, 25)
 MIN_POSITION_VALUE = 47_500.0
 # Still show smaller lots when (symbol, entry_date) is in the system map (registry/engine).
 MIN_REGISTRY_TRACKED_VALUE = 5_000.0
-REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS")
+REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR")
 REPORT_TITLE = f"{len(REPORT_SYSTEMS)}-System Investment Report"
+REPORT_SYSTEM_LABELS = {"IND": "IND (deprecated)"}
+_SYSTEM_ALIASES = {"PBR": "WPBR"}
+
+
+def _normalize_report_system(system: str) -> str:
+    s = str(system).strip().upper()
+    return _SYSTEM_ALIASES.get(s, s)
 # Broker fill date vs engine DATE_OPENED can differ by a session; match within this window.
 ENTRY_DATE_MATCH_DAYS = 5
 ENTRY_PRICE_MATCH_PCT = 2.0
@@ -114,7 +121,7 @@ _RL_SYMBOLS = {
 _MTS_SYMBOLS = set(_MTS_SYMBOLS_LIST)
 
 _ENGINE_CSV_RE = re.compile(
-    r"^(?P<engine>BRT|IND|RL|YH|MTS)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 
@@ -173,6 +180,8 @@ def _latest_engine_csvs(drive_dir: Path) -> dict[tuple[str, str], Path]:
         if not m:
             continue
         eng = m.group("engine").upper()
+        if eng == "PBR":
+            eng = "WPBR"  # legacy file prefix
         kind = m.group("kind").title()
         ts = m.group("ts")
         key = (eng, kind)
@@ -183,7 +192,7 @@ def _latest_engine_csvs(drive_dir: Path) -> dict[tuple[str, str], Path]:
 
 def _load_engine_trades_from_drive(drive_dir: Path) -> dict[tuple[str, str], str]:
     """
-    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS Closed and Open CSVs.
+    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR Closed and Open CSVs.
     Same symbol may have different systems on different entry dates.
     """
     out: dict[tuple[str, str], str] = {}
@@ -227,7 +236,7 @@ def _load_csv_position_maps(
         for _, r in df.iterrows():
             sym = str(r.get(sym_c, "")).strip().upper()
             d = _normalize_entry_date(r.get(date_c, ""))
-            sys = str(r.get(sys_c, "")).strip().upper()
+            sys = _normalize_report_system(str(r.get(sys_c, "")).strip().upper())
             if sym and d and sys in REPORT_SYSTEMS:
                 out[(sym, d)] = sys
                 if px_c:
@@ -252,7 +261,7 @@ def _load_registry_with_prices(path: Path) -> tuple[dict[tuple[str, str], str], 
     for _, r in df.iterrows():
         sym = str(r.get(sym_c, "")).strip().upper()
         d = _normalize_entry_date(r.get(date_c, ""))
-        sys = str(r.get(sys_c, "")).strip().upper()
+        sys = _normalize_report_system(str(r.get(sys_c, "")).strip().upper())
         if sym and d and sys in REPORT_SYSTEMS:
             out[(sym, d)] = sys
             if px_c:
@@ -426,7 +435,7 @@ def _closed_trade_from_log_row(row: pd.Series) -> Optional[ClosedTrade]:
             return None
         return ClosedTrade(
             symbol=sym,
-            system=str(row.get("system", "")).strip().upper(),
+            system=_normalize_report_system(str(row.get("system", "")).strip().upper()),
             buy_date=buy_date,
             buy_price=float(row.get("buy_price", 0)),
             sell_date=sell_date,
@@ -716,7 +725,7 @@ def _load_tracked_position_rows(positions_path: Path) -> list[dict]:
             bd = pd.Timestamp(d_norm).date()
         except Exception:
             continue
-        sys = str(r.get(sys_c, "")).strip().upper()
+        sys = _normalize_report_system(str(r.get(sys_c, "")).strip().upper())
         entry_price = 0.0
         if px_c:
             try:
@@ -1692,7 +1701,7 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
 
 
 _RUN_TS_RE = re.compile(
-    r"^(?P<prefix>BRT|IND|RL|YH|MTS)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$", re.I
+    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$", re.I
 )
 _PIPELINE_TS_RE = re.compile(
     r"^(?P<prefix>BRT|IND)_Pipeline_Timings_(?P<ts>\d{12})_", re.I
@@ -1702,15 +1711,19 @@ _PIPELINE_TS_RE = re.compile(
 def _latest_run_timestamp(prefix: str, drive: Path) -> Optional[str]:
     """Latest yyMMddHHmmss from Closed/Open/Watchlist/Pipeline (not Scanner alone)."""
     pfx = prefix.upper()
+    aliases = [pfx]
+    if pfx == "WPBR":
+        aliases.append("PBR")  # legacy outputs
     stamps: set[str] = set()
-    for path in drive.glob(f"{pfx}_*.csv"):
-        m = _RUN_TS_RE.match(path.name)
-        if m and m.group("prefix").upper() == pfx:
-            stamps.add(m.group("ts"))
-    for path in drive.glob(f"{pfx}_Pipeline_Timings_*.json"):
-        m = _PIPELINE_TS_RE.match(path.name)
-        if m and m.group("prefix").upper() == pfx:
-            stamps.add(m.group("ts"))
+    for alias in aliases:
+        for path in drive.glob(f"{alias}_*.csv"):
+            m = _RUN_TS_RE.match(path.name)
+            if m and m.group("prefix").upper() == alias:
+                stamps.add(m.group("ts"))
+        for path in drive.glob(f"{alias}_Pipeline_Timings_*.json"):
+            m = _PIPELINE_TS_RE.match(path.name)
+            if m and m.group("prefix").upper() == alias:
+                stamps.add(m.group("ts"))
     return max(stamps) if stamps else None
 
 
@@ -1724,8 +1737,11 @@ def _scanner_for_latest_run(
     run_ts = _latest_run_timestamp(prefix, drive)
     if not run_ts:
         return None, pd.DataFrame(), None
-    path = drive / f"{prefix}_Scanner_{run_ts}.csv"
-    if not path.is_file():
+    candidates = [drive / f"{prefix}_Scanner_{run_ts}.csv"]
+    if prefix.upper() == "WPBR":
+        candidates.append(drive / f"PBR_Scanner_{run_ts}.csv")
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
         return None, pd.DataFrame(), run_ts
     return path, pd.read_csv(path), run_ts
 
@@ -2152,7 +2168,7 @@ def _html_table(
     for row in rows:
         sys_attr = ""
         if system_col is not None and 0 <= system_col < len(row):
-            sys_val = str(row[system_col]).strip().upper()
+            sys_val = _normalize_report_system(str(row[system_col]).strip().upper())
             if sys_val:
                 sys_attr = f' data-system="{sys_val}"'
         body += f"<tr{sys_attr}>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>"
@@ -2427,6 +2443,7 @@ def build_report(
     rl_scan_path, rl_scan, rl_run_ts = _scanner_for_latest_run("RL", drive_dir)
     yh_scan_path, yh_scan, yh_run_ts = _scanner_for_latest_run("YH", drive_dir)
     mts_scan_path, mts_scan, mts_run_ts = _scanner_for_latest_run("MTS", drive_dir)
+    wpbr_scan_path, wpbr_scan, wpbr_run_ts = _scanner_for_latest_run("WPBR", drive_dir)
 
     metrics_by_key, charts_by_key = _build_system_filter_bundles(
         closed,
@@ -2558,6 +2575,7 @@ def build_report(
     rl_rows, rl_cols = _scan_rows(rl_scan)
     yh_rows, yh_cols = _scan_rows(yh_scan)
     mts_rows, mts_cols = _scan_rows(mts_scan)
+    wpbr_rows, wpbr_cols = _scan_rows(wpbr_scan)
 
     pending_sells, sell_thresholds, sell_as_of = find_pending_low_vol_sells(
         positions_path=positions_path,
@@ -2591,9 +2609,11 @@ def build_report(
     rl_scan_sub = _scanner_subtitle(rl_scan_path, rl_run_ts, "RL")
     yh_scan_sub = _scanner_subtitle(yh_scan_path, yh_run_ts, "YH")
     mts_scan_sub = _scanner_subtitle(mts_scan_path, mts_run_ts, "MTS")
+    wpbr_scan_sub = _scanner_subtitle(wpbr_scan_path, wpbr_run_ts, "WPBR")
 
     filter_buttons_html = "".join(
-        f'  <button type="button" class="sys-chip active" data-sys="{sys}" aria-pressed="true">{sys}</button>\n'
+        f'  <button type="button" class="sys-chip active" data-sys="{sys}" aria-pressed="true">'
+        f'{REPORT_SYSTEM_LABELS.get(sys, sys)}</button>\n'
         for sys in REPORT_SYSTEMS
     )
 
@@ -2759,9 +2779,9 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 {sell_section_html}
 
 <section class="pagebreak" data-system-section="IND">
-<h2>Scanner — IND</h2>
+<h2>Scanner — IND (deprecated)</h2>
 <p class="small">{ind_scan_sub}</p>
-<div class="table-wrap">{_html_table(ind_cols, ind_rows, ["text"] * len(ind_cols) if ind_cols else None) if ind_rows else '<p>No IND scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(ind_cols, ind_rows, ["text"] * len(ind_cols) if ind_cols else None) if ind_rows else '<p>No IND scanner output available; IND is deprecated.</p>'}</div>
 </section>
 
 <section data-system-section="BRT">
@@ -2786,6 +2806,12 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 <h2>Scanner — MTS</h2>
 <p class="small">{mts_scan_sub}</p>
 <div class="table-wrap">{_html_table(mts_cols, mts_rows, ["text"] * len(mts_cols) if mts_cols else None) if mts_rows else '<p>No MTS scanner for the latest run.</p>'}</div>
+</section>
+
+<section data-system-section="WPBR">
+<h2>Scanner — WPBR</h2>
+<p class="small">{wpbr_scan_sub}</p>
+<div class="table-wrap">{_html_table(wpbr_cols, wpbr_rows, ["text"] * len(wpbr_cols) if wpbr_cols else None) if wpbr_rows else '<p>No WPBR scanner for the latest run.</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}

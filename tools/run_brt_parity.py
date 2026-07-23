@@ -44,7 +44,6 @@ BRT_FLAGS = [
     "tight_range_threshold_pct=0.35",
     "tight_range_lookback=105",
     "sheet_breakout_scan_start_row_delta=2",
-    "sheet_touch_pullback_bars=10",
     "brt_sheet_touch=true",
     "max_positions=16",
     "min_spy_compare_1y_at_trigger=-1000",

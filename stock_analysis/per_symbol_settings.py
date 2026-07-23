@@ -23,6 +23,35 @@ T = TypeVar("T")
 
 META_KEYS = frozenset({"system"})
 
+# Legacy stop_anchor ↔ stop_loss_based (keep both keys consistent when applying overrides)
+_STOP_LOSS_BASED_ALIASES = {
+    "trigger_low": "trigger_low",
+    "signal_low": "trigger_low",
+    "entry_open": "entry_open",
+    "entry": "entry_open",
+    "zone_low": "zone_low",
+    "zone_bottom": "zone_low",
+}
+_STOP_LOSS_BASED_TO_ANCHOR = {
+    "trigger_low": "signal_low",
+    "entry_open": "entry",
+    "zone_low": "zone_low",
+}
+
+
+def _sync_stop_loss_override_keys(overrides: dict[str, Any]) -> dict[str, Any]:
+    """Map legacy stop_anchor into stop_loss_based; keep both fields aligned."""
+    if "stop_loss_based" not in overrides and "stop_anchor" not in overrides:
+        return overrides
+    out = dict(overrides)
+    raw = out.get("stop_loss_based", out.get("stop_anchor", "trigger_low"))
+    s = str(raw or "trigger_low").strip().lower()
+    slb = _STOP_LOSS_BASED_ALIASES.get(s, s if s in _STOP_LOSS_BASED_TO_ANCHOR else "trigger_low")
+    out["stop_loss_based"] = slb
+    out["stop_anchor"] = _STOP_LOSS_BASED_TO_ANCHOR[slb]
+    return out
+
+
 # BRT keys stored in optimized JSON -> PercentProfile field names (getTarget)
 _BRT_PERCENT_MAP = {
     "target_pct": "target_pct",
@@ -109,8 +138,14 @@ def overrides_for_symbol(
         return {}
     overrides = {k: v for k, v in entry.items() if k not in META_KEYS}
     if valid_fields is not None:
-        overrides = {k: v for k, v in overrides.items() if k in valid_fields}
-    return overrides
+        # Allow legacy stop_anchor in JSON even if only stop_loss_based is listed, and vice versa.
+        _stop_fields = {"stop_loss_based", "stop_anchor"}
+        overrides = {
+            k: v
+            for k, v in overrides.items()
+            if k in valid_fields or (k in _stop_fields and (_stop_fields & valid_fields))
+        }
+    return _sync_stop_loss_override_keys(overrides)
 
 
 def apply_to_dataclass(cfg: T, overrides: Mapping[str, Any]) -> T:
@@ -118,7 +153,8 @@ def apply_to_dataclass(cfg: T, overrides: Mapping[str, Any]) -> T:
     if not overrides:
         return cfg
     field_names = {f.name for f in fields(cfg)}  # type: ignore[arg-type]
-    kw = {k: v for k, v in overrides.items() if k in field_names}
+    kw = _sync_stop_loss_override_keys({k: v for k, v in overrides.items() if k in field_names or k in ("stop_anchor", "stop_loss_based")})
+    kw = {k: v for k, v in kw.items() if k in field_names}
     if not kw:
         return cfg
     return replace(cfg, **kw)  # type: ignore[return-value]
@@ -135,7 +171,7 @@ def cfg_dict_with_overrides(
     d = {f: getattr(base_cfg, f) for f in field_names}
     overrides = overrides_for_symbol(settings, symbol, system, valid_fields=field_names)
     d.update(overrides)
-    return d
+    return _sync_stop_loss_override_keys(d)
 
 
 def apply_rl_profile_overrides(profile: Any, overrides: Mapping[str, Any]) -> Any:

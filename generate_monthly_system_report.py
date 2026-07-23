@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND / RL / YH / MTS).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR).
 
 Uses paper-trading outputs from the latest engine runs:
-  Drive/{BRT,IND,YH,MTS}_LatestRun_Closed.csv / _Open.csv
+  Drive/{BRT,IND,YH,MTS,WPBR}_LatestRun_Closed.csv / _Open.csv
   Drive/BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv (newest RL mirror)
 
 Writes:
@@ -27,8 +27,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS")
-SYSTEMS_LABEL = " / ".join(SYSTEMS)
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR")
+SYSTEM_LABELS = {"IND": "IND (deprecated)"}
+SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
     "February",
@@ -165,9 +166,13 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS"):
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR"):
         closed = drive / f"{sys}_LatestRun_Closed.csv"
         open_p = drive / f"{sys}_LatestRun_Open.csv"
+        if sys == "WPBR" and not closed.is_file():
+            # Legacy copy-latest / outputs before PBR→WPBR rename
+            closed = drive / "PBR_LatestRun_Closed.csv"
+            open_p = drive / "PBR_LatestRun_Open.csv"
         paths[sys]["closed"] = closed if closed.is_file() else None
         paths[sys]["open"] = open_p if open_p.is_file() else None
 
@@ -341,6 +346,87 @@ def _month_label(year: int, month: int) -> str:
     return f"{MONTH_NAMES[month - 1]} {year}"
 
 
+def _sortable_th(label: str, sort_type: str) -> str:
+    return (
+        f'<th class="sortable-th" data-sort="{sort_type}" tabindex="0" '
+        f'role="columnheader" aria-sort="none">{html_mod.escape(label)}'
+        f'<span class="sort-ind"></span></th>'
+    )
+
+
+_SORTABLE_TABLE_SCRIPT = """
+<script>
+(function () {
+  var MONTHS = {
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12
+  };
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "month") {
+      var key = s.toLowerCase().split(/\\s/)[0];
+      return MONTHS[key] || 0;
+    }
+    if (type === "date") {
+      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      var mdy = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
+      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+"""
+
+
 def _trade_detail_table(trades: list[TradeRow]) -> str:
     if not trades:
         return "<p class=\"small\">No trades.</p>"
@@ -360,11 +446,20 @@ def _trade_detail_table(trades: list[TradeRow]) -> str:
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"
             "</tr>"
         )
+    head = "".join(
+        _sortable_th(label, sort_type)
+        for label, sort_type in (
+            ("Symbol", "text"),
+            ("Opened", "date"),
+            ("Closed", "date"),
+            ("Exit", "text"),
+            ("Days", "num"),
+            ("PnL %", "num"),
+            ("PnL $", "num"),
+        )
+    )
     return (
-        "<table><thead><tr>"
-        "<th>Symbol</th><th>Opened</th><th>Closed</th><th>Exit</th>"
-        "<th>Days</th><th>PnL %</th><th>PnL $</th>"
-        "</tr></thead><tbody>"
+        f'<table class="sortable"><thead><tr>{head}</tr></thead><tbody>'
         + body
         + "</tbody></table>"
     )
@@ -387,11 +482,20 @@ def _open_table(trades: list[TradeRow]) -> str:
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"
             "</tr>"
         )
+    head = "".join(
+        _sortable_th(label, sort_type)
+        for label, sort_type in (
+            ("Symbol", "text"),
+            ("Opened", "date"),
+            ("Entry", "num"),
+            ("Current", "num"),
+            ("Days", "num"),
+            ("PnL %", "num"),
+            ("Unrealized $", "num"),
+        )
+    )
     return (
-        "<table><thead><tr>"
-        "<th>Symbol</th><th>Opened</th><th>Entry</th><th>Current</th>"
-        "<th>Days</th><th>PnL %</th><th>Unrealized $</th>"
-        "</tr></thead><tbody>"
+        f'<table class="sortable"><thead><tr>{head}</tr></thead><tbody>'
         + body
         + "</tbody></table>"
     )
@@ -444,13 +548,14 @@ def build_html(
     # Summary cards
     cards = ""
     for sys in SYSTEMS:
+        sys_label = SYSTEM_LABELS.get(sys, sys)
         ytd = ytd_by_system[sys]
         unreal = open_totals[sys]
         total = ytd["pnl"] + unreal
         win_pct = (100.0 * ytd["wins"] / ytd["trades"]) if ytd["trades"] else 0.0
         cards += f"""
   <div class="card">
-    <h3>{sys}</h3>
+    <h3>{sys_label}</h3>
     <div class="metric {_pnl_class(ytd['pnl'])}">{_fmt_money(ytd['pnl'])}</div>
     <div class="small">YTD realized · {ytd['trades']} closed · {win_pct:.0f}% win</div>
     <div class="small">Open unrealized: <span class="{_pnl_class(unreal)}">{_fmt_money(unreal)}</span>
@@ -470,7 +575,9 @@ def build_html(
   </div>"""
 
     # Monthly pivot table
-    pivot_head = "".join(f"<th>{sys}</th>" for sys in SYSTEMS) + "<th>Total</th>"
+    pivot_head = _sortable_th("Month", "month") + "".join(
+        _sortable_th(SYSTEM_LABELS.get(sys, sys), "num") for sys in SYSTEMS
+    ) + _sortable_th("Total", "num")
     pivot_body = ""
     ytd_month_totals = {sys: 0.0 for sys in SYSTEMS}
     for month in range(1, through_month + 1):
@@ -533,7 +640,7 @@ def build_html(
             sys_pnl = sum(t.pnl_dollars for t in sys_trades)
             sys_blocks += f"""
   <div class="sys-block">
-    <h3>{sys} · <span class="{_pnl_class(sys_pnl)}">{_fmt_money(sys_pnl)}</span> · {len(sys_trades)} closed</h3>
+    <h3>{SYSTEM_LABELS.get(sys, sys)} · <span class="{_pnl_class(sys_pnl)}">{_fmt_money(sys_pnl)}</span> · {len(sys_trades)} closed</h3>
     <div class="table-wrap">{_trade_detail_table(sys_trades)}</div>
   </div>"""
         month_sections += f"""
@@ -550,7 +657,7 @@ def build_html(
         sys_pnl = open_totals[sys]
         open_sections += f"""
   <div class="sys-block">
-    <h3>{sys} · <span class="{_pnl_class(sys_pnl)}">{_fmt_money(sys_pnl)}</span> · {len(rows)} open</h3>
+    <h3>{SYSTEM_LABELS.get(sys, sys)} · <span class="{_pnl_class(sys_pnl)}">{_fmt_money(sys_pnl)}</span> · {len(rows)} open</h3>
     <div class="table-wrap">{_open_table(rows)}</div>
   </div>"""
 
@@ -581,6 +688,11 @@ section {{ margin-top:24px; }}
 table {{ border-collapse:collapse; font-size:12px; width:100%; min-width:640px; }}
 th, td {{ border:1px solid #e2e8f0; padding:7px 8px; text-align:left; vertical-align:top; }}
 th {{ background:#f1f5f9; }}
+th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; }}
+th.sortable-th:hover {{ background:#e2e8f0; }}
+.sort-ind {{ display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }}
+th.sort-asc .sort-ind::after {{ content:"▲"; color:#334155; }}
+th.sort-desc .sort-ind::after {{ content:"▼"; color:#334155; }}
 tr.total-row th, tr.total-row td {{ background:#f8fafc; border-top:2px solid #334155; }}
 ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
 </style></head><body>
@@ -594,10 +706,10 @@ ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
 
 <section>
 <h2>Monthly realized P&amp;L by system</h2>
-<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's position sizing.</p>
+<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's position sizing. Click column headers to sort.</p>
 <div class="table-wrap">
-<table>
-  <thead><tr><th>Month</th>{pivot_head}</tr></thead>
+<table class="sortable">
+  <thead><tr>{pivot_head}</tr></thead>
   <tbody>{pivot_body}{pivot_foot}</tbody>
 </table>
 </div>
@@ -615,6 +727,7 @@ ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
 <h2>Data sources</h2>
 <ul class="sources">{sources_html}</ul>
 </section>
+{_SORTABLE_TABLE_SCRIPT}
 </body></html>"""
 
 

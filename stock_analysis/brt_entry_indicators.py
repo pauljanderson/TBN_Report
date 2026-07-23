@@ -1,12 +1,15 @@
 """
 Point-in-time technical snapshot at BRT entry (uses only bars <= entry bar).
 
-Populates BRT_Closed / BRT_Open columns IND_* / IND_*_LAST / IND_*_COUNT plus summary counts.
+Populates BRT_Closed / BRT_Open / Scanner columns IND_* / IND_*_LAST / IND_*_COUNT plus summary counts.
 States are BULL / BEAR / NEUTRAL relative to **price strength** (not Recognia).
 IND_<id>_COUNT = number of price-bullish bars for that signal in the trailing lookback window.
 IND_ENTRY_BULL_N = trade-aligned count of indicator *types* bullish at the entry bar (max 47).
 Summary counts IND_ENTRY_* are **trade-aligned**: for LONG, BULL=price-bullish;
 for SHORT, BULL=price-bearish (favorable to the short).
+
+Trading Central–style horizon summaries (report/audit only; not entry gates):
+IND_TC_{SHORT,INT,LONG}_{SUM,OUTLOOK} plus optional IND_TC_{SHORT,INT,LONG}_N.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-INDICATOR_CACHE_VERSION = 3
+INDICATOR_CACHE_VERSION = 4
 # Rolling/pattern lookback slack when extending cache after new daily bars are appended.
 _INDICATOR_EXTEND_WARMUP_BARS = 350
 # Trailing bars for IND_<id>_COUNT (price-bullish firings of that signal in the window).
@@ -87,6 +90,29 @@ INDICATOR_IDS: tuple[str, ...] = (
     "CANDLE_THREE_SOLDIERS",
     "CANDLE_THREE_CROWS",
     "CANDLE_DOJI",
+)
+
+# Trading Central–style Option A subset (report-only recency sums). Skip DOJI / vol-noise / fuzzy shapes.
+# MACD family, price vs MA, MA stack, ROC/momentum, RSI, CCI; a few pattern/candle fires.
+TC_INDICATOR_IDS: tuple[str, ...] = (
+    "MACD_HIST",
+    "MACD_LINE_OVER_SIGNAL",
+    "PRICE_OVER_SMA20",
+    "PRICE_OVER_SMA50",
+    "PRICE_OVER_SMA200",
+    "SMA20_OVER_SMA50",
+    "EMA12_OVER_EMA26",
+    "ROC10",
+    "CMO14",
+    "RSI14",
+    "CCI20",
+    "DOUBLE_BOTTOM",
+    "DOUBLE_TOP",
+    "FLAG_CONT",
+    "CANDLE_HAMMER",
+    "CANDLE_SHOOTING_STAR",
+    "CANDLE_BULL_ENGULF",
+    "CANDLE_BEAR_ENGULF",
 )
 
 _LEGACY_IND_SCORE_WEIGHTS_PATH = Path(__file__).with_name("ind_score_weights.json")
@@ -306,6 +332,113 @@ def mandatory_ind_states_first_miss(
     return None
 
 
+# --- Exclude IND states (block entry when indicator is in a forbidden state) ---
+_DEFAULT_EXCLUDE_IND_STATES_PATH = Path(__file__).with_name("exclude_ind_states.json")
+_EXCLUDE_IND_STATES_CACHE: Optional[tuple[str, float, dict[str, frozenset[str]]]] = None
+
+
+def resolve_exclude_ind_states_path(raw: Optional[str | Path] = None) -> Optional[Path]:
+    """Resolve exclude IND states JSON (cwd, stock_analysis/, experiments/, repo root). Blank = disabled."""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    p = Path(s)
+    if p.is_file():
+        return p.resolve()
+    script_dir = Path(__file__).resolve().parent
+    for base in (Path.cwd(), script_dir, script_dir / ".." / "experiments", script_dir.parent):
+        candidate = (base / s).resolve()
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _normalize_exclude_states(v: Any) -> frozenset[str]:
+    """Accept 'BULL', 'BULL,BEAR', or ['BULL','BEAR'] → frozenset of valid states."""
+    if v is None:
+        return frozenset()
+    if isinstance(v, (list, tuple, set, frozenset)):
+        parts = [str(x or "").strip().upper() for x in v]
+    else:
+        parts = [p.strip().upper() for p in str(v).replace(";", ",").split(",")]
+    return frozenset(p for p in parts if p in _VALID_IND_STATES)
+
+
+def load_exclude_ind_states(path: Optional[str | Path] = None) -> dict[str, frozenset[str]]:
+    """Load {indicator_id: frozenset of forbidden BULL|BEAR|NEUTRAL} from JSON."""
+    global _EXCLUDE_IND_STATES_CACHE
+    resolved = resolve_exclude_ind_states_path(path)
+    if resolved is None:
+        return {}
+    key = str(resolved)
+    mtime = resolved.stat().st_mtime
+    if _EXCLUDE_IND_STATES_CACHE is not None:
+        cached_key, cached_mtime, cached_rules = _EXCLUDE_IND_STATES_CACHE
+        if cached_key == key and cached_mtime == mtime:
+            return {k: frozenset(v) for k, v in cached_rules.items()}
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    raw_rules: Any = payload
+    if isinstance(payload, dict) and isinstance(payload.get("rules"), dict):
+        raw_rules = payload["rules"]
+    if not isinstance(raw_rules, dict):
+        return {}
+    out: dict[str, frozenset[str]] = {}
+    for k, v in raw_rules.items():
+        iid = str(k or "").strip().upper()
+        if iid.startswith("IND_"):
+            iid = iid[4:]
+        if iid.endswith("_LAST"):
+            continue
+        if iid not in INDICATOR_IDS:
+            continue
+        states = _normalize_exclude_states(v)
+        if states:
+            out[iid] = states
+    _EXCLUDE_IND_STATES_CACHE = (key, mtime, {k: frozenset(v) for k, v in out.items()})
+    return out
+
+
+def exclude_ind_states_passes(
+    pre: Optional["_Precomputed"],
+    bar_i: int,
+    side: str,
+    rules: dict[str, frozenset[str]],
+) -> bool:
+    """True when no rule matches a forbidden IND_<id> state on bar_i."""
+    if not rules:
+        return True
+    if pre is None or bar_i < 0:
+        return False
+    snap = snapshot_for_entry(pre, bar_i, side)
+    for iid, forbidden in rules.items():
+        actual = str(snap.get(f"IND_{iid}", "NEUTRAL")).strip().upper()
+        if actual in forbidden:
+            return False
+    return True
+
+
+def exclude_ind_states_first_hit(
+    pre: Optional["_Precomputed"],
+    bar_i: int,
+    side: str,
+    rules: dict[str, frozenset[str]],
+) -> Optional[tuple[str, str, frozenset[str]]]:
+    """Return (indicator_id, actual, forbidden) for the first exclude hit, or None if all pass."""
+    if not rules:
+        return None
+    if pre is None or bar_i < 0:
+        return ("__precompute__", "missing", frozenset())
+    snap = snapshot_for_entry(pre, bar_i, side)
+    for iid, forbidden in rules.items():
+        actual = str(snap.get(f"IND_{iid}", "NEUTRAL")).strip().upper()
+        if actual in forbidden:
+            return (iid, actual, frozenset(forbidden))
+    return None
+
+
 def ind_score_at_bar(
     pre: Optional["_Precomputed"],
     bar_i: int,
@@ -357,6 +490,20 @@ def apply_ind_score_to_entry_indicators(
     entry_indicators["IND_SCORE"] = f"{sc:.2f}"
 
 
+# Trading Central–style horizon summaries on Closed/Open/Scanner (analysis only; no gates).
+IND_TC_EXPORT_COLS: tuple[str, ...] = (
+    "IND_TC_SHORT_SUM",
+    "IND_TC_SHORT_OUTLOOK",
+    "IND_TC_INT_SUM",
+    "IND_TC_INT_OUTLOOK",
+    "IND_TC_LONG_SUM",
+    "IND_TC_LONG_OUTLOOK",
+    "IND_TC_SHORT_N",
+    "IND_TC_INT_N",
+    "IND_TC_LONG_N",
+)
+
+
 def entry_indicator_csv_headers() -> list[str]:
     cols: list[str] = []
     for iid in INDICATOR_IDS:
@@ -372,6 +519,7 @@ def entry_indicator_csv_headers() -> list[str]:
             "IND_SCORE",
         ]
     )
+    cols.extend(IND_TC_EXPORT_COLS)
     return cols
 
 
@@ -534,14 +682,153 @@ def _state_tri(x: np.ndarray, bull: np.ndarray, bear: np.ndarray) -> np.ndarray:
 
 
 def _last_dir_idx(state: np.ndarray) -> np.ndarray:
+    """Per-bar index of last sign-flip / fire into the current non-zero regime.
+
+    Updates when state becomes non-zero from 0, or flips BULL<->BEAR.
+    Stays put while the same sign continues (so IND_*_LAST ages for continuous signals).
+    After a sparse fire returns to 0, the fire bar remains the event index until the next fire.
+    """
     n = len(state)
     out = np.full(n, -1, dtype=np.int32)
     last_j = -1
+    prev = 0
     for i in range(n):
-        if state[i] != 0:
-            last_j = i
+        s = int(state[i])
+        if s != 0:
+            if prev == 0 or (s > 0) != (prev > 0):
+                last_j = i
+            prev = s
+        else:
+            prev = 0
         out[i] = last_j
     return out
+
+
+def _ymd_int_to_ordinal(ymd: int) -> int:
+    from datetime import date
+
+    y = int(ymd) // 10000
+    m = (int(ymd) // 100) % 100
+    d = int(ymd) % 100
+    try:
+        return date(y, m, d).toordinal()
+    except ValueError:
+        return 0
+
+
+def _tc_recency_weight(age_days: int, horizon: str) -> int:
+    """Absolute recency weight for TC Option A; 0 means exclude from that horizon."""
+    a = int(age_days)
+    if a < 0:
+        return 0
+    if horizon == "short":
+        if a <= 3:
+            return 3
+        if a <= 8:
+            return 2
+        if a <= 30:
+            return 1
+        return 0
+    if horizon == "int":
+        if a <= 10:
+            return 3
+        if a <= 30:
+            return 2
+        if a <= 90:
+            return 1
+        return 0
+    # long
+    if a <= 30:
+        return 3
+    if a <= 90:
+        return 2
+    if a <= 252:
+        return 1
+    return 0
+
+
+def _tc_outlook_label(total: int) -> str:
+    if total > 0:
+        return "Strong"
+    if total < 0:
+        return "Weak"
+    return "Neutral"
+
+
+def _compute_tc_recency_series(
+    dates: np.ndarray,
+    states: dict[str, np.ndarray],
+    last_idx: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per-bar TC Option A sums/counts (price BULL=+ / BEAR=-; NEUTRAL events skipped)."""
+    n = len(dates)
+    short_sum = np.zeros(n, dtype=np.int16)
+    int_sum = np.zeros(n, dtype=np.int16)
+    long_sum = np.zeros(n, dtype=np.int16)
+    short_n = np.zeros(n, dtype=np.int16)
+    int_n = np.zeros(n, dtype=np.int16)
+    long_n = np.zeros(n, dtype=np.int16)
+    if n == 0:
+        return short_sum, int_sum, long_sum, short_n, int_n, long_n
+
+    ordinals = np.fromiter(
+        (_ymd_int_to_ordinal(int(d)) for d in dates),
+        dtype=np.int32,
+        count=n,
+    )
+
+    for iid in TC_INDICATOR_IDS:
+        st_arr = states.get(iid)
+        lj_arr = last_idx.get(iid)
+        if st_arr is None or lj_arr is None or len(st_arr) != n or len(lj_arr) != n:
+            continue
+        for i in range(n):
+            lj = int(lj_arr[i])
+            if lj < 0 or lj > i:
+                continue
+            # Sign at event bar (flip into current regime, or sparse fire).
+            ev = int(st_arr[lj])
+            if ev == 0:
+                continue
+            age = int(ordinals[i] - ordinals[lj])
+            sign = 1 if ev > 0 else -1
+            w_s = _tc_recency_weight(age, "short")
+            if w_s:
+                short_sum[i] = np.int16(int(short_sum[i]) + sign * w_s)
+                short_n[i] = np.int16(int(short_n[i]) + 1)
+            w_i = _tc_recency_weight(age, "int")
+            if w_i:
+                int_sum[i] = np.int16(int(int_sum[i]) + sign * w_i)
+                int_n[i] = np.int16(int(int_n[i]) + 1)
+            w_l = _tc_recency_weight(age, "long")
+            if w_l:
+                long_sum[i] = np.int16(int(long_sum[i]) + sign * w_l)
+                long_n[i] = np.int16(int(long_n[i]) + 1)
+
+    return short_sum, int_sum, long_sum, short_n, int_n, long_n
+
+
+def _apply_tc_to_snapshot(out: dict[str, str], pre: "_Precomputed", entry_i: int) -> None:
+    """Attach report-only TC Option A columns to an entry snapshot dict."""
+    if entry_i < 0 or entry_i >= len(pre.dates):
+        return
+    # Avoid re-entering ensure from ensure's callers; snapshot already ensures first.
+    if getattr(pre, "tc_short_sum", None) is None:
+        _ensure_gate_arrays(pre)
+    if getattr(pre, "tc_short_sum", None) is None:
+        return
+    s_s = int(pre.tc_short_sum[entry_i])
+    s_i = int(pre.tc_int_sum[entry_i]) if pre.tc_int_sum is not None else 0
+    s_l = int(pre.tc_long_sum[entry_i]) if pre.tc_long_sum is not None else 0
+    out["IND_TC_SHORT_SUM"] = str(s_s)
+    out["IND_TC_SHORT_OUTLOOK"] = _tc_outlook_label(s_s)
+    out["IND_TC_INT_SUM"] = str(s_i)
+    out["IND_TC_INT_OUTLOOK"] = _tc_outlook_label(s_i)
+    out["IND_TC_LONG_SUM"] = str(s_l)
+    out["IND_TC_LONG_OUTLOOK"] = _tc_outlook_label(s_l)
+    out["IND_TC_SHORT_N"] = str(int(pre.tc_short_n[entry_i]) if pre.tc_short_n is not None else 0)
+    out["IND_TC_INT_N"] = str(int(pre.tc_int_n[entry_i]) if pre.tc_int_n is not None else 0)
+    out["IND_TC_LONG_N"] = str(int(pre.tc_long_n[entry_i]) if pre.tc_long_n is not None else 0)
 
 
 def _bull_direction_count_series(state: np.ndarray, lookback: int) -> np.ndarray:
@@ -868,7 +1155,7 @@ def _candle_state_series(
 class _Precomputed:
     dates: np.ndarray  # int64 YYYYMMDD
     states: dict[str, np.ndarray]  # id -> int8 state per bar
-    last_idx: dict[str, np.ndarray]  # id -> last directional bar index
+    last_idx: dict[str, np.ndarray]  # id -> last sign-flip / fire bar index
     bull_counts: Optional[dict[str, np.ndarray]] = None  # id -> price-bullish count in lookback window
     # Trade-aligned bull-bear diff per bar (O(1) indicator_buy gate; INDICATOR_CACHE_VERSION >= 2).
     diff_long: Optional[np.ndarray] = None  # int16: sum(bullish states) - sum(bearish) for LONG
@@ -876,6 +1163,13 @@ class _Precomputed:
     bull_long: Optional[np.ndarray] = None  # int16: trade-aligned IND_ENTRY_BULL_N for LONG
     bull_short: Optional[np.ndarray] = None  # int16: trade-aligned IND_ENTRY_BULL_N for SHORT
     neutral_n: Optional[np.ndarray] = None  # int16: IND_ENTRY_NEUTRAL_N (side-independent)
+    # Trading Central Option A (report-only; INDICATOR_CACHE_VERSION >= 4).
+    tc_short_sum: Optional[np.ndarray] = None  # int16
+    tc_int_sum: Optional[np.ndarray] = None
+    tc_long_sum: Optional[np.ndarray] = None
+    tc_short_n: Optional[np.ndarray] = None
+    tc_int_n: Optional[np.ndarray] = None
+    tc_long_n: Optional[np.ndarray] = None
 
 
 _CACHE_LOCK = threading.Lock()
@@ -974,8 +1268,19 @@ def _cache_path(cache_dir: Path, symbol: str) -> Path:
     return cache_dir / f"{sym}.indcache.pkl"
 
 
+def _assign_tc_arrays(pre: _Precomputed, tc: tuple[np.ndarray, ...]) -> None:
+    (
+        pre.tc_short_sum,
+        pre.tc_int_sum,
+        pre.tc_long_sum,
+        pre.tc_short_n,
+        pre.tc_int_n,
+        pre.tc_long_n,
+    ) = tc
+
+
 def _ensure_gate_arrays(pre: _Precomputed) -> _Precomputed:
-    """Add diff/bull/neutral count arrays from cached states (v1 caches) without full indicator rebuild."""
+    """Add diff/bull/neutral/TC arrays from cached states without full indicator rebuild."""
     n = len(pre.dates)
     if pre.bull_counts is None:
         pre.bull_counts = _build_bull_count_dict(pre.states, n)
@@ -987,6 +1292,11 @@ def _ensure_gate_arrays(pre: _Precomputed) -> _Precomputed:
         pre.bull_short = _trade_aligned_bull_series(pre.states, n, for_short=True)
     if pre.neutral_n is None:
         pre.neutral_n = _neutral_count_series(pre.states, n)
+    if getattr(pre, "tc_short_sum", None) is None:
+        # Rebuild LAST with sign-flip semantics, then TC recency sums (v3→v4 upgrade path).
+        for iid, arr in pre.states.items():
+            pre.last_idx[iid] = _last_dir_idx(arr)
+        _assign_tc_arrays(pre, _compute_tc_recency_series(pre.dates, pre.states, pre.last_idx))
     return pre
 
 
@@ -1101,6 +1411,7 @@ def _extend_precomputed(cached: _Precomputed, df: pd.DataFrame) -> Optional[_Pre
     bull_short = _trade_aligned_bull_series(merged_states, n_new, for_short=True)
     neutral_n = _neutral_count_series(merged_states, n_new)
     bull_counts = _build_bull_count_dict(merged_states, n_new)
+    tc = _compute_tc_recency_series(dates_new, merged_states, merged_last)
     return _Precomputed(
         dates=dates_new,
         states=merged_states,
@@ -1111,6 +1422,12 @@ def _extend_precomputed(cached: _Precomputed, df: pd.DataFrame) -> Optional[_Pre
         bull_long=bull_long,
         bull_short=bull_short,
         neutral_n=neutral_n,
+        tc_short_sum=tc[0],
+        tc_int_sum=tc[1],
+        tc_long_sum=tc[2],
+        tc_short_n=tc[3],
+        tc_int_n=tc[4],
+        tc_long_n=tc[5],
     )
 
 
@@ -1288,6 +1605,7 @@ def _build_precomputed(df: pd.DataFrame) -> Optional[_Precomputed]:
     bull_short = _trade_aligned_bull_series(built, n, for_short=True)
     neutral_n = _neutral_count_series(built, n)
     bull_counts = _build_bull_count_dict(built, n)
+    tc = _compute_tc_recency_series(dates, built, last_idx)
     return _Precomputed(
         dates=dates,
         states=built,
@@ -1298,6 +1616,12 @@ def _build_precomputed(df: pd.DataFrame) -> Optional[_Precomputed]:
         bull_long=bull_long,
         bull_short=bull_short,
         neutral_n=neutral_n,
+        tc_short_sum=tc[0],
+        tc_int_sum=tc[1],
+        tc_long_sum=tc[2],
+        tc_short_n=tc[3],
+        tc_int_n=tc[4],
+        tc_long_n=tc[5],
     )
 
 
@@ -1316,6 +1640,7 @@ def format_indicator_csv_row(entry_indicators: dict[str, str]) -> list[str]:
         for _iid in INDICATOR_IDS:
             row.extend(["NEUTRAL", "", "0"])
         row.extend(["0", "0", "0", str(len(INDICATOR_IDS)), ""])
+        row.extend([""] * len(IND_TC_EXPORT_COLS))
         return row
     apply_ind_score_to_entry_indicators(entry_indicators)
     row = []
@@ -1328,6 +1653,8 @@ def format_indicator_csv_row(entry_indicators: dict[str, str]) -> list[str]:
     row.append(entry_indicators.get("IND_DIFF", "0"))
     row.append(entry_indicators.get("IND_ENTRY_NEUTRAL_N", str(len(INDICATOR_IDS))))
     row.append(entry_indicators.get("IND_SCORE", ""))
+    for col in IND_TC_EXPORT_COLS:
+        row.append(entry_indicators.get(col, ""))
     return row
 
 
@@ -1368,6 +1695,7 @@ def snapshot_for_entry(pre: _Precomputed, entry_i: int, side: str) -> dict[str, 
     out["IND_DIFF"] = str(bull_n - bear_n)
     out["IND_ENTRY_NEUTRAL_N"] = str(neut_n)
     apply_ind_score_to_entry_indicators(out)
+    _apply_tc_to_snapshot(out, pre, entry_i)
     return out
 
 

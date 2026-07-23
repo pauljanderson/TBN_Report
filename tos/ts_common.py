@@ -14,6 +14,10 @@ ZONE_COLORS = [
 
 COLOR_NAMES = ["Orange", "Yellow", "Blue", "Cyan", "Violet"]
 
+# Untraded BRT zones (no Closed/Open match)
+UNTRADED_COLOR = "Color.GRAY"
+UNTRADED_COLOR_NAME = "Gray"
+
 
 def zone_color(index: int) -> str:
     """1-based zone index -> thinkScript Color constant."""
@@ -39,14 +43,31 @@ def build_lines(
     exits: list[int],
     *,
     extra_header: str = "",
+    traded: list[bool] | None = None,
+    study_label: str | None = None,
 ) -> list[str]:
     """
     zones: list of (pivot_yyyymmdd, zone_lo, zone_hi, breakout_yyyymmdd).
     breakout_yyyymmdd=0 means cloud only (no BO marker).
+    traded: optional per-zone flags; False -> Color.GRAY cloud (no BO).
+            None -> all zones colored (legacy gen_* behavior).
+    study_label: header name (default: symbol). Use e.g. "BRT NVDA".
     """
+    label = study_label or symbol
+    if traded is not None and len(traded) != len(zones):
+        raise ValueError(f"traded length {len(traded)} != zones length {len(zones)}")
+
+    if traded is None:
+        color_note = "Zone colors cycle O-Y-B-C-V (ROYGBIV minus R/G)."
+    else:
+        color_note = (
+            "Traded zones cycle O-Y-B-C-V (ROYGBIV minus R/G); "
+            "untraded zones are Gray."
+        )
+
     lines: list[str] = [
-        f"# {symbol} — zones (pivot date) + matching-color BO + entries/exits",
-        "# Daily AND Weekly. Zone colors cycle O-Y-B-C-V (ROYGBIV minus R/G).",
+        f"# {label} - zones (maturity/pivot date) + matching-color BO + entries/exits",
+        f"# Daily AND Weekly. {color_note}",
         "# Entries white, exits red.",
     ]
     if extra_header:
@@ -66,11 +87,25 @@ def build_lines(
         ]
     )
 
+    traded_color_i = 0
+    zone_meta: list[tuple[str, str, bool]] = []  # col, cname, is_traded
+
     for i, (pivot, lo, hi, bo) in enumerate(zones, 1):
-        col = zone_color(i)
-        cname = color_name(i)
+        is_traded = True if traded is None else bool(traded[i - 1])
+        if is_traded:
+            traded_color_i += 1
+            col = zone_color(traded_color_i if traded is not None else i)
+            cname = color_name(traded_color_i if traded is not None else i)
+        else:
+            col = UNTRADED_COLOR
+            cname = UNTRADED_COLOR_NAME
+        zone_meta.append((col, cname, is_traded))
+
+        status = "traded" if is_traded else "untraded/grey"
         bo_note = f"  BO={bo}" if bo > 0 else "  (no BO date)"
-        lines.append(f"# Zone {i} ({cname}): pivot {pivot}  lo={lo} hi={hi}{bo_note}")
+        lines.append(
+            f"# Zone {i} ({cname}, {status}): start {pivot}  lo={lo} hi={hi}{bo_note}"
+        )
         lines.append(
             f"def z{i}OnW = (IsNaN(GetYYYYMMDD()[1]) and GetYYYYMMDD() >= {pivot}) "
             f"or ({pivot} > GetYYYYMMDD()[1] and {pivot} <= GetYYYYMMDD());"
@@ -85,12 +120,10 @@ def build_lines(
         lines.append(f"AddCloud(z{i}Hi, z{i}Lo, {col}, {col});")
         lines.append("")
 
-    lines.append("# ===================== BREAKOUTS (same color as zone) =====================")
-    for i, (_, _, _, bo) in enumerate(zones, 1):
-        if bo <= 0:
+    lines.append("# ===================== BREAKOUTS (same color as zone; traded only) =====================")
+    for i, ((_, _, _, bo), (col, cname, is_traded)) in enumerate(zip(zones, zone_meta), 1):
+        if bo <= 0 or not is_traded:
             continue
-        col = zone_color(i)
-        cname = color_name(i)
         lines.append(f"# BO zone {i} ({cname})")
         lines.append(f"def bo{i}Hit = {event_hit_expr(bo)};")
         lines.append(
@@ -137,9 +170,25 @@ def write_ts_files(
     output_dir: Path | None = None,
     repo_root: Path | None = None,
     extra_header: str = "",
+    traded: list[bool] | None = None,
+    study_label: str | None = None,
+    filename: str | None = None,
 ) -> Path:
-    text = "\n".join(build_lines(symbol, zones, entries, exits, extra_header=extra_header)) + "\n"
-    fname = f"{symbol.upper()}_zones_trades.ts"
+    text = (
+        "\n".join(
+            build_lines(
+                symbol,
+                zones,
+                entries,
+                exits,
+                extra_header=extra_header,
+                traded=traded,
+                study_label=study_label,
+            )
+        )
+        + "\n"
+    )
+    fname = filename or f"{symbol.upper()}_zones_trades.ts"
     paths: list[Path] = []
     if output_dir is not None:
         dests = [Path(output_dir).resolve() / fname]
@@ -152,8 +201,10 @@ def write_ts_files(
         paths.append(dest)
         print(f"Wrote {dest}")
     bo_count = sum(1 for *_, bo in zones if bo > 0)
+    n_traded = sum(1 for t in traded if t) if traded is not None else len(zones)
+    n_grey = (len(zones) - n_traded) if traded is not None else 0
     print(
-        f"{symbol}: {len(zones)} zones, {bo_count} BO markers, "
-        f"{len(entries)} entries, colors cycle {', '.join(COLOR_NAMES)}"
+        f"{symbol}: {len(zones)} zones ({n_traded} traded/colored, {n_grey} grey), "
+        f"{bo_count} BO markers, {len(entries)} entries, colors cycle {', '.join(COLOR_NAMES)}"
     )
     return paths[0]

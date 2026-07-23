@@ -43,7 +43,7 @@ def run_trace(start: str = "2019-08-01", end: str = "2019-10-31") -> None:
     n = len(df)
     index_iso = [str(x).replace("-", "")[:8] for x in df.index]
 
-    lag = int(getattr(cfg, "sheet_touch_pullback_bars", 7) or 7)
+    lag = int(getattr(cfg, "strong_post_pivot_bars", 7) or 7)
     mat_bh, mat_bi = rb._precompute_mat_bh_bi_stream(
         np.asarray(l3["zone_low"], dtype=float),
         np.asarray(l3["zone_high"], dtype=float),

@@ -23,6 +23,7 @@ NAV_FOOTER = """
   · <a href="investment.html">Investment report</a>
   · <a href="convergence.html">System convergence</a>
   · <a href="monthly.html">Monthly report (all systems)</a>
+  · <a href="system_performance.html">Historical performance</a>
   · Refresh this page for the latest copy.
 </p>
 """
@@ -39,8 +40,28 @@ def _resolve_drive(drive: Path) -> Path:
 
 
 def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
-    if not show_nav or "investment.html" in html and "Scanner open report" in html:
+    if not show_nav or "system_performance.html" in html:
         return html
+    monthly_link = re.compile(
+        r'(<a\s+href=["\']monthly\.html["\'][^>]*>.*?</a>)',
+        flags=re.I | re.S,
+    )
+    if monthly_link.search(html):
+        return monthly_link.sub(
+            r'\1\n  · <a href="system_performance.html">Historical performance</a>',
+            html,
+            count=1,
+        )
+    compact_nav = re.compile(
+        r'(<a\s+href=["\']index\.html["\'][^>]*>Scanner open report</a>)(\s*</p>)',
+        flags=re.I,
+    )
+    if compact_nav.search(html):
+        return compact_nav.sub(
+            r'\1 · <a href="system_performance.html">Historical performance</a>\2',
+            html,
+            count=1,
+        )
     if "</body>" in html.lower():
         return re.sub(r"</body>", NAV_FOOTER + "\n</body>", html, count=1, flags=re.I)
     return html + NAV_FOOTER
@@ -98,6 +119,17 @@ def generate_monthly_backtest_report(drive: Path) -> Path:
 
     out = build_report(_resolve_drive(drive))
     print(f"[pages] Monthly system report -> {out}")
+    return out
+
+
+def generate_performance_report(drive: Path, docs_dir: Path) -> Path:
+    """Build the historical per-system and combined portfolio report."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from generate_system_performance_report import build_report
+
+    out, _payload = build_report(_resolve_drive(drive), docs_dir / "system_performance.html")
+    print(f"[pages] Historical system performance -> {out}")
     return out
 
 
@@ -253,6 +285,10 @@ def main() -> int:
             generate_monthly_backtest_report(drive)
         except Exception as exc:
             print(f"[pages] Monthly backtest report skipped: {exc}", file=sys.stderr)
+        try:
+            generate_performance_report(drive, docs_dir)
+        except Exception as exc:
+            print(f"[pages] Historical performance report skipped: {exc}", file=sys.stderr)
 
     published: list[Path] = []
     scanner_src = drive / "Scanner_Open_Report_Latest.html"
@@ -294,6 +330,14 @@ def main() -> int:
     elif include_investment and not monthly_src.is_file():
         print(f"[pages] Skipped monthly report (no {monthly_src.name})")
 
+    performance_dst = docs_dir / "system_performance.html"
+    if include_investment and performance_dst.is_file():
+        published.append(performance_dst)
+        show_nav = True
+        print(f"[pages] Wrote {performance_dst}")
+    elif include_investment:
+        print(f"[pages] Skipped historical performance (no {performance_dst.name})")
+
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
@@ -310,6 +354,7 @@ def main() -> int:
     print("[pages]   Investment:   https://pauljanderson.github.io/TBN_Report/investment.html")
     print("[pages]   Convergence:  https://pauljanderson.github.io/TBN_Report/convergence.html")
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
+    print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
     if args.push:
         print(
             "[pages] After push, check Actions > Publish reports to Pages (deploy ~1-2 min)."

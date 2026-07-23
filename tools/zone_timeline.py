@@ -32,7 +32,7 @@ def zone_timeline(sym: str, lo: int = 0, hi: int = 999) -> None:
         pre_pivot_bars=cfg.strong_pre_pivot_bars,
         pre_pivot_pct=cfg.strong_pre_pivot_pct,
         touch_pullback_pct=cfg.strong_post_pivot_pct,
-        touch_pullback_bars=int(cfg.sheet_touch_pullback_bars or 10),
+        touch_pullback_bars=int(cfg.strong_post_pivot_bars or 7),
         maturity_lag=lag,
         warmup_bars=9,
         zone_price_round_decimals=cfg.zone_price_round_decimals,

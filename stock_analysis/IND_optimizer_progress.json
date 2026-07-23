@@ -5,10 +5,12 @@
     "atr_stop",
     "min_atr_pct_at_trigger",
     "max_ind_entry_neutral_n",
-    "min_ind_score"
+    "min_ind_score",
+    "target_pct",
+    "aggressive_avg_positions"
   ],
   "best_params": {
-    "target_pct": 1.21,
+    "target_pct": 1.24,
     "trailing_stop_increment": 0,
     "strong_pre_pivot_pct": 0.081,
     "strong_post_pivot_pct": 0.109,
@@ -20,19 +22,18 @@
     "max_atr_pct_at_trigger": 0,
     "use_indicators": true,
     "indicator_buy": "only",
-    "indicator_diff": 9,
+    "indicator_diff": 7,
     "indicator_sides": "long",
     "transaction_type": "long",
-    "atr_target": 2.0,
-    "atr_stop": 1.2,
-    "max_ind_entry_neutral_n": 35,
-    "min_ind_score": -1,
+    "atr_target": 2.2,
+    "atr_stop": 1.4,
+    "max_ind_entry_neutral_n": 30,
+    "min_ind_score": -2,
     "yh_zones": false,
     "brt_zones": false,
     "stop_pct": 0,
     "aggressive": true,
-    "aggressive_avg_positions": 25,
-    "compute_equity_metrics": true,
-    "equity_fast_aggressive": true
+    "aggressive_avg_positions": 20,
+    "compute_equity_metrics": true
   }
 }

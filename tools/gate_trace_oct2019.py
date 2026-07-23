@@ -23,7 +23,7 @@ def gate_trace(df, cfg, t: int) -> dict:
     dedup = rb._PIVOT_DEDUP_EPS
     pre_bars = cfg.strong_pre_pivot_bars
     pre_pct = cfg.strong_pre_pivot_pct
-    tp_bars = int(cfg.sheet_touch_pullback_bars or 10)
+    tp_bars = int(cfg.strong_post_pivot_bars or 7)
     c15 = cfg.strong_post_pivot_pct
     warmup = int(getattr(cfg, "brt_sheet_warmup_bars", 9) or 9)
     dec = cfg.zone_price_round_decimals

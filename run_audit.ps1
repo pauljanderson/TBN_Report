@@ -256,6 +256,11 @@ if (-not $awkExe) {
     exit 1
 }
 
+# AWK redirects diagnostics into drive\; create it for every run (not only large manifests).
+if (-not (Test-Path -LiteralPath $DriveDir)) {
+    New-Item -ItemType Directory -Path $DriveDir -Force | Out-Null
+}
+
 # Windows CreateProcess command line is ~8191 chars; 1000+ full paths exceeds it ("filename too long").
 # Pass a manifest file instead; portfolio_audit.awk reads RL_INPUT_MANIFEST in BEGIN and fills ARGV.
 $manifestThresholdChars = 7000
@@ -266,9 +271,6 @@ foreach ($p in $awkInputPaths) {
 $useInputManifest = ($pathChars -ge $manifestThresholdChars)
 $manifestPath = $null
 if ($useInputManifest) {
-    if (-not (Test-Path -LiteralPath $DriveDir)) {
-        New-Item -ItemType Directory -Path $DriveDir -Force | Out-Null
-    }
     $manifestPath = Join-Path $DriveDir "run_audit_input_manifest.txt"
     $manifestLines = foreach ($p in $awkInputPaths) { ConvertTo-UnixPath $p }
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false

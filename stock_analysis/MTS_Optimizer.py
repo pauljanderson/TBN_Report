@@ -91,7 +91,8 @@ current_best_params = {
     "target_pct": 1.22,          # +22% target exit
     "stop_pct": 0.934,           # signal low × 0.934 ≈ 6.6% stop
     "stop_pct_is_multiplier": True,
-    "stop_anchor": "signal_low",
+    "stop_loss_based": "trigger_low",
+    "stop_anchor": "signal_low",  # legacy alias of trigger_low
     "compute_equity_metrics": True,
     "brt_cash": 47500,
 }
@@ -115,7 +116,7 @@ MTS_CFG_COLS = [
     "strong_post_pivot_bars", "strong_post_pivot_pct",
     "strong_pre_pivot_bars", "strong_pre_pivot_pct",
     "target_pct", "stop_pct",
-    "stop_anchor", "compute_equity_metrics",
+    "stop_loss_based", "stop_anchor", "compute_equity_metrics",
 ]
 
 AUDIT_COLS_ORDER = (

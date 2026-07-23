@@ -47,6 +47,31 @@ RL_V_ALIASES: dict[str, str] = {
     "PEAK_THRESHOLD_MAX": "rl_peak_threshold_max",
 }
 
+# Shared data-window aliases (engine-wide): friendly -v names → BRTConfig entry-date window
+# fields. These are honored by every system that routes -v through normalize_rl_v_key
+# (BRT, WPBR/PBR, RL, MTS, VEC), so `-v start_date=2016-01-01` reconciles all engines to the
+# spreadsheet window. Warmup: full OHLC history still loads for indicator/weekly lookback.
+# WPBR: pivots/zones with pivot Monday before start_date are excluded from the strategy ledger
+# (no BO/retest/rocket from those pivots). Entries before start_date are also blocked
+# (entry_start_date). Default (unset) = empty = full history; DailyRun / production bats unchanged.
+_SHARED_WINDOW_ALIASES: dict[str, str] = {
+    "start_date": "entry_start_date",
+    "data_start": "entry_start_date",
+    "history_start": "entry_start_date",
+    "end_date": "entry_end_date",
+    "data_end": "entry_end_date",
+}
+RL_V_ALIASES.update(_SHARED_WINDOW_ALIASES)
+
+# WPBR daily-retest scan mode: friendly `-v retest_mode=...` alias → BRTConfig field.
+# Also accept the explicit `wpbr_retest_mode` spelling (identity; kept for discoverability).
+RL_V_ALIASES.update(
+    {
+        "retest_mode": "wpbr_retest_mode",
+        "wpbr_retest_mode": "wpbr_retest_mode",
+    }
+)
+
 # BRTConfig rl_* field → RLConfig field name (when they differ).
 _BRT_KEY_TO_RL: dict[str, str] = {
     "rl_sma_qual": "sma_qual",
@@ -79,6 +104,18 @@ RL_BRT_GATE_DEFAULTS_OFF: dict[str, Any] = {
     "growth_filter_enabled": False,
     "rl_brt_entry_gates_enabled": False,
 }
+
+# RLConfig fields that map 1:1 onto BRTConfig (no rl_ prefix).
+_RL_SHARED_BRT_KEYS = frozenset(
+    {
+        "mandatory_ind_states_path",
+        "exclude_ind_states_path",
+        "indicator_cache_dir",
+        "indicator_cache",
+        "entry_start_date",
+        "entry_end_date",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -122,9 +159,19 @@ class RLConfig:
     vol_pct_threshold: float = 0.0
     watch_min_score: int = 55
     watch_disable: bool = False
+    # Optional IND-state gates (off by default). Paths resolve like BRT mandatory/exclude.
+    mandatory_ind_states_path: str = ""
+    exclude_ind_states_path: str = ""
+    indicator_cache_dir: str = ""
+    indicator_cache: bool = True
+    # Inclusive entry date window (YYYY-MM-DD / YYYYMMDD). Empty = off.
+    entry_start_date: str = ""
+    entry_end_date: str = ""
 
 
 def _brt_key_for_rl_field(rl_field_name: str) -> str:
+    if rl_field_name in _RL_SHARED_BRT_KEYS:
+        return rl_field_name
     for brt_key, name in _BRT_KEY_TO_RL.items():
         if name == rl_field_name:
             return brt_key
@@ -172,6 +219,11 @@ def rl_config_from_brt_cfg(cfg: Any) -> RLConfig:
         brt_key = _brt_key_for_rl_field(f.name)
         if hasattr(cfg, brt_key):
             kw[f.name] = getattr(cfg, brt_key)
+
+    # Shared BRTConfig keys (not rl_* prefixed) used by optional IND gates / date windows.
+    for shared in _RL_SHARED_BRT_KEYS:
+        if hasattr(cfg, shared):
+            kw[shared] = getattr(cfg, shared)
 
     return RLConfig(**kw)
 

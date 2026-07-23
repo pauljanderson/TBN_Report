@@ -41,13 +41,17 @@
 
 **Parameters:** `band_pct=0.02` (configurable), `lookback_long=504`, `touch_threshold=2` (STONK_DATA 3.0 sheet: **2** touches to mature)
 
+### Sheet-touch Final Pivot High (`brt_sheet_touch` / `compute_sheet_brt_touch_stream`)
+
+When BRT sheet-touch is enabled, a **Final Pivot High** requires: local high (±`pivot_local_window`) AND post-drop (≥`pivot_future_move_pct` over `post_pivot_bars`) AND not-also-pivot-low. **Column L / no-dup** (suppress a second Final PH because a prior Final PH exists in the local window at ±`dedup_tol_pct`) is **disabled** per PO 2026-07-20 — consecutive same-price Final PHs are allowed (AMZN 2011-10-14 + 2011-10-17 @ $12.34). Pivot-low no-dup and local/post/not-also gates remain. Touch still needs Final PH + pre-strong (Z) + pullback ≥ `strong_post_pivot_pct` over `strong_post_pivot_bars`.
+
 ### What counts as a touch
 For each bar i:
 - If `pivot_high[i]==1` → **touch at bar i**, `touch_price[i] = High[i]`
 - Else if `pivot_low[i]==1` → **touch at bar i**, `touch_price[i] = Low[i]`
 - Else → **no touch**, `touch_price[i] = null`
 
-**Strong pivot filter (optional, STONK_DATA 3.0):** When `strong_pivots_enabled` is True and `realtime_filter_enabled` is False, a pivot only produces a touch if it passes the strong-pivot rules. Defaults match the sheet: `strong_pre_pivot_bars=7`, `strong_pre_pivot_pct=0.12`, `strong_post_pivot_bars=7`, `strong_post_pivot_pct=0.09`, `strong_pivot_mode="pre"`.
+**Strong pivot filter (optional, STONK_DATA 3.0):** When `strong_pivots_enabled` is True and `realtime_filter_enabled` is False, a pivot only produces a touch if it passes the strong-pivot rules. Defaults match the BRT sheet: `strong_pre_pivot_bars=7`, `strong_pre_pivot_pct=0.081`, `strong_post_pivot_bars=7`, `strong_post_pivot_pct=0.108`, `strong_pivot_mode="pre"`. (MTS sheet uses different C-cell values — see `run_mts.bat` / `--mts-sheet-parity`.)
 - **Pre (lookback, realtime-safe):** Pivot **Low** at \(t\): `(1 - Low[t] / max(High[t-pre_bars : t])) >= strong_pre_pivot_pct`. Pivot **High** at \(t\): `High[t] / min(Low[t-pre_bars : t]) - 1 >= strong_pre_pivot_pct`. Indices are prior bars only (no lookahead).
 - **Post (lookahead):** Same follow-through test as legacy: e.g. pivot low requires `max(High[t+1:t+post_bars+1])/Low[t] - 1 >= strong_post_pivot_pct`.
 - **`strong_pivot_mode`:** `pre` (default) uses only pre rules; `post` uses only post rules; `both` requires pre **and** post. With `realtime_filter_enabled`, the strong filter is skipped and **all** pivots create touches.
@@ -96,6 +100,8 @@ One-time trigger. No repeat on subsequent touches after maturity.
 - **Entry price:** `entry = Open[close_above_bar + 1]`
 - **Stop:** `stopPrice = Low[entry_bar] * stop_pct` — **entry bar** low × multiplier (not trigger candle)
 - **Target:** `targetPrice = entry * target_pct` — **multiplier form** (standardized)
+- **`min_zone_above_pct` (default 0 = off):** when >0, reject entry if a matured zone sits above the trade zone with gap `(nearest_above_low − current_zone_high) / current_zone_high ≤ threshold` (fraction); take the trade if no overhead zone. Nearest above uses matured zone centers in `lookback_long` (non-overlapping bands), same inventory as `zone_above_center`.
+- **`require_no_zone_above` (default False):** when True, only take entries with no matured non-overlapping zone above (`PCT_ENTRY_TO_BOTTOM_ZONE_ABOVE` empty / `zone_above_center == 0`). Same inventory as `min_zone_above_pct`, but requires empty overhead rather than a minimum gap.
 
 ### Target convention (standardized)
 We use **Option B (multiplier form)**:
@@ -103,6 +109,29 @@ We use **Option B (multiplier form)**:
 - `target_pct = 1.29` → 29% above entry
 
 **Do not mix with Option A (percent form):** `target = entry * (1 + target_pct)` with `target_pct = 0.29`. Choose one and lock it everywhere.
+
+### BRT_Like_WPBR package (`brt_like_wpbr`, default **False**)
+
+Optional package flag (display name **BRT_Like_WPBR**) that adapts the WPBR two-stage break/confirm/retest concept to **daily** bars on the **existing BRT matured-zone inventory** (Z1 — no weekly bars, no new zone stream). When **False**, the breakout/retest/entry path above is 100% unchanged (classic BRT). When **True**, decisions **B / D / E / F** flip together as one unit, and Stage 1/2 breakout + daily strength metrics turn on:
+
+- **Stage 1 breakout** (bar `b`): `Close[b] > zone_upper` (strict, OPEN-A recommended `>`) **and** `Close[b-1] <= zone_upper`. Zone selection reuses the DI `breakout_zone_pick` / role / YH logic.
+- **Stage 2 confirm** (bar `c ≥ b`): first `High[c] > zone_upper × (1 + brt_like_wpbr_confirm_pct)` (default **0.03**). Same-bar allowed. No cap by default (`brt_like_wpbr_confirm_max_bars = 0`, OPEN-C recommended C1). Until Stage 2 fires there is no retest / entry.
+- **B — retest scan start:** bar `c + 1` (first session strictly after confirm). `sheet_breakout_scan_start_row_delta` / C19 is **dropped** on this path.
+- **D — retest (hold-above):** first `r ≥ c+1` with `Low[r] ≤ upper` **and** `Close[r] > upper` **and** `Close[r-1] ≥ lower`.
+- **E — entry window only:** for `di` in `[r, r + brt_like_wpbr_max_days_after_retest]` (default **2**, inclusive), signal when `Close[di] > Open[di]` **and** `Close[di] > upper`; fill = next session open. **Red-to-green and the COUNTIF retest-date gate are disabled on this path** (replaced by the WPBR window). **3-year growth is optional:** when `growth_filter_enabled=true` it still applies (not forced off by BLW); when `false`, WPBR window only.
+- **F — too-fast (BQ):** ignored (unimplemented).
+- **Strength (audit-only):** daily `brt_*` analogs of the WPBR strength fields + a 0–1 `brt_zone_strength` composite are written to the `BRT_breakout_and_retest_*.csv` (extra columns appear only when this flag is on). Phase 1 does **not** gate entries by strength.
+
+Everything **not** in B/D/E/F stays classic BRT: zone birth/maturity (sheet lag), stops (`stop_pct`), targets (`target_pct`), portfolio/sizing, and all other configured entry filters (`min_spy_compare_*`, `too_high_multiplier`, TKL, consolidation, etc.) still apply as configured. Enable via `-v brt_like_wpbr=true`. Sheet (workbook) parity for this path is a **phase-2 follow-up** (see `drive/brt_sheet_reconcile/BRT_PBR_DAILY_RULES_REQUIREMENTS.md` §7); the engine can run ahead of the sheet.
+
+### WPBR standalone retest scan — `retest_mode` (`wpbr_zones.py`, default **`stop_looking`**)
+
+Applies to the **standalone WPBR system** (`wpbr_zones=true`, weekly pivot zones), not the BLW daily path above. Controls how `find_wpbr_retest_and_signal` terminates the daily forward scan that begins the Monday after the confirmation week (`next_week_start`):
+
+- **`stop_looking` (DEFAULT — matches the sheet `Daily Retest Row`):** first bar with `Low ≤ upper` **and** `Close > upper`, but **only before** the first bar (on/after `next_week_start`) with `Close < zone_lower` (the sheet abandon-"kill" window). If abandon precedes any hold-above bar, the retest is **blank** for that zone. **No** prior-`Close[r-1] ≥ lower` gate — exact sheet parity. Reproduces the pasted META `Daily Retest Row` formula **48/48** (incl. the 7 abandon-kill blanks).
+- **`keep_looking` (legacy engine):** unbounded forward scan (no abandon kill) **plus** the prior `Close[r-1] ≥ lower` gate. Gives 41/48 on META (7 engine-only retests where the sheet is blank).
+
+Wire via `-v retest_mode=stop_looking|keep_looking` (BRTConfig `wpbr_retest_mode`; `retest_mode` / `wpbr_retest_mode` aliases). Default is `stop_looking` so `run_wpbr.bat` / DailyRun match the sheet with no extra flag; use `keep_looking` for A/B against the old behavior. **Product decision (2026-07-22): the sheet wins** — engine adopts the sheet's abandon-kill retest as the default; the flag only exists to A/B the legacy scan. The sheet formulas are unchanged.
 
 ### Support / Resistance Test (approach-direction labels)
 - **Not** touch confirmations; they indicate whether price is testing the zone as support or resistance.

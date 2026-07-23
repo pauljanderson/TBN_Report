@@ -484,6 +484,81 @@ def _merge_daily_maps(maps: list[dict[str, float]]) -> dict[str, float]:
     return out
 
 
+def _ymd8(s: str) -> str:
+    digits = "".join(ch for ch in str(s or "") if ch.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _entry_date_allowed(iso: str, start: str, end: str) -> bool:
+    """Inclusive entry date window; empty bounds = open."""
+    d = _ymd8(iso)
+    if not d:
+        return False
+    s = _ymd8(start)
+    e = _ymd8(end)
+    if s and d < s:
+        return False
+    if e and d > e:
+        return False
+    return True
+
+
+def _load_rl_ind_gate_context(
+    cfg: RLConfig, df: pd.DataFrame, symbol: str
+) -> tuple[Any, dict[str, str], dict[str, Any]]:
+    """Load indicator precompute + mandatory/exclude rules when either gate path is set."""
+    mand_path = str(getattr(cfg, "mandatory_ind_states_path", "") or "").strip()
+    excl_path = str(getattr(cfg, "exclude_ind_states_path", "") or "").strip()
+    if not mand_path and not excl_path:
+        return None, {}, {}
+    try:
+        from brt_entry_indicators import (
+            build_entry_indicator_precompute,
+            load_exclude_ind_states,
+            load_mandatory_ind_states,
+        )
+    except ImportError:
+        from stock_analysis.brt_entry_indicators import (  # type: ignore
+            build_entry_indicator_precompute,
+            load_exclude_ind_states,
+            load_mandatory_ind_states,
+        )
+    cache_dir = str(getattr(cfg, "indicator_cache_dir", "") or "").strip() or None
+    use_cache = bool(getattr(cfg, "indicator_cache", True))
+    pre = build_entry_indicator_precompute(
+        df.sort_index(),
+        symbol=symbol,
+        cache_dir=cache_dir,
+        use_cache=use_cache,
+    )
+    mand = load_mandatory_ind_states(mand_path) if mand_path else {}
+    excl = load_exclude_ind_states(excl_path) if excl_path else {}
+    return pre, mand, excl
+
+
+def _rl_ind_gates_block(
+    pre: Any,
+    bar_i: int,
+    mand_rules: dict[str, str],
+    excl_rules: dict[str, frozenset],
+) -> bool:
+    """True when mandatory/exclude IND-state rules reject the signal bar."""
+    if not mand_rules and not excl_rules:
+        return False
+    try:
+        from brt_entry_indicators import exclude_ind_states_passes, mandatory_ind_states_passes
+    except ImportError:
+        from stock_analysis.brt_entry_indicators import (  # type: ignore
+            exclude_ind_states_passes,
+            mandatory_ind_states_passes,
+        )
+    if mand_rules and not mandatory_ind_states_passes(pre, bar_i, "LONG", mand_rules):
+        return True
+    if excl_rules and not exclude_ind_states_passes(pre, bar_i, "LONG", excl_rules):
+        return True
+    return False
+
+
 def run_symbol_rl(
     symbol: str,
     df: pd.DataFrame,
@@ -509,6 +584,11 @@ def run_symbol_rl(
         bars["sma"][100],
         bars["sma"][200],
     )
+
+    ind_pre, mand_rules, excl_rules = _load_rl_ind_gate_context(cfg, df, symbol)
+    entry_start = str(getattr(cfg, "entry_start_date", "") or "").strip()
+    entry_end = str(getattr(cfg, "entry_end_date", "") or "").strip()
+    ind_gates_active = bool(mand_rules or excl_rules)
 
     closed: list[RLClosedRow] = []
     open_row: Optional[RLOpenRow] = None
@@ -995,6 +1075,15 @@ def run_symbol_rl(
                     and vol_ok
                 )
 
+                if filters_ok and ind_gates_active:
+                    if _rl_ind_gates_block(ind_pre, idx, mand_rules, excl_rules):
+                        filters_ok = False
+
+                if filters_ok and (entry_start or entry_end):
+                    # Window applies to fill date (next open), matching BRT entry_start/end semantics.
+                    if next_iso and not _entry_date_allowed(next_iso, entry_start, entry_end):
+                        filters_ok = False
+
                 if emit_last_bar_extras and is_last_bar and filters_ok:
                     scan_tgt = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 and y_sma > 0 else 0.0
                     stop_lv = l[idx] * cfg.rl_stop_pct
@@ -1344,6 +1433,17 @@ def run_rl_from_brt_main(
         f"(rl_cash={rl_cfg.rl_cash:,.0f}, flush_days={rl_cfg.rl_flush_days}, workers={workers})",
         flush=True,
     )
+    _mand = str(getattr(rl_cfg, "mandatory_ind_states_path", "") or "").strip()
+    _excl = str(getattr(rl_cfg, "exclude_ind_states_path", "") or "").strip()
+    if _mand or _excl:
+        print(
+            f"[RL] IND-state gates: mandatory={_mand or '(off)'} exclude={_excl or '(off)'}",
+            flush=True,
+        )
+    _es = str(getattr(rl_cfg, "entry_start_date", "") or "").strip()
+    _ee = str(getattr(rl_cfg, "entry_end_date", "") or "").strip()
+    if _es or _ee:
+        print(f"[RL] Entry date window: start={_es or '(none)'} end={_ee or '(none)'}", flush=True)
     closed, open_rows, scanner_rows, watch_rows = run_rl_backtest_batch(
         ticker_list,
         tickers,

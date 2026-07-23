@@ -154,14 +154,14 @@ BREAKOUT_PER_ROW_FORMULAS = """
 
 | Col | Header | Formula |
 |-----|--------|---------|
-| BC | NEW FORMULA to check ALL zones | ``MIN(FILTER(zU, prior_close<zU, close>=zU))`` over BA/BB pairs rows 2..ROW()-1 |
+| BC | NEW FORMULA to check ALL zones | ``MAX(FILTER(zU, prior_close<zU, close>=zU))`` over BA/BB pairs rows 2..ROW()-1 |
 | BE | Selected Break lower | ``INDEX(FILTER(BA where BB=BC), 1)`` |
 | BF | Breakout event | ``IF(BC="", "", 1)`` |
 | BG | Create Breakout record | ``IF(BF=1, 1, "")`` |
 
 **Cross rule:** prior **Close** ``H[row-1] < zone upper`` and current **Close** ``H[row] >= zone upper``.
-**Pick rule (BC):** **MIN(zone upper)** among crossed matured bands (not MAX).
-**AB touch pullback:** forward **C14** bars (periods to check = 10), not C10 (7). Maturity lag AZ:BB uses **C10**.
+**Pick rule (BC):** ``breakout_zone_pick`` — **max** (default) = **MAX(zone upper)** among crossed matured bands; **min** = **MIN(zone upper)**. Override via ``-v breakout_zone_pick=min``.
+**AB touch pullback:** forward **C10** Strong post-pivot bars (same window as Post Pivot Pullback / AZ:BB maturity lag). Sheet **C14** "periods to check" is unused for AB. (Legacy engine field ``sheet_touch_pullback_bars`` was an incorrect split; deprecated.)
 """
 
 # Ledger columns on the same row when BG=1 (export as tools/*_brt_sheet_breakout_retest.tsv).
@@ -289,8 +289,9 @@ See ``BREAKOUT_LEDGER_FORMULAS`` and ``BREAKOUT_PER_ROW_COLUMNS`` in this module
 - **BM** = Main Row + **C19** (retest delay 2) — first bar eligible for **BN** retest scan.
 
 ## Program-side
-1. **Breakout pick** — ``_sheet_pick_di_breakout_zone_long``: **MIN(zone upper)** among crossed
-   matured BA/BB bands before the breakout bar (matches sheet **BC**).
+1. **Breakout pick** — ``_sheet_pick_di_breakout_zone_long`` / ``breakout_zone_pick``:
+   **max** (default) = **MAX(zone upper)** among crossed matured BA/BB bands before the breakout
+   bar (engine **BC**); **min** = **MIN(zone upper)** (``-v breakout_zone_pick=min``).
 2. **Retest** — overlap from ``breakout_bar + sheet_breakout_scan_start_row_delta`` (default 2).
 3. **Too fast retest (BQ)** — not yet implemented in engine; checks overlap on Main Row + 1.
 4. **Main Row export** — cosmetic +8 vs sheet when CSV starts before **D2**; compare dates not rows.

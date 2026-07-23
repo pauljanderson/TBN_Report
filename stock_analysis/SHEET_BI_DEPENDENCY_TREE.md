@@ -52,7 +52,7 @@ This document reflects **your current sheet** (column **BI** = Rocket Buy), not 
 |-----|----------------------------------|----------------------------|
 | **J** | Local High Test | **F**, **F** window, **C23** |
 | **K** | Future Rise test (from high) | **F**, **G** forward window, **C21** |
-| **L** | No dup Pivot High | **N**, **T**, **F**, **C22** |
+| **L** | No dup Pivot High | **N**, **T**, **F**, **C22** | *(Engine sheet-touch: L disabled PO 2026-07-20 — twin Final PHs allowed)* |
 | **M** | Not also Pivot Low | **F**, **G**, **S**, **U**, **C21–C23** |
 
 ### **N** (Final Pivot High label)

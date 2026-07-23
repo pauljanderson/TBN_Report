@@ -2,12 +2,12 @@
 Compute live stop/target levels for open positions (gettarget_output.csv).
 
 Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk),
-BRT (backtest percent or ATR live params), IND (indicator backtest ATR params),
+BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
 YH (year-high zone backtest percent params), or MTS (Magic Touch sheet parity).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, or MTS (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, or WPBR (case-insensitive).
 
 When entry_price is set, getTarget can compute target/limit from that price even if
 purchase_date is not in the symbol CSV yet (e.g. bought today before files update).
@@ -32,13 +32,20 @@ DEFAULT_POSITIONS_CSV = Path(__file__).resolve().parent / "gettarget_positions.c
 # Optional overrides only (normally leave empty). CSV is the source of truth.
 POSITIONS: dict[str, tuple[str, str | float, str]] = {}
 
+_SYSTEM_ALIASES = {"PBR": "WPBR"}
+
+
+def _normalize_system(system: str) -> str:
+    s = str(system).strip().upper()
+    return _SYSTEM_ALIASES.get(s, s)
+
 
 @dataclass
 class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS
+    system: str  # RL, BRT, IND, YH, MTS, WPBR
 
 
 @dataclass
@@ -89,10 +96,10 @@ def _parse_entry_price(raw: str | float | None) -> Optional[float]:
 
 def load_positions(
     positions_csv: Optional[Path] = None,
-    default_system: str = "IND",
+    default_system: str = "BRT",
 ) -> dict[str, PositionSpec]:
     out: dict[str, PositionSpec] = {}
-    ds = default_system.strip().upper() or "IND"
+    ds = default_system.strip().upper() or "BRT"
 
     csv_path = positions_csv
     if csv_path and csv_path.exists():
@@ -110,7 +117,7 @@ def load_positions(
                 symbol=sym,
                 purchase_date=str(r[date_c]).strip()[:10],
                 entry_price=_parse_entry_price(r.get(price_c, "")),
-                system=str(r.get(sys_c, ds)).strip().upper() or ds,
+                system=_normalize_system(str(r.get(sys_c, ds)).strip().upper() or ds),
             )
 
     for sym, row in POSITIONS.items():
@@ -121,7 +128,7 @@ def load_positions(
             symbol=sym.strip().upper(),
             purchase_date=str(date_s).strip(),
             entry_price=_parse_entry_price(price_raw),
-            system=str(system).strip().upper() or ds,
+            system=_normalize_system(str(system).strip().upper() or ds),
         )
 
     if not out:
@@ -652,6 +659,9 @@ def compute_price_only_payload(
     mts_mode_resolved: str,
     mts_percent: PercentProfile,
     mts_atr: AtrProfile,
+    wpbr_mode_resolved: str,
+    wpbr_percent: PercentProfile,
+    wpbr_atr: AtrProfile,
     default_atr_pct: float,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
@@ -691,6 +701,11 @@ def compute_price_only_payload(
         profile_atr = mts_atr
         profile_pct = mts_percent
         label = "MTS"
+    elif system == "WPBR":
+        mode = wpbr_mode_resolved
+        profile_atr = wpbr_atr
+        profile_pct = wpbr_percent
+        label = "WPBR"
     else:
         return {"error": f"unknown system {system!r}"}
 
@@ -755,10 +770,13 @@ def compute_position_payload(
     mts_mode_resolved: str,
     mts_percent: PercentProfile,
     mts_atr: AtrProfile,
+    wpbr_mode_resolved: str,
+    wpbr_percent: PercentProfile,
+    wpbr_atr: AtrProfile,
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
 ) -> dict[str, Any]:
-    """Dispatch to RL / BRT / IND / YH / MTS calculator for a given as-of date."""
+    """Dispatch to RL / BRT / IND / YH / MTS / WPBR calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
@@ -800,6 +818,15 @@ def compute_position_payload(
         return compute_atr_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, mts_atr, "MTS", **kw
         )
+    if system == "WPBR":
+        if wpbr_mode_resolved == "percent":
+            return compute_percent_system(
+                sym, df, entry_ts, entry_price, entry_src, as_of_effective, wpbr_percent, "WPBR",
+                entry_in_data=entry_in_data,
+            )
+        return compute_atr_system(
+            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, wpbr_atr, "WPBR", **kw
+        )
     return {"error": f"unknown system {system!r}"}
 
 
@@ -836,7 +863,10 @@ def _add_atr_profile_args(p: argparse.ArgumentParser, prefix: str, defaults: Atr
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Live stop/target for open positions (RL / BRT / IND / YH / MTS profiles)."
+        description=(
+            "Live stop/target for open positions "
+            "(RL / BRT / YH / MTS / WPBR; deprecated IND remains available manually)."
+        )
     )
     parser.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR))
     parser.add_argument("--atr-period", type=int, default=14)
@@ -847,7 +877,13 @@ def main() -> None:
         default=str(DEFAULT_POSITIONS_CSV),
         help="Positions table CSV (default: gettarget_positions.csv next to this script).",
     )
-    parser.add_argument("--default-system", type=str, default="IND", help="When system column missing.")
+    parser.add_argument("--default-system", type=str, default="BRT", help="When system column missing.")
+    parser.add_argument(
+        "--exclude-system",
+        action="append",
+        default=[],
+        help="Skip live targets for this system (repeatable; DailyRun excludes deprecated IND).",
+    )
     parser.add_argument(
         "--brt-mode",
         choices=("auto", "atr", "percent"),
@@ -871,6 +907,12 @@ def main() -> None:
         choices=("auto", "atr", "percent"),
         default="auto",
         help="MTS: auto=percent when --mts-atr-* are 0 (rocket_brt target_pct); else ATR.",
+    )
+    parser.add_argument(
+        "--wpbr-mode",
+        choices=("auto", "atr", "percent"),
+        default="auto",
+        help="WPBR: auto=percent when --wpbr-atr-* are 0 (rocket_brt target_pct); else ATR.",
     )
     parser.add_argument("--as-of-date", type=str, default=None)
     parser.add_argument("--use-next-trading-day", action="store_true")
@@ -915,6 +957,7 @@ def main() -> None:
     )
     _add_atr_profile_args(parser, "yh", AtrProfile())
     _add_atr_profile_args(parser, "mts", AtrProfile())
+    _add_atr_profile_args(parser, "wpbr", AtrProfile())
 
     parser.add_argument("--rl-target-pct", type=float, default=1.20)
     parser.add_argument("--rl-stop-pct", type=float, default=0.934)
@@ -947,6 +990,10 @@ def main() -> None:
         choices=("entry", "signal_low"),
         help="MTS stop anchor: signal_low = prior-bar Low * stop_pct (sheet AM); entry = entry_price * stop_pct.",
     )
+    parser.add_argument("--wpbr-target-pct", type=float, default=1.24)
+    parser.add_argument("--wpbr-stop-pct", type=float, default=0.927)
+    parser.add_argument("--wpbr-trailing-stop-increment", type=float, default=0.0)
+    parser.add_argument("--wpbr-use-sma50", action="store_true", default=False)
     parser.add_argument(
         "--per-symbol-settings",
         default="",
@@ -960,6 +1007,31 @@ def main() -> None:
         Path(args.positions_csv) if str(args.positions_csv).strip() else None,
         default_system=args.default_system,
     )
+    excluded_systems = {
+        _normalize_system(str(system).strip().upper())
+        for system in args.exclude_system
+        if str(system).strip()
+    }
+    if excluded_systems:
+        skipped = [pos for pos in positions.values() if pos.system in excluded_systems]
+        positions = {
+            sym: pos for sym, pos in positions.items() if pos.system not in excluded_systems
+        }
+        print(
+            f"[getTarget] Skipping {len(skipped)} position(s) for excluded system(s): "
+            f"{', '.join(sorted(excluded_systems))}"
+        )
+        if not positions:
+            out_path = Path(args.out_csv)
+            columns = ["Symbol", "System", "PurchaseDate", "TargetPrice", "LimitPrice"]
+            if out_path.exists():
+                try:
+                    columns = list(pd.read_csv(out_path, nrows=0).columns) or columns
+                except Exception:
+                    pass
+            pd.DataFrame(columns=columns).to_csv(out_path, index=False)
+            print(f"No active-system positions; cleared live target rows in {out_path.resolve()}")
+            return
 
     brt_atr = AtrProfile(
         atr_target=args.brt_atr_target,
@@ -996,6 +1068,15 @@ def main() -> None:
         atr_days=args.mts_atr_days,
         atr_progress_incremental_stop=bool(args.mts_atr_progress_incremental_stop),
         sma_stop_days=int(args.mts_sma_stop_days or 0),
+    )
+    wpbr_atr = AtrProfile(
+        atr_target=args.wpbr_atr_target,
+        atr_stop=args.wpbr_atr_stop,
+        atr_increment=args.wpbr_atr_increment,
+        atr_progress=args.wpbr_atr_progress,
+        atr_days=args.wpbr_atr_days,
+        atr_progress_incremental_stop=bool(args.wpbr_atr_progress_incremental_stop),
+        sma_stop_days=int(args.wpbr_sma_stop_days or 0),
     )
     rl_profile = RlProfile(
         rl_target_pct=args.rl_target_pct,
@@ -1034,6 +1115,13 @@ def main() -> None:
         use_sma50_target=bool(args.mts_use_sma50),
         sma_stop_days=int(args.mts_sma_stop_days or 0),
         stop_anchor=str(args.mts_stop_anchor or "signal_low"),
+    )
+    wpbr_percent = PercentProfile(
+        target_pct=args.wpbr_target_pct,
+        stop_pct=args.wpbr_stop_pct,
+        trailing_stop_increment=args.wpbr_trailing_stop_increment,
+        use_sma50_target=bool(args.wpbr_use_sma50),
+        sma_stop_days=int(args.wpbr_sma_stop_days or 0),
     )
 
     try:
@@ -1094,6 +1182,7 @@ def main() -> None:
     ind_mode_resolved = resolve_exit_mode(args.ind_mode, ind_atr)
     yh_mode_resolved = resolve_exit_mode(args.yh_mode, yh_atr)
     mts_mode_resolved = resolve_exit_mode(args.mts_mode, mts_atr)
+    wpbr_mode_resolved = resolve_exit_mode(args.wpbr_mode, wpbr_atr)
     if brt_mode_resolved == "percent" and args.brt_mode.strip().lower() in ("auto", "atr"):
         print(
             "[INFO] BRT using percent stops/targets "
@@ -1117,6 +1206,12 @@ def main() -> None:
             "[INFO] MTS using percent stops/targets "
             f"(target_pct={args.mts_target_pct}, stop_pct={args.mts_stop_pct}, "
             f"stop_anchor={args.mts_stop_anchor}); MTS ATR multipliers are all zero."
+        )
+    if wpbr_mode_resolved == "percent" and args.wpbr_mode.strip().lower() in ("auto", "atr"):
+        print(
+            "[INFO] WPBR using percent stops/targets "
+            f"(target_pct={args.wpbr_target_pct}, stop_pct={args.wpbr_stop_pct}); "
+            "WPBR ATR multipliers are all zero."
         )
 
     results: list[dict] = []
@@ -1178,6 +1273,7 @@ def main() -> None:
         sym_rl_profile = apply_rl_profile_overrides(rl_profile, _sym_ov)
         sym_brt_percent = apply_brt_percent_overrides(brt_percent, _sym_ov)
         sym_mts_percent = apply_brt_percent_overrides(mts_percent, _sym_ov)
+        sym_wpbr_percent = apply_brt_percent_overrides(wpbr_percent, _sym_ov)
 
         _payload_kw = dict(
             atr_period=int(args.atr_period),
@@ -1185,6 +1281,7 @@ def main() -> None:
             ind_mode_resolved=ind_mode_resolved,
             yh_mode_resolved=yh_mode_resolved,
             mts_mode_resolved=mts_mode_resolved,
+            wpbr_mode_resolved=wpbr_mode_resolved,
             rl_profile=sym_rl_profile,
             brt_percent=sym_brt_percent,
             brt_atr=brt_atr,
@@ -1194,13 +1291,18 @@ def main() -> None:
             yh_atr=yh_atr,
             mts_percent=sym_mts_percent,
             mts_atr=mts_atr,
+            wpbr_percent=sym_wpbr_percent,
+            wpbr_atr=wpbr_atr,
             default_atr_pct=float(args.default_atr_pct),
         )
 
         if df is None:
             as_of_effective = requested_ts
             payload = compute_price_only_payload(
-                system, entry_price, entry_src, **_payload_kw
+                system,
+                entry_price,
+                entry_src,
+                **{k: v for k, v in _payload_kw.items() if k != "atr_period"},
             )
         else:
             assert as_of_effective is not None
@@ -1289,6 +1391,7 @@ def main() -> None:
             "IndMode": ind_mode_resolved if system == "IND" else None,
             "YhMode": yh_mode_resolved if system == "YH" else None,
             "MtsMode": mts_mode_resolved if system == "MTS" else None,
+            "WpbrMode": wpbr_mode_resolved if system == "WPBR" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,

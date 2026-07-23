@@ -1,5 +1,5 @@
 @echo off
-rem Generate investment report, copy to docs\ for GitHub Pages, optionally push.
+rem Generate all Pages reports (including historical performance), copy to docs\, optionally push.
 rem   publish_github_pages.bat --push        generate + publish + git push (~1-2 min deploy)
 rem   publish_github_pages.bat               generate + local docs/ only (live site unchanged)
 rem   publish_github_pages.bat --no-generate --push   copy existing Latest only, then push
