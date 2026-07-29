@@ -21,7 +21,7 @@ Rocket Launcher is **not** a variant of BRT zone/retest logic. It is a separate 
 | Math source | **AWK** (`portfolio_audit.awk` + `-v` defaults) |
 | RL vs BRT | **Separate runs** — `rl_mode=true` for dip-buy; separate invocation for BRT zone/retest |
 | No combined mode | No `rl_mode=both`; one engine per backtest pass |
-| Parity universe | **76 stocks** — `data/rl_gold_universe.txt` (+ SPY loaded first by runner) |
+| Parity / DailyRun universe | **`data/rl_gold_universe.txt`** (synced with `run_rl.bat` / `run_audit.bat` `RL_SYMBOLS`; SPY loaded first by runner) |
 | Full universe | Run ad hoc when testing changes; not the CI gold gate |
 | RL100 / Dive Bomber | **Defer** until 50-trigger matches |
 | Trails / flush | **Off by default**; enable only via explicit `-v` (e.g. `rl_trail_profit=0.14`) |
@@ -116,7 +116,7 @@ Source: `portfolio_audit.awk` lines ~1203–1410 (entry), ~894–1200 (exit whil
 - Entry: **next session open**
 - Stop: **signal-day low × 0.934** (not entry × stop_pct)
 - Target: **prior-day SMA50 × 1.20** (updated daily while open)
-- Too high: next open ≤ low × **1.14** × **0.934**
+- Too high: **off by default** (`rl_too_high=0` / `RL_TOO_HIGH=0`). When on (e.g. 1.14): next open ≤ low × too_high × stop_pct
 - Size: **RL_CASH / entry_open** shares (default **$47,500** notional)
 - One open position per symbol; **no max_positions cap**
 
