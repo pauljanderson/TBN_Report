@@ -48,7 +48,7 @@ Use **headline** for continuity / sheet paste; use **robust** for promotion gate
 
 ### RL post-TARGET quick stops
 
-ImproveHints / SymbolAssessments may flag **TARGET → quick STOP** re-entries. For RL, prefer **`rl_post_target_reentry_bars` + `rl_post_target_stop_pct`** (tighter original stop only; entries still fire) over a calendar **`symbol_reentry_cooldown_days`** (BRT-only / unwired in `rocket_rl`, and it kills NTRA-style ladders). Defaults are **0 / off**. See `docs/TRAILING_STOPS.md` §2.1.
+ImproveHints / SymbolAssessments may flag **TARGET → quick STOP** re-entries. For RL, prefer **`rl_post_target_reentry_bars` + `rl_post_target_reentry_mode`** (`stop_loss` with `rl_post_target_stop_pct`, or quality gates `min_stack` / `under_sma_limit`, or `none` cooldown) over a calendar **`symbol_reentry_cooldown_days`** (BRT-only / unwired in `rocket_rl`, and it kills NTRA-style ladders). Defaults are **bars=0 / off**. See `docs/TRAILING_STOPS.md` §2.1.
 
 - **RL:** `write_rl_post_reports` → `write_rl_analysis_artifacts`
 - **BRT / WPBR / YH / IND / MTS / RS / …:** `write_all_outputs` → `write_analysis_artifacts`

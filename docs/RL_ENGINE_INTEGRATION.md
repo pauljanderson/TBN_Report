@@ -117,7 +117,7 @@ Source: `portfolio_audit.awk` lines ~1203–1410 (entry), ~894–1200 (exit whil
 
 - Entry: **next session open**
 - Stop: **signal-day low × 0.934** (not entry × stop_pct)
-- Optional post-TARGET tighter stop (default **off**): if prior closed trade exited `TARGET` and trading bars from exit → entry fill ≤ `rl_post_target_reentry_bars`, use `rl_post_target_stop_pct` for original stop only (fill gates still use `rl_stop_pct`). See `docs/TRAILING_STOPS.md` §2.1.
+- Optional post-TARGET re-entry window (default **off**, `rl_post_target_reentry_bars=0`): when bars>0 and prior closed trade exited `TARGET` within N trading bars of the fill, `rl_post_target_reentry_mode` applies one mutually exclusive policy — `stop_loss` (allow + tighter original stop via `rl_post_target_stop_pct`; fill gates still use `rl_stop_pct`), `min_stack` / `under_sma_limit` (quality block on trigger-bar SMA/close), or `none` (block all). See `docs/TRAILING_STOPS.md` §2.1.
 - Target: **prior-day SMA50 × 1.20** (updated daily while open)
 - Too high: **off by default** (`rl_too_high=0` / `RL_TOO_HIGH=0`). When on (e.g. 1.14): next open ≤ low × too_high × stop_pct
 - Size: **RL_CASH / entry_open** shares (default **$47,500** notional)

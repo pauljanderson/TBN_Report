@@ -32,14 +32,34 @@ On entry (next session open after signal):
 | Field | Default | Meaning |
 |-------|---------|---------|
 | `RL_STOP_PCT` | `0.934` | Initial stop = **signal-day low × 0.934** (~6.6% below that low, not below entry open). |
-| `RL_POST_TARGET_REENTRY_BARS` | `0` (off) | Trading bars after a **TARGET** exit during which a new entry uses `RL_POST_TARGET_STOP_PCT` for the original stop. Alias: `RL_POST_TARGET_REENTRY_DAYS`. **0 = off** (production default). Fill gates (`too_low` / `too_high`) still use `RL_STOP_PCT`, so ladder re-entries still fire. |
-| `RL_POST_TARGET_STOP_PCT` | `0` (off) | Tighter stop multiplier when re-entering within `REENTRY_BARS` after TARGET (e.g. `0.97` ≈ 3% under signal low). Unused when bars=0. |
+| `RL_POST_TARGET_REENTRY_BARS` | `0` (off) | Trading bars after a **TARGET** exit during which `RL_POST_TARGET_REENTRY_MODE` applies. Alias: `RL_POST_TARGET_REENTRY_DAYS`. **0 = feature fully off** (production default). |
+| `RL_POST_TARGET_REENTRY_MODE` | `stop_loss` | Mutually exclusive policy when bars>0: `stop_loss` \| `min_stack` \| `under_sma_limit` \| `none`. |
+| `RL_POST_TARGET_STOP_PCT` | `0` (off) | For **mode=stop_loss**: tighter stop multiplier when re-entering within `REENTRY_BARS` (e.g. `0.97` ≈ 3% under signal low). Unused when bars=0 or mode≠stop_loss. Fill gates (`too_low` / `too_high`) still use `RL_STOP_PCT`. |
+| `RL_POST_TARGET_MIN_STACK` | `0.05` | For **mode=min_stack**: require `(SMA20/SMA50 − 1) ≥` this on the **trigger** bar; else block re-entry. |
+| `RL_POST_TARGET_UNDER_SMA20` | `0.03` | For **mode=under_sma_limit**: max depth under SMA20 on the **trigger** bar; reject if `close < SMA20 × (1 − limit)`. |
 | `RL_TARGET_PCT` | `1.20` | Target = **prior session SMA50 × 1.20** (20% above SMA50; target moves with SMA). |
 | `RL_TOO_HIGH` | (varies) | Blocks entry if next open is too far above signal-day low. |
 
 `original_stop` and `original_target` are stored on the closed-trade row for audit.
 
-**Post-TARGET tighter stop (experiment):** Prefer this over a calendar cooldown. Cooldowns that block re-entry kill NTRA-style TARGET ladders (~6 trading days between rungs). Starter grid: `N ∈ {5,10,15}` × `stop_pct ∈ {0.95,0.96,0.97}`; verify NTRA 2019 rung MAE so the tighter stop does not stop them out.
+**Post-TARGET re-entry modes (experiment):** One mode at a time (no combining). Prefer these over a calendar `symbol_reentry_cooldown_days` (BRT-only / unwired in `rocket_rl`, kills NTRA-style ladders).
+
+| Mode | Behavior in window |
+|------|--------------------|
+| `stop_loss` (default) | Allow entry; original stop = signal low × `STOP_PCT` when set. Starter grid: `N ∈ {5,10,15}` × `stop_pct ∈ {0.95,0.96,0.97}`. |
+| `min_stack` | Block unless SMA stack `(SMA20/SMA50 − 1) ≥ MIN_STACK` (try `0.04–0.06`). |
+| `under_sma_limit` | Block if close is deeper under SMA20 than `UNDER_SMA20` (try `0.02–0.04`). |
+| `none` | Block all re-entries in the window (pure cooldown). |
+
+Examples:
+
+```bat
+-v rl_post_target_reentry_bars=10 -v rl_post_target_reentry_mode=none
+-v rl_post_target_reentry_bars=10 -v rl_post_target_reentry_mode=min_stack -v rl_post_target_min_stack=0.05
+-v rl_post_target_reentry_bars=10 -v rl_post_target_reentry_mode=under_sma_limit -v rl_post_target_under_sma20=0.03
+-v rl_post_target_reentry_bars=5 -v rl_post_target_reentry_mode=stop_loss -v rl_post_target_stop_pct=0.97
+```
+
 ### 2.2 RL trailing stops (profit-gated, two tiers)
 
 Controlled by AWK variables (overridable via `run_audit.ps1` `-RLTrailProfit`, etc.):
