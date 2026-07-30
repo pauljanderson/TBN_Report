@@ -61,12 +61,12 @@ A `max_pre_entry_gain_20d` (or similar) gate would cut trade count sharply but i
 
 1. Backtest `-v max_pre_entry_gain_20d=15` (or 20) on a fixed run set.
 2. Stratify reports by `IND_SCORE` decile vs `POST_ENTRY_GAIN_HIT`.
-3. Fix `min_ind_score` falsy-`0` → `32.56` in `rocket_brt.py` if you need “gate off” from batch files.
+3. Fix `min_ind_score` falsy-`0` → `32.56` in `rocket_tbn.py` (legacy shim `rocket_brt.py`) if you need “gate off” from batch files.
 
 ---
 
 ## Files
 
-- Backtest engine: `stock_analysis/rocket_brt.py`
+- Backtest engine (TBN): `stock_analysis/rocket_tbn.py` (legacy shim: `rocket_brt.py`)
 - Stops/targets doc: `docs/TRAILING_STOPS.md`
 - Watchlist semantics: tightened `SCANNER` rows require ATR + green bar + latest `AS_OF_DATE` (see conversation / `ind_watchlist_*` config)

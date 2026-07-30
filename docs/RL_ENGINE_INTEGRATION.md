@@ -1,4 +1,6 @@
-# Rocket Launcher (RL) → `rocket_brt.py` Integration Plan
+# Rocket Launcher (RL) → TBN engine (`rocket_tbn.py`) Integration Plan
+
+> **Naming:** **TBN** = Twin Beacon Networks (shared engine). **BRT** = Break and ReTest *system* only. See `docs/TBN_VS_BRT.md`. Legacy shim: `rocket_brt.py` → `rocket_tbn`.
 
 Engineering deep-dive and implementation roadmap. **Gold standard:** `Drive/RL_LatestRun_*` from run **`260629143410`** (2026-06-29 14:34:10 ET).
 
@@ -6,9 +8,9 @@ Engineering deep-dive and implementation roadmap. **Gold standard:** `Drive/RL_L
 
 ## Executive summary
 
-Rocket Launcher is **not** a variant of BRT zone/retest logic. It is a separate **50-SMA dip-buy** strategy (optional 100-SMA and Dive Bomber subsystems) implemented today in **`portfolio_audit.awk`** (~2,500 lines). `rocket_brt.py` handles **BRT / IND / YH** via zone breakout + retest (or IND-only indicator scan).
+Rocket Launcher is **not** a variant of BRT zone/retest logic. It is a separate **50-SMA dip-buy** strategy (optional 100-SMA and Dive Bomber subsystems) implemented today in **`portfolio_audit.awk`** (~2,500 lines). The **TBN** engine (`rocket_tbn.py`) hosts **BRT / IND / YH** (and RL/RS/…) via zone breakout + retest (or IND-only indicator scan / `rl_mode`).
 
-**Goal:** Port RL into Python inside `rocket_brt.py` with `rl_mode=true`, reach **trade parity** on the 76-stock gold universe, then retire the AWK dependency for production runs.
+**Goal:** Port RL into Python inside the TBN engine with `rl_mode=true`, reach **trade parity** on the 76-stock gold universe, then retire the AWK dependency for production runs.
 
 **Authority:** `portfolio_audit.awk` and its `-v` variable passthrough are the **authoritative math** (dip band, acceptance, target 1.20, trail arming, all gates). The RL spreadsheet is reference only.
 
@@ -64,15 +66,15 @@ DailyRun.bat [2/8]  →  run_audit.ps1
                          ├─ gawk portfolio_audit.awk  (+ SPY.csv first, symbol CSVs)
                          └─ rl_emit_brt_mirror.py     → BRT_Closed_RL_*, audit row
 
-DailyRun.bat [3–5/8] → rocket_brt.py  (BRT whitelist / IND full / YH zones)
+DailyRun.bat [3–5/8] → rocket_tbn.py  (BRT whitelist / IND full / YH zones; shim: rocket_brt.py)
 ```
 
 | System | Engine | Output prefix | Entry model |
 |--------|--------|---------------|-------------|
-| **RL** | AWK | `RL_` | 50-SMA dip, next open |
-| **BRT** | Python | `BRT_` | Zone BO + retest |
-| **IND** | Python | `IND_` | Indicator-only (`indicator_buy=only`) |
-| **YH** | Python | `YH_` | Year-high zones |
+| **RL** | AWK (Python port via TBN) | `RL_` | 50-SMA dip, next open |
+| **BRT** | TBN (`rocket_tbn.py`) | `BRT_` | Zone BO + retest |
+| **IND** | TBN | `IND_` | Indicator-only (`indicator_buy=only`) |
+| **YH** | TBN | `YH_` | Year-high zones |
 
 `rl_emit_brt_mirror.py` converts RL native CSV → BRT column shape for comparison tooling. It does **not** change fill logic.
 
@@ -115,6 +117,7 @@ Source: `portfolio_audit.awk` lines ~1203–1410 (entry), ~894–1200 (exit whil
 
 - Entry: **next session open**
 - Stop: **signal-day low × 0.934** (not entry × stop_pct)
+- Optional post-TARGET tighter stop (default **off**): if prior closed trade exited `TARGET` and trading bars from exit → entry fill ≤ `rl_post_target_reentry_bars`, use `rl_post_target_stop_pct` for original stop only (fill gates still use `rl_stop_pct`). See `docs/TRAILING_STOPS.md` §2.1.
 - Target: **prior-day SMA50 × 1.20** (updated daily while open)
 - Too high: **off by default** (`rl_too_high=0` / `RL_TOO_HIGH=0`). When on (e.g. 1.14): next open ≤ low × too_high × stop_pct
 - Size: **RL_CASH / entry_open** shares (default **$47,500** notional)
@@ -156,7 +159,7 @@ DailyRun uses **50-trigger only** (`SMA_QUAL=1`, RL100/DB off).
 
 ---
 
-## Flag model in `rocket_brt.py`
+## Flag model in `rocket_tbn.py`
 
 **Separate DailyRun invocations** (same as today):
 
@@ -190,7 +193,7 @@ else:                     → "BRT"
 Target DailyRun RL step (after parity):
 
 ```bat
-python stock_analysis\rocket_brt.py data\newdata\data -o drive -w 6 --no-regression ^
+python stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 6 --no-regression ^
   -v rl_mode=true ^
   -s "@data/rl_gold_universe.txt"   rem or inline comma list
 ```
@@ -209,14 +212,14 @@ python stock_analysis\rocket_brt.py data\newdata\data -o drive -w 6 --no-regress
 
 New module `stock_analysis/rocket_rl.py`:
 
-- Per-symbol OHLCV loop (reuse data loading from `rocket_brt.py`)
+- Per-symbol OHLCV loop (reuse data loading from `rocket_tbn.py`)
 - SMA 20/30/50/100/200 (reuse precomputed CSV cols 8–12 when present)
 - ATR(14), acceptance rolling window, expansion lookback, peak_cl, shock detector
 - Entry gate chain + next-open fill
 - Exit stack (stop/target/trails/timed; flush deferred to Phase 2)
 - Emit native **79-column** `RL_Closed` / **13-column** `RL_Open` schema
 
-Wire into `rocket_brt.py`:
+Wire into `rocket_tbn.py`:
 
 - `rl_mode=true` → call `run_rl_backtest()` instead of zone pipeline
 - Skip pivot/zone/DI work when RL-only (performance)
@@ -236,7 +239,7 @@ Port after 50-trigger gold parity is stable.
 
 ### Phase 4 — DailyRun cutover
 
-Replace `run_audit.ps1` in `DailyRun.bat` with `rocket_brt.py -v rl_mode=true` and `-s` from `data/rl_gold_universe.txt`.
+Replace `run_audit.ps1` in `DailyRun.bat` with `rocket_tbn.py -v rl_mode=true` and `-s` from `data/rl_gold_universe.txt`.
 
 Keep AWK fallback until parity stable for 2+ weeks.
 
@@ -246,7 +249,7 @@ Keep AWK fallback until parity stable for 2+ weeks.
 
 | RL need | Existing Python |
 |---------|-----------------|
-| OHLCV load / symbol loop | `rocket_brt.py` data paths |
+| OHLCV load / symbol loop | `rocket_tbn.py` data paths |
 | SMA arrays | `_compute_sma_arr`, precomputed cols via `precompute_csv_smas.py` |
 | ATR | BRT ATR helpers |
 | Closed/Open CSV writers | Adapt `write_brt_closed` **or** native RL writer matching 79 cols |
@@ -275,6 +278,30 @@ python tools/run_rl_parity.py --run --symbols-file data/rl_gold_universe.txt
 
 ---
 
+---
+
+## Post-run analysis (split architecture)
+
+All systems (RL, BRT, WPBR, YH, MTS, RS, IND, …) share the same cheap/deep split.
+Full guide: **[`docs/POST_RUN_ANALYSIS.md`](POST_RUN_ANALYSIS.md)**.
+
+| Layer | When | Artifacts |
+|-------|------|-----------|
+| **Cheap (DailyRun / every run)** | Always after Summary write | Closed `ONE_LINER`; Summary `FIT` / `FIT_SCORE` / `FIT_SCORE_ROBUST` / outlier cols / `FIT_ASSESSMENT` (RL also `RL_FIT`); `{prefix}_ImproveHints_<ts>.csv` + `.md` |
+| **Deep (optional, not DailyRun)** | Manual / review session | Charts + CRWD-style HTML |
+
+```bat
+rem After an RL run (stamp from drive\last_run_ts.txt or explicit):
+python stock_analysis\rl_post_run_analysis.py --stamp 260729143509 --charts -w 4
+python stock_analysis\post_run_analysis.py --system BRT --stamp 260729143513 --charts -w 4
+python stock_analysis\rl_post_run_analysis.py --symbols CRWD,AU
+python stock_analysis\rl_post_run_analysis.py --no-charts
+```
+
+Writes `drive/{prefix}_Charts_<ts>/`, `{prefix}_SymbolAssessments_<ts>.html`, `{prefix}_ImprovePriority_<ts>.html`.
+`-v rl_charts=true` / `-v rl_deep_analysis=true` on the RL run itself do **not** generate charts;
+they only print a pointer to `post_run_analysis.py`.
+
 ## File index
 
 | Path | Role |
@@ -285,6 +312,11 @@ python tools/run_rl_parity.py --run --symbols-file data/rl_gold_universe.txt
 | `stock_analysis/rl_emit_brt_mirror.py` | RL → BRT-shaped CSV |
 | `stock_analysis/ENTRY_LOGIC_COMPARISON.md` | Entry gate reference |
 | `stock_analysis/rocket_rl_config.py` | Python RL defaults (= AWK BEGIN) |
+| `stock_analysis/rocket_post_analysis.py` | Shared ONE_LINER / FIT / hints / charts (+ `--workers`) |
+| `stock_analysis/rocket_rl_analysis.py` | Thin re-export of `rocket_post_analysis` |
+| `stock_analysis/post_run_analysis.py` | Optional charts + deep HTML (all systems) |
+| `stock_analysis/rl_post_run_analysis.py` | RL wrapper → `post_run_analysis --system RL` |
+| `docs/POST_RUN_ANALYSIS.md` | All-systems post-run usage |
 | `tools/run_rl_parity.py` | Parity tests |
 | `Drive/RL_LatestRun_Closed.csv` | Gold standard closed |
 | `Drive/BRT_Audit_Report_RL_260629143410.csv` | Gold standard metrics |

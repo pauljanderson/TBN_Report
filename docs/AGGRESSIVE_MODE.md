@@ -1,6 +1,6 @@
 # Aggressive mode (`--aggressive`) — reference
 
-This document explains how **aggressive** equity simulation works in `rocket_brt.py` and `BRT_DrawdownCalc.py`. It is separate from trade entry/exit logic (stops, targets, indicators). Aggressive mode only changes how **portfolio equity, drawdown, and margin** are modeled after trades are generated.
+This document explains how **aggressive** equity simulation works in the **TBN** engine (`rocket_tbn.py`, legacy `rocket_brt.py`) and `BRT_DrawdownCalc.py`. It is separate from trade entry/exit logic (stops, targets, indicators). Aggressive mode only changes how **portfolio equity, drawdown, and margin** are modeled after trades are generated. (**BRT** in filenames = Break and ReTest *system* / shared drawdown helper — not the engine brand; see `docs/TBN_VS_BRT.md`.)
 
 For stop/target behavior see [TRAILING_STOPS.md](./TRAILING_STOPS.md).
 
@@ -13,7 +13,7 @@ For stop/target behavior see [TRAILING_STOPS.md](./TRAILING_STOPS.md).
 | **What it does** | Builds a **daily share-level portfolio simulator** on top of closed + open trades. Each new entry is sized as **`current_equity × aggressive_max_multiple / avg_positions`** (default 2× equity spread across avg slots). |
 | **What it does not do** | Does not change which trades open/close, fill prices, or per-trade `PNL_DOLLARS` in `*_Closed_*.csv` (those still use `brt_cash`). |
 | **Why use it** | Produces **Max_DD**, underwater stats, and equity curves that reflect **compounding equity**, **overlapping positions**, and **margin interest** when gross exposure exceeds net equity. |
-| **DailyRun** | Both BRT step 3 and IND step 4 pass `--aggressive` (defaults below). |
+| **DailyRun** | BRT (`run_brt.bat`), RS (`run_rs.bat`), and other `--aggressive` bats pass the flag (defaults below). IND is deprecated/skipped in DailyRun. |
 | **Primary outputs** | `{BRT\|IND}_EquityCurve_<ts>.csv` (aggressive series used for Max_DD), `{prefix}_EquityCurve_Aggressive_<ts>.csv`, optional `{prefix}_aggressive_trim_log_<ts>.csv`. |
 
 **CLI help line (shorthand):** “equity×2/avg_positions per entry; margin interest on borrowed notional” — expanded in §4.
@@ -150,7 +150,7 @@ Written to `{prefix}_EquityCurve_<ts>.csv` (column `Equity`) and `{prefix}_Equit
 
 ## 5. CLI and config
 
-### 5.1 Flags (`rocket_brt.py`)
+### 5.1 Flags (`rocket_tbn.py`)
 
 | Flag | Default | Purpose |
 |------|---------|---------|
@@ -177,7 +177,7 @@ Same names in audit CSV columns:
 
 ### 5.3 DailyRun.bat (current)
 
-Both backtest steps use `--aggressive` with defaults above. They do **not** pass `--equity-fast-aggressive` (so passive comparison is still computed when equity metrics run).
+Backtest steps that pass `--aggressive` (defaults above) include BRT and RS. They do **not** pass `--equity-fast-aggressive` (so passive comparison is still computed when equity metrics run).
 
 ---
 
@@ -272,15 +272,15 @@ No. `gettarget.py` is per-position stop/target only; it does not run this equity
 
 **Where is the code?**  
 - Simulator: `stock_analysis/BRT_DrawdownCalc.py` (`_simulate_aggressive_share_level`, `compute_equity_metrics`)  
-- Wiring: `stock_analysis/rocket_brt.py` (`--aggressive`, `_write_aggressive_equity_curve`)  
-- Glossary strings: `rocket_brt.py` `_AUDIT_CFG_GLOSSARY` / metrics helpers  
+- Wiring: `stock_analysis/rocket_tbn.py` (`--aggressive`, `_write_aggressive_equity_curve`; shim: `rocket_brt.py`)  
+- Glossary strings: `rocket_tbn.py` `_AUDIT_CFG_GLOSSARY` / metrics helpers  
 
 ---
 
 ## 12. Related docs
 
 - [TRAILING_STOPS.md](./TRAILING_STOPS.md) — exits and live `gettarget.py`  
-- `DailyRun.bat` — steps 3 (BRT) and 4 (IND) enable `--aggressive`  
+- `DailyRun.bat` — BRT / RS (and other `--aggressive` wrappers) enable `--aggressive`  
 - `Copy-LatestRunOutputs.ps1` — copies latest aggressive equity CSVs  
 
 *Last aligned to codebase: May 2026.*

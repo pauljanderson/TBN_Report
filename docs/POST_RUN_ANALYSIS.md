@@ -1,0 +1,118 @@
+# Post-run analysis (all systems)
+
+Optional deep charts + HTML for any **TBN**-hosted system that writes `{prefix}_Closed_<ts>.csv` /
+`{prefix}_Summary_<ts>.csv`. Cheap sheet enrichments run automatically after each
+backtest; charts/deep HTML are **not** part of DailyRun.
+
+**TBN** = Twin Beacon Networks engine (`rocket_tbn.py`). **BRT** in the table below is the Break-and-ReTest *system* prefix — see `docs/TBN_VS_BRT.md`.
+
+## Systems / prefixes
+
+| Prefix | System | Chart style |
+|--------|--------|-------------|
+| **RL** / DB | Rocket Launcher (dip-buy) | SMA20/50/100/200 + dip band + IN/OUT/stop |
+| **BRT** / WPBR / YH / VEC / PBR | Zone systems | Close + SMA50 + zone bands from Closed `ZONE_CENTER` + IN/OUT/stop |
+| **IND** / MTS / RS / ADX | Other | Close + SMA50 + IN/OUT/stop |
+
+Auto-detect: scan `drive/{PREFIX}_Closed_{stamp}.csv`, or pass `--system` / `--closed`.
+
+## Cheap (every run)
+
+Emitted after Summary write:
+
+| Artifact | Columns / files |
+|----------|-----------------|
+| Closed | `ONE_LINER` |
+| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `MEDIAN_PNL_PCT`, `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`) |
+| Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` |
+
+`FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
+
+`FIT_SCORE_ROBUST` uses the same point rules but:
+
+1. **Median** trade `PNL %` (from Closed) instead of mean for the avg-pnl points bucket — resists one mega-win (e.g. MPWR +254%).
+2. Soft outlier penalty: **−1** if top win &gt;50% of sum of winning PnL% **or** that trade’s fixed-notional share &gt;60% of sum(PnL%); **−2** if &gt;70% of win PnLs or &gt;80% of sheet share.
+
+When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (med …%, outlier …% of wins)`.
+
+Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, avg not carried by one outlier”).
+
+`FIT_SCORE` trades/year component (`AVG_TRADES_PER_YEAR` in `assess_symbol_fit`): higher frequency is rewarded; there is no “busy” penalty for high tpy.
+
+| `AVG_TRADES_PER_YEAR` | Points |
+|-----------------------|--------|
+| ≥ 1.0 | +2 |
+| ≥ 0.36 | +1 |
+| 0 &lt; tpy &lt; 0.2 | 0 (note: `rare setups`) |
+| otherwise | 0 |
+
+### RL post-TARGET quick stops
+
+ImproveHints / SymbolAssessments may flag **TARGET → quick STOP** re-entries. For RL, prefer **`rl_post_target_reentry_bars` + `rl_post_target_stop_pct`** (tighter original stop only; entries still fire) over a calendar **`symbol_reentry_cooldown_days`** (BRT-only / unwired in `rocket_rl`, and it kills NTRA-style ladders). Defaults are **0 / off**. See `docs/TRAILING_STOPS.md` §2.1.
+
+- **RL:** `write_rl_post_reports` → `write_rl_analysis_artifacts`
+- **BRT / WPBR / YH / IND / MTS / RS / …:** `write_all_outputs` → `write_analysis_artifacts`
+
+## Deep (manual)
+
+```bat
+rem RL (wrapper keeps old commands working)
+python stock_analysis\rl_post_run_analysis.py --stamp 260729143509 --charts
+python stock_analysis\rl_post_run_analysis.py --symbols CRWD,AU -w 4
+python stock_analysis\rl_post_run_analysis.py --stamp 260729183512 --missed-moves --no-charts -s NVDA,AMD,TSLA
+
+rem Any system
+python stock_analysis\post_run_analysis.py --system RL --stamp 260729143509 --charts -w 4
+python stock_analysis\post_run_analysis.py --system BRT --stamp 260729143513 --charts -w 4
+python stock_analysis\post_run_analysis.py --system RS --stamp 260729143513 --charts -w 4
+python stock_analysis\post_run_analysis.py --stamp 260729143509
+python stock_analysis\post_run_analysis.py --closed drive\BRT_Closed_260729143513.csv --no-charts
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--system` | `RL\|BRT\|WPBR\|YH\|MTS\|RS\|IND\|…` (default: auto) |
+| `--stamp` / `-t` | Run id (default: `drive/last_run_ts.txt`) |
+| `--workers` / `-w` | Chart ProcessPool size; **default `-1` → min(4, CPUs)**; `0` = sequential |
+| `--charts` / `--no-charts` | PNGs on by default for this script |
+| `--missed-moves` | **RL/DB only:** heuristic near-miss + blind-spot scan (not DailyRun) |
+| `--missed-min-gain` | Min fwd max-gain % to keep a NEAR_MISS (default 8) |
+| `--missed-blind-min-gain` | Min fwd max-gain % to keep a BLIND_SPOT (default 12) |
+| `--refresh-cheap` | Re-write ONE_LINER / FIT / ImproveHints before HTML |
+| `--symbols` / `-s` | Subset of tickers |
+
+Outputs:
+
+```
+{prefix}_Charts_<ts>/{prefix}_<SYM>_<ts>.png
+{prefix}_SymbolAssessments_<ts>.html
+{prefix}_ImprovePriority_<ts>.html
+{prefix}_MissedMoves_<ts>.csv          # with --missed-moves (RL/DB)
+```
+
+### Missed / almost-taken moves (RL v1)
+
+Optional deep path only (`--missed-moves`). **Not** part of DailyRun.
+
+**What exists today (engine artifacts):**
+
+| Artifact | Scope | Useful for misses? |
+|----------|-------|--------------------|
+| `RL_Watchlist` | **Last bar only** — `NEAR_50_ZONE` / `PENDING_FILTERS` + miss tags (`EXP ATR SLOPE…`) | Live watch, not history |
+| `RL_Scanner` | Last-bar pending fills | Same |
+| Closed / Open / underwater / pivots | Taken trades / structure | Context, not reject log |
+| Historical reject CSV | **None** — AWK/`rocket_rl` do not log every blocked dip | — |
+
+**v1 approach:** replay dip+stack on OHLC+SMAs with Report params; when primary gate fires but secondary gates fail → **NEAR_MISS** (+ forward return / max gain / TARGET-like); when stack+near-dip then a material rally but primary incomplete → **BLIND_SPOT** (“weren’t looking”). Surfaces in SymbolAssessments §6 and ImprovePriority “Why we miss winners”.
+
+**Limits:** heuristic ≠ perfect MarkTen (no full in-position / flush / IND / SPY-TC / entry-window fidelity unless those Report flags are on and SPY is loaded). Confirm candidates on charts / agent review before changing production gates.
+
+## Modules
+
+| Path | Role |
+|------|------|
+| `stock_analysis/rocket_post_analysis.py` | Shared one-liners, FIT, hints, charts (+ workers) |
+| `stock_analysis/rocket_rl_analysis.py` | Thin re-export (backward compatible) |
+| `stock_analysis/post_run_analysis.py` | System-agnostic deep CLI |
+| `stock_analysis/rl_post_run_analysis.py` | RL wrapper (`--system RL`) |
+| `stock_analysis/rl_missed_moves.py` | RL near-miss / blind-spot heuristic (`--missed-moves`) |

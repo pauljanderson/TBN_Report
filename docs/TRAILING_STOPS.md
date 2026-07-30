@@ -1,6 +1,6 @@
 # Trailing stops and stop management — requirements reference
 
-This document explains how stops, targets, and “trailing” behavior work across **Rocket Launcher** (live audit / `portfolio_audit.awk`), **BRT** and **IND** backtests (`rocket_brt.py`), and the **gettarget** live calculator (`gettarget.py`). It is written for operators and developers who need to know which knobs apply where and why results differ between systems.
+This document explains how stops, targets, and “trailing” behavior work across **Rocket Launcher** (live audit / `portfolio_audit.awk`), **BRT** and **IND** backtests (TBN engine: `rocket_tbn.py`), and the **gettarget** live calculator (`gettarget.py`). It is written for operators and developers who need to know which knobs apply where and why results differ between systems. (**TBN** = engine; **BRT** = Break and ReTest system — `docs/TBN_VS_BRT.md`.)
 
 ---
 
@@ -11,13 +11,13 @@ This document explains how stops, targets, and “trailing” behavior work acro
 | **Rocket Launcher (RL)** | `portfolio_audit.awk` | **Profit-gated lock-in** (arm trail after % gain, then fixed stop level) | Step 2 `run_audit.ps1` |
 | **Rocket Launcher 100 (RL100)** | Same AWK | Same pattern, separate params | Same (if `RL100_TOGGLE` on) |
 | **Dive Bomber (DB)** | Same AWK | **No trailing** — fixed stop above entry | Off by default |
-| **BRT whitelist** | `rocket_brt.py` | **Optional gain-based ratchet** (`trailing_stop_increment`); DailyRun **off** | Step 3 — percent stop/target |
-| **IND full universe** | `rocket_brt.py` | Same exit engine as BRT; DailyRun uses **ATR** stops/targets + **ATR schedule**, trailing **off** | Step 4 |
+| **BRT whitelist** | TBN (`rocket_tbn.py`) | **Optional gain-based ratchet** (`trailing_stop_increment`); DailyRun **off** | Step 3 — percent stop/target |
+| **IND full universe** | TBN (`rocket_tbn.py`) | Same exit engine as BRT system; DailyRun uses **ATR** stops/targets + **ATR schedule**, trailing **off** | Step 4 |
 | **Live open positions** | `gettarget.py` | Mirrors **BRT** math (`atr_increment`, `atr_progress`, floors) | Step 6 DailyRun |
 
 **Important:** “Trailing” means different things in RL vs BRT/IND. RL trails by **jumping the stop to a fixed % of entry** after a profit milestone. BRT/IND trail by **adding 1% of entry per N% of peak gain** (when `trailing_stop_increment > 0`).
 
-**BRT and IND share one exit implementation.** IND is not a separate stop engine; it is `rocket_brt.py` with indicator entry filters and (often) ATR-based exits.
+**BRT and IND share one exit implementation on the TBN engine.** IND is not a separate stop engine; it is `rocket_tbn.py` with indicator entry filters and (often) ATR-based exits (legacy shim: `rocket_brt.py`).
 
 ---
 
@@ -32,11 +32,14 @@ On entry (next session open after signal):
 | Field | Default | Meaning |
 |-------|---------|---------|
 | `RL_STOP_PCT` | `0.934` | Initial stop = **signal-day low × 0.934** (~6.6% below that low, not below entry open). |
+| `RL_POST_TARGET_REENTRY_BARS` | `0` (off) | Trading bars after a **TARGET** exit during which a new entry uses `RL_POST_TARGET_STOP_PCT` for the original stop. Alias: `RL_POST_TARGET_REENTRY_DAYS`. **0 = off** (production default). Fill gates (`too_low` / `too_high`) still use `RL_STOP_PCT`, so ladder re-entries still fire. |
+| `RL_POST_TARGET_STOP_PCT` | `0` (off) | Tighter stop multiplier when re-entering within `REENTRY_BARS` after TARGET (e.g. `0.97` ≈ 3% under signal low). Unused when bars=0. |
 | `RL_TARGET_PCT` | `1.20` | Target = **prior session SMA50 × 1.20** (20% above SMA50; target moves with SMA). |
 | `RL_TOO_HIGH` | (varies) | Blocks entry if next open is too far above signal-day low. |
 
 `original_stop` and `original_target` are stored on the closed-trade row for audit.
 
+**Post-TARGET tighter stop (experiment):** Prefer this over a calendar cooldown. Cooldowns that block re-entry kill NTRA-style TARGET ladders (~6 trading days between rungs). Starter grid: `N ∈ {5,10,15}` × `stop_pct ∈ {0.95,0.96,0.97}`; verify NTRA 2019 rung MAE so the tighter stop does not stop them out.
 ### 2.2 RL trailing stops (profit-gated, two tiers)
 
 Controlled by AWK variables (overridable via `run_audit.ps1` `-RLTrailProfit`, etc.):
@@ -91,9 +94,9 @@ Short strategy: fixed `DB_STOP_PCT` (stop **above** entry) and `DB_TARGET_PCT` (
 
 ---
 
-## 3. BRT / IND backtest (`rocket_brt.py`)
+## 3. BRT / IND backtest (TBN: `rocket_tbn.py`)
 
-Single backtest engine. **IND** = same exits + indicator entry gates (`indicator_buy=only`, `min_ind_score`, `sell_ind_diff_below`, etc.).
+Single TBN backtest engine. **IND** = same exits + indicator entry gates (`indicator_buy=only`, `min_ind_score`, `sell_ind_diff_below`, etc.).
 
 ### 3.1 Initial stop and target
 
@@ -178,7 +181,7 @@ Separate from gain-based trailing and the ATR progress floor. Uses a simple movi
 **Examples:**
 
 ```bash
-# Backtest (rocket_brt.py)
+# Backtest (rocket_tbn.py; legacy shim rocket_brt.py)
 -v sma_stop_days=20
 -v sma_stop_days=8
 
@@ -278,7 +281,7 @@ CLI defaults are **per system** (DailyRun step 6):
 
 **Manual entry:** `ACTUAL_ENTRY_PRICE` dict overrides CSV entry price.
 
-**Note:** `gettarget.py` uses **bar index** `entry_i + atr_days` for schedule preview in one code path, while `rocket_brt.py` schedule uses **calendar days**. Treat schedule dates in gettarget as approximate vs backtest when comparing.
+**Note:** `gettarget.py` uses **bar index** `entry_i + atr_days` for schedule preview in one code path, while `rocket_tbn.py` schedule uses **calendar days**. Treat schedule dates in gettarget as approximate vs backtest when comparing.
 
 ---
 
@@ -305,10 +308,12 @@ CLI defaults are **per system** (DailyRun step 6):
 
 | Step | Trailing | Stop / target model |
 |------|----------|---------------------|
-| 2 RL audit | AWK trail params unless passed in `run_audit.ps1` | RL percent + SMA target |
-| 3 BRT | **Off** | Percent stop/target |
-| 4 IND | **Off** | ATR stop/target + 6-day ATR progress rule |
-| 6 gettarget | **On** (`atr_increment=12`) | ATR + progress floor for live book |
+| 3 RL (AWK + Python + compare) | AWK trail params unless passed in `run_audit.ps1` | RL percent + SMA target |
+| 4 BRT | **Off** | Percent stop/target |
+| 5 IND | skipped (deprecated) | — |
+| 6–8 YH / MTS / WPBR | **Off** | Percent stop/target (system bats) |
+| 9 RS | **Off** (`atr_days=0`) | Percent 1.25 / 0.88 (`run_rs.bat`) |
+| 11 gettarget | floors as configured | Percent/ATR per system (incl. RS 1.25/0.88) |
 
 ---
 
@@ -358,7 +363,7 @@ python gettarget.py --atr-stop=3 --atr-target=8 --atr-increment=12 --atr-progres
 |------|------|
 | `stock_analysis/portfolio_audit.awk` | Rocket Launcher, RL100, Dive Bomber exits |
 | `run_audit.ps1` | Runs audit; passes `RL_TRAIL_*` overrides |
-| `stock_analysis/rocket_brt.py` | BRT + IND backtest exits |
+| `stock_analysis/rocket_tbn.py` | TBN engine — BRT + IND backtest exits (shim: `rocket_brt.py`) |
 | `DailyRun.bat` | Steps 2–4 and 6 orchestration |
 | `gettarget.py` | Live stop/target/trailing for open positions |
 | `Copy-LatestRunOutputs.ps1` | Copies latest `RL_*`, `BRT_*`, `IND_*` CSVs |
@@ -368,10 +373,10 @@ python gettarget.py --atr-stop=3 --atr-target=8 --atr-increment=12 --atr-progres
 ## 8. Open questions / known mismatches
 
 1. **RL vs BRT** are different strategies; stop logic is not intended to match.
-2. **gettarget** schedule preview may use bar-count `atr_days` in one place vs **calendar days** in `rocket_brt.py` — verify before relying on `ATRScheduleExitDate` for IND backtests.
+2. **gettarget** schedule preview may use bar-count `atr_days` in one place vs **calendar days** in `rocket_tbn.py` — verify before relying on `ATRScheduleExitDate` for IND backtests.
 3. **Gain trailing** uses fractional `gain_pct / increment` in BRT; **gettarget** uses `int(gain_pct / atr_increment)` — tiny differences possible at boundaries.
 4. Enabling `RL_TRAIL_PROFIT` in audit changes closed history; default `0` means most RL runs have **no** trailing unless you opt in.
 
 ---
 
-*Last aligned to codebase: `DailyRun.bat`, `rocket_brt.py`, `portfolio_audit.awk`, `gettarget.py`.*
+*Last aligned to codebase: `DailyRun.bat`, `rocket_tbn.py` (shim `rocket_brt.py`), `portfolio_audit.awk`, `gettarget.py`.*
