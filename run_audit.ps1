@@ -51,6 +51,12 @@
 .PARAMETER RLTrailStop2
     Optional. -v RL_TRAIL_STOP2=...
 
+.NOTES
+    Optional env (typically set by run_audit.bat for DailyRun / Python parity):
+    RL_ATR_LOW, RL_ATR_HIGH (e.g. off), RL_SLOPE_THRESHOLD (e.g. 0), RL_TOO_HIGH (e.g. 0),
+    RL_DIP_PCT (e.g. 1.041). Passed through as gawk -v when non-empty. Direct ps1 runs without
+    them keep AWK defaults.
+
 .EXAMPLE
     .\run_audit.ps1
     .\run_audit.ps1 -SkipRegressionCheck
@@ -281,6 +287,13 @@ if ($useInputManifest) {
 
 $awkArgList = [System.Collections.Generic.List[string]]::new()
 [void]$awkArgList.Add('-v'); [void]$awkArgList.Add('SMA_QUAL=1')
+# Optional RL gate overrides from env (run_audit.bat sets these to match run_rl.bat production).
+# Unset/empty => portfolio_audit.awk defaults (ATR ~2.44-8.48%, slope 0.0643, too_high 0).
+if (-not [string]::IsNullOrEmpty($env:RL_ATR_LOW)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_ATR_LOW=$($env:RL_ATR_LOW)") }
+if (-not [string]::IsNullOrEmpty($env:RL_ATR_HIGH)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_ATR_HIGH=$($env:RL_ATR_HIGH)") }
+if (-not [string]::IsNullOrEmpty($env:RL_SLOPE_THRESHOLD)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_SLOPE_THRESHOLD=$($env:RL_SLOPE_THRESHOLD)") }
+if (-not [string]::IsNullOrEmpty($env:RL_TOO_HIGH)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TOO_HIGH=$($env:RL_TOO_HIGH)") }
+if (-not [string]::IsNullOrEmpty($env:RL_DIP_PCT)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_DIP_PCT=$($env:RL_DIP_PCT)") }
 if ($RLTrailProfit -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT=$RLTrailProfit") }
 if ($RLTrailStop -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_STOP=$RLTrailStop") }
 if ($RLTrailProfit2 -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT2=$RLTrailProfit2") }

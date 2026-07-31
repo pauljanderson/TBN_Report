@@ -6,7 +6,7 @@ from datetime import datetime
 
 from davey_experiment_common import Arm, REPO, run_jobs, score, write_csv
 
-ROOT = REPO / "drive" / "davey_experiments" / "adx_channel"
+ROOT = REPO / "drive" / "paul_experiments" / "adx_channel"
 COMMON = (
     "entry_mode=adx_channel", "adx_period=15", "adx_max=20", "channel_length=10",
     "pending_stop_bars=1", "stop_order_gap_fill_at_open=true",

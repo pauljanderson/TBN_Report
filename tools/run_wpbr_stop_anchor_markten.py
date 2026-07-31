@@ -2,7 +2,7 @@
 
 Arms: trigger_low (prod default), entry_open, zone_low.
 Parity matches run_wpbr.bat. Never edits run_wpbr.bat.
-Outdir: drive/davey_experiments/wpbr_stop_anchor_markten/
+Outdir: drive/paul_experiments/wpbr_stop_anchor_markten/
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_stop_anchor_markten"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_stop_anchor_markten"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 MARKTEN_LIST = MARKTEN.split(",")
 DEFAULT_ANCHOR = "trigger_low"

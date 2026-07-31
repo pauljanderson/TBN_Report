@@ -8,7 +8,7 @@ from pathlib import Path
 
 from davey_experiment_common import Arm, REPO, run_jobs, score, write_csv
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_stop_only"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_stop_only"
 WPBR_COMMON = (
     "wpbr_zones=true", "brt_zones=false", "yh_zones=false", "vec_zones=false",
     "band_pct=0.015", "strong_pre_pivot_bars=3", "strong_pre_pivot_pct=0.10",

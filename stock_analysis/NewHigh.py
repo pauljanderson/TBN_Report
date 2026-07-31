@@ -494,7 +494,13 @@ def main() -> None:
         print(f"[NewHigh] Scanner: {_scanner_path} ({len(all_scanner)} rows)")
     write_brt_watchlist([], str(out_dir / f"BRT_Watchlist_{ts}.csv"))
     write_brt_short_candidates([], str(out_dir / f"BRT_ShortCandidates_{ts}.csv"))
-    write_brt_summary(all_closed, str(out_dir / f"BRT_Summary_{ts}.csv"))
+    write_brt_summary(
+        all_closed,
+        str(out_dir / f"BRT_Summary_{ts}.csv"),
+        cfg=cfg,
+        tickers=tickers,
+        data_dir=data_dir,
+    )
     write_brt_industry_summary(all_closed, str(out_dir / f"BRT_INDUSTRY_{ts}.csv"))
 
     try:

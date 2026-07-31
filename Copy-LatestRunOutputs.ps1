@@ -9,7 +9,7 @@
     MTS run: latest yyMMddHHmmss from MTS_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv.
     WPBR run: latest yyMMddHHmmss from WPBR_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv
              (falls back to legacy PBR_* filenames if no WPBR_* yet).
-    RS run: latest yyMMddHHmmss from RS_Closed|Open|Scanner|Summary_<ts>.csv.
+    RS run: latest yyMMddHHmmss from RS_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv.
 
     Rocket Launcher / audit: timestamp from drive\last_run_ts.txt (same as portfolio_audit.awk).
 
@@ -19,7 +19,7 @@
       IND_Closed|Open|Scanner|Watchlist|Summary|indicators_while_held|EquityCurve_Aggressive_<indTs>.csv -> IND_LatestRun_*.csv
       MTS_Closed|Open|Scanner|Watchlist|Summary_<mtsTs>.csv  -> MTS_LatestRun_*.csv
       WPBR_Closed|Open|Scanner|Watchlist|Summary_<wpbrTs>.csv  -> WPBR_LatestRun_*.csv
-      RS_Closed|Open|Scanner|Summary_<rsTs>.csv             -> RS_LatestRun_*.csv
+      RS_Closed|Open|Scanner|Watchlist|Summary_<rsTs>.csv   -> RS_LatestRun_*.csv
       RL_Closed|Open|Scanner|Watchlist|Summary_<rlTs>.csv    -> RL_LatestRun_*.csv
 
 .PARAMETER RepoRoot
@@ -77,7 +77,7 @@ $BrtStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $YhStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $MtsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $WpbrStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
-$RsStems = @("Closed", "Open", "Scanner", "Summary")
+$RsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $IndStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary", "indicators_while_held", "EquityCurve_Aggressive")
 $RlStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 

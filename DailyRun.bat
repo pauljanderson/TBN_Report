@@ -7,7 +7,7 @@ cd /d "C:\Users\songg\Downloads\stockresearch"
 
 rem --- Each run_*.bat owns its default symbol list (standalone). Override before calling, e.g.:
 rem     set BRT_SYMBOLS=AAPL,MSFT
-rem     set RL_SYMBOLS=TSLA,AMD
+rem     set RL_SYMBOLS=AMD,NFLX  (default universe lives in run_rl.bat / run_audit.bat)
 rem     set RS_SYMBOLS=NVDA,AVGO
 rem     set RS_TARGET=1.25
 rem     set RS_STOP=0.88
@@ -79,7 +79,7 @@ if errorlevel 1 (
 )
 
 rem --- 1) Update data ---
-echo [1/11] run_update_data>>"%LOG%"
+echo [1/12] run_update_data>>"%LOG%"
 call "%~dp0run_update_data.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
@@ -89,15 +89,15 @@ rem cold miss still builds on the fly. Set WARM_IND=1 before DailyRun to pre-war
 rem Manual one-liner: call run_warm_indicator_cache.bat
 rem Cache is .brt_indicator_cache (INDICATOR_CACHE_VERSION=4); cold miss still builds TC on the fly.
 if /i "%WARM_IND%"=="1" (
-  echo [2/11] run_warm_indicator_cache ^(WARM_IND=1^)>>"%LOG%"
+  echo [2/12] run_warm_indicator_cache ^(WARM_IND=1^)>>"%LOG%"
   call "%~dp0run_warm_indicator_cache.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 ) else (
-  echo [2/11] SKIPPED - run_warm_indicator_cache ^(set WARM_IND=1 to enable^)>>"%LOG%"
+  echo [2/12] SKIPPED - run_warm_indicator_cache ^(set WARM_IND=1 to enable^)>>"%LOG%"
 )
 
 rem --- 3a) Audit (legacy AWK Rocket Launcher) ---
-echo [3/11] run_audit (AWK RL)>>"%LOG%"
+echo [3/12] run_audit (AWK RL)>>"%LOG%"
 call "%~dp0run_audit.bat" -AllowRegression >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_AWK_TS=%%a"
@@ -105,10 +105,10 @@ if not defined RL_AWK_TS (
   echo ERROR: drive\last_run_ts.txt missing after run_audit>>"%LOG%"
   goto :fail
 )
-echo [3/11] AWK RL timestamp: %RL_AWK_TS%>>"%LOG%"
+echo [3/12] AWK RL timestamp: %RL_AWK_TS%>>"%LOG%"
 
 rem --- 3b) Python Rocket Launcher ---
-echo [3/11] run_rl>>"%LOG%"
+echo [3/12] run_rl>>"%LOG%"
 call "%~dp0run_rl.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_PY_TS=%%a"
@@ -116,53 +116,60 @@ if not defined RL_PY_TS (
   echo ERROR: drive\last_run_ts.txt missing after run_rl>>"%LOG%"
   goto :fail
 )
-echo [3/11] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
+echo [3/12] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
 
 rem --- 3c) AWK vs Python RL output parity ---
-echo [3/11] run_rl_compare>>"%LOG%"
+echo [3/12] run_rl_compare>>"%LOG%"
 call "%~dp0run_rl_compare.bat" %RL_AWK_TS% %RL_PY_TS% >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 4) BRT backtest ---
-echo [4/11] run_brt>>"%LOG%"
+rem --- 4) BRT system backtest (Break and ReTest; TBN engine via run_brt.bat → rocket_tbn.py) ---
+echo [4/12] run_brt>>"%LOG%"
 call "%~dp0run_brt.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 5) DEPRECATED: IND indicator-only backtest (manual script retained) ---
-echo [5/11] SKIPPED - run_ind (IND deprecated)>>"%LOG%"
+echo [5/12] SKIPPED - run_ind (IND deprecated)>>"%LOG%"
 
 rem --- 6) YH backtest ---
-echo [6/11] run_yh>>"%LOG%"
+echo [6/12] run_yh>>"%LOG%"
 call "%~dp0run_yh.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 7) MTS backtest ---
-echo [7/11] run_mts>>"%LOG%"
+echo [7/12] run_mts>>"%LOG%"
 call "%~dp0run_mts.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 8) WPBR backtest (parity flags live in run_wpbr.bat: SC-on, stop 0.91, target 1.22, start_date 2016) ---
-echo [8/11] run_wpbr>>"%LOG%"
+rem --- 8) WPBR backtest (Mag9; parity flags in run_wpbr.bat: SC-on, stop 0.91, target 1.22, start_date 2016; AMD out of WPBR) ---
+echo [8/12] run_wpbr>>"%LOG%"
 call "%~dp0run_wpbr.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 9) RS (Relative Strength: SPY_COMPARE>0 + TC Strong) ---
-echo [9/11] run_rs>>"%LOG%"
+echo [9/12] run_rs>>"%LOG%"
 call "%~dp0run_rs.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 10) Copy latest run outputs ---
-echo [10/11] run_copy_latest>>"%LOG%"
+echo [10/12] run_copy_latest>>"%LOG%"
 call "%~dp0run_copy_latest.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 11a) Live stop/target for open positions ---
-echo [11/11] run_gettarget>>"%LOG%"
+rem --- 11) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR)
+rem Disable: set SKIP_RECONCILE_GATE=1  or  set RECONCILE_GATE=0
+rem Docs: drive\paul_experiments\yh_baseline_20260731\RECONCILE_GATE.md
+echo [11/12] run_reconcile_gate>>"%LOG%"
+call "%~dp0run_reconcile_gate.bat" >>"%LOG%" 2>&1
+if errorlevel 1 goto :fail
+
+rem --- 12a) Live stop/target for open positions ---
+echo [12/12] run_gettarget>>"%LOG%"
 call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 11b) Investment report + GitHub Pages ---
-echo [11/11] publish_github_pages>>"%LOG%"
+rem --- 12b) Investment report + GitHub Pages ---
+echo [12/12] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 

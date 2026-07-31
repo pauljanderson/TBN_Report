@@ -72,7 +72,8 @@ AUDIT_COLS_ORDER = (
     + ["Avg_Days_Held", "Median_Days_Held", "P90_Days", "Capital_Days",
        "Profit_Per_Capital_Day", "Ann_ROR"]
     + ["Max_DD", "Losing_Streak", "DD_Per_Trade"]
-    + ["CES_AVG", "CES_Median", "Pct_PNL_Top10", "Pct_PNL_Bottom10", "Max_Positions"]
+    + ["CES_AVG", "CES_Median", "Pct_PNL_Top10", "Pct_PNL_Bottom10", "Max_Positions",
+       "Avg_Positions", "Median_Positions"]
     + ["Score"]
 )
 
@@ -197,6 +198,8 @@ def _metrics_to_row(metrics: dict, param_name: str, param_value) -> dict:
         "Pct_PNL_Top10": num(metrics.get("Pct_PNL_Top10", 0)),
         "Pct_PNL_Bottom10": num(metrics.get("Pct_PNL_Bottom10", 0)),
         "Max_Positions": int(metrics.get("Max_Positions", 1)),
+        "Avg_Positions": num(metrics.get("Avg_Positions", 0)),
+        "Median_Positions": num(metrics.get("Median_Positions", 0)),
     }
 
 

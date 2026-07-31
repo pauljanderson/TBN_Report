@@ -15,9 +15,13 @@ import numpy as np
 import pandas as pd
 
 try:
-    from rocket_rl_config import RLConfig, rl_config_from_brt_cfg
+    from rocket_rl_config import RLConfig, atr_pct_band_passes, rl_config_from_brt_cfg
 except ImportError:
-    from stock_analysis.rocket_rl_config import RLConfig, rl_config_from_brt_cfg  # type: ignore
+    from stock_analysis.rocket_rl_config import (  # type: ignore
+        RLConfig,
+        atr_pct_band_passes,
+        rl_config_from_brt_cfg,
+    )
 
 # AWK constants (portfolio_audit.awk BEGIN)
 SMA_20, SMA_30, SMA_50, SMA_100, SMA_200 = 20, 30, 50, 100, 200
@@ -559,6 +563,187 @@ def _rl_ind_gates_block(
     return False
 
 
+def _rl_spy_int_tc_filters_active(cfg: RLConfig) -> bool:
+    return bool(
+        getattr(cfg, "block_entries_when_spy_int_weak", False)
+        or getattr(cfg, "exit_when_spy_int_turns_weak", False)
+    )
+
+
+def _rl_spy_int_tc_lag(cfg: RLConfig) -> int:
+    try:
+        return max(0, int(getattr(cfg, "spy_int_tc_lag", 1) or 0))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _rl_spy_tc_weak_horizon(cfg: RLConfig) -> str:
+    try:
+        from brt_entry_indicators import normalize_spy_tc_horizon
+    except ImportError:
+        from stock_analysis.brt_entry_indicators import normalize_spy_tc_horizon  # type: ignore
+    return normalize_spy_tc_horizon(getattr(cfg, "spy_tc_weak_horizon", "int"))
+
+
+def _rl_spy_tc_weak_exit_type(cfg: RLConfig) -> str:
+    hz = _rl_spy_tc_weak_horizon(cfg)
+    return {
+        "short": "SPY_SHORT_TC_WEAK_EXIT",
+        "int": "SPY_INT_TC_WEAK_EXIT",
+        "long": "SPY_LONG_TC_WEAK_EXIT",
+    }.get(hz, "SPY_INT_TC_WEAK_EXIT")
+
+
+def _build_rl_spy_tc_lookup(cfg: RLConfig, spy_df: Optional[pd.DataFrame]) -> Any:
+    """SPY TC outlook lookup when lag-1 entry/exit filters are on (horizon from cfg)."""
+    if not _rl_spy_int_tc_filters_active(cfg) or spy_df is None or spy_df.empty:
+        return None
+    try:
+        from brt_entry_indicators import build_spy_tc_outlook_by_date
+    except ImportError:
+        from stock_analysis.brt_entry_indicators import build_spy_tc_outlook_by_date  # type: ignore
+    cache_dir = str(getattr(cfg, "indicator_cache_dir", "") or "").strip() or None
+    use_cache = bool(getattr(cfg, "indicator_cache", True))
+    return build_spy_tc_outlook_by_date(
+        spy_df,
+        horizon=_rl_spy_tc_weak_horizon(cfg),
+        cache_dir=cache_dir,
+        use_cache=use_cache,
+    )
+
+
+def _rl_block_entries_spy_int_weak(cfg: RLConfig, spy_tc_lookup: Any, trigger_ymd: str) -> bool:
+    """True when block_entries_when_spy_int_weak rejects trigger bar T (lagged Weak / missing).
+
+    Pass trigger/signal date T — not fill/entry date T+1. Default lag=1 → outlook[T-1].
+    """
+    if not bool(getattr(cfg, "block_entries_when_spy_int_weak", False)):
+        return False
+    if spy_tc_lookup is None:
+        return True
+    lag = _rl_spy_int_tc_lag(cfg)
+    if hasattr(spy_tc_lookup, "at_date_lagged"):
+        outlook = spy_tc_lookup.at_date_lagged(trigger_ymd, lag)
+    else:
+        outlook = spy_tc_lookup.at_date(trigger_ymd) if lag <= 0 else None
+    if outlook is None:
+        return True
+    return str(outlook).strip().lower() == "weak"
+
+
+_RL_POST_TARGET_MODES = frozenset({"stop_loss", "min_stack", "under_sma_limit", "none"})
+
+
+def _rl_post_target_reentry_mode(cfg: RLConfig) -> str:
+    """Normalized post-TARGET re-entry mode (default stop_loss)."""
+    raw = str(getattr(cfg, "rl_post_target_reentry_mode", "stop_loss") or "stop_loss").strip().lower()
+    if raw in ("", "off"):
+        return "stop_loss"
+    if raw in _RL_POST_TARGET_MODES:
+        return raw
+    return "stop_loss"
+
+
+def _rl_in_post_target_window(
+    cfg: RLConfig,
+    *,
+    last_exit_idx: int,
+    last_exit_was_target: bool,
+    entry_idx: int,
+) -> bool:
+    """True when bars>0 and prior TARGET exit is within reentry_bars of fill index."""
+    bars = int(getattr(cfg, "rl_post_target_reentry_bars", 0) or 0)
+    return (
+        bars > 0
+        and last_exit_was_target
+        and last_exit_idx >= 0
+        and (entry_idx - last_exit_idx) <= bars
+    )
+
+
+def _rl_post_target_blocks_entry(
+    cfg: RLConfig,
+    *,
+    last_exit_idx: int,
+    last_exit_was_target: bool,
+    entry_idx: int,
+    close: float,
+    sma20: float,
+    sma50: float,
+) -> bool:
+    """True when post-TARGET policy should block this re-entry.
+
+    Quality checks (min_stack / under_sma_limit) use trigger/signal bar close & SMAs.
+    Modes are mutually exclusive; ``stop_loss`` never blocks here.
+    """
+    if not _rl_in_post_target_window(
+        cfg,
+        last_exit_idx=last_exit_idx,
+        last_exit_was_target=last_exit_was_target,
+        entry_idx=entry_idx,
+    ):
+        return False
+    mode = _rl_post_target_reentry_mode(cfg)
+    if mode == "stop_loss":
+        return False
+    if mode == "none":
+        return True
+    if mode == "min_stack":
+        min_stack = float(getattr(cfg, "rl_post_target_min_stack", 0.05) or 0.0)
+        if not (np.isfinite(sma20) and np.isfinite(sma50) and sma50 > 0):
+            return True
+        return (float(sma20) / float(sma50) - 1.0) < min_stack
+    if mode == "under_sma_limit":
+        limit = float(getattr(cfg, "rl_post_target_under_sma20", 0.03) or 0.0)
+        if not (np.isfinite(sma20) and np.isfinite(close) and sma20 > 0):
+            return True
+        # Reject if close is deeper under SMA20 than limit:
+        # close < SMA20 × (1 − limit) ⇔ (SMA20 − close) / SMA20 > limit
+        return float(close) < float(sma20) * (1.0 - limit)
+    return False
+
+
+def _rl_effective_stop_pct(
+    cfg: RLConfig,
+    *,
+    last_exit_idx: int,
+    last_exit_was_target: bool,
+    entry_idx: int,
+) -> float:
+    """Stop multiplier for original stop at entry.
+
+    When ``rl_post_target_reentry_bars`` > 0, mode is ``stop_loss``, and
+    ``rl_post_target_stop_pct`` > 0, the prior closed trade exited TARGET, and
+    trading bars from exit bar to entry fill are ≤ N, use the tighter post-TARGET
+    stop. Fill gates still use ``rl_stop_pct``. Other modes never change the stop.
+    """
+    post_pct = float(getattr(cfg, "rl_post_target_stop_pct", 0.0) or 0.0)
+    if (
+        post_pct > 0
+        and _rl_post_target_reentry_mode(cfg) == "stop_loss"
+        and _rl_in_post_target_window(
+            cfg,
+            last_exit_idx=last_exit_idx,
+            last_exit_was_target=last_exit_was_target,
+            entry_idx=entry_idx,
+        )
+    ):
+        return post_pct
+    return float(cfg.rl_stop_pct)
+
+
+def _rl_exit_spy_int_turns_weak(cfg: RLConfig, spy_tc_lookup: Any, decision_ymd: str) -> bool:
+    """True when exit_when_spy_int_turns_weak should fire at day D open (lag-1 as of D)."""
+    if not bool(getattr(cfg, "exit_when_spy_int_turns_weak", False)):
+        return False
+    if spy_tc_lookup is None:
+        return False
+    lag = _rl_spy_int_tc_lag(cfg)
+    if hasattr(spy_tc_lookup, "turns_weak_at_date"):
+        return bool(spy_tc_lookup.turns_weak_at_date(decision_ymd, lag))
+    return False
+
+
 def run_symbol_rl(
     symbol: str,
     df: pd.DataFrame,
@@ -566,6 +751,7 @@ def run_symbol_rl(
     spy_maps: Optional[dict[str, dict[str, float]]] = None,
     *,
     flush_trigger: Optional[dict[str, int]] = None,
+    spy_tc_lookup: Any = None,
     record_closes: bool = True,
     emit_last_bar_extras: bool = True,
     track_daily_pnl: bool = False,
@@ -635,6 +821,9 @@ def run_symbol_rl(
     partial_date = ""
     partial_amt = 0.0
     m_days = [0] * 6
+    # Post-TARGET tighter stop: prior closed trade exit bar / whether it was TARGET.
+    last_exit_idx = -1
+    last_exit_was_target = False
 
     # Entry snapshot fields
     snap: dict[str, Any] = {}
@@ -748,7 +937,17 @@ def run_symbol_rl(
             rl_sell = 0.0
 
             if (
-                cfg.rl_flush_days > 0
+                bool(getattr(cfg, "exit_when_spy_int_turns_weak", False))
+                and iso != entry_iso
+                and _rl_exit_spy_int_turns_weak(cfg, spy_tc_lookup, iso)
+            ):
+                execute_exit = 1
+                exit_type = _rl_spy_tc_weak_exit_type(cfg)
+                rl_sell = o[idx]
+
+            if (
+                execute_exit == 0
+                and cfg.rl_flush_days > 0
                 and flush_trigger is not None
                 and flush_trigger.get(iso, 0) == 1
                 and iso != entry_iso
@@ -833,7 +1032,12 @@ def run_symbol_rl(
                         rl_sell = entry_price * (1 + cfg.rl_exit_percent)
                 elif exit_type == "TARGET":
                     rl_sell = rl_target if rl_target > o[idx] else o[idx]
-                elif exit_type == "FLUSH_EXIT":
+                elif exit_type in (
+                    "FLUSH_EXIT",
+                    "SPY_INT_TC_WEAK_EXIT",
+                    "SPY_SHORT_TC_WEAK_EXIT",
+                    "SPY_LONG_TC_WEAK_EXIT",
+                ):
                     rl_sell = o[idx]
                 else:
                     rl_sell = rl_stop
@@ -936,6 +1140,8 @@ def run_symbol_rl(
                         trigger_vol=snap.get("trigger_vol", 0.0),
                         )
                     )
+                last_exit_idx = idx
+                last_exit_was_target = exit_type == "TARGET"
                 rl_inv = 0.0
                 initial_shares = 0.0
                 rl_max_p = rl_min_p = 0.0
@@ -1035,7 +1241,9 @@ def run_symbol_rl(
                 next_open = o[next_idx] if next_idx < n else 0.0
                 atr_vol = atr_rolling / signal_open if signal_open > 0 else 0.0
                 atr_inclusion = (
-                    cfg.rl_atr_low_percent <= atr_vol <= cfg.rl_atr_high_percent
+                    atr_pct_band_passes(
+                        atr_vol, cfg.rl_atr_low_percent, cfg.rl_atr_high_percent
+                    )
                     and atr_rolling < cfg.rl_atr_high_value
                     and signal_open >= cfg.rl_low_price
                 )
@@ -1084,10 +1292,33 @@ def run_symbol_rl(
                     if next_iso and not _entry_date_allowed(next_iso, entry_start, entry_end):
                         filters_ok = False
 
+                # SPY INT Weak block on trigger bar (iso / idx), lag-1 — not fill day next_iso.
+                if filters_ok and iso and _rl_block_entries_spy_int_weak(cfg, spy_tc_lookup, iso):
+                    filters_ok = False
+
+                # Post-TARGET re-entry quality / cooldown (modes other than stop_loss).
+                if filters_ok and _rl_post_target_blocks_entry(
+                    cfg,
+                    last_exit_idx=last_exit_idx,
+                    last_exit_was_target=last_exit_was_target,
+                    entry_idx=next_idx,
+                    close=float(c[idx]),
+                    sma20=s20,
+                    sma50=s50,
+                ):
+                    filters_ok = False
+
                 if emit_last_bar_extras and is_last_bar and filters_ok:
                     scan_tgt = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 and y_sma > 0 else 0.0
-                    stop_lv = l[idx] * cfg.rl_stop_pct
-                    th_line = stop_lv * cfg.rl_too_high
+                    scan_stop_pct = _rl_effective_stop_pct(
+                        cfg,
+                        last_exit_idx=last_exit_idx,
+                        last_exit_was_target=last_exit_was_target,
+                        entry_idx=next_idx,
+                    )
+                    stop_lv = l[idx] * scan_stop_pct
+                    # too_high line stays on baseline rl_stop_pct (fill gate unchanged).
+                    th_line = (l[idx] * cfg.rl_stop_pct) * cfg.rl_too_high
                     nxop = next_open if next_open > 0 else 0.0
                     scanner_row = RLScannerRow(
                         symbol=symbol,
@@ -1107,7 +1338,13 @@ def run_symbol_rl(
                     entry_iso = next_iso
                     entry_price = float(o[next_idx])
                     entry_idx = j + 1
-                    rl_stop = l[idx] * cfg.rl_stop_pct
+                    stop_pct = _rl_effective_stop_pct(
+                        cfg,
+                        last_exit_idx=last_exit_idx,
+                        last_exit_was_target=last_exit_was_target,
+                        entry_idx=next_idx,
+                    )
+                    rl_stop = l[idx] * stop_pct
                     original_stop = rl_stop
                     original_target = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 else 0.0
                     rl_trail_active = 0
@@ -1233,12 +1470,23 @@ def _process_rl_symbol(
         dict[str, Any],
         Optional[dict],
         Optional[dict[str, int]],
+        Any,
         bool,
         bool,
         bool,
     ],
 ) -> RLSymbolResult:
-    sym, df, cfg_d, spy_maps, flush_trigger, record_closes, emit_last_bar_extras, track_daily_pnl = args
+    (
+        sym,
+        df,
+        cfg_d,
+        spy_maps,
+        flush_trigger,
+        spy_tc_lookup,
+        record_closes,
+        emit_last_bar_extras,
+        track_daily_pnl,
+    ) = args
     cfg = _rl_cfg_from_dict(cfg_d)
     return run_symbol_rl(
         sym,
@@ -1246,6 +1494,7 @@ def _process_rl_symbol(
         cfg,
         spy_maps=spy_maps,
         flush_trigger=flush_trigger,
+        spy_tc_lookup=spy_tc_lookup,
         record_closes=record_closes,
         emit_last_bar_extras=emit_last_bar_extras,
         track_daily_pnl=track_daily_pnl,
@@ -1292,6 +1541,14 @@ def run_rl_backtest_batch(
 ) -> tuple[list[RLClosedRow], list[RLOpenRow], list[RLScannerRow], list[RLWatchRow]]:
     spy_maps = _prepare_spy_maps(spy_df) if spy_df is not None and not spy_df.empty else None
     cfg_d = _rl_cfg_dict(cfg)
+    spy_tc_lookup = _build_rl_spy_tc_lookup(cfg, spy_df)
+    if spy_tc_lookup is not None:
+        print(
+            f"[RL] SPY TC Weak filters: horizon={_rl_spy_tc_weak_horizon(cfg)} "
+            f"block_entries={bool(cfg.block_entries_when_spy_int_weak)} "
+            f"exit_on_weak={bool(cfg.exit_when_spy_int_turns_weak)} lag={_rl_spy_int_tc_lag(cfg)}",
+            flush=True,
+        )
     base_tasks: list[tuple[str, pd.DataFrame]] = []
     for sym in symbols:
         df = tickers.get(sym)
@@ -1304,7 +1561,8 @@ def run_rl_backtest_batch(
     flush_trigger: Optional[dict[str, int]] = None
     if cfg.rl_flush_days > 0:
         pass1_tasks = [
-            (sym, df, cfg_d, spy_maps, None, False, False, True) for sym, df in base_tasks
+            (sym, df, cfg_d, spy_maps, None, spy_tc_lookup, False, False, True)
+            for sym, df in base_tasks
         ]
         pass1 = _run_symbol_tasks(pass1_tasks, workers)
         agg_realized = _merge_daily_maps([r.daily_realized for r in pass1])
@@ -1320,6 +1578,7 @@ def run_rl_backtest_batch(
             cfg_d,
             spy_maps,
             flush_trigger,
+            spy_tc_lookup,
             True,
             True,
             False,
@@ -1423,6 +1682,7 @@ def run_rl_from_brt_main(
     workers: int,
     spy_df: Optional[pd.DataFrame] = None,
     drive_link: str = "",
+    no_yfinance: bool = False,
 ) -> int:
     rl_cfg = rl_config_from_brt_cfg(cfg)
     if hasattr(cfg, "rl_cash"):
@@ -1444,6 +1704,22 @@ def run_rl_from_brt_main(
     _ee = str(getattr(rl_cfg, "entry_end_date", "") or "").strip()
     if _es or _ee:
         print(f"[RL] Entry date window: start={_es or '(none)'} end={_ee or '(none)'}", flush=True)
+
+    # SPY INT TC filters need SPY OHLC; load when parent did not pass spy_df.
+    if spy_df is None and _rl_spy_int_tc_filters_active(rl_cfg):
+        spy_df = tickers.get("SPY")
+        if (spy_df is None or spy_df.empty) and load_symbol_fn is not None:
+            try:
+                spy_df = load_symbol_fn("SPY", data_dir)
+            except Exception:
+                spy_df = None
+        if spy_df is None or (hasattr(spy_df, "empty") and spy_df.empty):
+            print(
+                "[RL] WARNING: SPY INT TC filters on but SPY data unavailable — "
+                "block_entries will reject all fills; exit_on_weak will not fire.",
+                flush=True,
+            )
+
     closed, open_rows, scanner_rows, watch_rows = run_rl_backtest_batch(
         ticker_list,
         tickers,
@@ -1477,5 +1753,7 @@ def run_rl_from_brt_main(
         open_path=paths.get("open"),
         drive_link=drive_link,
         cash_per_trade=float(rl_cfg.rl_cash),
+        no_yfinance=bool(no_yfinance),
+        yfinance_workers=workers if workers and workers > 0 else None,
     )
     return 0

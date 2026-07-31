@@ -82,6 +82,40 @@ def _coerce_object_numeric(s: pd.Series) -> pd.Series | None:
     return None
 
 
+_CORR_HEADER_COLS = ["Variable", "R_PNL_PCT", "R_ANN_ROR_PCT", "R_POST_ENTRY_GAIN_HIT", "R_Total"]
+_PAIRS_HEADER_COLS = [
+    "Var_A",
+    "Var_B",
+    "Combo",
+    "N",
+    "R_PNL_PCT",
+    "R_ANN_ROR_PCT",
+    "R_POST_ENTRY_GAIN_HIT",
+    "R_Total",
+    "R_Total_A",
+    "R_Total_B",
+    "Synergy_vs_best_single",
+]
+_REF_HEADER_COLS = ["Variable", "Mean", "Std"]
+
+
+def _write_rl_correlation_stubs(output_csv_path: str) -> None:
+    """Header-only Correlation / Pairs / ReferenceStats for 0-trade (or <2-row) runs."""
+    out = Path(output_csv_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(columns=_CORR_HEADER_COLS).to_csv(out, index=False)
+
+    m = re.match(r"^RL_Correlation_(.+)\.csv$", out.name, re.I)
+    if m:
+        ref_path = out.parent / f"RL_ReferenceStats_{m.group(1)}.csv"
+    else:
+        ref_path = out.parent / "RL_ReferenceStats.csv"
+    pd.DataFrame(columns=_REF_HEADER_COLS).to_csv(ref_path, index=False)
+
+    pairs_path = out.with_name(out.name.replace("_Correlation_", "_Correlation_Pairs_", 1))
+    pd.DataFrame(columns=_PAIRS_HEADER_COLS).to_csv(pairs_path, index=False)
+
+
 def run_rl_correlation_report(closed_csv_path: str, output_csv_path: str) -> None:
     path = Path(closed_csv_path)
     if not path.exists():
@@ -89,15 +123,21 @@ def run_rl_correlation_report(closed_csv_path: str, output_csv_path: str) -> Non
     df = pd.read_csv(path, low_memory=False)
     df.columns = [str(c).strip() for c in df.columns]
     if len(df) < 2:
+        _write_rl_correlation_stubs(output_csv_path)
         return
     if _COL_PNL not in df.columns:
-        print(f"[correlate_rl_closed] Missing {_COL_PNL!r} in {path}; skip.", file=sys.stderr)
+        print(
+            f"[correlate_rl_closed] Missing {_COL_PNL!r} in {path}; writing header-only stubs.",
+            file=sys.stderr,
+        )
+        _write_rl_correlation_stubs(output_csv_path)
         return
 
     work = df.copy()
     work["PNL_PCT"] = work[_COL_PNL].map(_parse_pct)
     work = work.dropna(subset=["PNL_PCT"])
     if len(work) < 2:
+        _write_rl_correlation_stubs(output_csv_path)
         return
 
     if _COL_ANN in work.columns:

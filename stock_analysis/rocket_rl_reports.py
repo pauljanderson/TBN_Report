@@ -19,6 +19,8 @@ def write_rl_post_reports(
     open_path: Optional[Path] = None,
     drive_link: str = "",
     cash_per_trade: Optional[float] = None,
+    no_yfinance: bool = False,
+    yfinance_workers: Optional[int] = None,
 ) -> None:
     """Emit Summary, EquityCurve/Meta, Correlation/Pairs, underwater, and Audit for an RL run."""
     if not closed_path.is_file():
@@ -42,30 +44,36 @@ def write_rl_post_reports(
         from rocket_brt import (
             HAS_EQUITY_METRICS,
             _apply_report_dollar_scale_to_trades,
+            _aggressive_sim_margin_utilization,
             _compute_equity_metrics,
-            _effective_margin_utilization,
             _enrich_post_entry_gain_hit,
             _enrich_trades_entry_indicators,
+            _enrich_trades_yfinance,
             _generate_underwater_report,
             _normalize_aggressive_sell,
             _write_brt_equity_canonical_outputs,
             compute_metrics,
             write_brt_audit_report,
+            write_brt_industry_summary,
+            write_brt_report,
             write_brt_summary,
         )
     except ImportError:
         from stock_analysis.rocket_brt import (  # type: ignore[no-redef]
             HAS_EQUITY_METRICS,
             _apply_report_dollar_scale_to_trades,
+            _aggressive_sim_margin_utilization,
             _compute_equity_metrics,
-            _effective_margin_utilization,
             _enrich_post_entry_gain_hit,
             _enrich_trades_entry_indicators,
+            _enrich_trades_yfinance,
             _generate_underwater_report,
             _normalize_aggressive_sell,
             _write_brt_equity_canonical_outputs,
             compute_metrics,
             write_brt_audit_report,
+            write_brt_industry_summary,
+            write_brt_report,
             write_brt_summary,
         )
 
@@ -111,10 +119,30 @@ def write_rl_post_reports(
         _enrich_post_entry_gain_hit(closed + open_list, tickers, report_cfg)
         _enrich_trades_entry_indicators(closed + open_list, tickers, report_cfg)
 
-    if closed:
-        summary_path = out_dir / f"{file_prefix}_Summary_{ts}.csv"
-        write_brt_summary(closed, str(summary_path))
-        print(f"[RL reports] Wrote {summary_path.name}")
+    # Match BRT write_all_outputs: yfinance fills CURRENT_MARKET_CAP / SECTOR / INDUSTRY on Summary
+    # (and industry concentration on Report/Audit). rl_mode returns before BRT's post-run enrich.
+    if no_yfinance:
+        print("[RL reports] yfinance enrichment skipped (no_yfinance=True).", flush=True)
+    elif closed or open_list:
+        print(
+            "[RL reports] yfinance enrichment (market cap / sector / industry)...",
+            flush=True,
+        )
+        _enrich_trades_yfinance(
+            closed,
+            open_list,
+            yfinance_workers=yfinance_workers,
+        )
+
+    # Always emit Summary (header-only when 0 closed trades), matching BRT write_all_outputs.
+    # FIRST_DATA_DATE / AVG_TRADES_PER_YEAR use loaded tickers + cfg.entry_start_date / backtest_end_date.
+    # Pass report_cfg so SHEET_PNL uses post-scale brt_cash (same notional as Report/Audit Total_PNL).
+    summary_path = out_dir / f"{file_prefix}_Summary_{ts}.csv"
+    write_brt_summary(closed, str(summary_path), cfg=report_cfg, tickers=tickers)
+    print(f"[RL reports] Wrote {summary_path.name}")
+    industry_path = out_dir / f"{file_prefix}_INDUSTRY_{ts}.csv"
+    write_brt_industry_summary(closed, str(industry_path))
+    print(f"[RL reports] Wrote {industry_path.name}")
 
     metrics = dict(compute_metrics(closed, report_cfg))
 
@@ -140,7 +168,7 @@ def write_rl_post_reports(
                     report_cfg.aggressive_avg_positions if report_cfg.aggressive_avg_positions > 0 else None
                 ),
                 aggressive_sizing_equity_cap=report_cfg.aggressive_sizing_equity_cap,
-                margin_utilization=_effective_margin_utilization(report_cfg),
+                margin_utilization=_aggressive_sim_margin_utilization(report_cfg),
                 aggressive_sell=_normalize_aggressive_sell(getattr(report_cfg, "aggressive_sell", "false")),
                 skip_passive_mtm_for_aggressive=bool(
                     getattr(report_cfg, "equity_fast_aggressive", False) and report_cfg.aggressive
@@ -169,7 +197,12 @@ def write_rl_post_reports(
             _write_brt_equity_canonical_outputs(out_dir, ts, equity, file_prefix)
             if _generate_underwater_report is not None:
                 eq_dates = equity.get("equity_dates") or []
-                eq_vals = equity.get("equity_values") or []
+                eq_reg = equity.get("equity_values_regular") or []
+                eq_vals = (
+                    eq_reg
+                    if eq_reg and len(eq_reg) == len(eq_dates)
+                    else (equity.get("equity_values") or [])
+                )
                 if eq_dates and eq_vals and len(eq_dates) == len(eq_vals):
                     try:
                         uw_df = pd.DataFrame({"Date": eq_dates, "Equity": eq_vals})
@@ -185,6 +218,15 @@ def write_rl_post_reports(
         except Exception as e:
             print(f"[RL reports] Equity metrics failed: {e}", file=sys.stderr)
 
+    write_brt_report(
+        report_cfg,
+        metrics,
+        str(out_dir),
+        ts,
+        drive_link=drive_link,
+        file_prefix=file_prefix,
+    )
+    print(f"[RL reports] Wrote {file_prefix}_Report_{ts}.csv")
     write_brt_audit_report(
         report_cfg,
         metrics,
@@ -210,3 +252,25 @@ def write_rl_post_reports(
                 print(f"[RL reports] Wrote {pairs_path.name}")
     except Exception as e:
         print(f"[RL reports] Correlation report skipped: {e}", file=sys.stderr)
+
+    # Cheap DailyRun enrichments only (ONE_LINER / FIT / ImproveHints). Charts + deep HTML:
+    # python stock_analysis/post_run_analysis.py --system RL --stamp <ts> --charts -w 4
+    try:
+        from rocket_post_analysis import write_rl_analysis_artifacts
+    except ImportError:
+        try:
+            from rocket_rl_analysis import write_rl_analysis_artifacts
+        except ImportError:
+            from stock_analysis.rocket_post_analysis import write_rl_analysis_artifacts  # type: ignore[no-redef]
+    try:
+        write_rl_analysis_artifacts(
+            cfg=report_cfg,
+            tickers=tickers or {},
+            output_dir=out_dir,
+            ts=ts,
+            closed_path=Path(closed_path),
+            summary_path=summary_path,
+            open_path=Path(open_path) if open_path else None,
+        )
+    except Exception as e:
+        print(f"[RL reports] Analysis artifacts skipped: {e}", file=sys.stderr)

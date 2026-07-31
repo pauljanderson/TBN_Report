@@ -6,7 +6,7 @@ Same scoring model as IND_Optimizer (baseline-relative score = 100):
   win/loss ratio 10%, losing streak 10%, p90 days 5%.
 
 Hard gates: >= MIN_TRADES closed trades, Max_DD <= MAX_DRAWDOWN_PCT.
-Default universe: data/rl_gold_universe.txt (75 symbols, AWK parity set).
+Default universe: data/rl_gold_universe.txt (synced with run_rl.bat RL_SYMBOLS).
 """
 from __future__ import annotations
 
@@ -64,11 +64,11 @@ W_P90_DAYS = 5
 # AWK portfolio_audit.awk BEGIN defaults (sequential one-at-a-time grid)
 current_best_params: dict[str, Any] = {
     "rl_cash": 47_500.0,
-    "rl_dip_pct": 1.024,
+    "rl_dip_pct": 1.041,
     "rl_50_sma_lookback": 4,
     "rl_stop_pct": 0.934,
     "rl_target_pct": 1.20,
-    "rl_too_high": 1.14,
+    "rl_too_high": 0.0,
     "rl_expansion": 1.163,
     "rl_acc_min": 8,
     "rl_acc_count": 10,
@@ -92,7 +92,7 @@ current_best_params: dict[str, Any] = {
 RL_CFG_COLS = list(current_best_params.keys())
 
 OPTIMIZATION_PLAN: dict[str, tuple[Any, ...]] = {
-    "rl_dip_pct": (1.018, 1.020, 1.022, 1.024, 1.026, 1.028),
+    "rl_dip_pct": (1.024, 1.028, 1.032, 1.036, 1.041, 1.045),
     "rl_stop_pct": (0.920, 0.927, 0.934, 0.940, 0.945),
     "rl_target_pct": (1.15, 1.18, 1.20, 1.22, 1.25),
     "rl_expansion": (1.14, 1.15, 1.163, 1.17, 1.18),

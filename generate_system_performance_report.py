@@ -20,7 +20,7 @@ DEFAULT_DRIVE = ROOT / "Drive"
 DEFAULT_OUTPUT = ROOT / "docs" / "system_performance.html"
 ET = ZoneInfo("America/New_York")
 
-ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH")
+ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS")
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
 }
@@ -30,6 +30,7 @@ COLORS = {
     "MTS": "#0891b2",
     "WPBR": "#d97706",
     "YH": "#16a34a",
+    "RS": "#db2777",
     "Equal capital": "#2563eb",
     "Risk-balanced": "#d97706",
     "Recommended": "#0f766e",
@@ -103,7 +104,7 @@ def _date(raw: object) -> Optional[date]:
 def resolve_sources(drive: Path) -> dict[str, Optional[Path]]:
     """Select one closed file per logical system, avoiding PBR/WPBR alias duplication."""
     out: dict[str, Optional[Path]] = {}
-    for system in ("BRT", "MTS", "YH"):
+    for system in ("BRT", "MTS", "YH", "RS"):
         path = drive / f"{system}_LatestRun_Closed.csv"
         out[system] = path if path.is_file() else None
 
@@ -704,7 +705,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         for s in ACTIVE_SYSTEMS
     }
 
-    equal = {s: 0.20 for s in ACTIVE_SYSTEMS}
+    equal = {s: 1.0 / len(ACTIVE_SYSTEMS) for s in ACTIVE_SYSTEMS}
     sleeve_dd: dict[str, float] = {}
     for system in ACTIVE_SYSTEMS:
         sleeve_curve = pd.DataFrame(
@@ -866,7 +867,7 @@ section{{padding:22px;margin:18px 0}} .chart{{padding:16px;margin:18px 0}} .char
 <div class="card"><span>Max drawdown</span><strong>{_pct(rec['max_dd_pct'])}</strong></div><div class="card"><span>SPY return</span><strong>{_pct(spy_stats['total_return'], sign=True)}</strong></div>
 </div>
 <section id="allocation"><h2>Allocation scenarios</h2>
-<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of five full standalone accounts is not used as a portfolio result.</p>
+<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of full standalone accounts is not used as a portfolio result.</p>
 <div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Ending equity</th><th>Total return</th><th>CAGR</th><th>Max DD</th><th>PF</th><th>Ann. vol</th><th>Sharpe</th><th>Worst year</th><th>Peak usage</th></tr></thead><tbody>{''.join(scenario_rows)}</tbody></table></div>
 <div class="chart">{benchmark_chart}</div>
 <h3>Dollar allocations</h3><div class="table-wrap"><table><thead><tr><th>System</th><th>Equal capital</th><th>Risk-balanced</th><th>Recommended</th><th>Standalone basis</th><th>Avg monthly corr.</th></tr></thead><tbody>{''.join(allocation_rows)}</tbody></table></div>
@@ -879,7 +880,7 @@ section{{padding:22px;margin:18px 0}} .chart{{padding:16px;margin:18px 0}} .char
 {sections}
 <section id="method"><h2>Methodology &amp; caveats</h2><ul>
 <li><strong>Capital basis:</strong> position notional is inferred as |dollar P&amp;L ÷ percentage P&amp;L|; RL uses its native $47,500 sizing. Each denominator is that system's observed peak overlapping gross notional. Scaling allocation ÷ basis preserves trade economics and proportionally reduces all simultaneous positions when a sleeve is smaller than its standalone basis.</li>
-<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among BRT, RL, MTS, WPBR, and YH. Only trades opened and closed inside it are used. SPY is aligned to available trading sessions inside those same dates.</li>
+<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(ACTIVE_SYSTEMS)}. Only trades opened and closed inside it are used. SPY is aligned to available trading sessions inside those same dates.</li>
 <li><strong>Benchmark:</strong> local <code>{html.escape(str(spy_source.relative_to(ROOT)))}</code>, using {html.escape(spy_label)}. SPY equity is normalized to the same $500,000.</li>
 <li><strong>Risk-balanced:</strong> inverse realized drawdown by sleeve in the common period, constrained to 10% minimum and 30% maximum. <strong>Recommended:</strong> 55% risk-balance anchor, 25% low-correlation diversification, and 20% capped PF robustness; the same guardrails apply.</li>
 <li><strong>Drawdown/volatility limitation:</strong> portfolio P&amp;L is recorded on trade exit dates because compatible mark-to-market curves are not available for every sleeve over the common period. This can materially understate intratrade drawdown and makes volatility/Sharpe lumpy; Sharpe is descriptive, zero risk-free rate, and not a forecast.</li>

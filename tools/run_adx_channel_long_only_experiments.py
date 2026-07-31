@@ -16,7 +16,7 @@ import pandas as pd
 
 from davey_experiment_common import DATA_DIR, Arm, REPO, run_jobs, score, write_csv
 
-ROOT = REPO / "drive" / "davey_experiments" / "adx_channel_long_only"
+ROOT = REPO / "drive" / "paul_experiments" / "adx_channel_long_only"
 INITIAL_CAPITAL = 500_000.0
 
 # Investable liquid list — same symbols as run_brt.bat (≈42 names). Documented in comparison.md.

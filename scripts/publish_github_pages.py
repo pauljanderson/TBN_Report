@@ -106,8 +106,12 @@ def generate_convergence_report(drive: Path) -> Path:
         sys.path.insert(0, str(ROOT))
     from generate_system_convergence_report import build_report
 
-    _, out_html, cross, _same = build_report(_resolve_drive(drive))
-    print(f"[pages] Convergence report: {len(cross)} cross-system overlaps -> {out_html}")
+    _, out_html, cross, _same, multi_open = build_report(_resolve_drive(drive))
+    multi_n = 0 if multi_open is None or multi_open.empty else int(multi_open["SYMBOL"].nunique())
+    print(
+        f"[pages] Convergence report: {len(cross)} cross-system overlaps, "
+        f"{multi_n} multi-system opens -> {out_html}"
+    )
     return out_html
 
 

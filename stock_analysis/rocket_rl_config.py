@@ -2,7 +2,76 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
+
+# ATR% band bounds: these tokens (case-insensitive) disable that bound.
+# Empty string is treated as off only when the key is explicitly set (Python -v).
+_ATR_PCT_OFF_TOKENS = frozenset({"off", "none", "false", ""})
+
+
+def parse_rl_atr_percent_bound(val: Any) -> Optional[float]:
+    """Parse RL ATR% low/high. ``off``/``none``/``false``/empty → None (bound disabled)."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        # bool is a subclass of int; treat False as off, True as invalid for a %.
+        return None if not val else float(val)
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().lower()
+    if s in _ATR_PCT_OFF_TOKENS:
+        return None
+    return float(s)
+
+
+def parse_rl_too_high(val: Any) -> float:
+    """Parse RL too-high fill multiplier. ``off``/``none``/``false``/empty → 0 (gate disabled).
+
+    Fill gate (see rocket_rl): ``next_open <= signal_low * rl_too_high * rl_stop_pct``.
+    Default 0 (off); ``0``/``off`` disables. ``1`` with stop 0.934 requires open ≤ low×0.934
+    (below the signal low) and almost never fills. Historical production used 1.14.
+    """
+    if val is None:
+        return 0.0
+    if isinstance(val, bool):
+        return 0.0 if not val else float(val)
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().lower()
+    if s in _ATR_PCT_OFF_TOKENS:
+        return 0.0
+    return float(s)
+
+
+def atr_pct_band_passes(
+    atr_vol: float,
+    low: Optional[float],
+    high: Optional[float],
+) -> bool:
+    """Return True if atr_vol passes the ATR% band (None = unbound).
+
+    Semantics:
+    - Both None → no % filter.
+    - Both numeric 0 → no % filter (legacy 0/0 footgun fix).
+    - Only low set → require atr_vol >= low (low=0 is a no-op floor).
+    - Only high set → require atr_vol <= high.
+    - Both set (and not dual 0) → require low <= atr_vol <= high.
+    Dollar ATR cap and min price are independent of this helper.
+    """
+    if low is None and high is None:
+        return True
+    if (
+        low is not None
+        and high is not None
+        and float(low) == 0.0
+        and float(high) == 0.0
+    ):
+        return True
+    if low is not None and atr_vol < float(low):
+        return False
+    if high is not None and atr_vol > float(high):
+        return False
+    return True
 
 # AWK -v names (uppercase) and legacy spellings → rocket_brt.py -v keys (rl_* on BRTConfig).
 RL_V_ALIASES: dict[str, str] = {
@@ -11,6 +80,13 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_DIP_PCT": "rl_dip_pct",
     "RL_50_SMA_LOOKBACK": "rl_50_sma_lookback",
     "RL_STOP_PCT": "rl_stop_pct",
+    "RL_POST_TARGET_REENTRY_BARS": "rl_post_target_reentry_bars",
+    "RL_POST_TARGET_REENTRY_DAYS": "rl_post_target_reentry_bars",
+    "rl_post_target_reentry_days": "rl_post_target_reentry_bars",
+    "RL_POST_TARGET_REENTRY_MODE": "rl_post_target_reentry_mode",
+    "RL_POST_TARGET_STOP_PCT": "rl_post_target_stop_pct",
+    "RL_POST_TARGET_MIN_STACK": "rl_post_target_min_stack",
+    "RL_POST_TARGET_UNDER_SMA20": "rl_post_target_under_sma20",
     "RL_TARGET_PCT": "rl_target_pct",
     "RL_TOO_HIGH": "rl_too_high",
     "RL_EXPANSION": "rl_expansion",
@@ -21,6 +97,11 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_ATR_HIGH_PERCENT": "rl_atr_high_percent",
     "RL_ATR_LOW": "rl_atr_low_percent",
     "RL_ATR_HIGH": "rl_atr_high_percent",
+    # Short aliases (no RL_ prefix) — same ATR% bounds; accept off via parse_rl_atr_percent_bound.
+    "ATR_LOW": "rl_atr_low_percent",
+    "ATR_HIGH": "rl_atr_high_percent",
+    "atr_low": "rl_atr_low_percent",
+    "atr_high": "rl_atr_high_percent",
     "RL_ATR_HIGH_VALUE": "rl_atr_high_value",
     "RL_LOW_PRICE": "rl_low_price",
     "RL_SLOPE_PERIOD": "rl_slope_period",
@@ -49,7 +130,7 @@ RL_V_ALIASES: dict[str, str] = {
 
 # Shared data-window aliases (engine-wide): friendly -v names → BRTConfig entry-date window
 # fields. These are honored by every system that routes -v through normalize_rl_v_key
-# (BRT, WPBR/PBR, RL, MTS, VEC), so `-v start_date=2016-01-01` reconciles all engines to the
+# (BRT, WPBR/PBR, RL, MTS, VEC, RS), so `-v start_date=2016-01-01` reconciles all engines to the
 # spreadsheet window. Warmup: full OHLC history still loads for indicator/weekly lookback.
 # WPBR: pivots/zones with pivot Monday before start_date are excluded from the strategy ledger
 # (no BO/retest/rocket from those pivots). Entries before start_date are also blocked
@@ -62,6 +143,17 @@ _SHARED_WINDOW_ALIASES: dict[str, str] = {
     "data_end": "entry_end_date",
 }
 RL_V_ALIASES.update(_SHARED_WINDOW_ALIASES)
+
+# RS (Relative Strength) mode aliases → BRTConfig.relative_strength_enabled
+RL_V_ALIASES.update(
+    {
+        "rs_mode": "relative_strength_enabled",
+        "rs": "relative_strength_enabled",
+        # Identity aliases kept for discoverability alongside -v sell_breakdown=...
+        "sell_breakdown": "sell_breakdown",
+        "rs_sell_breakdown": "sell_breakdown",
+    }
+)
 
 # WPBR daily-retest scan mode: friendly `-v retest_mode=...` alias → BRTConfig field.
 # Also accept the explicit `wpbr_retest_mode` spelling (identity; kept for discoverability).
@@ -85,6 +177,58 @@ _BRT_KEY_TO_RL: dict[str, str] = {
     "rl_vol_pct_threshold": "vol_pct_threshold",
     "rl_watch_min_score": "watch_min_score",
     "rl_watch_disable": "watch_disable",
+}
+
+# AWK-only RL100 / Dive Bomber levers (Python port deferred). Serialized into
+# RL_Report / RL_Audit_Report with these BEGIN-block defaults when not on BRTConfig.
+# Toggle defaults are 0/off so non-RL and Python-RL runs show subsystems disabled.
+RL_AWK_SUBSYSTEM_AUDIT_DEFAULTS: dict[str, Any] = {
+    # RL100 (100-SMA subsystem)
+    "rl100_toggle": 0,
+    "rl100_cash": 47_500.0,
+    "rl100_dip_pct": 1.041,
+    "rl100_expansion": 1.163,
+    "rl100_acc_min": 8,
+    "rl100_acc_count": 10,
+    "rl100_too_high": 1.14,
+    "rl100_trail_profit": 0.14,
+    "rl100_trail_stop": 0.0,
+    "rl100_trail_profit2": 0.40,
+    "rl100_trail_stop2": 0.20,
+    "rl100_target_pct": 1.29,
+    "rl100_stop_pct": 0.934,
+    "rl100_exit_percent": 0.22,
+    "rl100_exit_days": 17,
+    "rl100_slope_period": 30,
+    "rl100_slope_threshold": 0.0,
+    "rl100_100_sma_lookback": 4,
+    "rl100_cut_the_losers": 0.2,
+    "rl100_flush_days": 42,
+    "rl100_spy_inclusion": 0,
+    "rl100_partial_exit_target": 0.0,
+    "rl100_partial_exit_percent": 0.50,
+    "rl100_partial_exit_follow_target": 0.1,
+    "rl100_atr_high_percent": 0.0848,
+    "rl100_atr_low_percent": 0.0244,
+    "rl100_atr_high_value": 200.0,
+    "rl100_low_price": 0.000001,
+    # Dive Bomber (shorts; AWK only)
+    "db_toggle": 0,
+    "db_cash": 47_500.0,
+    "db_stop_pct": 1.0946,
+    "db_target_pct": 0.92,
+    "db_rip_days_min": 3,
+    "db_rip_days_max": 5,
+    "db_rip_touch_tol": 0.026,
+    "db_max_hold_days": 16,
+    "db_squeeze_exit": 0,
+    "db_inverse_strict": 0,
+    "db_slope_lookback": 4,
+    "db_gap_up_max": 1.14,
+    "db_expansion": 0.98,
+    "db_acc_min": 9,
+    "db_acc_count": 10,
+    "db_peak_trough_max": -0.43,
 }
 
 # Optional BRT zone/retest entry gates — not used by portfolio_audit.awk RL path.
@@ -114,6 +258,11 @@ _RL_SHARED_BRT_KEYS = frozenset(
         "indicator_cache",
         "entry_start_date",
         "entry_end_date",
+        # SPY TC lag-1 market filters (defaults off; match BRTConfig).
+        "spy_int_tc_lag",
+        "spy_tc_weak_horizon",
+        "block_entries_when_spy_int_weak",
+        "exit_when_spy_int_turns_weak",
     }
 )
 
@@ -124,18 +273,36 @@ class RLConfig:
 
     sma_qual: bool = True
     rl_cash: float = 47_500.0
-    rl_dip_pct: float = 1.024
+    rl_dip_pct: float = 1.041
     rl_50_sma_lookback: int = 4
     rl_stop_pct: float = 0.934
+    # Post-TARGET re-entry window (0 bars = feature fully off; production unchanged).
+    # When bars > 0 and prior closed trade exited TARGET with fill within N trading bars,
+    # rl_post_target_reentry_mode selects one mutually exclusive policy:
+    #   stop_loss      — allow entry; original stop uses rl_post_target_stop_pct
+    #                    (fill gates still use rl_stop_pct). Default for backward compat.
+    #   min_stack      — block unless (SMA20/SMA50 − 1) ≥ rl_post_target_min_stack
+    #                    (evaluated on trigger/signal bar).
+    #   under_sma_limit — block unless close ≥ SMA20 × (1 − rl_post_target_under_sma20)
+    #                    i.e. depth (SMA20−close)/SMA20 ≤ limit (trigger bar).
+    #   none           — block all re-entries in the window (cooldown).
+    rl_post_target_reentry_bars: int = 0
+    rl_post_target_reentry_mode: str = "stop_loss"
+    rl_post_target_stop_pct: float = 0.0
+    rl_post_target_min_stack: float = 0.05
+    rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
-    rl_too_high: float = 1.14
+    # Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default off).
+    rl_too_high: float = 0.0
     rl_expansion: float = 1.163
     rl_acc_min: int = 8
     rl_acc_count: int = 10
     expansion_lookback_days: int = 10
     rl_cut_the_losers: float = 0.25
-    rl_atr_low_percent: float = 0.0244
-    rl_atr_high_percent: float = 0.0848
+    # ATR% band: None = that bound off (``-v RL_ATR_LOW=off`` / ``ATR_LOW=off`` / ``RL_ATR_HIGH=off``).
+    # Dual numeric 0/0 also disables the % band (see atr_pct_band_passes).
+    rl_atr_low_percent: Optional[float] = 0.0244
+    rl_atr_high_percent: Optional[float] = 0.0848
     rl_atr_high_value: float = 200.0
     rl_low_price: float = 0.000001
     peak_threshold_max: float = 2.0
@@ -167,6 +334,15 @@ class RLConfig:
     # Inclusive entry date window (YYYY-MM-DD / YYYYMMDD). Empty = off.
     entry_start_date: str = ""
     entry_end_date: str = ""
+    # SPY IND_TC_{SHORT|INT|LONG}_OUTLOOK lag-1 market filters (shared with BRT; default off).
+    # Horizon: spy_tc_weak_horizon=short|int|long (default int; alias intermediate=int).
+    # block_entries: evaluate on trigger/signal bar T with outlook[T-lag] (default lag=1);
+    #   do not re-check on fill/entry open T+1.
+    # exit_on_weak: on each later day D, if lag-1 outlook newly turns Weak, exit at D open.
+    spy_int_tc_lag: int = 1
+    spy_tc_weak_horizon: str = "int"
+    block_entries_when_spy_int_weak: bool = False
+    exit_when_spy_int_turns_weak: bool = False
 
 
 def _brt_key_for_rl_field(rl_field_name: str) -> str:
@@ -224,6 +400,13 @@ def rl_config_from_brt_cfg(cfg: Any) -> RLConfig:
     for shared in _RL_SHARED_BRT_KEYS:
         if hasattr(cfg, shared):
             kw[shared] = getattr(cfg, shared)
+
+    # Normalize ATR% bounds (accept off/none/false strings from JSON / soft overrides).
+    for atr_key in ("rl_atr_low_percent", "rl_atr_high_percent"):
+        if atr_key in kw:
+            kw[atr_key] = parse_rl_atr_percent_bound(kw[atr_key])
+    if "rl_too_high" in kw:
+        kw["rl_too_high"] = parse_rl_too_high(kw["rl_too_high"])
 
     return RLConfig(**kw)
 

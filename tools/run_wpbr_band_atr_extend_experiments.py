@@ -1,6 +1,6 @@
 """WPBR band_pct_atr extension above prior winner 1.0 (MarkTen); never edits run_wpbr.bat.
 
-Prior opt (drive/davey_experiments/wpbr_band_opt) topped out at atr_m1p000.
+Prior opt (drive/paul_experiments/wpbr_band_opt) topped out at atr_m1p000.
 This grid re-runs 1.0 baseline plus higher ATR multipliers with fallback band_pct=0.015.
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ from pathlib import Path
 
 from davey_experiment_common import Arm, REPO, run_job, score, write_csv
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_band_opt_atr_extend"
-PRIOR_ROOT = REPO / "drive" / "davey_experiments" / "wpbr_band_opt"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_band_opt_atr_extend"
+PRIOR_ROOT = REPO / "drive" / "paul_experiments" / "wpbr_band_opt"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 
 # Same parity as tools/run_wpbr_band_experiments.py / run_wpbr.bat

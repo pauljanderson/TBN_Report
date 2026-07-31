@@ -2,7 +2,7 @@
 
 Parity matches run_wpbr.bat PLUS allow_secondary_entries=true.
 Never edits run_wpbr.bat.
-Outdir: drive/davey_experiments/wpbr_allow_secondary_markten/
+Outdir: drive/paul_experiments/wpbr_allow_secondary_markten/
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_allow_secondary_markten"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_allow_secondary_markten"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 MARKTEN_LIST = MARKTEN.split(",")
 

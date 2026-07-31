@@ -2,7 +2,7 @@
 
 Fair capital A/B: only flip wpbr_second_chance_after_win; everything else matches
 run_wpbr.bat baseline (band 0.015, target 1.22, stop 0.91, start 2016, secondary off).
-Never edits run_wpbr.bat. Outdir: drive/davey_experiments/wpbr_sc_on_off_markten/
+Never edits run_wpbr.bat. Outdir: drive/paul_experiments/wpbr_sc_on_off_markten/
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_sc_on_off_markten"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_sc_on_off_markten"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 MARKTEN_LIST = MARKTEN.split(",")
 

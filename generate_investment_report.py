@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR systems.
+Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR / RS systems.
 
 Data sources:
   - Accounts_History full exports in Downloads (numbered or timestamped; recent-history sells merged in)
@@ -8,8 +8,8 @@ Data sources:
   - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows)
   - closed_positions_log.csv — append-only permanent closed round-trips (survives rolling Fidelity export windows)
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
-  - Latest IND/BRT/RL/YH/MTS/WPBR Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
-  - Latest IND/BRT/RL/YH/MTS/WPBR_Scanner_*.csv in Drive/ (matched to latest core run per engine)
+  - Latest IND/BRT/RL/YH/MTS/WPBR/RS Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
+  - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ CLOSED_SINCE = date(2026, 5, 25)
 MIN_POSITION_VALUE = 47_500.0
 # Still show smaller lots when (symbol, entry_date) is in the system map (registry/engine).
 MIN_REGISTRY_TRACKED_VALUE = 5_000.0
-REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR")
+REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS")
 REPORT_TITLE = f"{len(REPORT_SYSTEMS)}-System Investment Report"
 REPORT_SYSTEM_LABELS = {"IND": "IND (deprecated)"}
 _SYSTEM_ALIASES = {"PBR": "WPBR"}
@@ -121,7 +121,7 @@ _RL_SYMBOLS = {
 _MTS_SYMBOLS = set(_MTS_SYMBOLS_LIST)
 
 _ENGINE_CSV_RE = re.compile(
-    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 
@@ -192,7 +192,7 @@ def _latest_engine_csvs(drive_dir: Path) -> dict[tuple[str, str], Path]:
 
 def _load_engine_trades_from_drive(drive_dir: Path) -> dict[tuple[str, str], str]:
     """
-    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR Closed and Open CSVs.
+    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR/RS Closed and Open CSVs.
     Same symbol may have different systems on different entry dates.
     """
     out: dict[tuple[str, str], str] = {}
@@ -1701,7 +1701,7 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
 
 
 _RUN_TS_RE = re.compile(
-    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$", re.I
+    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$", re.I
 )
 _PIPELINE_TS_RE = re.compile(
     r"^(?P<prefix>BRT|IND)_Pipeline_Timings_(?P<ts>\d{12})_", re.I
@@ -2444,6 +2444,7 @@ def build_report(
     yh_scan_path, yh_scan, yh_run_ts = _scanner_for_latest_run("YH", drive_dir)
     mts_scan_path, mts_scan, mts_run_ts = _scanner_for_latest_run("MTS", drive_dir)
     wpbr_scan_path, wpbr_scan, wpbr_run_ts = _scanner_for_latest_run("WPBR", drive_dir)
+    rs_scan_path, rs_scan, rs_run_ts = _scanner_for_latest_run("RS", drive_dir)
 
     metrics_by_key, charts_by_key = _build_system_filter_bundles(
         closed,
@@ -2576,6 +2577,7 @@ def build_report(
     yh_rows, yh_cols = _scan_rows(yh_scan)
     mts_rows, mts_cols = _scan_rows(mts_scan)
     wpbr_rows, wpbr_cols = _scan_rows(wpbr_scan)
+    rs_rows, rs_cols = _scan_rows(rs_scan)
 
     pending_sells, sell_thresholds, sell_as_of = find_pending_low_vol_sells(
         positions_path=positions_path,
@@ -2610,6 +2612,7 @@ def build_report(
     yh_scan_sub = _scanner_subtitle(yh_scan_path, yh_run_ts, "YH")
     mts_scan_sub = _scanner_subtitle(mts_scan_path, mts_run_ts, "MTS")
     wpbr_scan_sub = _scanner_subtitle(wpbr_scan_path, wpbr_run_ts, "WPBR")
+    rs_scan_sub = _scanner_subtitle(rs_scan_path, rs_run_ts, "RS")
 
     filter_buttons_html = "".join(
         f'  <button type="button" class="sys-chip active" data-sys="{sys}" aria-pressed="true">'
@@ -2812,6 +2815,12 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 <h2>Scanner — WPBR</h2>
 <p class="small">{wpbr_scan_sub}</p>
 <div class="table-wrap">{_html_table(wpbr_cols, wpbr_rows, ["text"] * len(wpbr_cols) if wpbr_cols else None) if wpbr_rows else '<p>No WPBR scanner for the latest run.</p>'}</div>
+</section>
+
+<section data-system-section="RS">
+<h2>Scanner — RS</h2>
+<p class="small">{rs_scan_sub}</p>
+<div class="table-wrap">{_html_table(rs_cols, rs_rows, ["text"] * len(rs_cols) if rs_cols else None) if rs_rows else '<p>No RS scanner for the latest run.</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}

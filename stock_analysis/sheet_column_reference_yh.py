@@ -149,15 +149,18 @@ Serial handoff (prior row → today):
 ## Active YH Touch Price
 
 ``=IF(0.03 move away next = "", "", 0.03 move away next * (1 + move_away_pct))``
-(display may round to cents; **move-away test** is ``High >= BZ*(1+pct)`` on **full precision**,
-e.g. NVDA 2021-11-09: High 32.31 vs 31.37×1.03 = 32.3111 → no activation).
+(display may round to cents; **move-away test** keeps the **unrounded** product:
+``High >= BZ*(1+pct)`` where High is the sheet High column (typically 2dp).
+NVDA 2021-11-09: High 32.31 vs 31.37×1.03 = 32.3111 → no activation.
+AAPL 2014-10-22: High 26.03 vs 25.27×1.03 = 26.0281 → activates; engine must ROUND(yfinance High)
+to cents before this compare or 26.0275 fails by $0.0006 and forks the ladder.)
 
 ## Active YH Level
 
 ``=IF(0.03 move away next = "", "",
   IF(OR(prior Active YH Level = 0.03 move away next, High >= Active YH Touch Price),
      0.03 move away next, ""))``
-(use raw High vs unrounded ``BZ*(1+pct)`` for the inequality; same as above.)
+(sheet High column vs unrounded ``BZ*(1+pct)``; same as above.)
 
 ## Next YH candidate
 
@@ -181,7 +184,7 @@ Leading engine hypothesis: after a zone is assigned, allow **one next NEW_YH bar
 the pending touch **only if** ``(BY_next - BY_assign) / BY_assign`` is below a sheet threshold
 (likely ~2%%; confirm from **Matured touch price** formula or config cell).
 
-On move-away activation (``High >= ROUND(pending_touch * 1.03, 2)``):
+On move-away activation (``ROUND(High, 2) >= pending_touch * 1.03``, unrounded threshold):
 - **Matured touch price** = frozen pending touch (43.81 for AAPL #11)
 - Same-bar **YH Level** may show today's High (45.12 on 2018-02-27) because BX=1 on that bar —
   unrelated to the matured center.

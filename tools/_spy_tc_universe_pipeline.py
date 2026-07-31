@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parents[1]
-BASE = REPO / "drive" / "davey_experiments" / "spy_tc_strong_system" / "universe_then_curated"
+BASE = REPO / "drive" / "paul_experiments" / "spy_tc_strong_system" / "universe_then_curated"
 SHARDS = BASE / "shards"
 NORM_NOTIONAL = 100_000.0  # normalize $ metrics to $100k/slot (MaxPos=10)
 MIN_TRADES = 5

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from davey_experiment_common import Arm, REPO, run_job, score, write_csv
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_strong_pivot_opt"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_strong_pivot_opt"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 
 # run_wpbr.bat parity; strong_* and atr overrides come from arms

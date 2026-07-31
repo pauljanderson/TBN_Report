@@ -4,7 +4,7 @@
 2) Select symbols with TOTAL_PNL>0 and TRADES>=min_trades from Summary
 3) Rerun subset with flag on (and optionally flag off)
 Never edits run_wpbr.bat.
-Outdir: drive/davey_experiments/wpbr_require_no_zone_above_universe/
+Outdir: drive/paul_experiments/wpbr_require_no_zone_above_universe/
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_require_no_zone_above_universe"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_require_no_zone_above_universe"
 
 # run_wpbr.bat parity; require_no_zone_above overridden per arm
 WPBR_COMMON = (

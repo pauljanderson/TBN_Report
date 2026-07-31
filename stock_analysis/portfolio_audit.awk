@@ -14,6 +14,18 @@
 # RL_CASH:             Rocket Launcher investment amount (e.g., 50000).
 # RL_DIP_PCT:          Dip threshold multiplier (e.g., 1.02 for 2%).
 # RL_STOP_PCT:       Stop loss multiplier (e.g., 0.95 for 5%).
+# RL_POST_TARGET_REENTRY_BARS: Trading bars after a TARGET exit during which REENTRY_MODE applies
+#                      (0=off). Alias: RL_POST_TARGET_REENTRY_DAYS. Modes are mutually exclusive.
+# RL_POST_TARGET_REENTRY_MODE: stop_loss (default; allow + tighter stop via STOP_PCT) |
+#                      min_stack (block unless SMA20/SMA50-1 >= MIN_STACK on trigger bar) |
+#                      under_sma_limit (block if close < SMA20*(1-UNDER_SMA20) on trigger bar) |
+#                      none (block all re-entries in the window).
+# RL_POST_TARGET_STOP_PCT: Tighter stop multiplier for mode=stop_loss when re-entering within
+#                      REENTRY_BARS after TARGET (e.g. 0.97 ≈ 3% under signal low; 0=off).
+#                      Fill gates (too_low / too_high) still use RL_STOP_PCT.
+# RL_POST_TARGET_MIN_STACK: For mode=min_stack: min (SMA20/SMA50 - 1) on trigger bar (default 0.05).
+# RL_POST_TARGET_UNDER_SMA20: For mode=under_sma_limit: max depth under SMA20; reject if
+#                      close < SMA20*(1-limit) (default 0.03).
 # RL_TARGET_PCT:     Profit target multiplier (e.g., 1.20 for 20%).
 # SMA_QUAL:            Toggle for SMA Qualifier (1=On, 0=Off).
 # INSTRUMENT:          If set (e.g. 1), enables throughput instrumentation (instrument.txt, per-symbol timing). Default: 0.
@@ -23,6 +35,9 @@
 # RL_FLUSH_DAYS:       If > 0, sell ALL positions after portfolio has been underwater (below HWM) this many consecutive days; exit type FLUSH_EXIT. Default: 0 (off).
 # AVG_VOL_DAYS:        Days for rolling avg volume (0=disabled). If 10, avg vol printed in RL_Closed as of entry. Default: 0.
 # VOL_PCT_THRESHOLD:   Pct above avg vol required to buy (0=no filter). E.g. 25 = only buy if entry-day vol >= avg_vol*1.25. Default: 0.
+# RL_ATR_LOW / RL_ATR_HIGH (aliases RL_ATR_LOW_PERCENT / RL_ATR_HIGH_PERCENT):
+#   ATR% band floor/ceiling. Pass off|none|false to disable that bound; both off (or numeric 0 0) disables % band.
+#   RL_ATR_HIGH_VALUE ($ cap) and RL_LOW_PRICE remain independent. AWK empty = default (cannot distinguish unset).
 #
 # OUTPUT — LIVE / LAST BAR:
 # RL_Scanner_<ts>.csv — Last calendar bar only: 50-SMA dip setup fired today; model entry is next session open (ENTRY_DATE).
@@ -259,15 +274,21 @@ BEGIN {
     if (RS_DAYS == "") RS_DAYS = 5
     if (ADD_PCT == "") ADD_PCT = 0.33
     if (RL_CASH == "") RL_CASH = 47500
-    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.024
+    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.041
     if (RL_STOP_PCT == "") RL_STOP_PCT = 0.934
+    if (RL_POST_TARGET_REENTRY_DAYS != "" && RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = RL_POST_TARGET_REENTRY_DAYS
+    if (RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = 0
+    if (RL_POST_TARGET_REENTRY_MODE == "") RL_POST_TARGET_REENTRY_MODE = "stop_loss"
+    if (RL_POST_TARGET_STOP_PCT == "") RL_POST_TARGET_STOP_PCT = 0
+    if (RL_POST_TARGET_MIN_STACK == "") RL_POST_TARGET_MIN_STACK = 0.05
+    if (RL_POST_TARGET_UNDER_SMA20 == "") RL_POST_TARGET_UNDER_SMA20 = 0.03
     if (RL_TARGET_PCT == "") RL_TARGET_PCT = 1.20
     if (SMA_QUAL == "") SMA_QUAL = 1
     if (RL_EXPANSION == "") RL_EXPANSION = 1.163
     if (RL_ACC_MIN == "") RL_ACC_MIN = 8
     if (RL_ACC_COUNT == "") RL_ACC_COUNT = 10
     if (RUN_REPLAYS == "") RUN_REPLAYS = 0
-    if (RL_TOO_HIGH == "") RL_TOO_HIGH = 1.14
+    if (RL_TOO_HIGH == "") RL_TOO_HIGH = 0
     if (RL_TRAIL_PROFIT == "") RL_TRAIL_PROFIT = 0
     if (RL_TRAIL_STOP == "") RL_TRAIL_STOP = 0.0
     if (RL_50_SMA_LOOKBACK == "") RL_50_SMA_LOOKBACK = 4
@@ -275,7 +296,7 @@ BEGIN {
     if (RL100_TOGGLE == "" && RL_100_TOGGLE != "") RL100_TOGGLE = RL_100_TOGGLE
     if (RL100_TOGGLE == "") RL100_TOGGLE = 0
     if (RL100_DIP_PCT == "" && RL_100_DIP_PCT != "") RL100_DIP_PCT = RL_100_DIP_PCT
-    if (RL100_DIP_PCT == "") RL100_DIP_PCT = 1.024
+    if (RL100_DIP_PCT == "") RL100_DIP_PCT = 1.041
     if (RL100_EXPANSION == "" && RL_100_EXPANSION != "") RL100_EXPANSION = RL_100_EXPANSION
     if (RL100_EXPANSION == "") RL100_EXPANSION = 1.163
     if (RL100_ACC_MIN == "" && RL_100_ACC_MIN != "") RL100_ACC_MIN = RL_100_ACC_MIN
@@ -326,14 +347,37 @@ BEGIN {
     if (RL_ATR_HIGH_PERCENT == "") RL_ATR_HIGH_PERCENT = .0848 #0.105      # Filter out those stocks whose ATR is > 10.5% of their stock price as they are too volatile
     if (RL_ATR_LOW_PERCENT == "") RL_ATR_LOW_PERCENT = .0244 #0.019       # Filter out those stocks whose ATR is < 1.9% of their stock price as they do not have a big enough Range
     # Map optimizer variable names to script variable names (optimizer passes RL_ATR_HIGH / RL_ATR_LOW)
+    # Also accept -v RL_ATR_HIGH=off / RL_ATR_LOW=off (none|false) to disable that % bound.
     if (RL_ATR_HIGH != "") RL_ATR_HIGH_PERCENT = RL_ATR_HIGH
     if (RL_ATR_LOW != "") RL_ATR_LOW_PERCENT = RL_ATR_LOW
 
+    # Resolve ATR% off tokens → BOUND_OFF flags (rewrite off → 0 for numeric copy/summary).
+    # Dual numeric 0/0 disables the entire % band; $ cap and LOW_PRICE stay independent.
+    RL_ATR_LOW_BOUND_OFF = atr_pct_token_off(RL_ATR_LOW_PERCENT) ? 1 : 0
+    RL_ATR_HIGH_BOUND_OFF = atr_pct_token_off(RL_ATR_HIGH_PERCENT) ? 1 : 0
+    if (RL_ATR_LOW_BOUND_OFF) RL_ATR_LOW_PERCENT = 0
+    if (RL_ATR_HIGH_BOUND_OFF) RL_ATR_HIGH_PERCENT = 0
+    RL_ATR_PCT_BAND_OFF = 0
+    if (RL_ATR_LOW_BOUND_OFF && RL_ATR_HIGH_BOUND_OFF) RL_ATR_PCT_BAND_OFF = 1
+    else if (!RL_ATR_LOW_BOUND_OFF && !RL_ATR_HIGH_BOUND_OFF && (RL_ATR_LOW_PERCENT + 0) == 0 && (RL_ATR_HIGH_PERCENT + 0) == 0) RL_ATR_PCT_BAND_OFF = 1
+
     # 100-SMA ATR/price defaults must come AFTER RL_ATR_* and RL_LOW_PRICE are set (else RL100_* get 0 and ATR filter excludes every bar)
+    rl100_atr_low_was_empty = (RL100_ATR_LOW_PERCENT == "")
+    rl100_atr_high_was_empty = (RL100_ATR_HIGH_PERCENT == "")
     if (RL100_ATR_HIGH_PERCENT == "") RL100_ATR_HIGH_PERCENT = RL_ATR_HIGH_PERCENT + 0
     if (RL100_ATR_LOW_PERCENT == "") RL100_ATR_LOW_PERCENT = RL_ATR_LOW_PERCENT + 0
     if (RL100_ATR_HIGH_VALUE == "") RL100_ATR_HIGH_VALUE = RL_ATR_HIGH_VALUE + 0
     if (RL100_LOW_PRICE == "") RL100_LOW_PRICE = RL_LOW_PRICE + 0
+    # Inherit off flags when RL100 ATR% was not explicitly passed; else parse RL100 tokens.
+    if (rl100_atr_low_was_empty) RL100_ATR_LOW_BOUND_OFF = RL_ATR_LOW_BOUND_OFF
+    else if (atr_pct_token_off(RL100_ATR_LOW_PERCENT)) { RL100_ATR_LOW_BOUND_OFF = 1; RL100_ATR_LOW_PERCENT = 0 }
+    else RL100_ATR_LOW_BOUND_OFF = 0
+    if (rl100_atr_high_was_empty) RL100_ATR_HIGH_BOUND_OFF = RL_ATR_HIGH_BOUND_OFF
+    else if (atr_pct_token_off(RL100_ATR_HIGH_PERCENT)) { RL100_ATR_HIGH_BOUND_OFF = 1; RL100_ATR_HIGH_PERCENT = 0 }
+    else RL100_ATR_HIGH_BOUND_OFF = 0
+    RL100_ATR_PCT_BAND_OFF = 0
+    if (RL100_ATR_LOW_BOUND_OFF && RL100_ATR_HIGH_BOUND_OFF) RL100_ATR_PCT_BAND_OFF = 1
+    else if (!RL100_ATR_LOW_BOUND_OFF && !RL100_ATR_HIGH_BOUND_OFF && (RL100_ATR_LOW_PERCENT + 0) == 0 && (RL100_ATR_HIGH_PERCENT + 0) == 0) RL100_ATR_PCT_BAND_OFF = 1
       
     if (RL_SLOPE_PERIOD == "") RL_SLOPE_PERIOD = 30
     if (RL_SLOPE_THRESHOLD == "") RL_SLOPE_THRESHOLD = 0.0643
@@ -440,7 +484,8 @@ function reset_ticker_variables() {
     has_hit_milestone[current_symbol] = 0; total_exit_proceeds[current_symbol] = 0; total_shares_sold[current_symbol] = 0; 
     
     # 3. Clear Historical Markers
-    exp_hits = 0; ready_to_hit = 1; last_exp_iso = "0"; last_reset_iso = "0"; 
+    exp_hits = 0; ready_to_hit = 1; last_exp_iso = "0"; last_reset_iso = "0";
+    last_exit_idx = -1; last_exit_was_target = 0
     
     # 4. Clean Memory Slots for the Previous Run
     delete s_q; delete s_p; delete s_fv; 
@@ -469,6 +514,13 @@ function to_iso(d) {
 function abs(v) {  
       return v < 0 ? -v : v  
       }
+
+# ATR% band: off|none|false (case-insensitive) disables that bound.
+# Empty is NOT off in AWK — empty means "use default" (unset and -v KEY= look the same).
+function atr_pct_token_off(v,   s) {
+  s = tolower(v "")
+  return (s == "off" || s == "none" || s == "false")
+}
 
 # Trim working set of all processes via PowerShell (frees RAM; does not kill processes).
 # Call after releasing symbol data to reduce AWK process memory pressure.
@@ -634,6 +686,7 @@ function perform_audit(sym) {
       acc_rolling_hits = 0; acc100_rolling_hits = 0; db_acc_below_50 = 0
       rl_trail_active = 0
       sym_hwm = 0; max_sym_dd = 0
+      last_exit_idx = -1; last_exit_was_target = 0
       s_50_wins = s_50_losses = s_50_BEs = 0
       s_100_wins = s_100_losses = s_100_BEs = 0
       m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0
@@ -1187,6 +1240,8 @@ function perform_audit(sym) {
                     }
                     daily_realized_pnl[iso] += trade_pnl
                     # 5. CRITICAL STATE RESET (Zero out for next trade)
+                    last_exit_idx = j
+                    last_exit_was_target = (exit_type == "TARGET") ? 1 : 0
                     rl_pnl += trade_pnl
                     trl += trade_pnl
                     rl_inv = rl_max_p = rl_min_p = rl_trail_active = m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0
@@ -1269,15 +1324,16 @@ function perform_audit(sym) {
                         
                         atr_inclusion = 1
                         
-                        # 1. Percent-based ATR Filter
-                        if (atr_volatility > RL_ATR_HIGH_PERCENT || atr_volatility < RL_ATR_LOW_PERCENT) {
-                              atr_inclusion = 0
+                        # 1. Percent-based ATR Filter (skip when band off; per-bound off = one-sided)
+                        if (!RL_ATR_PCT_BAND_OFF) {
+                              if (!RL_ATR_HIGH_BOUND_OFF && atr_volatility > (RL_ATR_HIGH_PERCENT + 0)) atr_inclusion = 0
+                              if (!RL_ATR_LOW_BOUND_OFF && atr_volatility < (RL_ATR_LOW_PERCENT + 0)) atr_inclusion = 0
                         }
-                        # 2. Value-based ATR Filter
+                        # 2. Value-based ATR Filter (independent of % band off)
                         if (atr_rolling >= RL_ATR_HIGH_VALUE) {
                               atr_inclusion = 0
                         }
-                        # 3. Minimum Price Filter
+                        # 3. Minimum Price Filter (independent of % band off)
                         if (base_price < RL_LOW_PRICE) {
                               atr_inclusion = 0
                         }
@@ -1327,7 +1383,25 @@ function perform_audit(sym) {
                               entry_day_vol = raw_vol[sym, next_day_iso] + 0
                               vol_ok = (avg_vol > 0 && entry_day_vol >= avg_vol * (1 + VOL_PCT_THRESHOLD/100))
                         }
-                        if (expansion && acceptance && cut_it && atr_inclusion && spy_ok && peak_inclusion && slope_ok  && shock_qualified && !too_low && vol_ok) {
+                        # Post-TARGET re-entry: mode is mutually exclusive (stop_loss | min_stack | under_sma_limit | none).
+                        # Quality checks use trigger/signal bar (iso) SMA/close; window uses fill bar index.
+                        post_target_reentry_ok = 1
+                        entry_bar_idx_pt = j + 1
+                        if ((RL_POST_TARGET_REENTRY_BARS + 0) > 0 && last_exit_was_target == 1 && last_exit_idx >= 0 && (entry_bar_idx_pt - last_exit_idx) <= (RL_POST_TARGET_REENTRY_BARS + 0)) {
+                              pt_mode = tolower(RL_POST_TARGET_REENTRY_MODE)
+                              if (pt_mode == "" || pt_mode == "off") pt_mode = "stop_loss"
+                              if (pt_mode == "none") post_target_reentry_ok = 0
+                              else if (pt_mode == "min_stack") {
+                                    if (sma50[iso] <= 0) post_target_reentry_ok = 0
+                                    else if ((sma20[iso] / sma50[iso] - 1) < (RL_POST_TARGET_MIN_STACK + 0)) post_target_reentry_ok = 0
+                              }
+                              else if (pt_mode == "under_sma_limit") {
+                                    if (sma20[iso] <= 0) post_target_reentry_ok = 0
+                                    else if (raw_cl[sym, iso] < sma20[iso] * (1 - (RL_POST_TARGET_UNDER_SMA20 + 0))) post_target_reentry_ok = 0
+                              }
+                              # stop_loss (default): allow entry; tighter stop applied below when STOP_PCT > 0
+                        }
+                        if (expansion && acceptance && cut_it && atr_inclusion && spy_ok && peak_inclusion && slope_ok  && shock_qualified && !too_low && vol_ok && post_target_reentry_ok) {
                               # Next-session entry (same test as opening the RL position below)
                               entry_ok_next_open = 0
                               if (next_day_iso != "" && raw_op[sym, next_day_iso] > 0) {
@@ -1337,8 +1411,14 @@ function perform_audit(sym) {
                               if (j == d_ptr[sym]) {
                                     pred_iso_scan = dates[sym, j - 1]
                                     scan_tgt = (pred_iso_scan != "" && sma50[pred_iso_scan] > 0) ? (sma50[pred_iso_scan] * RL_TARGET_PCT) : 0
-                                    stop_lv_scan = raw_lo[sym, iso] * RL_STOP_PCT
-                                    th_line_scan = stop_lv_scan * RL_TOO_HIGH
+                                    entry_bar_idx_scan = j + 1
+                                    stop_pct_scan = RL_STOP_PCT + 0
+                                    pt_mode_scan = tolower(RL_POST_TARGET_REENTRY_MODE)
+                                    if (pt_mode_scan == "" || pt_mode_scan == "off") pt_mode_scan = "stop_loss"
+                                    if ((RL_POST_TARGET_REENTRY_BARS + 0) > 0 && (RL_POST_TARGET_STOP_PCT + 0) > 0 && pt_mode_scan == "stop_loss" && last_exit_was_target == 1 && last_exit_idx >= 0 && (entry_bar_idx_scan - last_exit_idx) <= (RL_POST_TARGET_REENTRY_BARS + 0))
+                                        stop_pct_scan = RL_POST_TARGET_STOP_PCT + 0
+                                    stop_lv_scan = raw_lo[sym, iso] * stop_pct_scan
+                                    th_line_scan = (raw_lo[sym, iso] * RL_STOP_PCT) * RL_TOO_HIGH
                                     nxop_scan = (next_day_iso != "" && raw_op[sym, next_day_iso] > 0) ? raw_op[sym, next_day_iso] : 0
                                     scanner_list[++scanner_ptr] = sprintf("%s,%s,%.2f,%s,%.2f,%.2f,%.2f,%.2f,%d", sym, iso, raw_cl[sym, iso], next_day_iso, nxop_scan, stop_lv_scan, th_line_scan, scan_tgt, entry_ok_next_open)
                               }
@@ -1362,7 +1442,14 @@ function perform_audit(sym) {
                                     initial_shares_at_entry[sym] = rl_inv # Capture the 100% count
                                     entry_atr_stop[sym] = raw_op[sym, next_day_iso] - (atr_rolling * 2)
                                     entry_atr_val[sym] = atr_rolling
-                                    rl_stop = raw_lo[sym, iso] * RL_STOP_PCT; 
+                                    # Post-TARGET tighter stop (mode=stop_loss only); fill gates still use RL_STOP_PCT.
+                                    entry_bar_idx = j + 1
+                                    stop_pct_eff = RL_STOP_PCT + 0
+                                    pt_mode_eff = tolower(RL_POST_TARGET_REENTRY_MODE)
+                                    if (pt_mode_eff == "" || pt_mode_eff == "off") pt_mode_eff = "stop_loss"
+                                    if ((RL_POST_TARGET_REENTRY_BARS + 0) > 0 && (RL_POST_TARGET_STOP_PCT + 0) > 0 && pt_mode_eff == "stop_loss" && last_exit_was_target == 1 && last_exit_idx >= 0 && (entry_bar_idx - last_exit_idx) <= (RL_POST_TARGET_REENTRY_BARS + 0))
+                                        stop_pct_eff = RL_POST_TARGET_STOP_PCT + 0
+                                    rl_stop = raw_lo[sym, iso] * stop_pct_eff; 
                                     rl_entry_iso[sym] = next_day_iso; 
                                     rl_entry_p[sym] = raw_op[sym, next_day_iso];
                                     rl_entry_idx[sym] = j+1; 
@@ -1594,7 +1681,10 @@ function perform_audit(sym) {
                 cut_it_100 = (cur_hi_pct_100 < RL100_CUT_THE_LOSERS) ? 1 : 0
                 atr_volatility_100 = (raw_op[sym, iso] > 0) ? atr_rolling/raw_op[sym, iso] : 0
                 atr_inclusion_100 = 1
-                if (atr_volatility_100 > RL100_ATR_HIGH_PERCENT || atr_volatility_100 < RL100_ATR_LOW_PERCENT) atr_inclusion_100 = 0
+                if (!RL100_ATR_PCT_BAND_OFF) {
+                    if (!RL100_ATR_HIGH_BOUND_OFF && atr_volatility_100 > (RL100_ATR_HIGH_PERCENT + 0)) atr_inclusion_100 = 0
+                    if (!RL100_ATR_LOW_BOUND_OFF && atr_volatility_100 < (RL100_ATR_LOW_PERCENT + 0)) atr_inclusion_100 = 0
+                }
                 if (atr_rolling >= RL100_ATR_HIGH_VALUE) atr_inclusion_100 = 0
                 if (raw_op[sym, iso] < RL100_LOW_PRICE) atr_inclusion_100 = 0
                 peak_inclusion_100 = (peak_cl[sym] < PEAK_THRESHOLD_MAX) ? 1 : 0
@@ -2304,7 +2394,7 @@ END {
       out = out "," RL_TARGET_PCT "," RL_EXPANSION "," RL_ACC_MIN "," RL_ACC_COUNT
       out = out "," RL_TOO_HIGH "," RL_TRAIL_PROFIT "," RL_TRAIL_STOP
       out = out "," RL_TRAIL_PROFIT2 "," RL_TRAIL_STOP2
-      out = out "," sprintf("%.4f", RL_ATR_HIGH_PERCENT) "," sprintf("%.4f", RL_ATR_LOW_PERCENT)
+      out = out "," (RL_ATR_HIGH_BOUND_OFF ? "off" : sprintf("%.4f", RL_ATR_HIGH_PERCENT)) "," (RL_ATR_LOW_BOUND_OFF ? "off" : sprintf("%.4f", RL_ATR_LOW_PERCENT))
       out = out "," RL_SLOPE_PERIOD "," sprintf("%.4f", RL_SLOPE_THRESHOLD)
       #out = out "," RL_SHOCK_THRESHOLD "," sprintf("%.4f", RL_SHOCK_THRESHOLD)
       #out = out "," RL_SHOCK_REHAB_DAYS "," RL_SHOCK_REHAB_DAYS
@@ -2345,6 +2435,9 @@ END {
     out = out "," sprintf("%.6f", profit_per_capital_day)
     out = out "," sprintf("%.4f", pct_time_underwater) "," max_consecutive_underwater "," max_pos
     # summary line has 61 columns (incl. ProfitPerCapDay, Pct_Time_Underwater, Max_Consec_Underwater, Max_Pos)
+    # Append post-TARGET levers at end so legacy column indices stay stable.
+    out = out "," (RL_POST_TARGET_REENTRY_BARS + 0) "," RL_POST_TARGET_REENTRY_MODE "," sprintf("%.4f", RL_POST_TARGET_STOP_PCT + 0)
+    out = out "," sprintf("%.4f", RL_POST_TARGET_MIN_STACK + 0) "," sprintf("%.4f", RL_POST_TARGET_UNDER_SMA20 + 0)
 
       # Final Print: normal audit appends to RocketLauncher.csv and temp_run.csv (RegressionCheck.ps1
       # matches CurrentTs in temp_run). Optimizer uses -v OUT_FILE=temp_run_core_N.csv only.

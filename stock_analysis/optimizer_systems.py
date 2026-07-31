@@ -65,7 +65,7 @@ RL_BASELINE: dict[str, Any] = {
     "rl_50_sma_lookback": 4,
     "rl_stop_pct": 0.934,
     "rl_target_pct": 1.20,
-    "rl_too_high": 1.14,
+    "rl_too_high": 0.0,
     "rl_expansion": 1.163,
     "rl_acc_min": 6,
     "rl_acc_count": 10,
@@ -268,13 +268,22 @@ class SystemSpec:
 
 
 def _load_rl_symbols() -> list[str]:
+    """Prefer data/rl_gold_universe.txt; else parse RL_SYMBOLS from run_rl.bat."""
     out: list[str] = []
-    if not RL_UNIVERSE.is_file():
-        return out
-    for line in RL_UNIVERSE.read_text(encoding="utf-8").splitlines():
-        t = line.strip()
-        if t and not t.startswith("#"):
-            out.append(t.upper())
+    if RL_UNIVERSE.is_file():
+        for line in RL_UNIVERSE.read_text(encoding="utf-8").splitlines():
+            t = line.strip()
+            if t and not t.startswith("#"):
+                out.append(t.upper())
+        if out:
+            return out
+    bat = REPO_ROOT / "run_rl.bat"
+    if bat.is_file():
+        import re
+
+        m = re.search(r'set "RL_SYMBOLS=([^"]+)"', bat.read_text(encoding="utf-8", errors="replace"))
+        if m:
+            return [s.strip().upper() for s in m.group(1).split(",") if s.strip()]
     return out
 
 

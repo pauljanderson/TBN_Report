@@ -14,6 +14,7 @@ IND_TC_{SHORT,INT,LONG}_{SUM,OUTLOOK} plus optional IND_TC_{SHORT,INT,LONG}_N.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import os
@@ -21,7 +22,7 @@ import pickle
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1750,6 +1751,147 @@ def build_spy_ind_diff_by_date(
         long_map[ymd] = int(pre.diff_long[i])
         short_map[ymd] = int(pre.diff_short[i])
     return SpyIndDiffByDate(long_by_date=long_map, short_by_date=short_map)
+
+
+# Horizon → precompute array attr / Closed-column name for SPY TC outlook gates.
+_SPY_TC_HORIZON_SUM_ATTR: dict[str, str] = {
+    "short": "tc_short_sum",
+    "int": "tc_int_sum",
+    "long": "tc_long_sum",
+}
+_SPY_TC_HORIZON_COL: dict[str, str] = {
+    "short": "IND_TC_SHORT_OUTLOOK",
+    "int": "IND_TC_INT_OUTLOOK",
+    "long": "IND_TC_LONG_OUTLOOK",
+}
+
+
+def normalize_spy_tc_horizon(raw: Any) -> str:
+    """Normalize horizon selector to short|int|long (default int)."""
+    s = str(raw or "int").strip().lower()
+    if s in ("short", "s"):
+        return "short"
+    if s in ("long", "l"):
+        return "long"
+    if s in ("int", "intermediate", "i", "mid", "medium"):
+        return "int"
+    return "int"
+
+
+def spy_tc_outlook_column(horizon: Any = "int") -> str:
+    """Closed-style column name for the given TC horizon."""
+    return _SPY_TC_HORIZON_COL[normalize_spy_tc_horizon(horizon)]
+
+
+@dataclass
+class SpyTcOutlookByDate:
+    """SPY IND_TC_{SHORT|INT|LONG}_OUTLOOK (Strong/Neutral/Weak) keyed by calendar day.
+
+    Outlook for session D is known only after D's close. Trading decisions on day T
+    that must be known before T's open should use ``at_date_lagged(T, lag=1)``
+    (outlook from the prior SPY session).
+    """
+
+    outlook_by_date: dict[int, str]
+    horizon: str = "int"
+    column_name: str = "IND_TC_INT_OUTLOOK"
+    sorted_ymds: list[int] = field(default_factory=list)
+    ymd_to_idx: dict[int, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.horizon = normalize_spy_tc_horizon(self.horizon)
+        if not self.column_name:
+            self.column_name = spy_tc_outlook_column(self.horizon)
+        if self.sorted_ymds and self.ymd_to_idx:
+            return
+        self.sorted_ymds = sorted(self.outlook_by_date.keys())
+        self.ymd_to_idx = {ymd: i for i, ymd in enumerate(self.sorted_ymds)}
+
+    def at_date(self, date_s: str) -> Optional[str]:
+        ymd = _trade_date_to_ymd(date_s)
+        if ymd is None:
+            return None
+        return self.outlook_by_date.get(ymd)
+
+    def _session_idx_asof(self, ymd: int) -> Optional[int]:
+        """Index of SPY session ``ymd``, or latest session on/before ``ymd``."""
+        direct = self.ymd_to_idx.get(ymd)
+        if direct is not None:
+            return direct
+        if not self.sorted_ymds:
+            return None
+        i = bisect.bisect_right(self.sorted_ymds, ymd) - 1
+        return i if i >= 0 else None
+
+    def at_date_lagged(self, date_s: str, lag: int = 1) -> Optional[str]:
+        """Outlook from ``lag`` SPY sessions before decision date (0 = same session)."""
+        ymd = _trade_date_to_ymd(date_s)
+        if ymd is None:
+            return None
+        lag_n = max(0, int(lag))
+        idx = self._session_idx_asof(ymd)
+        if idx is None:
+            return None
+        src = idx - lag_n
+        if src < 0:
+            return None
+        return self.outlook_by_date.get(self.sorted_ymds[src])
+
+    def turns_weak_at_date(self, date_s: str, lag: int = 1) -> bool:
+        """True when lagged outlook is Weak and the prior session's lagged outlook was not."""
+        curr = self.at_date_lagged(date_s, lag)
+        if curr is None or str(curr).strip().lower() != "weak":
+            return False
+        prev = self.at_date_lagged(date_s, int(lag) + 1)
+        if prev is None:
+            return True
+        return str(prev).strip().lower() != "weak"
+
+
+# Backward-compatible alias (INT-only naming from earlier lag-1 experiment).
+SpyTcIntOutlookByDate = SpyTcOutlookByDate
+
+
+def build_spy_tc_outlook_by_date(
+    df: pd.DataFrame,
+    *,
+    horizon: Any = "int",
+    cache_dir: Optional[str | Path] = None,
+    use_cache: bool = True,
+) -> Optional[SpyTcOutlookByDate]:
+    """Precompute SPY IND_TC_{SHORT|INT|LONG}_OUTLOOK per bar for market-regime gates."""
+    hz = normalize_spy_tc_horizon(horizon)
+    attr = _SPY_TC_HORIZON_SUM_ATTR[hz]
+    col = _SPY_TC_HORIZON_COL[hz]
+    pre = build_entry_indicator_precompute(
+        df, symbol="SPY", cache_dir=cache_dir, use_cache=use_cache,
+    )
+    if pre is None:
+        return None
+    pre = _ensure_gate_arrays(pre)
+    sum_arr = getattr(pre, attr, None)
+    if sum_arr is None:
+        return None
+    out_map: dict[int, str] = {}
+    for i, d in enumerate(pre.dates):
+        out_map[int(d)] = _tc_outlook_label(int(sum_arr[i]))
+    return SpyTcOutlookByDate(
+        outlook_by_date=out_map,
+        horizon=hz,
+        column_name=col,
+    )
+
+
+def build_spy_tc_int_outlook_by_date(
+    df: pd.DataFrame,
+    *,
+    cache_dir: Optional[str | Path] = None,
+    use_cache: bool = True,
+) -> Optional[SpyTcOutlookByDate]:
+    """Precompute SPY IND_TC_INT_OUTLOOK per bar (alias of horizon=int)."""
+    return build_spy_tc_outlook_by_date(
+        df, horizon="int", cache_dir=cache_dir, use_cache=use_cache,
+    )
 
 
 def aligned_bull_bear_diff(pre: Optional[_Precomputed], entry_i: int, side: str) -> Optional[int]:

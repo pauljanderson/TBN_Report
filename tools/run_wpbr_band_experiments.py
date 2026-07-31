@@ -26,7 +26,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_band_opt"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_band_opt"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 
 # run_wpbr.bat parity (band_* overridden per arm)

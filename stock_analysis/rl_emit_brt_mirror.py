@@ -11,7 +11,10 @@ Typical use (from repo root, after ``portfolio_audit.awk`` / ``run_audit.ps1``):
 
   python stock_analysis/rl_emit_brt_mirror.py --output-dir drive --data-dir data/newdata/data
 
-Also writes ``RL_Correlation_<ts>.csv`` / ``RL_ReferenceStats_<ts>.csv`` (field vs PNL % drivers).
+Also writes ``RL_Summary_<ts>.csv`` / ``RL_INDUSTRY_<ts>.csv`` (BRT-shaped, with
+CURRENT_MARKET_CAP / SECTOR / INDUSTRY via yfinance, PCT_WINS, FIRST_DATA_DATE from symbol CSV,
+AVG_TRADES_PER_YEAR over the study window) and ``RL_Correlation_<ts>.csv`` /
+``RL_ReferenceStats_<ts>.csv`` (field vs PNL % drivers).
 
 If ``--ts`` is omitted, reads ``<output-dir>/last_run_ts.txt`` (written by the AWK audit).
 
@@ -37,11 +40,14 @@ try:
         BRTTrade,
         _apply_report_dollar_scale_to_trades,
         _enrich_post_entry_gain_hit,
+        _enrich_trades_yfinance,
         compute_metrics,
         load_all_tickers,
         write_brt_audit_report,
         write_brt_closed,
+        write_brt_industry_summary,
         write_brt_open,
+        write_brt_summary,
     )
 except ImportError:
     from stock_analysis.rocket_brt import (  # type: ignore[no-redef]
@@ -49,11 +55,14 @@ except ImportError:
         BRTTrade,
         _apply_report_dollar_scale_to_trades,
         _enrich_post_entry_gain_hit,
+        _enrich_trades_yfinance,
         compute_metrics,
         load_all_tickers,
         write_brt_audit_report,
         write_brt_closed,
+        write_brt_industry_summary,
         write_brt_open,
+        write_brt_summary,
     )
 
 
@@ -319,6 +328,11 @@ def main() -> int:
     )
     ap.add_argument("--ts", type=str, default="", help="Run timestamp yyMMddHHmmss (default: read last_run_ts.txt)")
     ap.add_argument("--brt-cash", type=float, default=47500.0, help="Notional per trade for PNL_DOLLARS scaling")
+    ap.add_argument(
+        "--no-yfinance",
+        action="store_true",
+        help="Skip Yahoo market-cap/sector/industry enrichment (RL_Summary CURRENT_MARKET_CAP/SECTOR/INDUSTRY stay blank)",
+    )
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parent.parent
@@ -353,7 +367,20 @@ def main() -> int:
             except Exception as e:
                 print(f"[rl_emit_brt_mirror] skip open row: {e}", file=sys.stderr)
 
-    cfg = BRTConfig(brt_cash=float(args.brt_cash))
+    cfg = BRTConfig(brt_cash=float(args.brt_cash), rl_mode="true", rl_cash=float(args.brt_cash))
+    try:
+        from rocket_rl_config import apply_rl_defaults_to_brt_kw
+        from dataclasses import replace as _dc_replace
+    except ImportError:
+        from stock_analysis.rocket_rl_config import apply_rl_defaults_to_brt_kw  # type: ignore
+        from dataclasses import replace as _dc_replace
+    # Mirror AWK BEGIN defaults into audit/report columns (rl_mode path).
+    _rl_kw = apply_rl_defaults_to_brt_kw(
+        {"rl_mode": "true", "brt_cash": float(args.brt_cash), "rl_cash": float(args.brt_cash)},
+        explicit_overrides=("rl_mode", "brt_cash", "rl_cash"),
+    )
+    _cfg_fields = set(BRTConfig.__dataclass_fields__)
+    cfg = _dc_replace(cfg, **{k: v for k, v in _rl_kw.items() if k in _cfg_fields})
     sym_filt: set[str] | None = None
     if str(args.symbols).strip():
         sym_filt = {x.strip().upper() for x in str(args.symbols).split(",") if x.strip()}
@@ -378,6 +405,30 @@ def main() -> int:
         except ImportError:
             from stock_analysis.rocket_brt import _enrich_trades_entry_indicators
         _enrich_trades_entry_indicators(closed + open_list, tickers, cfg)
+
+    # Align with BRT/Python RL Summary: populate CURRENT_MARKET_CAP / SECTOR / INDUSTRY.
+    # Also rewrites RL_Summary to the BRT-shaped schema (AWK writes a different layout).
+    if args.no_yfinance:
+        print("[rl_emit_brt_mirror] yfinance enrichment skipped (--no-yfinance).", flush=True)
+    elif closed or open_list:
+        print(
+            "[rl_emit_brt_mirror] yfinance enrichment (market cap / sector / industry)...",
+            flush=True,
+        )
+        _enrich_trades_yfinance(closed, open_list)
+
+    summary_path = out_dir / f"RL_Summary_{ts}.csv"
+    write_brt_summary(
+        closed,
+        str(summary_path),
+        cfg=cfg,
+        tickers=tickers,
+        data_dir=data_dir,
+    )
+    print(f"[rl_emit_brt_mirror] Wrote {summary_path.name}")
+    industry_path = out_dir / f"RL_INDUSTRY_{ts}.csv"
+    write_brt_industry_summary(closed, str(industry_path))
+    print(f"[rl_emit_brt_mirror] Wrote {industry_path.name}")
 
     out_closed = out_dir / f"BRT_Closed_RL_{ts}.csv"
     out_open = out_dir / f"BRT_Open_RL_{ts}.csv"

@@ -203,7 +203,11 @@ def _load_tickers(ticker_dir: str, symbols: set[str]) -> dict[str, pd.DataFrame]
 
 
 def _effective_margin_utilization(*, aggressive: bool, margin_utilization: float) -> float:
-    """Match rocket_brt._effective_margin_utilization: aggressive runs use full 1.0 leverage."""
+    """Utilization for aggressive overlay sim only (full 1.0 when aggressive=True).
+
+    Passive Max_DD / brt_cash sizing in rocket_tbn no longer forces 1.0 on --aggressive;
+    this helper remains for replaying the aggressive ledger at full buying power.
+    """
     if aggressive:
         return 1.0
     util = float(margin_utilization or 0.6)

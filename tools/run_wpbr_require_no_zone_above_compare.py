@@ -2,7 +2,7 @@
 
 Baseline: flag off (default). Treatment: require_no_zone_above=true.
 Parity matches run_wpbr.bat (band 0.015 fixed, target 1.22, stop 0.91, start 2016, SC on).
-Never edits run_wpbr.bat. Outdir: drive/davey_experiments/wpbr_require_no_zone_above/
+Never edits run_wpbr.bat. Outdir: drive/paul_experiments/wpbr_require_no_zone_above/
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_require_no_zone_above"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_require_no_zone_above"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 MARKTEN_LIST = MARKTEN.split(",")
 

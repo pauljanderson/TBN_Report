@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Experiment-only: long when SPY_COMPARE 1Y/2Y/3Y > 0 AND all IND_TC_*_OUTLOOK = Strong.
 
-Non-production research harness. Production DailyRun path: stock_analysis/rocket_rs.py via run_rs.bat
-(outputs RS_Closed|Open|Scanner|Summary_* to drive/).
+Non-production research harness. Production DailyRun path: stock_analysis/rocket_brt.py via
+run_rs.bat (--relative-strength / -v rs_mode=true; outputs RS_Closed|Open|Scanner|… to drive/).
+Legacy thin wrapper: stock_analysis/rocket_rs.py → rocket_brt.
 
 MarkTen first. Entry = next open after signal close (BRT scan convention).
 Exits: target_pct=1.2 (20%) OR stop_pct=0.92 (8%). No zones / trailing.
@@ -46,7 +47,7 @@ from rocket_brt import (  # noqa: E402
 
 MARKTEN = ["AAPL", "AMD", "AMZN", "AU", "META", "MSFT", "NVDA", "NFLX", "GOOGL", "TSLA"]
 EXPANDED14 = MARKTEN + ["TSM", "AVGO", "MU", "LLY"]
-DEFAULT_OUT = REPO / "drive" / "davey_experiments" / "spy_tc_strong_system"
+DEFAULT_OUT = REPO / "drive" / "paul_experiments" / "spy_tc_strong_system"
 TARGET_PCT = 1.2
 STOP_PCT = 0.92
 INITIAL_CAPITAL = 1_000_000.0

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-BASE = Path(__file__).resolve().parents[1] / "drive" / "davey_experiments" / "spy_tc_strong_system" / "universe_then_curated"
+BASE = Path(__file__).resolve().parents[1] / "drive" / "paul_experiments" / "spy_tc_strong_system" / "universe_then_curated"
 
 
 def shard_maxpos() -> list[tuple[str, int, float]]:

@@ -4,7 +4,7 @@ Baseline: wpbr_merge_overlapping_zones=false (default, sheet parity).
 Treatment: wpbr_merge_overlapping_zones=true (ZONE_STRENGTH = merge member count).
 
 Parity matches run_wpbr.bat (band 0.015 fixed, target 1.22, stop 0.91, start 2016, SC on).
-Never edits run_wpbr.bat. Outdir: drive/davey_experiments/wpbr_merge_zones_markten/
+Never edits run_wpbr.bat. Outdir: drive/paul_experiments/wpbr_merge_zones_markten/
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from davey_experiment_common import (
     write_csv,
 )
 
-ROOT = REPO / "drive" / "davey_experiments" / "wpbr_merge_zones_markten"
+ROOT = REPO / "drive" / "paul_experiments" / "wpbr_merge_zones_markten"
 MARKTEN = "AAPL,AMZN,GOOGL,META,MSFT,NVDA,TSLA,AU,AMD,NFLX"
 MARKTEN_LIST = MARKTEN.split(",")
 

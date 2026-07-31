@@ -1349,6 +1349,9 @@ def _upsert_symbol_to_db(con: duckdb.DuckDBPyConnection, table: str, symbol: str
     for col in ("Open", "High", "Low", "Close", "Volume"):
         if col not in raw.columns:
             raw[col] = None
+    # Avoid float32 tails from yfinance (53.195 → 53.19499969) poisoning DuckDB DOUBLE.
+    for col in ("Open", "High", "Low", "Close"):
+        raw[col] = pd.to_numeric(raw[col], errors="coerce").astype("float64").round(6)
     raw["symbol"] = symbol
     raw["source_file"] = f"{symbol}.csv"
     stage = raw[["symbol", "Date", "Open", "High", "Low", "Close", "Volume", "source_file"]].copy()

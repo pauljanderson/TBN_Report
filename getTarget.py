@@ -3,11 +3,12 @@ Compute live stop/target levels for open positions (gettarget_output.csv).
 
 Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk),
 BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
-YH (year-high zone backtest percent params), or MTS (Magic Touch sheet parity).
+YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
+WPBR, or RS (Relative Strength; SPY_COMPARE + TC Strong).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, or WPBR (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, or RS (case-insensitive).
 
 When entry_price is set, getTarget can compute target/limit from that price even if
 purchase_date is not in the symbol CSV yet (e.g. bought today before files update).
@@ -45,7 +46,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS
 
 
 @dataclass
@@ -662,6 +663,9 @@ def compute_price_only_payload(
     wpbr_mode_resolved: str,
     wpbr_percent: PercentProfile,
     wpbr_atr: AtrProfile,
+    rs_mode_resolved: str,
+    rs_percent: PercentProfile,
+    rs_atr: AtrProfile,
     default_atr_pct: float,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
@@ -706,6 +710,11 @@ def compute_price_only_payload(
         profile_atr = wpbr_atr
         profile_pct = wpbr_percent
         label = "WPBR"
+    elif system == "RS":
+        mode = rs_mode_resolved
+        profile_atr = rs_atr
+        profile_pct = rs_percent
+        label = "RS"
     else:
         return {"error": f"unknown system {system!r}"}
 
@@ -773,10 +782,13 @@ def compute_position_payload(
     wpbr_mode_resolved: str,
     wpbr_percent: PercentProfile,
     wpbr_atr: AtrProfile,
+    rs_mode_resolved: str,
+    rs_percent: PercentProfile,
+    rs_atr: AtrProfile,
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
 ) -> dict[str, Any]:
-    """Dispatch to RL / BRT / IND / YH / MTS / WPBR calculator for a given as-of date."""
+    """Dispatch to RL / BRT / IND / YH / MTS / WPBR / RS calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
@@ -827,6 +839,15 @@ def compute_position_payload(
         return compute_atr_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, wpbr_atr, "WPBR", **kw
         )
+    if system == "RS":
+        if rs_mode_resolved == "percent":
+            return compute_percent_system(
+                sym, df, entry_ts, entry_price, entry_src, as_of_effective, rs_percent, "RS",
+                entry_in_data=entry_in_data,
+            )
+        return compute_atr_system(
+            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, rs_atr, "RS", **kw
+        )
     return {"error": f"unknown system {system!r}"}
 
 
@@ -865,7 +886,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR; deprecated IND remains available manually)."
+            "(RL / BRT / YH / MTS / WPBR / RS; deprecated IND remains available manually)."
         )
     )
     parser.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR))
@@ -914,6 +935,12 @@ def main() -> None:
         default="auto",
         help="WPBR: auto=percent when --wpbr-atr-* are 0 (rocket_brt target_pct); else ATR.",
     )
+    parser.add_argument(
+        "--rs-mode",
+        choices=("auto", "atr", "percent"),
+        default="auto",
+        help="RS: auto=percent when --rs-atr-* are 0 (run_rs.bat target_pct/stop_pct); else ATR.",
+    )
     parser.add_argument("--as-of-date", type=str, default=None)
     parser.add_argument("--use-next-trading-day", action="store_true")
     parser.add_argument("--out-csv", type=str, default="getTarget_output.csv")
@@ -958,6 +985,7 @@ def main() -> None:
     _add_atr_profile_args(parser, "yh", AtrProfile())
     _add_atr_profile_args(parser, "mts", AtrProfile())
     _add_atr_profile_args(parser, "wpbr", AtrProfile())
+    _add_atr_profile_args(parser, "rs", AtrProfile())
 
     parser.add_argument("--rl-target-pct", type=float, default=1.20)
     parser.add_argument("--rl-stop-pct", type=float, default=0.934)
@@ -994,6 +1022,10 @@ def main() -> None:
     parser.add_argument("--wpbr-stop-pct", type=float, default=0.927)
     parser.add_argument("--wpbr-trailing-stop-increment", type=float, default=0.0)
     parser.add_argument("--wpbr-use-sma50", action="store_true", default=False)
+    parser.add_argument("--rs-target-pct", type=float, default=1.25)
+    parser.add_argument("--rs-stop-pct", type=float, default=0.88)
+    parser.add_argument("--rs-trailing-stop-increment", type=float, default=0.0)
+    parser.add_argument("--rs-use-sma50", action="store_true", default=False)
     parser.add_argument(
         "--per-symbol-settings",
         default="",
@@ -1078,6 +1110,15 @@ def main() -> None:
         atr_progress_incremental_stop=bool(args.wpbr_atr_progress_incremental_stop),
         sma_stop_days=int(args.wpbr_sma_stop_days or 0),
     )
+    rs_atr = AtrProfile(
+        atr_target=args.rs_atr_target,
+        atr_stop=args.rs_atr_stop,
+        atr_increment=args.rs_atr_increment,
+        atr_progress=args.rs_atr_progress,
+        atr_days=args.rs_atr_days,
+        atr_progress_incremental_stop=bool(args.rs_atr_progress_incremental_stop),
+        sma_stop_days=int(args.rs_sma_stop_days or 0),
+    )
     rl_profile = RlProfile(
         rl_target_pct=args.rl_target_pct,
         rl_stop_pct=args.rl_stop_pct,
@@ -1122,6 +1163,13 @@ def main() -> None:
         trailing_stop_increment=args.wpbr_trailing_stop_increment,
         use_sma50_target=bool(args.wpbr_use_sma50),
         sma_stop_days=int(args.wpbr_sma_stop_days or 0),
+    )
+    rs_percent = PercentProfile(
+        target_pct=args.rs_target_pct,
+        stop_pct=args.rs_stop_pct,
+        trailing_stop_increment=args.rs_trailing_stop_increment,
+        use_sma50_target=bool(args.rs_use_sma50),
+        sma_stop_days=int(args.rs_sma_stop_days or 0),
     )
 
     try:
@@ -1183,6 +1231,7 @@ def main() -> None:
     yh_mode_resolved = resolve_exit_mode(args.yh_mode, yh_atr)
     mts_mode_resolved = resolve_exit_mode(args.mts_mode, mts_atr)
     wpbr_mode_resolved = resolve_exit_mode(args.wpbr_mode, wpbr_atr)
+    rs_mode_resolved = resolve_exit_mode(args.rs_mode, rs_atr)
     if brt_mode_resolved == "percent" and args.brt_mode.strip().lower() in ("auto", "atr"):
         print(
             "[INFO] BRT using percent stops/targets "
@@ -1212,6 +1261,12 @@ def main() -> None:
             "[INFO] WPBR using percent stops/targets "
             f"(target_pct={args.wpbr_target_pct}, stop_pct={args.wpbr_stop_pct}); "
             "WPBR ATR multipliers are all zero."
+        )
+    if rs_mode_resolved == "percent" and args.rs_mode.strip().lower() in ("auto", "atr"):
+        print(
+            "[INFO] RS using percent stops/targets "
+            f"(target_pct={args.rs_target_pct}, stop_pct={args.rs_stop_pct}); "
+            "RS ATR multipliers are all zero."
         )
 
     results: list[dict] = []
@@ -1274,6 +1329,7 @@ def main() -> None:
         sym_brt_percent = apply_brt_percent_overrides(brt_percent, _sym_ov)
         sym_mts_percent = apply_brt_percent_overrides(mts_percent, _sym_ov)
         sym_wpbr_percent = apply_brt_percent_overrides(wpbr_percent, _sym_ov)
+        sym_rs_percent = apply_brt_percent_overrides(rs_percent, _sym_ov)
 
         _payload_kw = dict(
             atr_period=int(args.atr_period),
@@ -1282,6 +1338,7 @@ def main() -> None:
             yh_mode_resolved=yh_mode_resolved,
             mts_mode_resolved=mts_mode_resolved,
             wpbr_mode_resolved=wpbr_mode_resolved,
+            rs_mode_resolved=rs_mode_resolved,
             rl_profile=sym_rl_profile,
             brt_percent=sym_brt_percent,
             brt_atr=brt_atr,
@@ -1293,6 +1350,8 @@ def main() -> None:
             mts_atr=mts_atr,
             wpbr_percent=sym_wpbr_percent,
             wpbr_atr=wpbr_atr,
+            rs_percent=sym_rs_percent,
+            rs_atr=rs_atr,
             default_atr_pct=float(args.default_atr_pct),
         )
 

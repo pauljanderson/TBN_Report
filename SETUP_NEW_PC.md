@@ -83,7 +83,7 @@ Recreate the nightly job:
 | Run whether user is logged on or not | Yes |
 | Python | Must be python.org under `%LOCALAPPDATA%\Programs\Python\Python310\` |
 
-DailyRun steps (for reference): update data → warm cache → RL audit/parity → BRT → IND → YH → MTS → copy latest → getTarget → publish GitHub Pages.
+DailyRun steps (for reference): update data → optional IND cache warm → AWK RL + Python RL + compare → BRT → (IND skipped) → YH → MTS → WPBR → RS → copy latest → getTarget → publish GitHub Pages.
 
 Test manually first:
 ```bat

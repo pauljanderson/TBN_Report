@@ -271,6 +271,11 @@ def load_symbol_df(
 
     rows["Date"] = pd.to_datetime(rows["Date"])
     rows = rows.set_index("Date")
+    # DuckDB/yfinance ingest can store float32-quantized doubles (53.195 → 53.19499969).
+    # Snap OHLC to 6 dp so sheet/CSV parity and Sheets ROUND(entry,2) match CSV loads.
+    for col in ("Open", "High", "Low", "Close"):
+        if col in rows.columns:
+            rows[col] = rows[col].astype("float64").round(6)
     return rows
 
 

@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Runs the Rocket BRT backtest (rocket_brt.py). Regression check is built into
-    rocket_brt.py and runs automatically after each full backtest.
+    Runs the Rocket BRT backtest (rocket_tbn.py). Regression check is built into
+    rocket_tbn.py and runs automatically after each full backtest.
 
 .DESCRIPTION
-    Runs rocket_brt.py over all symbols. rocket_brt.py runs BRTRegressionCheck.ps1
+    Runs rocket_tbn.py over all symbols. rocket_tbn.py runs BRTRegressionCheck.ps1
     at the end to compare output to the previous run. If any output differs, exit
     code 1. Use -SkipRegressionCheck to skip the regression step.
 
 .PARAMETER SkipRegressionCheck
-    If set, pass --no-regression to rocket_brt.py (skip regression comparison).
+    If set, pass --no-regression to rocket_tbn.py (skip regression comparison).
 
 .PARAMETER AllowRegression
     Not used; regression fail-on-exit is controlled by BRTRegressionCheck.ps1.
@@ -64,7 +64,7 @@
     Pass --aggressive to rocket_brt (aggressive equity sizing mode for drawdown/equity metrics).
 
 .PARAMETER UseOG
-    If set, run the original engine (stock_analysis/rocket_brt_og.py) instead of stock_analysis/rocket_brt.py.
+    If set, run the original engine (stock_analysis/rocket_brt_og.py) instead of stock_analysis/rocket_tbn.py.
 
 .EXAMPLE
     .\run_brt.ps1
@@ -107,7 +107,7 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
 $DriveDir = Join-Path $RepoRoot "drive"
-$BrtScriptRel = if ($UseOG) { "stock_analysis\rocket_brt_og.py" } else { "stock_analysis\rocket_brt.py" }
+$BrtScriptRel = if ($UseOG) { "stock_analysis\rocket_brt_og.py" } else { "stock_analysis\rocket_tbn.py" }
 $BrtScript = Join-Path $RepoRoot $BrtScriptRel
 
 if (-not (Test-Path $BrtScript)) {
@@ -146,7 +146,7 @@ Write-Host "Running Rocket BRT..." -ForegroundColor Cyan
 if ($UseOG) {
     Write-Host "  Engine: OG (rocket_brt_og.py)" -ForegroundColor Gray
 } else {
-    Write-Host "  Engine: simplified (rocket_brt.py)" -ForegroundColor Gray
+    Write-Host "  Engine: simplified (rocket_tbn.py)" -ForegroundColor Gray
 }
 Write-Host "  Script: $BrtScript" -ForegroundColor Gray
 Write-Host "  Data:   $dataPath" -ForegroundColor Gray
@@ -293,6 +293,6 @@ Write-Host ""
 Write-Host "BRT completed successfully." -ForegroundColor Green
 Write-Host ""
 
-# Regression check is built into rocket_brt.py and runs automatically.
+# Regression check is built into rocket_tbn.py and runs automatically.
 # SkipRegressionCheck passes --no-regression to skip it.
 exit $brtExit

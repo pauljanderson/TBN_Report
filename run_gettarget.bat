@@ -48,6 +48,13 @@ if exist "%~dp0%PER_SYMBOL_SETTINGS%" set "PS_ARGS=--per-symbol-settings %PER_SY
   --wpbr-atr-days=0 ^
   "--wpbr-target-pct=1.24" ^
   "--wpbr-stop-pct=0.927" ^
+  --rs-atr-target=0 ^
+  --rs-atr-stop=0 ^
+  --rs-atr-increment=0 ^
+  --rs-atr-progress=0 ^
+  --rs-atr-days=0 ^
+  "--rs-target-pct=1.25" ^
+  "--rs-stop-pct=0.88" ^
   "--rl-target-pct=1.20" ^
   "--rl-stop-pct=0.934" ^
   --rl-use-sma50 ^
