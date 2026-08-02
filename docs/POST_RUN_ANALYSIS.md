@@ -13,6 +13,7 @@ backtest; charts/deep HTML are **not** part of DailyRun.
 | **RL** / DB | Rocket Launcher (dip-buy) | SMA20/50/100/200 + dip band + IN/OUT/stop |
 | **BRT** / WPBR / YH / VEC / PBR | Zone systems | Close + SMA50 + zone bands from Closed `ZONE_CENTER` + IN/OUT/stop |
 | **IND** / MTS / RS / ADX | Other | Close + SMA50 + IN/OUT/stop |
+| **SB** / **MVCP** | StockBee / Minervini VCP (standalone writers) | Close + SMA50 + IN/OUT/stop |
 
 Auto-detect: scan `drive/{PREFIX}_Closed_{stamp}.csv`, or pass `--system` / `--closed`.
 
@@ -52,6 +53,7 @@ ImproveHints / SymbolAssessments may flag **TARGET → quick STOP** re-entries. 
 
 - **RL:** `write_rl_post_reports` → `write_rl_analysis_artifacts`
 - **BRT / WPBR / YH / IND / MTS / RS / …:** `write_all_outputs` → `write_analysis_artifacts`
+- **SB / MVCP:** `rocket_stockbee_burst.write_outputs` / `rocket_minervini_vcp.write_mvcp_outputs` → `write_analysis_artifacts`
 
 ## Deep (manual)
 
