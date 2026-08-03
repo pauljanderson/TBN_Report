@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trading System Setup Process</title>
+<style>
+  :root {
+    --bg: #f7f6f2;
+    --ink: #1c1b19;
+    --muted: #5a574f;
+    --line: #d4d0c4;
+    --card: #ffffff;
+    --accent: #2a4a5c;
+    --accent-soft: #e8eef2;
+    --ok: #2d6a4f;
+    --ok-bg: #e8f2ec;
+    --warn: #8a5a12;
+    --warn-bg: #f7efe0;
+    --fill: #f0eee6;
+    --step-rail: #c5d0d8;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 40px 28px 72px;
+  }
+  header.doc-head {
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 18px;
+    margin-bottom: 28px;
+  }
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 650;
+    margin: 0 0 8px;
+  }
+  h1 {
+    font-size: 1.85rem;
+    font-weight: 700;
+    margin: 0 0 8px;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+  .lede {
+    margin: 0;
+    color: var(--muted);
+    max-width: 64ch;
+    font-size: 0.98rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    margin-top: 14px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .meta-row span strong { color: var(--ink); font-weight: 600; }
+
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    padding: 16px 18px;
+    margin: 0 0 32px;
+  }
+  nav.toc h2 {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: none;
+    padding: 0;
+  }
+  nav.toc ol {
+    margin: 0;
+    padding-left: 1.35rem;
+    columns: 2;
+    column-gap: 28px;
+  }
+  nav.toc li { break-inside: avoid; margin: 0 0 4px; font-size: 0.9rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  h2 {
+    font-size: 1.22rem;
+    font-weight: 700;
+    margin: 36px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.015em;
+  }
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 650;
+    margin: 18px 0 8px;
+    color: var(--accent);
+  }
+  p { margin: 0 0 12px; }
+  p.hint { color: var(--muted); font-size: 0.9rem; }
+  p a, .hint a, .step a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  p a:hover, .hint a:hover, .step a:hover { color: var(--ink); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.86em;
+    background: var(--fill);
+    padding: 0.1em 0.35em;
+    border-radius: 2px;
+  }
+  ul.bullets, ol.bullets {
+    margin: 0 0 14px;
+    padding-left: 1.3rem;
+  }
+  ul.bullets li, ol.bullets li { margin: 0 0 6px; }
+  ul.bullets li .detail, ol.bullets li .detail {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  /* Example / template prose */
+  .example {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--step-rail);
+    padding: 14px 16px;
+    margin: 0 0 16px;
+  }
+  .example .label {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 650;
+    margin: 0 0 10px;
+  }
+  .example dl {
+    margin: 0;
+    display: grid;
+    gap: 10px;
+  }
+  .example dt {
+    font-size: 0.78rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 650;
+    margin: 0;
+  }
+  .example dd {
+    margin: 2px 0 0;
+    color: var(--ink);
+    font-size: 0.94rem;
+  }
+  .example .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 20px;
+  }
+
+  /* Process steps */
+  .step {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    padding: 16px 18px 18px;
+    margin: 0 0 16px;
+  }
+  .step-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .step-num {
+    flex: 0 0 auto;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    border-radius: 2px;
+  }
+  .step-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+    line-height: 1.35;
+    padding-top: 0.25rem;
+    color: var(--ink);
+  }
+  .do-label {
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 650;
+    margin: 14px 0 6px;
+  }
+
+  .callout {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 12px 14px;
+    margin: 0 0 16px;
+    font-size: 0.92rem;
+  }
+  .callout.warn {
+    background: var(--warn-bg);
+    border-left-color: var(--warn);
+  }
+  .callout.ok {
+    background: var(--ok-bg);
+    border-left-color: var(--ok);
+  }
+  .callout strong { color: var(--accent); }
+  .callout.warn strong { color: var(--warn); }
+
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.88rem;
+    background: var(--card);
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #eef1f3;
+    font-weight: 650;
+  }
+  th.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  th.sortable-th:hover { background: #e2e8ed; }
+  .sort-ind {
+    display: inline-block;
+    width: 0.9em;
+    margin-left: 4px;
+    color: #9aa3ad;
+    font-size: 10px;
+  }
+  th.sort-asc .sort-ind::after { content: "▲"; color: #334155; }
+  th.sort-desc .sort-ind::after { content: "▼"; color: #334155; }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-size: 0.86rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+  .chip {
+    display: inline-block;
+    padding: 3px 9px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--fill);
+    border: 1px solid var(--line);
+    color: var(--ink);
+  }
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 4px;
+    align-items: center;
+    margin: 0 0 16px;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+  .flow span.stage {
+    background: var(--fill);
+    border: 1px solid var(--line);
+    padding: 3px 8px;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .flow .arrow { color: var(--step-rail); padding: 0 2px; }
+
+  footer.doc-foot {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+
+  @media print {
+    body { background: #fff; }
+    .wrap { padding: 12px; max-width: none; }
+    nav.toc { break-after: avoid; }
+    .step, .example, .callout, table { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 700px) {
+    nav.toc ol { columns: 1; }
+    .example .pair { grid-template-columns: 1fr; }
+    h1 { font-size: 1.45rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-head">
+  <p class="eyebrow">Stock Research · System lifecycle</p>
+  <h1>Trading System Setup Process</h1>
+  <p class="lede">
+    End-to-end path from theory → sheet ground truth → <strong>TBN</strong> engine →
+    seed ToS validation → post-run analysis → optimizer → ToS per lever → trade-diff →
+    universe promotion.
+    Shareable documentation for product-owner iteration.
+  </p>
+  <p class="hint" style="margin-top:0.75rem;">
+    <strong>TBN</strong> = Twin Beacon Networks (shared multi-system engine:
+    <span class="path">stock_analysis/rocket_tbn.py</span>).
+    <strong>BRT</strong> = Break and ReTest — one system on that engine (output prefix <code>BRT_</code>).
+    See <span class="path">docs/TBN_VS_BRT.md</span>.
+  </p>
+  <div class="meta-row">
+    <span><strong>Workspace</strong> stockresearch</span>
+    <span><strong>Owner iteration</strong> <span class="path">drive/paul_experiments/</span></span>
+    <span><strong>Printable</strong> Ctrl+P</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Process outline">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#theory">Theory of the system</a></li>
+    <li><a href="#sheet">Program in sheet / MarkTen (optional)</a></li>
+    <li><a href="#engine">Program into TBN engine</a></li>
+    <li><a href="#tos-seed">ToS Studies for seed (validate trades)</a></li>
+    <li><a href="#post-run">Post-run analysis (improve hints)</a></li>
+    <li><a href="#seed-opt">Optimize seed set</a></li>
+    <li><a href="#tos">ToS studies per variable</a></li>
+    <li><a href="#trade-diff">Compare 2 variables (trade-diff)</a></li>
+    <li><a href="#universe">Full universe run</a></li>
+    <li><a href="#promote">Promotion filters</a></li>
+    <li><a href="#rerun">Re-run promotion candidates</a></li>
+    <li><a href="#reopt">Re-optimize larger set</a></li>
+    <li><a href="#refs">Quick reference</a></li>
+    <li><a href="#systems">Systems on the TBN engine</a></li>
+  </ol>
+</nav>
+
+<section id="process">
+  <h2>Setup &amp; validation process</h2>
+  <div class="flow" aria-label="Suggested workflow loop">
+    <span class="stage">Theory</span><span class="arrow">→</span>
+    <span class="stage">Sheet (optional)</span><span class="arrow">→</span>
+    <span class="stage">Engine</span><span class="arrow">→</span>
+    <span class="stage">Seed ToS</span><span class="arrow">→</span>
+    <span class="stage">Post-run</span><span class="arrow">→</span>
+    <span class="stage">Seed opt</span><span class="arrow">→</span>
+    <span class="stage">ToS / lever</span><span class="arrow">→</span>
+    <span class="stage">Trade-diff</span><span class="arrow">→</span>
+    <span class="stage">Universe</span><span class="arrow">→</span>
+    <span class="stage">Filter</span><span class="arrow">→</span>
+    <span class="stage">Re-run</span><span class="arrow">→</span>
+    <span class="stage">Re-opt</span><span class="arrow">→</span>
+    <span class="stage">DailyRun</span>
+  </div>
+
+  <article class="step" id="theory">
+    <div class="step-head">
+      <div class="step-num">1</div>
+      <h3 class="step-title">Come up with a theory of the system</h3>
+    </div>
+    <p>Define the edge, regime, and entry/exit thesis before touching code. Keep it short enough that a reviewer can reject a bad fit before implementation.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>State the edge in one paragraph (what pays, why).
+        <span class="detail">Not “buy dips”—specify structure, filters, and expected holding period.</span></li>
+      <li>Name the market regime (and when the system should be idle).
+        <span class="detail">Example RL: stacked SMAs + dip into band; idle when stack broken / too extended.</span></li>
+      <li>Write entry and exit thesis (stop / target / trail / time).
+        <span class="detail">Map later to concrete <code>-v</code> levers (see <span class="path">ROCKET_LAUNCHER_LEVERS.md</span> for RL; other systems: bat comments + Audit Report columns).</span></li>
+      <li>List candidate stock types (seed intuition).
+        <span class="detail">Leaders with history deep enough for <code>FIRST_DATA_DATE</code> / trade-rate math.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="sheet">
+    <div class="step-head">
+      <div class="step-num">2</div>
+      <h3 class="step-title">Program it in a sheet (ground truth) (optional)</h3>
+    </div>
+    <p class="hint"><strong>Optional.</strong> Sheet / MarkTen programming is not required—you can go theory → TBN engine (step 3) directly if desired. When used, the sheet is a useful ground-truth ledger for entries, exits, and OHLC overrides before engine work.</p>
+    <p>Google Sheets / MarkTen can serve as the ledger of truth for entries, exits, and OHLC overrides. Prefer clarifying sheet behavior on the seed set when you do use this step.</p>
+    <p class="hint">Example of how a system is programmed in-sheet (MarkTen / Google Sheets): <a href="https://docs.google.com/spreadsheets/d/1tNnGXPWFqHgwzXGATqnxAvlP0bV_gGglvyC2kIt9bq8/edit?gid=1396537895#gid=1396537895" target="_blank" rel="noopener noreferrer">MarkTen system sheet (example)</a>.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Build a sheet tab with In/Out, stop, target, and sizing aligned to sheet invest (~$45k).
+        <span class="detail">Summary later scales engine PnL via <code>SHEET_PNL = TOTAL_PNL × (45_000 / brt_cash)</code>.</span></li>
+      <li>Load seed symbols that fit the system (e.g. MarkTen for RL / WPBR).
+        <span class="detail">WPBR production MarkTen list lives in <span class="path">run_wpbr.bat</span> <code>WPBR_SYMBOLS</code>.</span></li>
+      <li>Override known bad OHLC days (combined multi-ticker formula if needed).
+        <span class="detail">See <span class="path">drive/brt_sheet_reconcile/OHLC_override_formula.md</span>—merge tickers; never drop prior overrides.</span></li>
+      <li>Manual spot-check: 3–5 trades match chart intuition.
+        <span class="detail">If sheet trades look wrong, do not “fix” in Python yet.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="engine">
+    <div class="step-head">
+      <div class="step-num">3</div>
+      <h3 class="step-title">Program into the TBN engine</h3>
+    </div>
+    <p>Implement via the shared <strong>TBN</strong> host <span class="path">stock_analysis/rocket_tbn.py</span>
+    (legacy shim: <span class="path">rocket_brt.py</span>) using <code>-v</code> mode flags that select a
+    <em>system</em> (BRT, WPBR, YH, RL, RS, IND, …). Helpers live in
+    <span class="path">rocket_rl.py</span>, <span class="path">rocket_rs.py</span>,
+    <span class="path">rocket_MTS.py</span>. Prefer <code>-v</code> levers over hard-coding.
+    RL also has AWK in <span class="path">portfolio_audit.awk</span>.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Set the correct mode flag; isolate competing systems.
+        <span class="detail">RL example from <span class="path">run_rl.bat</span>: <code>rl_mode=true</code>, <code>brt_zones=false</code>, <code>yh_zones=false</code>, <code>indicator_buy=off</code>.</span></li>
+      <li>Document levers consistently with Audit columns.
+        <span class="detail">RL lever catalog: <span class="path">ROCKET_LAUNCHER_LEVERS.md</span> (intent) + ordered fields in <span class="path">brt_audit_columns.py</span> / defaults in <span class="path">rocket_rl_config.py</span>.</span></li>
+      <li>Confirm seed run produces Closed / Open / Report / Summary under <span class="path">drive/</span>.
+        <span class="detail">Prefixes: <code>BRT_</code>, <code>WPBR_</code>, <code>YH_</code>, <code>MTS_</code>, <code>RL_</code>, <code>RS_</code> + 12-digit stamp.</span></li>
+      <li>If a MarkTen / Google sheet exists for the system: reconcile engine results to the sheet (sheet is ground truth).
+        <span class="detail">Required for BRT, WPBR, RL, and YH when a sheet is in use. Match dates, entry prices, exit types, and PnL on the seed set before seed ToS validation (step 4), post-run, or optimizer work. WPBR: MarkTen parity tools under <span class="path">tools/run_wpbr_*_markten.py</span>. RL / BRT / YH: compare Closed rows to the sheet ledger; do not treat engine CSV as correct until parity holds.</span></li>
+      <li>If RL: compare AWK and Python stamps.
+        <span class="detail"><span class="path">run_rl_compare.bat</span> after dual run; DailyRun fails if parity breaks.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="tos-seed">
+    <div class="step-head">
+      <div class="step-num">4</div>
+      <h3 class="step-title">Produce ToS Studies for the seed set — validate these are the right trades</h3>
+    </div>
+    <p>Parity (step 3) proves sheet ↔ engine match. This step proves the trades make sense on the chart:
+    Closed / BO / RT / zones look like the system you intended. Qualitative gate before ImproveHints or
+    optimizer work—do not start optimizing until seed ToS validation passes (or known exceptions are documented).</p>
+    <div class="callout">
+      <strong>Two ToS gates:</strong>
+      Seed ToS (this step) = pre-optimize visual check that baseline trades are right.
+      Later ToS (steps 7–8) = accept each optimization lever / A-B trade-diff on the chart.
+    </div>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Generate Thinkorswim studies for the seed / MarkTen stamp.
+        <span class="detail">RL: <span class="path">tos/gen_rl_closed_studies.py</span> →
+        <span class="path">drive/paul_studies/rl_closed_&lt;stamp&gt;</span>. Other systems: same generators
+        under <span class="path">tos/</span> or the system’s closed-study equivalent. Output under
+        <span class="path">drive/paul_studies/</span>.</span></li>
+      <li>Load studies on charts for every seed symbol that traded (and spot-check non-traders if surprising).
+        <span class="detail">Confirm Closed In/Out markers, stops, and (where applicable) BO / RT / zone overlays
+        match visual expectation—not only CSV row counts.</span></li>
+      <li>Chart-validate that entries/exits fit the theory from step 1.
+        <span class="detail">Wrong structure on the chart = fix theory, sheet, or engine before post-run.
+        Parity alone is not enough if both sheet and engine encode a bad trade.</span></li>
+      <li>Pass / document exceptions before moving on.
+        <span class="detail">Known bad OHLC days, intentional skips, or deferred symbols go in
+        <span class="path">drive/paul_experiments/</span> notes next to the stamp. Do not proceed to
+        ImproveHints (step 5) or seed optimize (step 6) until this gate is green or exceptions are explicit.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="post-run">
+    <div class="step-head">
+      <div class="step-num">5</div>
+      <h3 class="step-title">Post-run analysis — find what to improve</h3>
+    </div>
+    <p>After seed ToS confirms trades are visually right, diagnose the seed stamp before optimizer sweeps:
+    which symbols fit poorly, which levers to tweak, and whether a <em>new</em> variable is warranted.
+    Cheap FIT / ImproveHints emit after every engine write;
+    deep charts + HTML are manual (not DailyRun). See <span class="path">docs/POST_RUN_ANALYSIS.md</span>.</p>
+    <div class="chip-row">
+      <span class="chip">CLI · post_run_analysis.py</span>
+      <span class="chip">RL wrapper · rl_post_run_analysis.py</span>
+      <span class="chip">ImproveHints / SymbolAssessments / ImprovePriority</span>
+      <span class="chip">FIT_SCORE_ROBUST</span>
+    </div>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Run deep post-run on the seed stamp (charts on by default).
+        <span class="detail">Any system: <code>python stock_analysis/post_run_analysis.py --system RL --stamp &lt;ts&gt; --charts</code>
+        (or <code>--system BRT</code> / WPBR / YH / …). RL shortcut:
+        <code>python stock_analysis/rl_post_run_analysis.py --stamp &lt;ts&gt; --charts</code>.
+        Auto-detect via <code>drive/{PREFIX}_Closed_{stamp}.csv</code> or pass <code>--closed</code>.</span></li>
+      <li>Read cheap artifacts already on Summary / ImproveHints.
+        <span class="detail">Summary: <code>FIT</code>, <code>FIT_SCORE</code>, <code>FIT_SCORE_ROBUST</code>,
+        <code>MAX_WIN_PCT</code>, <code>MEDIAN_PNL_PCT</code>, <code>OUTLIER_PCT_OF_WINS</code>,
+        <code>FIT_ASSESSMENT</code>. Hints: <code>{prefix}_ImproveHints_&lt;ts&gt;.csv</code> + <code>.md</code>.
+        Use headline <code>FIT_SCORE</code> for continuity; use <code>FIT_SCORE_ROBUST</code>
+        (median PnL% + outlier penalty) when deciding what to change.</span></li>
+      <li>Open deep HTML and decide: tweak an existing lever vs introduce a new variable.
+        <span class="detail">Outputs under <span class="path">drive/</span>:
+        <code>{prefix}_SymbolAssessments_&lt;ts&gt;.html</code>,
+        <code>{prefix}_ImprovePriority_&lt;ts&gt;.html</code>,
+        <code>{prefix}_Charts_&lt;ts&gt;/</code>. Prefer one coherent hypothesis for the next optimizer arm.</span></li>
+      <li>Optional (RL only): scan near-misses / blind spots.
+        <span class="detail"><code>--missed-moves</code> → <code>RL_MissedMoves_&lt;ts&gt;.csv</code> + SymbolAssessments §6 /
+        ImprovePriority “Why we miss winners”. Heuristic — confirm on charts before changing production gates.</span></li>
+      <li>Freeze the improvement target before seeding the optimizer.
+        <span class="detail">Document the chosen lever or new-variable idea next to the stamp in
+        <span class="path">drive/paul_experiments/</span>. Step 6 then optimizes that target on the seed set.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="seed-opt">
+    <div class="step-head">
+      <div class="step-num">6</div>
+      <h3 class="step-title">Run selected stocks through the optimizer</h3>
+    </div>
+    <p>Balance variables on the seed set only—guided by post-run ImprovePriority / FIT gaps
+    (and only after seed ToS validation in step 4).
+    Do not expand the universe until seed behavior is understood and charted.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Choose the optimizer for the system.
+        <span class="detail">RL: <span class="path">RL_Optimizer.py</span> (default universe <span class="path">data/rl_gold_universe.txt</span>). BRT/IND-family: <span class="path">BRT_Optimizer.py</span> / <span class="path">IND_Optimizer.py</span> / <span class="path">RocketOptimizer.py</span>. Per-symbol: <span class="path">run_per_symbol_optimizer.bat</span> → <span class="path">Per_Symbol_Optimized_Settings_*.json</span>.</span></li>
+      <li>Change one variable (or one coherent arm) at a time where possible.
+        <span class="detail">Keeps ToS and trade-diff interpretable in steps 7–8.</span></li>
+      <li>Record best settings (JSON / bat freeze / experiment folder under <span class="path">drive/paul_experiments/</span>).
+        <span class="detail">Do not silently edit production bats during exploration; document suggested <code>-v</code> overrides.</span></li>
+      <li>Review hard gates (min trades, max DD, score model).
+        <span class="detail">RL optimizer: score mix (PnL, DD, PF, expectancy, …) + min-trades / Max_DD gates.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="tos">
+    <div class="step-head">
+      <div class="step-num">7</div>
+      <h3 class="step-title">For each variable change: Thinkorswim studies</h3>
+    </div>
+    <p>After each optimizer lever change, charts must show what the system needs: SMAs, bands, stops, In/Out markers.
+    This is the <em>post-optimize</em> ToS gate (accept the lever)—distinct from seed ToS validation in step 4
+    (baseline trades are right before you optimize). Output studies under <span class="path">drive/paul_studies/</span>.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Generate a closed-trade study for the stamp.
+        <span class="detail">RL: <span class="path">tos/gen_rl_closed_studies.py</span> → e.g. <span class="path">drive/paul_studies/rl_closed_&lt;stamp&gt;</span>. Plots SMA20/50/100/200, dip band, SMA50Exp, In/Out, stop segments.</span></li>
+      <li>Load the study on charts for every seed symbol that traded.
+        <span class="detail">Confirm entries sit in the intended band / zone; stops match Closed <code>ORIGINAL STOP</code>.</span></li>
+      <li>Make the variable change visible on the chart (not only in CSV metrics).
+        <span class="detail">If you cannot see the lever’s effect, the experiment is incomplete.</span></li>
+      <li>Save study path + notes next to the experiment folder.
+        <span class="detail">Pair with HTML under <span class="path">drive/paul_experiments/</span>.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="trade-diff">
+    <div class="step-head">
+      <div class="step-num">8</div>
+      <h3 class="step-title">Comparing two variables: trade-diff HTML + ToS</h3>
+    </div>
+    <p>When comparing arm A vs arm B (two stamps / two lever values), produce a sortable trade-diff report and dual-band ToS studies showing shared vs new trades.</p>
+    <div class="chip-row">
+      <span class="chip">HTML · drive/paul_experiments/rl_stamp_trade_diff_*.html</span>
+      <span class="chip">ToS · tos/gen_rl_trade_diff_studies.py</span>
+      <span class="chip">ToS out · drive/paul_studies/rl_trade_diff_*</span>
+    </div>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Write trade-diff HTML (exact + close matches, new-only, metrics side-by-side).
+        <span class="detail">Pattern: <span class="path">rl_stamp_trade_diff_too_high_113129_vs_113132.html</span>. Tables use sortable headers (project rule).</span></li>
+      <li>Generate ToS trade-diff study for symbols that differ.
+        <span class="detail"><span class="path">tos/gen_rl_trade_diff_studies.py</span>: grey = shared/close-match; green = new-only; dual dip bands when comparing e.g. 2.4% vs 4.1%.</span></li>
+      <li>Ensure a reviewer can explain every new trade from the chart.
+        <span class="detail">If new trades are opaque, freeze promotion.</span></li>
+      <li>Keep only one primary lever different between stamps; document shared settings.
+        <span class="detail">Report/Audit columns should confirm the A/B isolation.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="universe">
+    <div class="step-head">
+      <div class="step-num">9</div>
+      <h3 class="step-title">After optimizing the seed set → full universe run</h3>
+    </div>
+    <p>Freeze seed-winning settings; run the production (or candidate) universe. Prefer the system’s bat so DailyRun parity stays intact.</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Source the universe list from bat / gold file (not an ad-hoc paste).
+        <span class="detail">RL: <code>RL_SYMBOLS</code> in <span class="path">run_rl.bat</span> ↔ <span class="path">data/rl_gold_universe.txt</span>. Override via env for one-offs.</span></li>
+      <li>Complete the full run; stamp Summary + Closed + Report under <span class="path">drive/</span>.
+        <span class="detail">Copy latest via <span class="path">run_copy_latest.bat</span> / DailyRun step 10 when appropriate.</span></li>
+      <li>Apply per-symbol settings if used in production.
+        <span class="detail"><span class="path">Per_Symbol_Optimized_Settings_Approved_Latest.json</span> (RL bat default).</span></li>
+      <li>Sanity-check Report totals vs Summary rollup; no empty Closed on liquid names.
+        <span class="detail">Investigate zero-trade liquid names before promotion filtering.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="promote">
+    <div class="step-head">
+      <div class="step-num">10</div>
+      <h3 class="step-title">Summary filters for promotion candidates</h3>
+    </div>
+    <p>Filter <code>*_Summary_&lt;stamp&gt;.csv</code> (columns from <span class="path">write_brt_summary</span> / RL mirror). Defaults below are product-owner starting points—document overrides when criteria evolve.</p>
+
+    <div class="table-wrap">
+      <table class="sortable" id="promo-table">
+        <caption>Promotion criteria — click headers to sort</caption>
+        <thead>
+          <tr>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Criterion<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Summary column<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Default threshold<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Notes<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Trade frequency</td>
+            <td><code>AVG_TRADES_PER_YEAR</code></td>
+            <td class="num">≥ ~0.36</td>
+            <td>Minimum activity: choose stocks that trade on average at least ~0.36×/year over the study window. Years = (end − start) / 365.25; start = max(<code>FIRST_DATA_DATE</code>, <code>-v start_date</code>); end = backtest end or last OHLC / last close.</td>
+          </tr>
+          <tr>
+            <td>Sheet-scaled PnL</td>
+            <td><code>SHEET_PNL</code></td>
+            <td class="num">&gt; 10,000</td>
+            <td>Sheet invest $45k vs engine <code>brt_cash</code> (~47.5k typical). Do not compare raw <code>TOTAL_PNL</code> to sheet dollars without scaling.</td>
+          </tr>
+          <tr>
+            <td>Win rate</td>
+            <td><code>PCT_WINS</code></td>
+            <td class="num">≥ 50%</td>
+            <td>WINS / TRADES × 100 (BE in denominator). Same definition as Report/Audit Pct_Wins.</td>
+          </tr>
+          <tr>
+            <td>No outlier-driven avg</td>
+            <td><code>TOTAL_PNL</code> / Closed rows</td>
+            <td class="num">Qualitative fail</td>
+            <td>Reject if a single mega-winner carries the average; check P90 day distortion, top-1 trade % of total PnL, and MAE clusters. Sort Closed by PnL $; if top trade ≫ rest, demote.</td>
+          </tr>
+          <tr>
+            <td>History depth (context)</td>
+            <td><code>FIRST_DATA_DATE</code></td>
+            <td class="num">—</td>
+            <td>Not a hard gate by itself; explains short windows and inflated trade rates. In-sample “went public” proxy from symbol CSV—not an IPO API.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <strong>Spotting outliers that inflate averages:</strong>
+      (1) One trade &gt; ~40–50% of symbol <code>TOTAL_PNL</code>;
+      (2) Removing top winner flips <code>SHEET_PNL</code> or <code>PCT_WINS</code> below threshold;
+      (3) Avg PnL ≫ median / P90 hold days extreme vs peers;
+      (4) Tiny <code>TRADES</code> with huge $ — prefer frequency filter first, then inspect Closed.
+    </div>
+
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Filter Summary with the thresholds above (or documented overrides).
+        <span class="detail">Keep a CSV / sheet of pass/fail with stamp ID.</span></li>
+      <li>Outlier-review every high-<code>SHEET_PNL</code> name.
+        <span class="detail">Especially low trade-count winners.</span></li>
+      <li>Write the promotion candidate list (symbols only) for step 11.
+        <span class="detail">Record stamp / frozen settings alongside the list in the experiment notes.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="rerun">
+    <div class="step-head">
+      <div class="step-num">11</div>
+      <h3 class="step-title">Re-run engine on just those stocks</h3>
+    </div>
+    <p>Evaluate the filtered set in isolation (cleaner metrics, faster ToS, clearer drawdown).</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Re-run the engine with <code>-s</code> / <code>*_SYMBOLS=</code> limited to the promotion list.
+        <span class="detail">Same frozen <code>-v</code> levers as the universe run that produced Summary.</span></li>
+      <li>Review portfolio-level metrics (Ann ROR, Max DD, PF, expectancy).
+        <span class="detail">Drawdown tools: <span class="path">DrawdownCalc.py</span> for RL/BRT/MTS Closed stamps.</span></li>
+      <li>Check for silent regressions vs seed behavior on overlapping names.
+        <span class="detail">If a MarkTen name suddenly looks different, stop and reconcile.</span></li>
+      <li>Record the decision: promote / hold / reject.
+        <span class="detail">Hold = needs re-opt (step 12) or more history.</span></li>
+    </ul>
+  </article>
+
+  <article class="step" id="reopt">
+    <div class="step-head">
+      <div class="step-num">12</div>
+      <h3 class="step-title">Re-optimize on the larger set</h3>
+    </div>
+    <p>Once the candidate universe is trusted, re-balance variables on that larger set. Every variable change again gets ToS + (when A/B) trade-diff (same post-lever gate as steps 7–8—not a substitute for the seed ToS pass in step 4).</p>
+    <p class="do-label">Do</p>
+    <ul class="bullets">
+      <li>Re-run the optimizer with the promotion universe as default input.
+        <span class="detail">Update gold list / experiment config; avoid contaminating production bat until approved.</span></li>
+      <li>For each accepted lever change: regenerate ToS closed studies.
+        <span class="detail"><span class="path">tos/gen_rl_closed_studies.py</span> (or system equivalent) on the new stamp.</span></li>
+      <li>For each A/B lever test: trade-diff HTML + trade-diff ToS.
+        <span class="detail">Same pattern as step 8; archive under <span class="path">drive/paul_experiments/</span> and <span class="path">drive/paul_studies/</span>.</span></li>
+      <li>Validate charts on every variable change (no “CSV-only” accepts).
+        <span class="detail">Promotion to DailyRun / approved JSON only after visual + parity checks.</span></li>
+      <li>If RL: confirm AWK↔Python parity is still green after lever freeze.
+        <span class="detail">DailyRun steps 3a–3c must remain clean.</span></li>
+      <li>Production handoff: update bat flags / approved per-symbol JSON / experiment README.
+        <span class="detail">Document why each lever won; link trade-diff HTML.</span></li>
+    </ul>
+  </article>
+</section>
+
+<section id="refs">
+  <h2>Quick reference</h2>
+  <div class="table-wrap">
+    <table class="sortable">
+      <caption>Paths and artifacts — click headers to sort</caption>
+      <thead>
+        <tr>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Artifact<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Location<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Notes<span class="sort-ind"></span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Daily orchestration</td>
+          <td><span class="path">DailyRun.bat</span></td>
+          <td>Data → AWK RL → Python RL → compare → BRT → YH → MTS → WPBR → RS → copy → targets → pages</td>
+        </tr>
+        <tr>
+          <td>RL levers doc</td>
+          <td><span class="path">ROCKET_LAUNCHER_LEVERS.md</span></td>
+          <td>Companion: <span class="path">rocket_rl_config.py</span>, Audit columns in <span class="path">brt_audit_columns.py</span></td>
+        </tr>
+        <tr>
+          <td>TBN engine entry</td>
+          <td><span class="path">stock_analysis/rocket_tbn.py</span></td>
+          <td><code>-v</code> levers; modes select BRT/RL/WPBR/YH/MTS/RS/… (legacy shim: <span class="path">rocket_brt.py</span>)</td>
+        </tr>
+        <tr>
+          <td>Post-run analysis</td>
+          <td><span class="path">stock_analysis/post_run_analysis.py</span></td>
+          <td>Deep CLI; RL wrapper <span class="path">rl_post_run_analysis.py</span>. Docs: <span class="path">docs/POST_RUN_ANALYSIS.md</span>. Outputs: SymbolAssessments, ImprovePriority, Charts; cheap FIT / ImproveHints / <code>FIT_SCORE_ROBUST</code> on Summary</td>
+        </tr>
+        <tr>
+          <td>Trade-diff HTML</td>
+          <td><span class="path">drive/paul_experiments/</span></td>
+          <td><code>rl_stamp_trade_diff_*.html</code>; sortable tables required</td>
+        </tr>
+        <tr>
+          <td>ToS studies</td>
+          <td><span class="path">drive/paul_studies/</span></td>
+          <td>Generators in <span class="path">tos/gen_rl_*_studies.py</span>. Step 4 = seed trade validation; steps 7–8 = accept each lever / trade-diff</td>
+        </tr>
+        <tr>
+          <td>Summary columns</td>
+          <td><code>*_Summary_&lt;ts&gt;.csv</code></td>
+          <td><code>FIRST_DATA_DATE</code>, <code>AVG_TRADES_PER_YEAR</code>, <code>SHEET_PNL</code>, <code>PCT_WINS</code>, …</td>
+        </tr>
+        <tr>
+          <td>Sheet PnL scale</td>
+          <td><code>SHEET_INVESTMENT = 45_000</code></td>
+          <td>In <span class="path">rocket_tbn.py</span> <code>write_brt_summary</code></td>
+        </tr>
+        <tr>
+          <td>Experiment outputs</td>
+          <td><span class="path">drive/paul_experiments/</span></td>
+          <td>WPBR/RS/RL arm folders; do not auto-edit production bats</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>Shareable use:</strong> Open this file in a browser or print to PDF.
+    Iterate with the product owner from <span class="path">drive/paul_experiments/</span>; graduate a stable copy to <span class="path">docs/</span> when the process doc is finalized.
+  </div>
+</section>
+
+<section id="systems">
+  <h2>Systems on the TBN engine</h2>
+  <p class="hint">Click column headers to sort. All Python paths below run through <strong>TBN</strong>
+  (<span class="path">rocket_tbn.py</span>). Production bats feed <span class="path">DailyRun.bat</span>;
+  outputs land under <span class="path">drive/</span> with <em>system</em> prefixes (<code>BRT_</code>, <code>RL_</code>, …).
+  <strong>BRT</strong> here means Break and ReTest — not the engine brand.</p>
+  <div class="table-wrap">
+    <table class="sortable">
+      <caption>TBN-hosted systems and primary entry points</caption>
+      <thead>
+        <tr>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">System<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Mode / -v<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Runner<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Core modules<span class="sort-ind"></span></th>
+          <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Typical seed<span class="sort-ind"></span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>BRT</strong> (Break and ReTest)</td>
+          <td><code>brt_zones=true</code> (default zone path)</td>
+          <td><span class="path">run_brt.bat</span></td>
+          <td><span class="path">rocket_tbn.py</span></td>
+          <td>Liquid breakout/retest names</td>
+        </tr>
+        <tr>
+          <td><strong>WPBR</strong></td>
+          <td><code>wpbr_zones=true</code>, other zones off</td>
+          <td><span class="path">run_wpbr.bat</span></td>
+          <td><span class="path">rocket_tbn.py</span> + WPBR zone math</td>
+          <td>MarkTen: AAPL AMZN GOOGL META MSFT NVDA TSLA AU AMD NFLX</td>
+        </tr>
+        <tr>
+          <td><strong>YH</strong></td>
+          <td><code>yh_zones=true</code>, BRT zones off</td>
+          <td><span class="path">run_yh.bat</span></td>
+          <td><span class="path">rocket_tbn.py</span></td>
+          <td>YH sheet universe</td>
+        </tr>
+        <tr>
+          <td><strong>MTS</strong></td>
+          <td><code>mts_mode=true</code> / sheet parity</td>
+          <td><span class="path">run_mts.bat</span> · <span class="path">run_mts_sheet.bat</span></td>
+          <td><span class="path">rocket_MTS.py</span> / MTS path in TBN</td>
+          <td>MTS sheet symbols</td>
+        </tr>
+        <tr>
+          <td><strong>RL</strong> (Rocket Launcher)</td>
+          <td><code>rl_mode=true</code>, isolate BRT/YH/IND</td>
+          <td><span class="path">run_rl.bat</span> · AWK <span class="path">run_audit.bat</span></td>
+          <td><span class="path">rocket_rl.py</span> · <span class="path">portfolio_audit.awk</span> (via TBN)</td>
+          <td>MarkTen mega-caps → <span class="path">rl_gold_universe.txt</span></td>
+        </tr>
+        <tr>
+          <td><strong>RS</strong></td>
+          <td><code>rs_mode=true</code> / relative strength</td>
+          <td><span class="path">run_rs.bat</span></td>
+          <td><span class="path">rocket_rs.py</span></td>
+          <td>RS_SYMBOLS + TC Strong / SPY compare</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout ok">
+    <strong>AWK ↔ Python parity (RL):</strong>
+    <span class="path">DailyRun.bat</span> runs AWK (<span class="path">run_audit.bat</span>) then Python (<span class="path">run_rl.bat</span>),
+    then <span class="path">run_rl_compare.bat</span> on the two stamps. Treat AWK math as authoritative for RL;
+    Python port must match before promoting lever changes.
+  </div>
+</section>
+
+<footer class="doc-foot">
+  <p>stockresearch · System setup process · For iteration with product owner · Canonical path: <span class="path">drive/paul_experiments/system_setup_process.html</span></p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var MONTHS = {
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12
+  };
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "month") {
+      var key = s.toLowerCase().split(/\s/)[0];
+      return MONTHS[key] || 0;
+    }
+    if (type === "date") {
+      var iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      var mdy = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (mdy) return parseInt(mdy[3] + ("0" + mdy[1]).slice(-2) + ("0" + mdy[2]).slice(-2), 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+≥>~]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+</body>
+</html>
