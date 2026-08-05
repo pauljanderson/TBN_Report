@@ -398,7 +398,14 @@
     <li><a href="#sheet">Program in sheet / MarkTen (optional)</a></li>
     <li><a href="#engine">Program into TBN engine</a></li>
     <li><a href="#tos-seed">ToS Studies for seed (validate trades)</a></li>
-    <li><a href="#post-run">Post-run analysis (improve hints)</a></li>
+    <li><a href="#post-run">Post-run analysis (improve hints)</a>
+      <ol style="margin:2px 0 0;padding-left:1.1rem;list-style:lower-alpha;">
+        <li><a href="#fit-score-robust">FIT / robust FIT formula</a></li>
+        <li><a href="#fit-robust-amzn">AMZN vs GOOGL example</a></li>
+        <li><a href="#fit-robust-faq">FAQ: median vs winners</a></li>
+        <li><a href="#fit-robust-intent">Intent &amp; overrides</a></li>
+      </ol>
+    </li>
     <li><a href="#seed-opt">Optimize seed set</a></li>
     <li><a href="#tos">ToS studies per variable</a></li>
     <li><a href="#trade-diff">Compare 2 variables (trade-diff)</a></li>
@@ -555,7 +562,8 @@
         <code>MAX_WIN_PCT</code>, <code>MEDIAN_PNL_PCT</code>, <code>OUTLIER_PCT_OF_WINS</code>,
         <code>FIT_ASSESSMENT</code>. Hints: <code>{prefix}_ImproveHints_&lt;ts&gt;.csv</code> + <code>.md</code>.
         Use headline <code>FIT_SCORE</code> for continuity; use <code>FIT_SCORE_ROBUST</code>
-        (median PnL% + outlier penalty) when deciding what to change.</span></li>
+        (median PnL% + outlier penalty) when deciding what to change—see
+        <a href="#fit-score-robust">How FIT / robust FIT is calculated</a>.</span></li>
       <li>Open deep HTML and decide: tweak an existing lever vs introduce a new variable.
         <span class="detail">Outputs under <span class="path">drive/</span>:
         <code>{prefix}_SymbolAssessments_&lt;ts&gt;.html</code>,
@@ -567,6 +575,182 @@
       <li>Freeze the improvement target before seeding the optimizer.
         <span class="detail">Document the chosen lever or new-variable idea next to the stamp in
         <span class="path">drive/paul_experiments/</span>. Step 6 then optimizes that target on the seed set.</span></li>
+    </ul>
+
+    <h3 id="fit-score-robust">How FIT / robust FIT is calculated</h3>
+    <p>Cheap FIT columns are written by <span class="path">stock_analysis/rocket_post_analysis.py</span>
+    (<code>assess_symbol_fit</code>) after every Summary write. Both scores share the same point rules;
+    <strong>robust</strong> only changes the avg-PnL% input and adds an outlier soft penalty.</p>
+    <div class="callout">
+      <strong>Headline vs robust:</strong>
+      <code>FIT</code> / <code>FIT_SCORE</code> use mean Summary <code>AVG_PNL_PCT</code> (continuity / sheet paste).
+      <code>FIT_SCORE_ROBUST</code> uses <em>median</em> Closed trade <code>PNL %</code> for that same bucket and may subtract
+      1–2 for a single-win-dominated book. Prefer robust for promotion / “is this edge real?” decisions.
+      Code does not write a separate <code>FIT_ROBUST</code> tier column—tier for robust is only implied via score
+      thresholds and the optional note in <code>FIT_ASSESSMENT</code>.
+    </div>
+    <p class="hint">Inputs (per symbol): Summary <code>PCT_WINS</code>, <code>AVG_PNL_PCT</code>, <code>SHEET_PNL</code>,
+    <code>AVG_TRADES_PER_YEAR</code>, <code>WINS</code>/<code>LOSSES</code>/<code>TRADES</code>; Closed rows supply each trade’s
+    <code>PNL %</code> (median + outlier math). Zero trades → score 0 / Low.</p>
+    <p class="do-label">Shared point rules (both scores)</p>
+    <div class="table-wrap">
+      <table class="sortable">
+        <caption>Click column headers to sort. Source: <code>_fit_component_score</code>.</caption>
+        <thead>
+          <tr>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Component<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Condition<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Points<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Win rate</td><td><code>PCT_WINS</code> ≥ 55%</td><td class="num">+2</td></tr>
+          <tr><td>Win rate</td><td>≥ 45% and &lt; 55%</td><td class="num">+1</td></tr>
+          <tr><td>Avg / median PnL%</td><td>bucket input ≥ 8%</td><td class="num">+2</td></tr>
+          <tr><td>Avg / median PnL%</td><td>≥ 3% and &lt; 8%</td><td class="num">+1</td></tr>
+          <tr><td>Avg / median PnL%</td><td>&lt; 0%</td><td class="num">−2</td></tr>
+          <tr><td>Sheet PnL</td><td><code>SHEET_PNL</code> &gt; 5000</td><td class="num">+2</td></tr>
+          <tr><td>Sheet PnL</td><td>&gt; 0 and ≤ 5000</td><td class="num">+1</td></tr>
+          <tr><td>Sheet PnL</td><td>&lt; −2000</td><td class="num">−2</td></tr>
+          <tr><td>Trades / year</td><td><code>AVG_TRADES_PER_YEAR</code> ≥ 1.0</td><td class="num">+2</td></tr>
+          <tr><td>Trades / year</td><td>≥ 0.36 and &lt; 1.0</td><td class="num">+1</td></tr>
+          <tr><td>Clean book</td><td>≥ 3 wins and 0 losses</td><td class="num">+1</td></tr>
+          <tr><td>Asymmetry</td><td>avg win &lt; 0.85 × |avg loss| (Closed)</td><td class="num">−1</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="do-label">What “robust” adds</p>
+    <ul class="bullets">
+      <li><strong>Median instead of mean</strong> for the avg-PnL% points bucket.
+        <span class="detail">Headline uses Summary mean <code>AVG_PNL_PCT</code>. Robust uses median of Closed
+        <code>PNL %</code> values (<code>MEDIAN_PNL_PCT</code> on Summary)—so one mega-win (e.g. +254%) cannot carry the bucket alone.</span></li>
+      <li><strong>Soft outlier penalty</strong> (−1 / −2) from top win share.
+        <span class="detail">Compute max winning <code>PNL %</code> vs sum of winning PnL%s (<code>OUTLIER_PCT_OF_WINS</code>) and vs sum of all trade PnL%s (sheet share under fixed notional).
+        −1 if top win &gt;50% of win PnLs <em>or</em> &gt;60% of sheet share; −2 if &gt;70% of win PnLs <em>or</em> &gt;80% of sheet share.
+        Headline score always passes outlier penalty = 0.</span></li>
+    </ul>
+    <p class="do-label">Scaling to FIT tier</p>
+    <ul class="bullets">
+      <li>Integer sum → tier: score ≥ 5 → <strong>High</strong>; ≥ 2 → <strong>Medium</strong>; else <strong>Low</strong>
+        (<span class="detail"><code>FIT</code> is the headline tier. Near-zero tpy (0 &lt; tpy &lt; 0.2) adds a
+        <code>rare setups</code> note only—no score hit. High tpy is never penalized as “busy.”</span></li>
+      <li>When robust is materially weaker, <code>FIT_ASSESSMENT</code> appends a flag.
+        <span class="detail">If robust score ≤ headline − 2, or robust tier drops below headline:
+        <code>robust Low/Medium… (med …%, outlier …% of wins)</code>. Full detail also in
+        <span class="path">docs/POST_RUN_ANALYSIS.md</span>.</span></li>
+    </ul>
+
+    <h3 id="fit-robust-formula">Robust score in one formula</h3>
+    <p>Robust FIT is the <em>same</em> integer point sum as headline FIT, with exactly two changes: the
+    PnL% bucket is fed the <strong>median</strong> Closed trade instead of the mean, and a soft outlier
+    penalty may subtract 1–2. In shorthand:</p>
+    <div class="callout">
+      <code>FIT_SCORE_ROBUST = win_rate_pts + pnl_pts(<strong>MEDIAN_PNL_PCT</strong>) + sheet_pnl_pts + trades_per_year_pts + clean_book_pt − asymmetry_pt − outlier_penalty</code>
+      <br><br>
+      where <code>pnl_pts(x) = +2 if x ≥ 8%, +1 if 3% ≤ x &lt; 8%, 0 if 0 ≤ x &lt; 3%, −2 if x &lt; 0%</code>,
+      and <code>outlier_penalty = 2 if top win &gt; 70% of win PnL% (or &gt; 80% of sheet share), 1 if &gt; 50% (or &gt; 60%), else 0</code>.
+      Tier: score ≥ 5 → High, ≥ 2 → Medium, else Low. Headline uses the identical formula but with
+      <code>pnl_pts(AVG_PNL_PCT)</code> (the mean) and <code>outlier_penalty = 0</code>.
+    </div>
+    <p class="hint">So the <em>only</em> structural difference is the PnL% input. When the median trade is a small
+    loss but the mean is positive, the PnL bucket swings from <code>+1/+2</code> (headline) to <code>−2</code> (robust) —
+    a 3-to-4-point drop on a scale where 5 = High. That single substitution is what produces the low robust
+    scores the product owner is seeing.</p>
+
+    <h3 id="fit-robust-amzn">Worked example — AMZN vs GOOGL (recent YH run)</h3>
+    <p>From <span class="path">drive/YH_LatestRun_Summary.csv</span> (stamp <code>260804183556</code>). AMZN makes
+    <strong>more money</strong> than GOOGL on every dollar metric (higher <code>TOTAL_PNL</code> and
+    <code>SHEET_PNL</code>) and has the same headline <code>FIT_SCORE</code> (6), yet its robust score is
+    <strong>3</strong> vs GOOGL’s <strong>7</strong>. The entire gap is the median.</p>
+    <div class="table-wrap">
+      <table class="sortable">
+        <caption>Click column headers to sort. Source: YH Summary FIT columns, 2026-08-04.</caption>
+        <thead>
+          <tr>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Symbol<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Trades<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">W / L<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Sheet PnL $<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Mean PnL%<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Median PnL%<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">FIT_SCORE<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">ROBUST<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Robust tier<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>AMZN</strong></td><td class="num">42</td><td>21 / 21</td><td class="num">115,874</td><td class="num">+6.13%</td><td class="num">−2.81%</td><td class="num">6</td><td class="num">3</td><td>Medium</td></tr>
+          <tr><td><strong>GOOGL</strong></td><td class="num">33</td><td>17 / 16</td><td class="num">96,616</td><td class="num">+6.51%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">7</td><td>High</td></tr>
+          <tr><td>AAPL</td><td class="num">41</td><td>19 / 22</td><td class="num">84,166</td><td class="num">+4.56%</td><td class="num">−6.77%</td><td class="num">6</td><td class="num">3</td><td>Medium</td></tr>
+          <tr><td>AMD</td><td class="num">52</td><td>22 / 30</td><td class="num">79,323</td><td class="num">+3.39%</td><td class="num">−7.79%</td><td class="num">5</td><td class="num">2</td><td>Medium</td></tr>
+          <tr><td>NFLX</td><td class="num">52</td><td>22 / 30</td><td class="num">71,999</td><td class="num">+3.08%</td><td class="num">−7.83%</td><td class="num">5</td><td class="num">2</td><td>Medium</td></tr>
+          <tr><td>MSFT</td><td class="num">31</td><td>19 / 12</td><td class="num">135,158</td><td class="num">+9.69%</td><td class="num">+21.00%</td><td class="num">8</td><td class="num">8</td><td>High</td></tr>
+          <tr><td>NVDA</td><td class="num">54</td><td>29 / 25</td><td class="num">169,281</td><td class="num">+6.97%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">7</td><td>High</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="do-label">Point-by-point: where AMZN loses 4 vs GOOGL</p>
+    <div class="table-wrap">
+      <table class="sortable">
+        <caption>Both share win-rate, sheet-PnL, and trades/year points; only the PnL bucket differs.</caption>
+        <thead>
+          <tr>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Component<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">AMZN<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">GOOGL<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Win rate (50.0% / 51.5%, both ≥45%)</td><td class="num">+1</td><td class="num">+1</td></tr>
+          <tr><td>PnL bucket — <strong>median</strong> (−2.81% &lt; 0 vs +21% ≥ 8%)</td><td class="num">−2</td><td class="num">+2</td></tr>
+          <tr><td>Sheet PnL (both &gt; 5000)</td><td class="num">+2</td><td class="num">+2</td></tr>
+          <tr><td>Trades / year (2.53 / 1.99, both ≥ 1.0)</td><td class="num">+2</td><td class="num">+2</td></tr>
+          <tr><td>Outlier penalty (7% / 8% of wins — below trigger)</td><td class="num">0</td><td class="num">0</td></tr>
+          <tr class="total-row"><td><strong>Robust total</strong></td><td class="num"><strong>3</strong></td><td class="num"><strong>7</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="fit-robust-faq">FAQ — why the median hurts some winners</h3>
+    <p><strong>Q: AMZN earns more dollars than GOOGL and has strong stats. Why is its robust score low?</strong><br>
+    Because robust asks a different question than “how much did it make?” It asks “was the <em>typical</em> trade
+    profitable?” AMZN’s book is 21 wins / 21 losses, so the median (middle) trade sits right on the win/loss
+    boundary at <strong>−2.81%</strong> — a small loss. The median PnL bucket therefore scores <code>−2</code>
+    instead of the <code>+2</code> a healthy median (≥ 8%) would earn. GOOGL, with 17 wins / 16 losses, has its
+    median land on a <em>winning</em> trade (+21%), so it collects <code>+2</code>. That one component is the
+    whole 4-point difference. AMZN’s larger total dollars come from a handful of big winners lifting the
+    <em>mean</em> — which is exactly what robust is designed to look past.</p>
+    <p><strong>Q: The PO says AMZN is “~1 win away.” Is that right?</strong><br>
+    Yes, literally. With 42 trades split 21/21, the median is the average of the 21st and 22nd sorted trades —
+    straddling the boundary. If one more trade closed green (22 wins / 20 losses), the median would jump from
+    the loss side up onto a winner (in this book, into the ~+21% neighborhood), flipping the PnL bucket from
+    <code>−2</code> to <code>+2</code> and lifting robust from <strong>3 (Medium)</strong> to <strong>7 (High)</strong>.
+    Robust is deliberately sensitive at this 50/50 hinge because that is where “real edge” vs “outlier-carried”
+    is genuinely uncertain.</p>
+    <p><strong>Q: Why do other strong performers (AAPL, AMD, NFLX) also score low on robust?</strong><br>
+    Same mechanism. They post large total dollars but carry ≥ as many losers as winners, so their median trade
+    is a small loss (−6.8% / −7.8% / −7.8%). The mean is dragged positive by a few asymmetric winners; the
+    median — the middle, everyday trade — is red. Robust rewards a book that is broadly profitable trade-by-trade,
+    not one rescued by its top few.</p>
+
+    <h3 id="fit-robust-intent">Intent, limitations, and when to override</h3>
+    <ul class="bullets">
+      <li><strong>Intent.</strong> Robust FIT answers “is the edge <em>broad and repeatable</em>?” rather than
+        “how big is the total?” Total PnL and win rate can both be dominated by a few large trades; the median
+        cannot. A high robust score means a randomly chosen trade in that book was likely a decent winner.</li>
+      <li><strong>vs raw total PnL / win rate.</strong> Use headline <code>FIT_SCORE</code> / total dollars for
+        “how much did this contribute” and sheet-paste continuity. Use robust for promotion and “should I trust
+        this edge going forward” — it is the harder, more conservative test.</li>
+      <li><strong>Limitation — boundary sensitivity.</strong> Near a 50% win rate the median can flip on a single
+        trade (the AMZN case), so a 3 vs 7 swing can overstate a real difference. Read robust alongside median,
+        mean, and total, not in isolation.</li>
+      <li><strong>Limitation — not a dollar measure.</strong> A low robust score does <em>not</em> mean a name
+        loses money; AMZN is highly profitable. It means the profit is concentrated, not typical.</li>
+      <li><strong>When to override with judgment.</strong> Keep an outlier-carried winner (low robust, high
+        dollars) when the big trades are structurally repeatable (e.g. the system is explicitly a
+        breakout/HTF runner where a few large moves are the thesis), when history is short, or when charts show
+        the winners are on-thesis rather than lucky. Demote a high-robust name if its trades don’t match the
+        intended setup on ToS review. Robust is a flag for a closer look — not an automatic reject.</li>
     </ul>
   </article>
 
@@ -835,6 +1019,9 @@
   <div class="callout">
     <strong>Shareable use:</strong> Open this file in a browser or print to PDF.
     Iterate with the product owner from <span class="path">drive/paul_experiments/</span>; graduate a stable copy to <span class="path">docs/</span> when the process doc is finalized.
+    Live PO link: edit the source <span class="path">drive/paul_experiments/system_setup_process.html</span>, then run
+    <span class="path">publish_github_pages.bat --push</span> (copies source → <span class="path">docs/system_setup_process.html</span> and pushes) so
+    <a href="https://pauljanderson.github.io/TBN_Report/system_setup_process.html" target="_blank" rel="noopener noreferrer">pauljanderson.github.io/TBN_Report/system_setup_process.html</a> updates—do not push unless asked.
   </div>
 </section>
 
