@@ -24,24 +24,33 @@ Emitted after Summary write:
 | Artifact | Columns / files |
 |----------|-----------------|
 | Closed | `ONE_LINER` |
-| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `MEDIAN_PNL_PCT`, `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`) |
+| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `AVG_PNL_PCT_WO_MAX`, `MEDIAN_PNL_PCT` (diag only), `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`) |
 | Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` + `.html` |
 
 `FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
 
 `FIT_SCORE_ROBUST` uses the same point rules but:
 
-1. **Median** trade `PNL %` (from Closed) instead of mean for the avg-pnl points bucket — resists one mega-win (e.g. MPWR +254%).
+1. **Leave-max-win-out** mean trade `PNL %` (drop the single largest winning trade, then re-average) for the avg-pnl points bucket — `AVG_PNL_PCT_WO_MAX`. Sheet PnL is scaled the same way (fixed-notional share of the dropped win).
 2. Soft outlier penalty: **−1** if top win &gt;50% of sum of winning PnL% **or** that trade’s fixed-notional share &gt;60% of sum(PnL%); **−2** if &gt;70% of win PnLs or &gt;80% of sheet share.
 
-When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (med …%, outlier …% of wins)`.
+`MEDIAN_PNL_PCT` remains on Summary for inspection but is **not** used in the robust score (a negative median when WR≈50% was over-punishing profitable books).
 
-Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, avg not carried by one outlier”).
+When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (wo-max avg …%, outlier …% of wins)`.
+
+Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, edge not carried by one outlier”).
 
 ### Parameter tweaks + peer-learn (ImproveHints)
 
 Emitted automatically with cheap ImproveHints (no extra flag). Additive sections in the same
-`{prefix}_ImproveHints_<ts>.*` artifacts:
+`{prefix}_ImproveHints_<ts>.*` artifacts.
+
+**How to use (PO process):** treat rows as **candidate hypotheses / missed-trade evidence**, not as
+orders to optimize. If nothing actionable appears and human ToS review finds no concrete miss,
+**do not hunt params**. When acting: one knob, ≤2 pre-agreed alternatives, ToS before/after,
+judge quality / thesis / DD / reconcile—not max profit. Adopt only with PO sign-off + reconcile
+freeze. Template: `docs/HYPOTHESIS_TEST.md` · process steps 5–8 / 12 in
+`drive/paul_experiments/system_setup_process.html`.
 
 | Section | What it scores | Direction signals |
 |---------|----------------|-------------------|
@@ -50,8 +59,13 @@ Emitted automatically with cheap ImproveHints (no extra flag). Additive sections
 | **stop_pct** | STOP then rebound above entry (OHLC) or MFE≥5% then STOP → **expand**; never-worked losers (MFE&lt;2%) → **hold** / tighten only if fat losses cluster | Same |
 | **peer-learn** | Hold-range overlaps vs peer `*_LatestRun_Closed.csv` (or newest stamp) under `drive/` | Adopt only when countable (peer TARGET after our STOP; wider stop won; longer hold won) |
 
+**Opposing lenses:** expand vs hold/contract (and tighten vs loosen) can both fire on **different trade subsets**. `param_tweak_hints.collect_param_tweak_hints` reconciles those into **one tension card** (direction lean or `mixed`, confidence capped at `medium`) so ImproveHints / ImprovePriority do not ship two high-confidence opposite knob moves — prefer one coherent hypothesis / A/B arm (see `docs/system_setup_process.html` steps 5–6 and `docs/HYPOTHESIS_TEST.md`).
+
 Heuristics are documented on each row (`HEURISTIC` column / MD bullets). Confidence is
 `high` / `medium` / `low` / `insufficient` — do not change production knobs on thin samples.
+Hints suggest a **direction** for a hypothesis test; they are not a license for combinatorial sweeps.
+
+**YH param-hint A/B:** `run_yh_param_hint_ab.bat <stamp>` (driver `tools/yh_param_hint_ab.py`) runs control vs one alt each for top ImproveHints `stop_pct` / `target_pct` / `band_pct` cards (frozen `run_yh.bat` baselines; ≤1 alternative per knob). Writes `drive/paul_experiments/yh_param_hint_ab/comparison.html`. ImprovePriority puts Parameter suggestions first and links the bat / comparison.
 
 - **Closed-only** always runs (DailyRun-safe).
 - **OHLC extras** (post-exit continuation, stop rebound, RejectedFills follow-through) run when
@@ -59,6 +73,8 @@ Heuristics are documented on each row (`HEURISTIC` column / MD bullets). Confide
   (e.g. `--refresh-cheap`).
 - Peer scan reads other systems’ Closed books from `drive/`; it does not call
   `tools/sb_system_convergence.py` (same overlap idea, lighter).
+- **Future / tooling:** teach post-run analysis to surface near-miss / band-touch more explicitly
+  across zone systems (beyond RL `--missed-moves`) so evidence for hypothesis tests is easier to count.
 
 `FIT_SCORE` trades/year component (`AVG_TRADES_PER_YEAR` in `assess_symbol_fit`): higher frequency is rewarded; there is no “busy” penalty for high tpy.
 

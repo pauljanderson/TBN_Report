@@ -374,9 +374,10 @@
   <h1>Trading System Setup Process</h1>
   <p class="lede">
     End-to-end path from theory → sheet ground truth → <strong>TBN</strong> engine →
-    seed ToS validation → post-run analysis → optimizer → ToS per lever → trade-diff →
-    universe promotion.
+    seed ToS validation → post-run analysis → <strong>hypothesis tests</strong> (missed-trade fixes) →
+    ToS before/after → trade-diff → universe promotion.
     Shareable documentation for product-owner iteration.
+    Param changes are evidence-driven—not open-ended optimization for max profit.
   </p>
   <p class="hint" style="margin-top:0.75rem;">
     <strong>TBN</strong> = Twin Beacon Networks (shared multi-system engine:
@@ -398,7 +399,7 @@
     <li><a href="#sheet">Program in sheet / MarkTen (optional)</a></li>
     <li><a href="#engine">Program into TBN engine</a></li>
     <li><a href="#tos-seed">ToS Studies for seed (validate trades)</a></li>
-    <li><a href="#post-run">Post-run analysis (improve hints)</a>
+    <li><a href="#post-run">Post-run analysis (evidence / hints)</a>
       <ol style="margin:2px 0 0;padding-left:1.1rem;list-style:lower-alpha;">
         <li><a href="#fit-score-robust">FIT / robust FIT formula</a></li>
         <li><a href="#fit-robust-amzn">AMZN vs GOOGL example</a></li>
@@ -406,13 +407,14 @@
         <li><a href="#fit-robust-intent">Intent &amp; overrides</a></li>
       </ol>
     </li>
-    <li><a href="#seed-opt">Optimize seed set</a></li>
+    <li><a href="#seed-opt">Hypothesis test on seed set</a></li>
     <li><a href="#tos">ToS studies per variable</a></li>
     <li><a href="#trade-diff">Compare 2 variables (trade-diff)</a></li>
     <li><a href="#universe">Full universe run</a></li>
     <li><a href="#promote">Promotion filters</a></li>
     <li><a href="#rerun">Re-run promotion candidates</a></li>
-    <li><a href="#reopt">Re-optimize larger set</a></li>
+    <li><a href="#reopt">Hypothesis re-test on larger set</a></li>
+    <li><a href="#hyp-one-pager">Hypothesis test one-pager</a></li>
     <li><a href="#refs">Quick reference</a></li>
     <li><a href="#systems">Systems on the TBN engine</a></li>
   </ol>
@@ -426,14 +428,27 @@
     <span class="stage">Engine</span><span class="arrow">→</span>
     <span class="stage">Seed ToS</span><span class="arrow">→</span>
     <span class="stage">Post-run</span><span class="arrow">→</span>
-    <span class="stage">Seed opt</span><span class="arrow">→</span>
+    <span class="stage">Hypothesis</span><span class="arrow">→</span>
     <span class="stage">ToS / lever</span><span class="arrow">→</span>
     <span class="stage">Trade-diff</span><span class="arrow">→</span>
     <span class="stage">Universe</span><span class="arrow">→</span>
     <span class="stage">Filter</span><span class="arrow">→</span>
     <span class="stage">Re-run</span><span class="arrow">→</span>
-    <span class="stage">Re-opt</span><span class="arrow">→</span>
+    <span class="stage">Re-test</span><span class="arrow">→</span>
     <span class="stage">DailyRun</span>
+  </div>
+
+  <div class="callout warn" id="hyp-principles">
+    <strong>Param changes = hypothesis tests / missed-trade fixes — not “optimization.”</strong>
+    No change without evidence (ImproveHints / post-run, ToS review, or a counted miss pattern).
+    One hypothesis, one knob; freeze everything else; same universe/stamp for A/B.
+    At most 1–2 pre-agreed alternatives tied to that hypothesis—no combinatorial / “find optimal” grids.
+    Judge on trade quality, thesis fit, drawdown, and reconcile—not max profit.
+    ToS before/after is the gate: reject PnL-up changes that do not look like the same setup.
+    Adopt only with product-owner (PO) sign-off plus reconcile freeze / re-baseline.
+    If setups, charts, trade count, and results already look good—and post-run has no missed-trade or lever suggestions—leave params alone.
+    Template: <a href="#hyp-one-pager">Hypothesis test one-pager</a> ·
+    <span class="path">docs/HYPOTHESIS_TEST.md</span>.
   </div>
 
   <article class="step" id="theory">
@@ -496,7 +511,7 @@
       <li>Confirm seed run produces Closed / Open / Report / Summary under <span class="path">drive/</span>.
         <span class="detail">Prefixes: <code>BRT_</code>, <code>WPBR_</code>, <code>YH_</code>, <code>MTS_</code>, <code>RL_</code>, <code>RS_</code> + 12-digit stamp.</span></li>
       <li>If a MarkTen / Google sheet exists for the system: reconcile engine results to the sheet (sheet is ground truth).
-        <span class="detail">Required for BRT, WPBR, RL, and YH when a sheet is in use. Match dates, entry prices, exit types, and PnL on the seed set before seed ToS validation (step 4), post-run, or optimizer work. WPBR: MarkTen parity tools under <span class="path">tools/run_wpbr_*_markten.py</span>. RL / BRT / YH: compare Closed rows to the sheet ledger; do not treat engine CSV as correct until parity holds.</span></li>
+        <span class="detail">Required for BRT, WPBR, RL, and YH when a sheet is in use. Match dates, entry prices, exit types, and PnL on the seed set before seed ToS validation (step 4), post-run, or any hypothesis test. WPBR: MarkTen parity tools under <span class="path">tools/run_wpbr_*_markten.py</span>. RL / BRT / YH: compare Closed rows to the sheet ledger; do not treat engine CSV as correct until parity holds.</span></li>
       <li>If RL: compare AWK and Python stamps.
         <span class="detail"><span class="path">run_rl_compare.bat</span> after dual run; DailyRun fails if parity breaks.</span></li>
     </ul>
@@ -509,11 +524,12 @@
     </div>
     <p>Parity (step 3) proves sheet ↔ engine match. This step proves the trades make sense on the chart:
     Closed / BO / RT / zones look like the system you intended. Qualitative gate before ImproveHints or
-    optimizer work—do not start optimizing until seed ToS validation passes (or known exceptions are documented).</p>
+    any hypothesis test—do not change params until seed ToS validation passes (or known exceptions are documented).</p>
     <div class="callout">
       <strong>Two ToS gates:</strong>
-      Seed ToS (this step) = pre-optimize visual check that baseline trades are right.
-      Later ToS (steps 7–8) = accept each optimization lever / A-B trade-diff on the chart.
+      Seed ToS (this step) = baseline visual check that trades match the intended setup.
+      Later ToS (steps 7–8) = accept or reject each hypothesis-test lever / A-B trade-diff on the chart
+      (PnL alone is not enough).
     </div>
     <p class="do-label">Do</p>
     <ul class="bullets">
@@ -531,17 +547,19 @@
       <li>Pass / document exceptions before moving on.
         <span class="detail">Known bad OHLC days, intentional skips, or deferred symbols go in
         <span class="path">drive/paul_experiments/</span> notes next to the stamp. Do not proceed to
-        ImproveHints (step 5) or seed optimize (step 6) until this gate is green or exceptions are explicit.</span></li>
+        ImproveHints (step 5) or a seed hypothesis test (step 6) until this gate is green or exceptions are explicit.</span></li>
     </ul>
   </article>
 
   <article class="step" id="post-run">
     <div class="step-head">
       <div class="step-num">5</div>
-      <h3 class="step-title">Post-run analysis — find what to improve</h3>
+      <h3 class="step-title">Post-run analysis — find evidence (or stop)</h3>
     </div>
-    <p>After seed ToS confirms trades are visually right, diagnose the seed stamp before optimizer sweeps:
-    which symbols fit poorly, which levers to tweak, and whether a <em>new</em> variable is warranted.
+    <p>After seed ToS confirms trades are visually right, diagnose the seed stamp for <em>concrete</em>
+    problems: poor FIT, counted miss patterns, or chart near-misses / band-touches that warrant a
+    single-knob hypothesis. If ImproveHints / post-run and human ToS review have nothing actionable,
+    <strong>do not hunt params</strong>—skip steps 6–8 and proceed to universe (step 9) with the frozen baseline.
     Cheap FIT / ImproveHints emit after every engine write;
     deep charts + HTML are manual (not DailyRun). See <span class="path">docs/POST_RUN_ANALYSIS.md</span>.</p>
     <div class="chip-row">
@@ -564,17 +582,22 @@
         Use headline <code>FIT_SCORE</code> for continuity; use <code>FIT_SCORE_ROBUST</code>
         (median PnL% + outlier penalty) when deciding what to change—see
         <a href="#fit-score-robust">How FIT / robust FIT is calculated</a>.</span></li>
-      <li>Open deep HTML and decide: tweak an existing lever vs introduce a new variable.
+      <li>Open deep HTML and decide whether there is <em>evidence</em> for one hypothesis (or none).
         <span class="detail">Outputs under <span class="path">drive/</span>:
         <code>{prefix}_SymbolAssessments_&lt;ts&gt;.html</code>,
         <code>{prefix}_ImprovePriority_&lt;ts&gt;.html</code>,
-        <code>{prefix}_Charts_&lt;ts&gt;/</code>. Prefer one coherent hypothesis for the next optimizer arm.</span></li>
+        <code>{prefix}_Charts_&lt;ts&gt;/</code>. Prefer one coherent missed-trade / lever hypothesis—
+        or explicitly record “no change” and skip step 6.</span></li>
       <li>Optional (RL only): scan near-misses / blind spots.
         <span class="detail"><code>--missed-moves</code> → <code>RL_MissedMoves_&lt;ts&gt;.csv</code> + SymbolAssessments §6 /
-        ImprovePriority “Why we miss winners”. Heuristic — confirm on charts before changing production gates.</span></li>
-      <li>Freeze the improvement target before seeding the optimizer.
-        <span class="detail">Document the chosen lever or new-variable idea next to the stamp in
-        <span class="path">drive/paul_experiments/</span>. Step 6 then optimizes that target on the seed set.</span></li>
+        ImprovePriority “Why we miss winners”. Heuristic — confirm on charts before changing production gates.
+        <strong>Future / tooling note:</strong> teach post-run analysis to surface near-miss and band-touch
+        patterns more explicitly across zone systems (not only RL) so evidence for hypothesis tests is easier to count.</span></li>
+      <li>Freeze the hypothesis (evidence → single knob → 1–2 alternatives) before any A/B run.
+        <span class="detail">Use the <a href="#hyp-one-pager">one-pager</a> /
+        <span class="path">docs/HYPOTHESIS_TEST.md</span>. Document next to the stamp in
+        <span class="path">drive/paul_experiments/</span>. Step 6 tests that hypothesis on the seed set—
+        it does not sweep for a better score.</span></li>
     </ul>
 
     <h3 id="fit-score-robust">How FIT / robust FIT is calculated</h3>
@@ -757,32 +780,50 @@
   <article class="step" id="seed-opt">
     <div class="step-head">
       <div class="step-num">6</div>
-      <h3 class="step-title">Run selected stocks through the optimizer</h3>
+      <h3 class="step-title">Hypothesis test on the seed set (missed-trade fix)</h3>
     </div>
-    <p>Balance variables on the seed set only—guided by post-run ImprovePriority / FIT gaps
-    (and only after seed ToS validation in step 4).
-    Do not expand the universe until seed behavior is understood and charted.</p>
+    <p><strong>Not open-ended optimization.</strong> Run this step only when step 5 (or human ToS review)
+    produced a concrete miss pattern or lever hypothesis. If the book already looks like the intended
+    setup and post-run has no suggestions, skip—do not hunt params “because it might be better.”
+    When you do test: seed set only, one knob, same universe/stamp baseline for A/B, and only after
+    seed ToS validation (step 4).</p>
+    <div class="callout warn">
+      There is no hierarchy of knobs and no combinatorial search for “optimal.”
+      Changing values until PnL rises risks overfitting and is <em>not</em> part of system review.
+      Leave money on the table if the setup book still matches the thesis.
+    </div>
     <p class="do-label">Do</p>
     <ul class="bullets">
-      <li>Choose the optimizer for the system.
-        <span class="detail">RL: <span class="path">RL_Optimizer.py</span> (default universe <span class="path">data/rl_gold_universe.txt</span>). BRT/IND-family: <span class="path">BRT_Optimizer.py</span> / <span class="path">IND_Optimizer.py</span> / <span class="path">RocketOptimizer.py</span>. Per-symbol: <span class="path">run_per_symbol_optimizer.bat</span> → <span class="path">Per_Symbol_Optimized_Settings_*.json</span>.</span></li>
-      <li>Change one variable (or one coherent arm) at a time where possible.
-        <span class="detail">Keeps ToS and trade-diff interpretable in steps 7–8.</span></li>
-      <li>Record best settings (JSON / bat freeze / experiment folder under <span class="path">drive/paul_experiments/</span>).
-        <span class="detail">Do not silently edit production bats during exploration; document suggested <code>-v</code> overrides.</span></li>
-      <li>Review hard gates (min trades, max DD, score model).
-        <span class="detail">RL optimizer: score mix (PnL, DD, PF, expectancy, …) + min-trades / Max_DD gates.</span></li>
+      <li>Require written evidence before any run.
+        <span class="detail">Cite ImproveHints / SymbolAssessments / FIT gaps, ToS chart notes, or a counted
+        near-miss / band-touch pattern. No evidence → no step 6.</span></li>
+      <li>Change exactly one knob (freeze everything else).
+        <span class="detail">Same seed universe and comparable stamps for A/B. At most 1–2 pre-agreed
+        alternative values tied to the hypothesis—not a grid. Keeps ToS and trade-diff interpretable
+        in steps 7–8.</span></li>
+      <li>Use the system runner / bat with explicit <code>-v</code> overrides (prefer over silent “optimizer” sweeps).
+        <span class="detail">Legacy sweep tools (<span class="path">RL_Optimizer.py</span>,
+        <span class="path">BRT_Optimizer.py</span>, <span class="path">RocketOptimizer.py</span>,
+        <span class="path">run_per_symbol_optimizer.bat</span>) exist for engineering experiments only—
+        they are <em>not</em> the default system-review path. Do not treat “best score” as adopt.</span></li>
+      <li>Record A/B settings and the one-pager next to the experiment folder.
+        <span class="detail">Under <span class="path">drive/paul_experiments/</span>. Do not silently edit
+        production bats during exploration.</span></li>
+      <li>Judge with quality gates—not max profit.
+        <span class="detail">Trade quality / thesis fit on chart, drawdown, reconcile / parity, robust FIT—
+        not headline PnL alone. Min-trades / Max_DD remain hard gates when used.</span></li>
     </ul>
   </article>
 
   <article class="step" id="tos">
     <div class="step-head">
       <div class="step-num">7</div>
-      <h3 class="step-title">For each variable change: Thinkorswim studies</h3>
+      <h3 class="step-title">For each variable change: Thinkorswim studies (accept / reject gate)</h3>
     </div>
-    <p>After each optimizer lever change, charts must show what the system needs: SMAs, bands, stops, In/Out markers.
-    This is the <em>post-optimize</em> ToS gate (accept the lever)—distinct from seed ToS validation in step 4
-    (baseline trades are right before you optimize). Output studies under <span class="path">drive/paul_studies/</span>.</p>
+    <p>After each hypothesis-test lever change, charts must still show the same intended setup:
+    SMAs, bands, stops, In/Out markers. This is the <em>post-change</em> ToS gate—distinct from seed
+    ToS validation in step 4. <strong>Reject PnL-up arms that do not look like the same setup.</strong>
+    Output studies under <span class="path">drive/paul_studies/</span>.</p>
     <p class="do-label">Do</p>
     <ul class="bullets">
       <li>Generate a closed-trade study for the stamp.
@@ -790,9 +831,10 @@
       <li>Load the study on charts for every seed symbol that traded.
         <span class="detail">Confirm entries sit in the intended band / zone; stops match Closed <code>ORIGINAL STOP</code>.</span></li>
       <li>Make the variable change visible on the chart (not only in CSV metrics).
-        <span class="detail">If you cannot see the lever’s effect, the experiment is incomplete.</span></li>
+        <span class="detail">If you cannot see the lever’s effect, the experiment is incomplete. If new trades
+        look like a different system, reject even if dollars improved.</span></li>
       <li>Save study path + notes next to the experiment folder.
-        <span class="detail">Pair with HTML under <span class="path">drive/paul_experiments/</span>.</span></li>
+        <span class="detail">Pair with HTML under <span class="path">drive/paul_experiments/</span> and the one-pager adopt/reject line.</span></li>
     </ul>
   </article>
 
@@ -801,7 +843,9 @@
       <div class="step-num">8</div>
       <h3 class="step-title">Comparing two variables: trade-diff HTML + ToS</h3>
     </div>
-    <p>When comparing arm A vs arm B (two stamps / two lever values), produce a sortable trade-diff report and dual-band ToS studies showing shared vs new trades.</p>
+    <p>When comparing arm A vs arm B (two stamps / two lever values for <em>one</em> pre-agreed hypothesis),
+    produce a sortable trade-diff report and dual-band ToS studies showing shared vs new trades.
+    Prefer trade quality and thesis fit over which arm made more money.</p>
     <div class="chip-row">
       <span class="chip">HTML · drive/paul_experiments/rl_stamp_trade_diff_*.html</span>
       <span class="chip">ToS · tos/gen_rl_trade_diff_studies.py</span>
@@ -814,18 +858,19 @@
       <li>Generate ToS trade-diff study for symbols that differ.
         <span class="detail"><span class="path">tos/gen_rl_trade_diff_studies.py</span>: grey = shared/close-match; green = new-only; dual dip bands when comparing e.g. 2.4% vs 4.1%.</span></li>
       <li>Ensure a reviewer can explain every new trade from the chart.
-        <span class="detail">If new trades are opaque, freeze promotion.</span></li>
+        <span class="detail">If new trades are opaque or off-thesis, freeze promotion—even if PnL improved.</span></li>
       <li>Keep only one primary lever different between stamps; document shared settings.
-        <span class="detail">Report/Audit columns should confirm the A/B isolation.</span></li>
+        <span class="detail">Report/Audit columns should confirm the A/B isolation. No multi-knob “combo” wins.</span></li>
     </ul>
   </article>
 
   <article class="step" id="universe">
     <div class="step-head">
       <div class="step-num">9</div>
-      <h3 class="step-title">After optimizing the seed set → full universe run</h3>
+      <h3 class="step-title">After seed hypothesis tests (or “no change”) → full universe run</h3>
     </div>
-    <p>Freeze seed-winning settings; run the production (or candidate) universe. Prefer the system’s bat so DailyRun parity stays intact.</p>
+    <p>Freeze seed-accepted settings (or the untouched baseline if step 6 was skipped); run the production
+    (or candidate) universe. Prefer the system’s bat so DailyRun parity stays intact.</p>
     <p class="do-label">Do</p>
     <ul class="bullets">
       <li>Source the universe list from bat / gold file (not an ad-hoc paste).
@@ -926,31 +971,64 @@
       <li>Check for silent regressions vs seed behavior on overlapping names.
         <span class="detail">If a MarkTen name suddenly looks different, stop and reconcile.</span></li>
       <li>Record the decision: promote / hold / reject.
-        <span class="detail">Hold = needs re-opt (step 12) or more history.</span></li>
+        <span class="detail">Hold = needs a new <em>evidence-backed</em> hypothesis re-test (step 12) or more history—
+        not a blind re-sweep of knobs.</span></li>
     </ul>
   </article>
 
   <article class="step" id="reopt">
     <div class="step-head">
       <div class="step-num">12</div>
-      <h3 class="step-title">Re-optimize on the larger set</h3>
+      <h3 class="step-title">Hypothesis re-test on the larger set (only with new evidence)</h3>
     </div>
-    <p>Once the candidate universe is trusted, re-balance variables on that larger set. Every variable change again gets ToS + (when A/B) trade-diff (same post-lever gate as steps 7–8—not a substitute for the seed ToS pass in step 4).</p>
+    <p><strong>Not a mandatory re-optimize.</strong> Once the candidate universe is trusted, change params on
+    that larger set <em>only</em> when post-run / ToS / counted misses supply a new hypothesis.
+    If trade setups, charts, trade count, and results are already good—stop. Every accepted change
+    again gets ToS + (when A/B) trade-diff (same gate as steps 7–8).</p>
+    <div class="callout warn">
+      Same rules as step 6: one knob, ≤2 pre-agreed alternatives, no combinatorial grids, ToS before/after
+      beats PnL. Adopt into production only with <strong>PO sign-off</strong> and a
+      <strong>reconcile freeze / re-baseline</strong> (sheet ↔ engine parity on the frozen levers).
+    </div>
     <p class="do-label">Do</p>
     <ul class="bullets">
-      <li>Re-run the optimizer with the promotion universe as default input.
-        <span class="detail">Update gold list / experiment config; avoid contaminating production bat until approved.</span></li>
+      <li>Skip this step when there is no new evidence.
+        <span class="detail">“Maybe we can squeeze more PnL” is not a hypothesis. Document “no re-test” and hand off.</span></li>
+      <li>When evidence exists: run the same single-knob A/B on the promotion universe.
+        <span class="detail">Update experiment config / gold list; avoid contaminating production bats until approved.
+        Do not default to multi-parameter optimizer sweeps as system review.</span></li>
       <li>For each accepted lever change: regenerate ToS closed studies.
         <span class="detail"><span class="path">tos/gen_rl_closed_studies.py</span> (or system equivalent) on the new stamp.</span></li>
       <li>For each A/B lever test: trade-diff HTML + trade-diff ToS.
         <span class="detail">Same pattern as step 8; archive under <span class="path">drive/paul_experiments/</span> and <span class="path">drive/paul_studies/</span>.</span></li>
       <li>Validate charts on every variable change (no “CSV-only” accepts).
-        <span class="detail">Promotion to DailyRun / approved JSON only after visual + parity checks.</span></li>
+        <span class="detail">Reject off-thesis books even if dollars rose.</span></li>
       <li>If RL: confirm AWK↔Python parity is still green after lever freeze.
         <span class="detail">DailyRun steps 3a–3c must remain clean.</span></li>
-      <li>Production handoff: update bat flags / approved per-symbol JSON / experiment README.
-        <span class="detail">Document why each lever won; link trade-diff HTML.</span></li>
+      <li>Production handoff only after PO sign-off + reconcile freeze / re-baseline.
+        <span class="detail">Update bat flags / approved per-symbol JSON / experiment README; link one-pager +
+        trade-diff HTML; re-check sheet parity on the frozen levers before DailyRun.</span></li>
     </ul>
+  </article>
+
+  <article class="step" id="hyp-one-pager">
+    <div class="step-head">
+      <div class="step-num">★</div>
+      <h3 class="step-title">Hypothesis test one-pager (template)</h3>
+    </div>
+    <p>Copy into <span class="path">drive/paul_experiments/</span> next to the A/B stamps
+    (Markdown twin: <span class="path">docs/HYPOTHESIS_TEST.md</span>). Fill before running; close with adopt/reject after ToS.</p>
+    <div class="callout">
+      <ol style="margin:0;padding-left:1.2rem;">
+        <li><strong>Evidence</strong> — ImproveHints / post-run ID, ToS note, or counted miss / band-touch pattern (what failed, how often).</li>
+        <li><strong>Hypothesis</strong> — one sentence: “If we change X, then Y near-misses become on-thesis fills (or stops/targets behave as intended).”</li>
+        <li><strong>Single knob</strong> — exact <code>-v</code> / lever name; list frozen settings; same universe.</li>
+        <li><strong>Alternatives</strong> — baseline + at most 1–2 pre-agreed values (no grid).</li>
+        <li><strong>A/B table</strong> — stamps, trade count, win%, DD / robust FIT, reconcile status (not max PnL as primary).</li>
+        <li><strong>ToS links</strong> — before/after study paths under <span class="path">drive/paul_studies/</span>; trade-diff HTML if used.</li>
+        <li><strong>Decision</strong> — adopt / reject / hold; reviewer; PO sign-off; reconcile freeze / re-baseline checkbox if adopt.</li>
+      </ol>
+    </div>
   </article>
 </section>
 
@@ -995,7 +1073,12 @@
         <tr>
           <td>ToS studies</td>
           <td><span class="path">drive/paul_studies/</span></td>
-          <td>Generators in <span class="path">tos/gen_rl_*_studies.py</span>. Step 4 = seed trade validation; steps 7–8 = accept each lever / trade-diff</td>
+          <td>Generators in <span class="path">tos/gen_rl_*_studies.py</span>. Step 4 = seed trade validation; steps 7–8 = accept/reject each hypothesis lever / trade-diff (ToS beats PnL)</td>
+        </tr>
+        <tr>
+          <td>Hypothesis test one-pager</td>
+          <td><span class="path">docs/HYPOTHESIS_TEST.md</span> · process § <a href="#hyp-one-pager">one-pager</a></td>
+          <td>Evidence → single knob → A/B → ToS → adopt/reject + PO + reconcile freeze</td>
         </tr>
         <tr>
           <td>Summary columns</td>
