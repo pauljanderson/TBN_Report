@@ -24,7 +24,7 @@ Emitted after Summary write:
 | Artifact | Columns / files |
 |----------|-----------------|
 | Closed | `ONE_LINER` |
-| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `AVG_PNL_PCT_WO_MAX`, `MEDIAN_PNL_PCT` (diag only), `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`) |
+| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `AVG_PNL_PCT_WO_MAX`, `MEDIAN_PNL_PCT` (diag only), `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`); `PAUL_SCORE` (0–8: +1 each if ≥ max(mean,median) for PCT_WINS / TOTAL_PNL / SHEET_PNL / AVG_PNL_PCT / AVG_PNL_PCT_WO_MAX / AVG_TRADES_PER_YEAR; +1 each if ≤ min(mean,median) for OUTLIER_PCT_OF_WINS / AVG_DAYS_HELD) |
 | Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` + `.html` |
 
 `FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
