@@ -4,11 +4,15 @@ Compute live stop/target levels for open positions (gettarget_output.csv).
 Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk),
 BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
-WPBR, or RS (Relative Strength; SPY_COMPARE + TC Strong).
+WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
+MVCP (Minervini Volatility Contraction Pattern), or CS (CAN SLIM price-legs).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, or RS (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, or CS (case-insensitive).
+  Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS.
+
+Qull / Kell use EMA trails (not fixed target_pct); they are not mapped here yet.
 
 When entry_price is set, getTarget can compute target/limit from that price even if
 purchase_date is not in the symbol CSV yet (e.g. bought today before files update).
@@ -16,6 +20,7 @@ Use --default-atr-pct when ATR mode needs a proxy % and history is missing.
 
 CLI sets defaults per system, e.g.:
   --brt-atr-target 8 --ind-atr-target 2.4 --rl-target-pct 1.20 --rl-use-sma50
+  --sb-target-pct 1.097 --mvcp-target-pct 1.25 --cs-target-pct 1.20
 """
 from __future__ import annotations
 
@@ -33,11 +38,24 @@ DEFAULT_POSITIONS_CSV = Path(__file__).resolve().parent / "gettarget_positions.c
 # Optional overrides only (normally leave empty). CSV is the source of truth.
 POSITIONS: dict[str, tuple[str, str | float, str]] = {}
 
-_SYSTEM_ALIASES = {"PBR": "WPBR"}
+_SYSTEM_ALIASES = {
+    "PBR": "WPBR",
+    "STOCKBEE": "SB",
+    "STOCKBEE_BURST": "SB",
+    "MINERVINI": "MVCP",
+    "VCP": "MVCP",
+    "CANSLIM": "CS",
+    "CAN_SLIM": "CS",
+    "CAN-SLIM": "CS",
+    "ONEIL": "CS",
+}
+
+# Percent/ATR live systems (RL is separate). Order matches help text.
+PERCENT_ATR_SYSTEMS = ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS")
 
 
 def _normalize_system(system: str) -> str:
-    s = str(system).strip().upper()
+    s = str(system).strip().upper().replace(" ", "_")
     return _SYSTEM_ALIASES.get(s, s)
 
 
@@ -46,7 +64,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS
 
 
 @dataclass
@@ -81,7 +99,17 @@ class PercentProfile:
     use_sma50_target: bool = False
     sma_stop_days: int = 0
     stop_anchor: str = "entry"  # entry | signal_low (MTS sheet AM = signal-bar Low * stop_pct)
+    # When stop_anchor=signal_low but signal Low is unavailable (no CSV / synthetic entry).
+    # 0 = fall back to entry * stop_pct. SB uses 0.922 (burst_max_risk ≈ 7.8%).
+    fallback_stop_pct: float = 0.0
 
+
+@dataclass
+class SystemExitConfig:
+    """Resolved live exit mode + profiles for one percent/ATR system."""
+    mode_resolved: str  # percent | atr
+    percent: PercentProfile
+    atr: AtrProfile
 
 def _parse_entry_price(raw: str | float | None) -> Optional[float]:
     if raw is None:
@@ -531,12 +559,20 @@ def compute_percent_system(
     stop_anchor = str(profile.stop_anchor or "entry").strip().lower()
     signal_ts = None
     signal_low = None
+    fallback_stop = (
+        float(profile.fallback_stop_pct)
+        if float(profile.fallback_stop_pct or 0) > 0
+        else float(profile.stop_pct)
+    )
     if stop_anchor == "signal_low" and entry_in_data and entry_ts in df.index:
         signal_ts = _prior_trading_ts(df, entry_ts) or entry_ts
         signal_low = float(df.loc[signal_ts, "Low"])
-        stop_initial = signal_low * profile.stop_pct if signal_low > 0 else entry_price * profile.stop_pct
+        if signal_low > 0:
+            stop_initial = signal_low * profile.stop_pct
+        else:
+            stop_initial = entry_price * fallback_stop
     else:
-        stop_initial = entry_price * profile.stop_pct
+        stop_initial = entry_price * fallback_stop
     max_high = _max_high_since_entry(df, entry_ts, entry_price, as_of_effective, entry_in_data)
     if profile.trailing_stop_increment > 0 and entry_price > 0:
         gain_pct = (max_high - entry_price) / entry_price * 100.0
@@ -642,30 +678,20 @@ def resolve_exit_mode(cli_mode: str, atr_profile: AtrProfile) -> str:
     return mode
 
 
+def _entry_stop_pct(profile: PercentProfile) -> float:
+    """Stop multiplier vs entry when signal Low is unavailable."""
+    if float(profile.fallback_stop_pct or 0) > 0:
+        return float(profile.fallback_stop_pct)
+    return float(profile.stop_pct)
+
+
 def compute_price_only_payload(
     system: str,
     entry_price: float,
     entry_src: str,
     *,
-    brt_mode_resolved: str,
-    ind_mode_resolved: str,
     rl_profile: RlProfile,
-    brt_percent: PercentProfile,
-    brt_atr: AtrProfile,
-    ind_percent: PercentProfile,
-    ind_atr: AtrProfile,
-    yh_mode_resolved: str,
-    yh_percent: PercentProfile,
-    yh_atr: AtrProfile,
-    mts_mode_resolved: str,
-    mts_percent: PercentProfile,
-    mts_atr: AtrProfile,
-    wpbr_mode_resolved: str,
-    wpbr_percent: PercentProfile,
-    wpbr_atr: AtrProfile,
-    rs_mode_resolved: str,
-    rs_percent: PercentProfile,
-    rs_atr: AtrProfile,
+    exit_configs: dict[str, SystemExitConfig],
     default_atr_pct: float,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
@@ -685,43 +711,19 @@ def compute_price_only_payload(
             "SMA20": None,
             "SMA50": None,
         }
-    if system == "BRT":
-        mode = brt_mode_resolved
-        profile_atr = brt_atr
-        profile_pct = brt_percent
-        label = "BRT"
-    elif system == "IND":
-        mode = ind_mode_resolved
-        profile_atr = ind_atr
-        profile_pct = ind_percent
-        label = "IND"
-    elif system == "YH":
-        mode = yh_mode_resolved
-        profile_atr = yh_atr
-        profile_pct = yh_percent
-        label = "YH"
-    elif system == "MTS":
-        mode = mts_mode_resolved
-        profile_atr = mts_atr
-        profile_pct = mts_percent
-        label = "MTS"
-    elif system == "WPBR":
-        mode = wpbr_mode_resolved
-        profile_atr = wpbr_atr
-        profile_pct = wpbr_percent
-        label = "WPBR"
-    elif system == "RS":
-        mode = rs_mode_resolved
-        profile_atr = rs_atr
-        profile_pct = rs_percent
-        label = "RS"
-    else:
+    cfg = exit_configs.get(system)
+    if cfg is None:
         return {"error": f"unknown system {system!r}"}
+    label = system
+    mode = cfg.mode_resolved
+    profile_atr = cfg.atr
+    profile_pct = cfg.percent
 
     if mode == "percent":
         target_price = entry_price * profile_pct.target_pct
         stop_anchor = str(profile_pct.stop_anchor or "entry").strip().lower()
-        stop_initial = entry_price * profile_pct.stop_pct
+        stop_mult = _entry_stop_pct(profile_pct)
+        stop_initial = entry_price * stop_mult
         return {
             "System": label,
             "EntrySource": entry_src,
@@ -734,6 +736,7 @@ def compute_price_only_payload(
             "target_pct": profile_pct.target_pct,
             "stop_pct": profile_pct.stop_pct,
             "stop_anchor": stop_anchor,
+            "fallback_stop_pct": profile_pct.fallback_stop_pct or None,
         }
 
     if default_atr_pct <= 0:
@@ -766,89 +769,28 @@ def compute_position_payload(
     as_of_effective: pd.Timestamp,
     *,
     atr_period: int,
-    brt_mode_resolved: str,
-    ind_mode_resolved: str,
     rl_profile: RlProfile,
-    brt_percent: PercentProfile,
-    brt_atr: AtrProfile,
-    ind_percent: PercentProfile,
-    ind_atr: AtrProfile,
-    yh_mode_resolved: str,
-    yh_percent: PercentProfile,
-    yh_atr: AtrProfile,
-    mts_mode_resolved: str,
-    mts_percent: PercentProfile,
-    mts_atr: AtrProfile,
-    wpbr_mode_resolved: str,
-    wpbr_percent: PercentProfile,
-    wpbr_atr: AtrProfile,
-    rs_mode_resolved: str,
-    rs_percent: PercentProfile,
-    rs_atr: AtrProfile,
+    exit_configs: dict[str, SystemExitConfig],
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
 ) -> dict[str, Any]:
-    """Dispatch to RL / BRT / IND / YH / MTS / WPBR / RS calculator for a given as-of date."""
+    """Dispatch to RL or percent/ATR calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, rl_profile, entry_in_data=entry_in_data
         )
-    if system == "BRT":
-        if brt_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, brt_percent, "BRT",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, brt_atr, "BRT", **kw
+    cfg = exit_configs.get(system)
+    if cfg is None:
+        return {"error": f"unknown system {system!r}"}
+    if cfg.mode_resolved == "percent":
+        return compute_percent_system(
+            sym, df, entry_ts, entry_price, entry_src, as_of_effective, cfg.percent, system,
+            entry_in_data=entry_in_data,
         )
-    if system == "IND":
-        if ind_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, ind_percent, "IND",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, ind_atr, "IND", **kw
-        )
-    if system == "YH":
-        if yh_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, yh_percent, "YH",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, yh_atr, "YH", **kw
-        )
-    if system == "MTS":
-        if mts_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, mts_percent, "MTS",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, mts_atr, "MTS", **kw
-        )
-    if system == "WPBR":
-        if wpbr_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, wpbr_percent, "WPBR",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, wpbr_atr, "WPBR", **kw
-        )
-    if system == "RS":
-        if rs_mode_resolved == "percent":
-            return compute_percent_system(
-                sym, df, entry_ts, entry_price, entry_src, as_of_effective, rs_percent, "RS",
-                entry_in_data=entry_in_data,
-            )
-        return compute_atr_system(
-            sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, rs_atr, "RS", **kw
-        )
-    return {"error": f"unknown system {system!r}"}
+    return compute_atr_system(
+        sym, df, entry_ts, entry_price, entry_src, as_of_effective, atr_period, cfg.atr, system, **kw
+    )
 
 
 def _add_atr_profile_args(p: argparse.ArgumentParser, prefix: str, defaults: AtrProfile) -> None:
@@ -886,7 +828,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR / RS; deprecated IND remains available manually)."
+            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS; "
+            "deprecated IND remains available manually)."
         )
     )
     parser.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR))
@@ -906,41 +849,21 @@ def main() -> None:
         help="Skip live targets for this system (repeatable; DailyRun excludes deprecated IND).",
     )
     parser.add_argument(
-        "--brt-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="BRT: auto=percent when --brt-atr-* are 0 (rocket_brt target_pct); else ATR.",
+        "--list-systems",
+        action="store_true",
+        help="Print supported system codes (and aliases) then exit.",
     )
-    parser.add_argument(
-        "--ind-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="IND: auto=percent when --ind-atr-* are 0 (rocket_brt target_pct); else ATR.",
-    )
-    parser.add_argument(
-        "--yh-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="YH: auto=percent when --yh-atr-* are 0 (rocket_brt target_pct); else ATR.",
-    )
-    parser.add_argument(
-        "--mts-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="MTS: auto=percent when --mts-atr-* are 0 (rocket_brt target_pct); else ATR.",
-    )
-    parser.add_argument(
-        "--wpbr-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="WPBR: auto=percent when --wpbr-atr-* are 0 (rocket_brt target_pct); else ATR.",
-    )
-    parser.add_argument(
-        "--rs-mode",
-        choices=("auto", "atr", "percent"),
-        default="auto",
-        help="RS: auto=percent when --rs-atr-* are 0 (run_rs.bat target_pct/stop_pct); else ATR.",
-    )
+    for sys_code in PERCENT_ATR_SYSTEMS:
+        px = sys_code.lower()
+        parser.add_argument(
+            f"--{px}-mode",
+            choices=("auto", "atr", "percent"),
+            default="auto",
+            help=(
+                f"{sys_code}: auto=percent when --{px}-atr-* are 0 "
+                f"(engine target_pct/stop_pct); else ATR."
+            ),
+        )
     parser.add_argument("--as-of-date", type=str, default=None)
     parser.add_argument("--use-next-trading-day", action="store_true")
     parser.add_argument("--out-csv", type=str, default="getTarget_output.csv")
@@ -986,6 +909,9 @@ def main() -> None:
     _add_atr_profile_args(parser, "mts", AtrProfile())
     _add_atr_profile_args(parser, "wpbr", AtrProfile())
     _add_atr_profile_args(parser, "rs", AtrProfile())
+    _add_atr_profile_args(parser, "sb", AtrProfile())
+    _add_atr_profile_args(parser, "mvcp", AtrProfile())
+    _add_atr_profile_args(parser, "cs", AtrProfile())
 
     parser.add_argument("--rl-target-pct", type=float, default=1.20)
     parser.add_argument("--rl-stop-pct", type=float, default=0.934)
@@ -1026,6 +952,44 @@ def main() -> None:
     parser.add_argument("--rs-stop-pct", type=float, default=0.88)
     parser.add_argument("--rs-trailing-stop-increment", type=float, default=0.0)
     parser.add_argument("--rs-use-sma50", action="store_true", default=False)
+    # StockBee: run_stockbee_burst.bat SB_TARGET=1.097; stop = signal LOD (stop_pct=1.0).
+    parser.add_argument(
+        "--sb-target-pct",
+        type=float,
+        default=1.097,
+        help="SB target multiplier (SB_TARGET / -v target_pct; default 1.097).",
+    )
+    parser.add_argument(
+        "--sb-stop-pct",
+        type=float,
+        default=1.0,
+        help="SB: multiplier on signal Low (LOD). Default 1.0 = raw LOD stop.",
+    )
+    parser.add_argument("--sb-trailing-stop-increment", type=float, default=0.0)
+    parser.add_argument("--sb-use-sma50", action="store_true", default=False)
+    parser.add_argument(
+        "--sb-stop-anchor",
+        type=str,
+        default="signal_low",
+        choices=("entry", "signal_low"),
+        help="SB stop: signal_low = prior-bar Low * stop_pct (burst LOD); entry = entry * stop/fallback.",
+    )
+    parser.add_argument(
+        "--sb-fallback-stop-pct",
+        type=float,
+        default=0.922,
+        help="SB when LOD unavailable: entry * this (burst_max_risk ~7.8%%; default 0.922).",
+    )
+    # Minervini VCP: run_minervini_vcp.bat MVCP_TARGET/STOP.
+    parser.add_argument("--mvcp-target-pct", type=float, default=1.25)
+    parser.add_argument("--mvcp-stop-pct", type=float, default=0.92)
+    parser.add_argument("--mvcp-trailing-stop-increment", type=float, default=0.0)
+    parser.add_argument("--mvcp-use-sma50", action="store_true", default=False)
+    # CAN SLIM price-legs: run_canslim.bat CS_TARGET/STOP.
+    parser.add_argument("--cs-target-pct", type=float, default=1.20)
+    parser.add_argument("--cs-stop-pct", type=float, default=0.92)
+    parser.add_argument("--cs-trailing-stop-increment", type=float, default=0.0)
+    parser.add_argument("--cs-use-sma50", action="store_true", default=False)
     parser.add_argument(
         "--per-symbol-settings",
         default="",
@@ -1034,6 +998,12 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    if args.list_systems:
+        print("Supported systems:", ", ".join(("RL",) + PERCENT_ATR_SYSTEMS))
+        print("Aliases:", ", ".join(f"{k}->{v}" for k, v in sorted(_SYSTEM_ALIASES.items())))
+        print("Not mapped (EMA trail): QULL, KELL")
+        return
 
     positions = load_positions(
         Path(args.positions_csv) if str(args.positions_csv).strip() else None,
@@ -1065,60 +1035,19 @@ def main() -> None:
             print(f"No active-system positions; cleared live target rows in {out_path.resolve()}")
             return
 
-    brt_atr = AtrProfile(
-        atr_target=args.brt_atr_target,
-        atr_stop=args.brt_atr_stop,
-        atr_increment=args.brt_atr_increment,
-        atr_progress=args.brt_atr_progress,
-        atr_days=args.brt_atr_days,
-        atr_progress_incremental_stop=bool(args.brt_atr_progress_incremental_stop),
-        sma_stop_days=int(args.brt_sma_stop_days or 0),
-    )
-    ind_atr = AtrProfile(
-        atr_target=args.ind_atr_target,
-        atr_stop=args.ind_atr_stop,
-        atr_increment=args.ind_atr_increment,
-        atr_progress=args.ind_atr_progress,
-        atr_days=args.ind_atr_days,
-        atr_progress_incremental_stop=bool(args.ind_atr_progress_incremental_stop),
-        sma_stop_days=int(args.ind_sma_stop_days or 0),
-    )
-    yh_atr = AtrProfile(
-        atr_target=args.yh_atr_target,
-        atr_stop=args.yh_atr_stop,
-        atr_increment=args.yh_atr_increment,
-        atr_progress=args.yh_atr_progress,
-        atr_days=args.yh_atr_days,
-        atr_progress_incremental_stop=bool(args.yh_atr_progress_incremental_stop),
-        sma_stop_days=int(args.yh_sma_stop_days or 0),
-    )
-    mts_atr = AtrProfile(
-        atr_target=args.mts_atr_target,
-        atr_stop=args.mts_atr_stop,
-        atr_increment=args.mts_atr_increment,
-        atr_progress=args.mts_atr_progress,
-        atr_days=args.mts_atr_days,
-        atr_progress_incremental_stop=bool(args.mts_atr_progress_incremental_stop),
-        sma_stop_days=int(args.mts_sma_stop_days or 0),
-    )
-    wpbr_atr = AtrProfile(
-        atr_target=args.wpbr_atr_target,
-        atr_stop=args.wpbr_atr_stop,
-        atr_increment=args.wpbr_atr_increment,
-        atr_progress=args.wpbr_atr_progress,
-        atr_days=args.wpbr_atr_days,
-        atr_progress_incremental_stop=bool(args.wpbr_atr_progress_incremental_stop),
-        sma_stop_days=int(args.wpbr_sma_stop_days or 0),
-    )
-    rs_atr = AtrProfile(
-        atr_target=args.rs_atr_target,
-        atr_stop=args.rs_atr_stop,
-        atr_increment=args.rs_atr_increment,
-        atr_progress=args.rs_atr_progress,
-        atr_days=args.rs_atr_days,
-        atr_progress_incremental_stop=bool(args.rs_atr_progress_incremental_stop),
-        sma_stop_days=int(args.rs_sma_stop_days or 0),
-    )
+    def _atr_from_args(px: str) -> AtrProfile:
+        return AtrProfile(
+            atr_target=getattr(args, f"{px}_atr_target"),
+            atr_stop=getattr(args, f"{px}_atr_stop"),
+            atr_increment=getattr(args, f"{px}_atr_increment"),
+            atr_progress=getattr(args, f"{px}_atr_progress"),
+            atr_days=getattr(args, f"{px}_atr_days"),
+            atr_progress_incremental_stop=bool(getattr(args, f"{px}_atr_progress_incremental_stop")),
+            sma_stop_days=int(getattr(args, f"{px}_sma_stop_days") or 0),
+        )
+
+    atr_by_sys = {code: _atr_from_args(code.lower()) for code in PERCENT_ATR_SYSTEMS}
+
     rl_profile = RlProfile(
         rl_target_pct=args.rl_target_pct,
         rl_stop_pct=args.rl_stop_pct,
@@ -1128,49 +1057,79 @@ def main() -> None:
         rl_trail_profit2=args.rl_trail_profit2,
         rl_trail_stop2=args.rl_trail_stop2,
     )
-    brt_percent = PercentProfile(
-        target_pct=args.brt_target_pct,
-        stop_pct=args.brt_stop_pct,
-        trailing_stop_increment=args.brt_trailing_stop_increment,
-        use_sma50_target=bool(args.brt_use_sma50),
-        sma_stop_days=int(args.brt_sma_stop_days or 0),
-    )
-    ind_percent = PercentProfile(
-        target_pct=args.ind_target_pct,
-        stop_pct=args.ind_stop_pct,
-        trailing_stop_increment=args.ind_trailing_stop_increment,
-        use_sma50_target=bool(args.ind_use_sma50),
-        sma_stop_days=int(args.ind_sma_stop_days or 0),
-    )
-    yh_percent = PercentProfile(
-        target_pct=args.yh_target_pct,
-        stop_pct=args.yh_stop_pct,
-        trailing_stop_increment=args.yh_trailing_stop_increment,
-        use_sma50_target=bool(args.yh_use_sma50),
-        sma_stop_days=int(args.yh_sma_stop_days or 0),
-    )
-    mts_percent = PercentProfile(
-        target_pct=args.mts_target_pct,
-        stop_pct=args.mts_stop_pct,
-        trailing_stop_increment=args.mts_trailing_stop_increment,
-        use_sma50_target=bool(args.mts_use_sma50),
-        sma_stop_days=int(args.mts_sma_stop_days or 0),
-        stop_anchor=str(args.mts_stop_anchor or "signal_low"),
-    )
-    wpbr_percent = PercentProfile(
-        target_pct=args.wpbr_target_pct,
-        stop_pct=args.wpbr_stop_pct,
-        trailing_stop_increment=args.wpbr_trailing_stop_increment,
-        use_sma50_target=bool(args.wpbr_use_sma50),
-        sma_stop_days=int(args.wpbr_sma_stop_days or 0),
-    )
-    rs_percent = PercentProfile(
-        target_pct=args.rs_target_pct,
-        stop_pct=args.rs_stop_pct,
-        trailing_stop_increment=args.rs_trailing_stop_increment,
-        use_sma50_target=bool(args.rs_use_sma50),
-        sma_stop_days=int(args.rs_sma_stop_days or 0),
-    )
+
+    def _pct(
+        code: str,
+        target: float,
+        stop: float,
+        trail: float,
+        use_sma50: bool,
+        *,
+        stop_anchor: str = "entry",
+        fallback_stop_pct: float = 0.0,
+    ) -> PercentProfile:
+        px = code.lower()
+        return PercentProfile(
+            target_pct=target,
+            stop_pct=stop,
+            trailing_stop_increment=trail,
+            use_sma50_target=bool(use_sma50),
+            sma_stop_days=int(getattr(args, f"{px}_sma_stop_days") or 0),
+            stop_anchor=stop_anchor,
+            fallback_stop_pct=fallback_stop_pct,
+        )
+
+    percent_by_sys = {
+        "BRT": _pct("BRT", args.brt_target_pct, args.brt_stop_pct, args.brt_trailing_stop_increment, args.brt_use_sma50),
+        "IND": _pct("IND", args.ind_target_pct, args.ind_stop_pct, args.ind_trailing_stop_increment, args.ind_use_sma50),
+        "YH": _pct("YH", args.yh_target_pct, args.yh_stop_pct, args.yh_trailing_stop_increment, args.yh_use_sma50),
+        "MTS": _pct(
+            "MTS",
+            args.mts_target_pct,
+            args.mts_stop_pct,
+            args.mts_trailing_stop_increment,
+            args.mts_use_sma50,
+            stop_anchor=str(args.mts_stop_anchor or "signal_low"),
+        ),
+        "WPBR": _pct("WPBR", args.wpbr_target_pct, args.wpbr_stop_pct, args.wpbr_trailing_stop_increment, args.wpbr_use_sma50),
+        "RS": _pct("RS", args.rs_target_pct, args.rs_stop_pct, args.rs_trailing_stop_increment, args.rs_use_sma50),
+        "SB": _pct(
+            "SB",
+            args.sb_target_pct,
+            args.sb_stop_pct,
+            args.sb_trailing_stop_increment,
+            args.sb_use_sma50,
+            stop_anchor=str(args.sb_stop_anchor or "signal_low"),
+            fallback_stop_pct=float(args.sb_fallback_stop_pct or 0.0),
+        ),
+        "MVCP": _pct("MVCP", args.mvcp_target_pct, args.mvcp_stop_pct, args.mvcp_trailing_stop_increment, args.mvcp_use_sma50),
+        "CS": _pct("CS", args.cs_target_pct, args.cs_stop_pct, args.cs_trailing_stop_increment, args.cs_use_sma50),
+    }
+
+    exit_configs: dict[str, SystemExitConfig] = {}
+    for code in PERCENT_ATR_SYSTEMS:
+        mode_cli = getattr(args, f"{code.lower()}_mode")
+        mode_resolved = resolve_exit_mode(mode_cli, atr_by_sys[code])
+        exit_configs[code] = SystemExitConfig(
+            mode_resolved=mode_resolved,
+            percent=percent_by_sys[code],
+            atr=atr_by_sys[code],
+        )
+        if mode_resolved == "percent" and str(mode_cli).strip().lower() in ("auto", "atr"):
+            pct = percent_by_sys[code]
+            extra = ""
+            if code == "MTS":
+                extra = f", stop_anchor={pct.stop_anchor}"
+            elif code == "SB":
+                extra = (
+                    f", stop_anchor={pct.stop_anchor}, "
+                    f"fallback_stop_pct={pct.fallback_stop_pct}"
+                )
+            print(
+                f"[INFO] {code} using percent stops/targets "
+                f"(target_pct={pct.target_pct}, stop_pct={pct.stop_pct}{extra}); "
+                f"{code} ATR multipliers are all zero."
+            )
 
     try:
         from stock_analysis.per_symbol_settings import (
@@ -1225,49 +1184,6 @@ def main() -> None:
                         stop_floor_by_key[(str(sym), "")] = float(st)
         except Exception as e:
             print(f"[WARN] Could not read prior stop floor from {out_path}: {e}")
-
-    brt_mode_resolved = resolve_exit_mode(args.brt_mode, brt_atr)
-    ind_mode_resolved = resolve_exit_mode(args.ind_mode, ind_atr)
-    yh_mode_resolved = resolve_exit_mode(args.yh_mode, yh_atr)
-    mts_mode_resolved = resolve_exit_mode(args.mts_mode, mts_atr)
-    wpbr_mode_resolved = resolve_exit_mode(args.wpbr_mode, wpbr_atr)
-    rs_mode_resolved = resolve_exit_mode(args.rs_mode, rs_atr)
-    if brt_mode_resolved == "percent" and args.brt_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] BRT using percent stops/targets "
-            f"(target_pct={args.brt_target_pct}, stop_pct={args.brt_stop_pct}); "
-            "BRT ATR multipliers are all zero."
-        )
-    if ind_mode_resolved == "percent" and args.ind_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] IND using percent stops/targets "
-            f"(target_pct={args.ind_target_pct}, stop_pct={args.ind_stop_pct}); "
-            "IND ATR multipliers are all zero."
-        )
-    if yh_mode_resolved == "percent" and args.yh_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] YH using percent stops/targets "
-            f"(target_pct={args.yh_target_pct}, stop_pct={args.yh_stop_pct}); "
-            "YH ATR multipliers are all zero."
-        )
-    if mts_mode_resolved == "percent" and args.mts_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] MTS using percent stops/targets "
-            f"(target_pct={args.mts_target_pct}, stop_pct={args.mts_stop_pct}, "
-            f"stop_anchor={args.mts_stop_anchor}); MTS ATR multipliers are all zero."
-        )
-    if wpbr_mode_resolved == "percent" and args.wpbr_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] WPBR using percent stops/targets "
-            f"(target_pct={args.wpbr_target_pct}, stop_pct={args.wpbr_stop_pct}); "
-            "WPBR ATR multipliers are all zero."
-        )
-    if rs_mode_resolved == "percent" and args.rs_mode.strip().lower() in ("auto", "atr"):
-        print(
-            "[INFO] RS using percent stops/targets "
-            f"(target_pct={args.rs_target_pct}, stop_pct={args.rs_stop_pct}); "
-            "RS ATR multipliers are all zero."
-        )
 
     results: list[dict] = []
 
@@ -1326,32 +1242,22 @@ def main() -> None:
 
         _sym_ov = overrides_for_symbol(_per_symbol_settings, sym, system) if _per_symbol_settings else {}
         sym_rl_profile = apply_rl_profile_overrides(rl_profile, _sym_ov)
-        sym_brt_percent = apply_brt_percent_overrides(brt_percent, _sym_ov)
-        sym_mts_percent = apply_brt_percent_overrides(mts_percent, _sym_ov)
-        sym_wpbr_percent = apply_brt_percent_overrides(wpbr_percent, _sym_ov)
-        sym_rs_percent = apply_brt_percent_overrides(rs_percent, _sym_ov)
+
+        # Per-symbol percent overrides for systems that share BRT-style keys.
+        sym_exit_configs = dict(exit_configs)
+        for code in ("BRT", "MTS", "WPBR", "RS", "SB", "MVCP", "CS"):
+            if code in sym_exit_configs:
+                base = sym_exit_configs[code]
+                sym_exit_configs[code] = SystemExitConfig(
+                    mode_resolved=base.mode_resolved,
+                    percent=apply_brt_percent_overrides(base.percent, _sym_ov),
+                    atr=base.atr,
+                )
 
         _payload_kw = dict(
             atr_period=int(args.atr_period),
-            brt_mode_resolved=brt_mode_resolved,
-            ind_mode_resolved=ind_mode_resolved,
-            yh_mode_resolved=yh_mode_resolved,
-            mts_mode_resolved=mts_mode_resolved,
-            wpbr_mode_resolved=wpbr_mode_resolved,
-            rs_mode_resolved=rs_mode_resolved,
             rl_profile=sym_rl_profile,
-            brt_percent=sym_brt_percent,
-            brt_atr=brt_atr,
-            ind_percent=ind_percent,
-            ind_atr=ind_atr,
-            yh_percent=yh_percent,
-            yh_atr=yh_atr,
-            mts_percent=sym_mts_percent,
-            mts_atr=mts_atr,
-            wpbr_percent=sym_wpbr_percent,
-            wpbr_atr=wpbr_atr,
-            rs_percent=sym_rs_percent,
-            rs_atr=rs_atr,
+            exit_configs=sym_exit_configs,
             default_atr_pct=float(args.default_atr_pct),
         )
 
@@ -1427,6 +1333,10 @@ def main() -> None:
         if limit_price is None or (isinstance(limit_price, float) and pd.isna(limit_price)):
             limit_price = payload.get("StopInitial")
 
+        mode_col = None
+        if system in exit_configs:
+            mode_col = exit_configs[system].mode_resolved
+
         row_out = {
             "Symbol": sym,
             "System": payload.get("System"),
@@ -1446,11 +1356,15 @@ def main() -> None:
             "TargetChanged": target_changed,
             "StopInitial": payload.get("StopInitial"),
             "StopTrailing": stop_trailing,
-            "BrtMode": brt_mode_resolved if system == "BRT" else None,
-            "IndMode": ind_mode_resolved if system == "IND" else None,
-            "YhMode": yh_mode_resolved if system == "YH" else None,
-            "MtsMode": mts_mode_resolved if system == "MTS" else None,
-            "WpbrMode": wpbr_mode_resolved if system == "WPBR" else None,
+            "BrtMode": mode_col if system == "BRT" else None,
+            "IndMode": mode_col if system == "IND" else None,
+            "YhMode": mode_col if system == "YH" else None,
+            "MtsMode": mode_col if system == "MTS" else None,
+            "WpbrMode": mode_col if system == "WPBR" else None,
+            "RsMode": mode_col if system == "RS" else None,
+            "SbMode": mode_col if system == "SB" else None,
+            "MvcpMode": mode_col if system == "MVCP" else None,
+            "CsMode": mode_col if system == "CS" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,
@@ -1471,6 +1385,8 @@ def main() -> None:
             extra += f" [floor={float(prev_floor):.4f}]"
         if payload.get("use_sma50") and payload.get("SMA50"):
             extra += f" [SMA50={float(payload['SMA50']):.2f}]"
+        if payload.get("SignalLow") is not None:
+            extra += f" [signal_low={float(payload['SignalLow']):.4f}]"
 
         print(
             f"{sym} [{system}] {entry_ts.date()} | "

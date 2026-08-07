@@ -41,7 +41,7 @@ from ts_common import color_name, event_hit_expr, zone_color  # noqa: E402
 
 DRIVE = _ROOT / "drive"
 STUDIES_ROOT = DRIVE / "paul_studies" / "YH"
-# Same default universe as run_yh.bat / MarkTen-style Mag7+AU/AMD/NFLX.
+# Same default universe as run_yh.bat / YH_universe.csv (Mag9 without TSLA).
 DEFAULT_SYMBOLS = [
     "AAPL",
     "AMD",
@@ -52,7 +52,6 @@ DEFAULT_SYMBOLS = [
     "MSFT",
     "NFLX",
     "NVDA",
-    "TSLA",
 ]
 DEFAULT_BAND_PCT = 0.015
 _STAMP_RE = re.compile(r"YH_Closed_(\d{12})\.csv$", re.I)
@@ -777,8 +776,8 @@ def write_readme(
     lines.extend(
         [
             f"- `band_pct` from `{band.source}`",
-            "- Default universe: AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA,TSLA "
-            "(`run_yh.bat` / MarkTen)",
+            "- Default universe: AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA "
+            "(`run_yh.bat` / YH Mag9)",
             "",
             "Sibling systems live under `drive/paul_studies/` "
             "(`RL/`, `BRT`→`brt/`, `WPBR`→`wpbr/`, `YH/`). "

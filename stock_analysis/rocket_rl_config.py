@@ -155,6 +155,23 @@ RL_V_ALIASES.update(
     }
 )
 
+# Minervini VCP mode aliases → BRTConfig.mvcp_mode
+RL_V_ALIASES.update(
+    {
+        "minervini_vcp": "mvcp_mode",
+        "mvcp": "mvcp_mode",
+    }
+)
+
+# StockBee Momentum Burst aliases → BRTConfig.sb_mode
+RL_V_ALIASES.update(
+    {
+        "stockbee_mode": "sb_mode",
+        "stockbee": "sb_mode",
+        "sb": "sb_mode",
+    }
+)
+
 # WPBR daily-retest scan mode: friendly `-v retest_mode=...` alias → BRTConfig field.
 # Also accept the explicit `wpbr_retest_mode` spelling (identity; kept for discoverability).
 RL_V_ALIASES.update(

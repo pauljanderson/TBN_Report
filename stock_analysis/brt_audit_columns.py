@@ -1,8 +1,10 @@
 """
 Stable column order for BRT_Report / BRT_Audit_Report / BRT_Audit_Report_RL and optimizer.
 
-This tuple matches the column order emitted by ``rocket_brt.write_brt_audit_report`` on a full
-BRT run (legacy ``brt_audit_columns`` layout + trailing config fields from ``_AUDIT_CFG_COLS``).
+Single shared Audit schema for all systems (BRT / YH / RS / RL / WPBR / IND / MTS /
+VEC / MVCP / SB / QULL). System-specific levers (``mvcp_*``, ``sb_mode`` / ``burst_*``,
+``qull_*``, …) are always present; non-active systems leave them blank (see
+``rocket_tbn._fill_sb_mode_audit`` / ``_fill_mvcp_mode_audit`` / ``_fill_qull_mode_audit``).
 
 Trade-level IND / Trading Central horizon fields (``IND_*``, ``IND_TC_*``) are **not** listed
 here — they append to Closed / Open / Scanner via ``brt_entry_indicators.entry_indicator_csv_headers``
@@ -11,7 +13,11 @@ when ``use_indicators`` is on (report/audit only for ``IND_TC_*``; no entry gate
 
 from __future__ import annotations
 
-# Exact header order from BRT_Audit_Report (do not reorder without matching a new BRT baseline).
+import csv
+from pathlib import Path
+from typing import Any, Mapping
+
+# Exact header order for all ``*_Audit_Report_*.csv`` / Report wide rows.
 _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "Timestamp_Drive",
     "pivot_k",
@@ -37,10 +43,63 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "wpbr_second_chance_after_win",
     "wpbr_merge_overlapping_zones",
     "mts_mode",
-    # RS mode flag (CLI alias -v rs_mode=true); mirrors relative_strength_enabled near peer mode flags.
     "rs_mode",
-    # --- Rocket Launcher levers (mode → entry → exits → RL100 → Dive Bomber → sizing/watch).
-    # SPY-TC + entry_start/end_date live in the shared slots below (same as BRT/RS). ---
+    "mvcp_mode",
+    "mvcp_rs_min_percentile",
+    "mvcp_rs_lookback",
+    "mvcp_sma200_rise_bars",
+    "mvcp_min_pct_above_52w_low",
+    "mvcp_max_pct_below_52w_high",
+    "mvcp_min_contractions",
+    "mvcp_max_contractions",
+    "mvcp_swing_k",
+    "mvcp_depth_shrink",
+    "mvcp_max_first_depth",
+    "mvcp_min_final_depth",
+    "mvcp_min_base_bars",
+    "mvcp_max_base_bars",
+    "mvcp_vol_dry_ratio",
+    "mvcp_vol_dry_soft_confirm",
+    "mvcp_require_prior_advance",
+    "mvcp_prior_advance_pct",
+    "mvcp_prior_advance_bars",
+    "mvcp_vol_breakout_mult",
+    "mvcp_max_extension_above_pivot",
+    "mvcp_stop_eps",
+    "mvcp_strength_pct",
+    "mvcp_strength_bars",
+    "mvcp_trail_sma",
+    "mvcp_trail_arm_pct",
+    "mvcp_time_stop_bars",
+    "mvcp_time_stop_min_gain",
+    "mvcp_rs_universe",
+    "qull_mode",
+    "qull_setup",
+    "qull_prior_run_bars",
+    "qull_prior_run_pct",
+    "qull_coil_bars",
+    "qull_coil_range_pct",
+    "qull_ema_surf_pct",
+    "qull_require_ema_surf",
+    "qull_vol_dry_ratio",
+    "qull_vol_dry_soft",
+    "qull_vol_breakout_mult",
+    "qull_min_price",
+    "qull_min_adv_usd",
+    "qull_adv_lookback",
+    "qull_market_filter",
+    "qull_ep_gap_pct",
+    "qull_ep_vol_mult",
+    "qull_ep_require_flat_prior",
+    "qull_ep_flat_lookback",
+    "qull_ep_flat_max_run_pct",
+    "qull_stop_under",
+    "qull_max_stop_adr_mult",
+    "qull_adr_lookback",
+    "qull_trail_ema",
+    "qull_partial_days",
+    "qull_partial_frac",
+    "qull_fill",
     "rl_mode",
     "rl_sma_qual",
     "rl_dip_pct",
@@ -179,6 +238,9 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "consolidation_blocker_enabled",
     "cb_max_box_width_pct",
     "brt_cash",
+    "capacity_brt_cash",
+    "effective_brt_cash",
+    "sheet_brt_cash",
     "stop_pct",
     "stop_pct_is_multiplier",
     "target_pct",
@@ -187,6 +249,8 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "trailing_stop_increment",
     "atr_progress",
     "atr_days",
+    "no_ft_days",
+    "time_stop_days",
     "realtime_filter_enabled",
     "realtime_filter_threshold",
     "realtime_filter_use_zscore",
@@ -238,6 +302,9 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "Param_Name",
     "Param_Value",
     "Total_PNL",
+    "capacity_Total_PNL",
+    "effective_Total_PNL",
+    "sheet_PnL",
     "Wins",
     "Losses",
     "BE",
@@ -333,9 +400,233 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "too_high_multiplier",
     "too_low_multiplier",
     "atr_progress_incremental_stop",
+    "sb_mode",
+    "burst_min_pct",
+    "burst_vol_gt_prior",
+    "burst_range_lookback",
+    "burst_dcr_min",
+    "burst_max_prior_up_days",
+    "burst_fill",
+    "burst_max_risk_pct",
+    "burst_time_stop_days",
+    "burst_no_ft_days",
+    "burst_mm_gate",
+    "burst_mm_min_ratio",
+    "mm_min_shares",
+    "mm_min_adv_usd",
+    "mm_min_price",
+    "mm_move_pct",
+    "mm_lookback",
+    "mm_force_rebuild",
+    "burst_require_t1_narrow_or_down",
+    "burst_t1_narrow_mode",
+    "burst_min_price",
+    "burst_min_adv_usd",
+    "burst_adv_lookback",
+    "burst_size_from_stop",
+    "burst_risk_frac",
+    "burst_min_atr_pct_at_trigger",
+    "burst_max_atr_pct_at_trigger",
+    "burst_min_dist_to_52w_high_pct",
+    "burst_max_dist_to_52w_high_pct",
+    "burst_vol_vs_avg_mult",
+    "burst_vol_avg_lookback",
+    "host_dollar_scale",
+    "sb_gold_universe",
+    "sb_signals_total",
+    "sb_rejected_fills_total",
+    "sb_rejected_too_low",
+    "sb_rejected_too_high",
+    "sb_rejected_mm",
+    "sb_rejected_t1_n",
+    "sb_rejected_vol_vs_avg",
+    "sheet_touch_pullback_bars",
+    "vec_zones",
+    "vec_vp_lookback",
+    "vec_vp_bin_pct",
+    "vec_prior_bars",
+    "vec_prior_side",
+    "vec_confluence_pct",
+    "vec_move_away_pct",
+    "vec_min_bars_between",
+    "wpbr_retest_mode",
+    "rl_charts",
+    "rl_deep_analysis",
+    "sell_on_low_vol",
+    "min_zone_above_pct",
+    "require_no_zone_above",
+    "growth_history_slack_bars",
+    "require_close_gt_open",
+    "sheet_red_to_green_entry_enabled",
+    "backtest_end_date",
+    "sheet_no_entry_same_bar_after_exit",
+    "sell_breakdown",
+    "entry_mode",
+    "adx_period",
+    "adx_max",
+    "channel_length",
+    "pending_stop_bars",
+    "stop_order_gap_fill_at_open",
+    "stop_loss_based",
+    "stop_anchor",
+    "target_enabled",
+    "use_sma50",
+    "sma_stop_days",
+    "chandelier_enabled",
+    "chandelier_atr_period",
+    "chandelier_atr_mult",
+    "zscore_exit_enabled",
+    "zscore_exit_lookback",
+    "zscore_exit_k",
+    "slippage_bps",
+    "commission_per_trade",
+    "liquidate_at_end",
+    "max_positions",
+    "allow_secondary_entries",
+)
+
+# StockBee-only levers (blank when sb_mode is false).
+_SB_AUDIT_LEVER_COLS: tuple[str, ...] = (
+    "sb_mode",
+    "burst_min_pct",
+    "burst_vol_gt_prior",
+    "burst_range_lookback",
+    "burst_dcr_min",
+    "burst_max_prior_up_days",
+    "burst_fill",
+    "burst_max_risk_pct",
+    "burst_time_stop_days",
+    "burst_no_ft_days",
+    "burst_mm_gate",
+    "burst_mm_min_ratio",
+    "mm_min_shares",
+    "mm_min_adv_usd",
+    "mm_min_price",
+    "mm_move_pct",
+    "mm_lookback",
+    "mm_force_rebuild",
+    "burst_require_t1_narrow_or_down",
+    "burst_t1_narrow_mode",
+    "burst_min_price",
+    "burst_min_adv_usd",
+    "burst_adv_lookback",
+    "burst_size_from_stop",
+    "burst_risk_frac",
+    "burst_min_atr_pct_at_trigger",
+    "burst_max_atr_pct_at_trigger",
+    "burst_min_dist_to_52w_high_pct",
+    "burst_max_dist_to_52w_high_pct",
+    "burst_vol_vs_avg_mult",
+    "burst_vol_avg_lookback",
+    "host_dollar_scale",
+    "sb_gold_universe",
+    "sb_signals_total",
+    "sb_rejected_fills_total",
+    "sb_rejected_too_low",
+    "sb_rejected_too_high",
+    "sb_rejected_mm",
+    "sb_rejected_t1_n",
+    "sb_rejected_vol_vs_avg",
+)
+
+# Minervini VCP-only levers (blank when mvcp_mode is false).
+_MVCP_AUDIT_LEVER_COLS: tuple[str, ...] = (
+    "mvcp_mode",
+    "mvcp_rs_min_percentile",
+    "mvcp_rs_lookback",
+    "mvcp_sma200_rise_bars",
+    "mvcp_min_pct_above_52w_low",
+    "mvcp_max_pct_below_52w_high",
+    "mvcp_min_contractions",
+    "mvcp_max_contractions",
+    "mvcp_swing_k",
+    "mvcp_depth_shrink",
+    "mvcp_max_first_depth",
+    "mvcp_min_final_depth",
+    "mvcp_min_base_bars",
+    "mvcp_max_base_bars",
+    "mvcp_vol_dry_ratio",
+    "mvcp_vol_dry_soft_confirm",
+    "mvcp_require_prior_advance",
+    "mvcp_prior_advance_pct",
+    "mvcp_prior_advance_bars",
+    "mvcp_vol_breakout_mult",
+    "mvcp_max_extension_above_pivot",
+    "mvcp_stop_eps",
+    "mvcp_strength_pct",
+    "mvcp_strength_bars",
+    "mvcp_trail_sma",
+    "mvcp_trail_arm_pct",
+    "mvcp_time_stop_bars",
+    "mvcp_time_stop_min_gain",
+    "mvcp_rs_universe",
+)
+
+# Qullamaggie HTF/EP-only levers (blank when qull_mode is false).
+_QULL_AUDIT_LEVER_COLS: tuple[str, ...] = (
+    "qull_mode",
+    "qull_setup",
+    "qull_prior_run_bars",
+    "qull_prior_run_pct",
+    "qull_coil_bars",
+    "qull_coil_range_pct",
+    "qull_ema_surf_pct",
+    "qull_require_ema_surf",
+    "qull_vol_dry_ratio",
+    "qull_vol_dry_soft",
+    "qull_vol_breakout_mult",
+    "qull_min_price",
+    "qull_min_adv_usd",
+    "qull_adv_lookback",
+    "qull_market_filter",
+    "qull_ep_gap_pct",
+    "qull_ep_vol_mult",
+    "qull_ep_require_flat_prior",
+    "qull_ep_flat_lookback",
+    "qull_ep_flat_max_run_pct",
+    "qull_stop_under",
+    "qull_max_stop_adr_mult",
+    "qull_adr_lookback",
+    "qull_trail_ema",
+    "qull_partial_days",
+    "qull_partial_frac",
+    "qull_fill",
 )
 
 
 def get_brt_audit_column_order() -> tuple[str, ...]:
     """Return full audit header order (immutable tuple)."""
     return _BRT_AUDIT_COLUMN_ORDER
+
+
+def get_sb_audit_lever_cols() -> tuple[str, ...]:
+    """StockBee-only Audit columns (blank on non-SB runs)."""
+    return _SB_AUDIT_LEVER_COLS
+
+
+def get_mvcp_audit_lever_cols() -> tuple[str, ...]:
+    """MVCP-only Audit columns (blank on non-MVCP runs)."""
+    return _MVCP_AUDIT_LEVER_COLS
+
+
+def get_qull_audit_lever_cols() -> tuple[str, ...]:
+    """Qull-only Audit columns (blank on non-Qull runs)."""
+    return _QULL_AUDIT_LEVER_COLS
+
+
+def empty_audit_row() -> dict[str, str]:
+    """Wide Audit row with every shared column present and empty."""
+    return {c: "" for c in _BRT_AUDIT_COLUMN_ORDER}
+
+
+def write_wide_audit_csv(path: str | Path, row: Mapping[str, Any]) -> Path:
+    """Write one wide Audit row in shared column order (missing keys → empty)."""
+    path = Path(path)
+    headers = list(_BRT_AUDIT_COLUMN_ORDER)
+    values = [row.get(c, "") for c in headers]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(headers)
+        w.writerow(values)
+    return path
+

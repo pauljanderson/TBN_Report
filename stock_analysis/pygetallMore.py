@@ -806,6 +806,7 @@ TICKERS = [
     "TYL",
     "UAL",
     "UAN",
+    "UBER",
     "UBS",
     "UNH",
     "UNM",
@@ -1262,7 +1263,22 @@ TICKERS = [
     "WEC",
     "WST",
     "WTW",
-    "XEL"
+    "XEL",
+    # StockBee Momentum Burst seeds / alternates (tbn_new_systems/stockbee_momentum_burst)
+    "AFRM",
+    "COIN",
+    "DKNG",
+    "HIMS",
+    "HOOD",
+    "MSTR",
+    "ROKU",
+    "SMCI",
+    "TXRH",
+    "UPST",
+    # minervini_vcp expand enrichment (download before -s use; CSV may be absent until pygetallMore)
+    "PATH",
+    "RBLX",
+    "SOFI",
 ]
 def _compute_start_date(mode: str, incremental_days: int) -> str:
     if mode == "full":

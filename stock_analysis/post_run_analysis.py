@@ -54,7 +54,9 @@ try:
         closed_summary_open_paths,
         detect_system,
         enrich_closed_csv_with_one_liners,
+        enrich_summary_csv_with_avg_days_held,
         enrich_summary_csv_with_fit,
+        enrich_summary_csv_with_yfinance,
         format_trade_one_liner,
         normalize_system,
         resolve_workers,
@@ -73,7 +75,9 @@ except ImportError:
         closed_summary_open_paths,
         detect_system,
         enrich_closed_csv_with_one_liners,
+        enrich_summary_csv_with_avg_days_held,
         enrich_summary_csv_with_fit,
+        enrich_summary_csv_with_yfinance,
         format_trade_one_liner,
         normalize_system,
         resolve_workers,
@@ -288,7 +292,9 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
         if quick_stop_after_target:
             lines.append(
                 f"Post-TARGET quick STOP ×{quick_stop_after_target} → "
-                f"``symbol_reentry_cooldown_days`` or stricter re-entry gates."
+                f"``rl_post_target_reentry_bars`` + mode "
+                f"(``none`` / ``under_sma_limit`` / ``min_stack`` / ``stop_loss``) "
+                f"or longer ``symbol_reentry_cooldown_days``."
             )
         if shallow_fails:
             lines.append(
@@ -586,6 +592,23 @@ def write_symbol_assessments_html(
     return path
 
 
+def _yh_param_ab_action(param: str, direction: str, ts: str, pref: str) -> str:
+    """Inline Run AB hint for YH band/target/stop cards (hypothesis-test one-knob)."""
+    p = (param or "").strip().lower()
+    d = (direction or "").strip().lower()
+    if pref.upper() != "YH" or p not in ("band_pct", "target_pct", "stop_pct"):
+        return ""
+    if d in ("", "hold", "mixed", "adopt"):
+        return "<span class=\"muted\">no mapped alt</span>"
+    bat = f"run_yh_param_hint_ab.bat {html.escape(ts)}"
+    cmp_rel = "paul_experiments/yh_param_hint_ab/comparison.html"
+    return (
+        f"<code>{bat}</code><br/>"
+        f"<span class=\"muted\">one knob · </span>"
+        f"<a href=\"{html.escape(cmp_rel)}\">comparison.html</a>"
+    )
+
+
 def write_improve_priority_html(
     *,
     path: Path,
@@ -593,25 +616,68 @@ def write_improve_priority_html(
     prefix: str,
     closed_rows: list[dict[str, Any]],
     miss_themes: Optional[list[dict[str, Any]]] = None,
+    drive_dir: Optional[Path] = None,
+    data_dir: Optional[Path] = None,
 ) -> Path:
     pref = normalize_system(prefix)
-    hints = _collect_improve_hints(closed_rows, prefix=pref)
-    rows_html = []
-    for i, h in enumerate(hints, 1):
-        rows_html.append(
-            "<tr>"
-            f"<td>{i}</td>"
-            f"<td>{html.escape(h.hypothesis_id)}</td>"
-            f"<td>{h.symbol_count}</td>"
-            f"<td>{h.trade_count}</td>"
-            f"<td>{html.escape(h.lever)}</td>"
-            f"<td>{html.escape(h.suggestion)}</td>"
-            f"<td>{html.escape(','.join(h.symbols[:12]))}</td>"
-            f"<td>{html.escape(h.evidence)}</td>"
-            "</tr>"
-        )
-    if not rows_html:
-        rows_html.append('<tr><td colspan="8">No multi-symbol patterns met threshold.</td></tr>')
+    hints = _collect_improve_hints(
+        closed_rows,
+        prefix=pref,
+        drive_dir=drive_dir or path.parent,
+        data_dir=data_dir,
+    )
+
+    def _rows_for(cat: str, *, with_ab: bool = False) -> str:
+        items = [h for h in hints if getattr(h, "category", "pattern") == cat]
+        colspan = 13 if with_ab else 12
+        if not items:
+            return f'<tr><td colspan="{colspan}">None met threshold / data unavailable.</td></tr>'
+        parts = []
+        for i, h in enumerate(items, 1):
+            pct = f"{h.pct_of_trades:.1f}" if getattr(h, "pct_of_trades", 0) else ""
+            ab_cell = ""
+            if with_ab:
+                ab = _yh_param_ab_action(
+                    getattr(h, "param", "") or "",
+                    getattr(h, "direction", "") or "",
+                    ts,
+                    pref,
+                )
+                ab_cell = f"<td>{ab}</td>"
+            parts.append(
+                "<tr>"
+                f"<td>{i}</td>"
+                f"<td>{html.escape(h.hypothesis_id)}</td>"
+                f"<td>{html.escape(getattr(h, 'param', '') or '')}</td>"
+                f"<td>{html.escape(getattr(h, 'direction', '') or '')}</td>"
+                f"<td>{html.escape(getattr(h, 'confidence', '') or '')}</td>"
+                f"<td>{h.symbol_count}</td>"
+                f"<td>{h.trade_count}</td>"
+                f"<td>{html.escape(pct)}</td>"
+                f"<td>{html.escape(h.lever)}</td>"
+                f"<td>{html.escape(h.suggestion)}</td>"
+                f"<td>{html.escape(','.join(h.symbols[:12]))}</td>"
+                f"<td>{html.escape(h.evidence)}</td>"
+                f"{ab_cell}"
+                "</tr>"
+            )
+        return "".join(parts)
+
+    hint_thead = f"""
+    {_sortable_th("#", "num")}
+    {_sortable_th("Hypothesis", "text")}
+    {_sortable_th("Param", "text")}
+    {_sortable_th("Direction", "text")}
+    {_sortable_th("Confidence", "text")}
+    {_sortable_th("Symbols", "num")}
+    {_sortable_th("Trades", "num")}
+    {_sortable_th("% scored", "num")}
+    {_sortable_th("Lever", "text")}
+    {_sortable_th("Suggestion", "text")}
+    {_sortable_th("Example symbols", "text")}
+    {_sortable_th("Evidence", "text")}
+"""
+    param_thead = hint_thead + f"    {_sortable_th('Run AB', 'text')}\n"
 
     miss_block = ""
     if miss_themes is not None:
@@ -661,6 +727,8 @@ def write_improve_priority_html(
   </tbody></table>
 """
 
+    # Primary section = actionable param hypotheses (+ Run AB for YH). Taken-trade
+    # patterns and peer-learn follow so AB does not read as a bolted-on second feature.
     doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -676,6 +744,7 @@ def write_improve_priority_html(
   table.sortable {{ border-collapse:collapse; width:100%; font-size:13px; }}
   table.sortable th, table.sortable td {{ border:1px solid #d8d8d0; padding:6px 8px; vertical-align:top; }}
   table.sortable th {{ background:#f0f0ea; }}
+  code {{ font-size:12px; }}
   {_SORTABLE_TH_CSS}
 </style>
 </head>
@@ -683,21 +752,25 @@ def write_improve_priority_html(
 <div class="wrap">
   <h1>{html.escape(pref)} Improve Priority — stamp {html.escape(ts)}</h1>
   <p class="muted">Portfolio-level rule hypotheses ranked by symbol/trade frequency.
-  Companion to cheap <code>{html.escape(pref)}_ImproveHints_{html.escape(ts)}.csv</code> from DailyRun.
-  Click headers to sort. Not LLM; use with charts + SymbolAssessments HTML.</p>
+  Layout: <strong>Parameter suggestions</strong> (with Run AB) first, then taken-trade patterns / peer-learn.
+  Companion to cheap <code>{html.escape(pref)}_ImproveHints_{html.escape(ts)}.csv</code> from DailyRun
+  (also includes param-tweak + peer-learn sections). Click headers to sort.
+  Not LLM; use with charts + SymbolAssessments HTML.
+  Next step is a <strong>one-knob hypothesis test</strong> (see <code>docs/HYPOTHESIS_TEST.md</code>), not a search for optimal params.</p>
+  <h2>Parameter suggestions (band / target / stop)</h2>
+  <p class="muted">Primary workbench: direction = tighten/loosen/expand/contract/hold/mixed.
+  Same-param opposing lenses (e.g. stop expand vs hold) are merged into one tension card;
+  confidence is capped when evidence conflicts. Prefer one coherent next hypothesis.
+  YH: use <code>run_yh_param_hint_ab.bat {html.escape(ts)}</code> (control vs suggested direction).</p>
+  <table class="sortable"><thead><tr>{param_thead}</tr></thead>
+  <tbody>{_rows_for("param", with_ab=True)}</tbody></table>
   <h2>Taken-trade patterns</h2>
-  <table class="sortable"><thead><tr>
-    {_sortable_th("#", "num")}
-    {_sortable_th("Hypothesis", "text")}
-    {_sortable_th("Symbols", "num")}
-    {_sortable_th("Trades", "num")}
-    {_sortable_th("Lever", "text")}
-    {_sortable_th("Suggestion", "text")}
-    {_sortable_th("Example symbols", "text")}
-    {_sortable_th("Evidence", "text")}
-  </tr></thead><tbody>
-  {''.join(rows_html)}
-  </tbody></table>
+  <table class="sortable"><thead><tr>{hint_thead}</tr></thead>
+  <tbody>{_rows_for("pattern")}</tbody></table>
+  <h2>Peer-learn (cross-system overlap)</h2>
+  <p class="muted">Countable adopt-from-peer suggestions when hold ranges overlap peer Closed books.</p>
+  <table class="sortable"><thead><tr>{hint_thead}</tr></thead>
+  <tbody>{_rows_for("peer_learn")}</tbody></table>
   {miss_block}
 </div>
 {_SORTABLE_TABLE_SCRIPT}
@@ -709,7 +782,16 @@ def write_improve_priority_html(
     return path
 
 
+
+def _harden_stdio() -> None:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
+    _harden_stdio()
     ap = argparse.ArgumentParser(
         description="Optional charts + CRWD-style deep HTML for any system (NOT part of DailyRun)."
     )
@@ -751,7 +833,10 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
     ap.add_argument(
         "--refresh-cheap",
         action="store_true",
-        help="Re-write ONE_LINER / FIT / ImproveHints CSV before deep HTML",
+        help=(
+            "Re-write ONE_LINER / CURRENT_MARKET_CAP+SECTOR+INDUSTRY / FIT / "
+            "ImproveHints CSV before deep HTML"
+        ),
     )
     ap.add_argument(
         "--missed-moves",
@@ -825,15 +910,26 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
     if args.refresh_cheap or not summary_path.is_file():
         if summary_path.is_file():
             enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
+            enrich_summary_csv_with_yfinance(summary_path)
             enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
-            write_improve_hints(closed_path, output_dir, ts, prefix=prefix)
+            enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
+            write_improve_hints(
+                closed_path,
+                output_dir,
+                ts,
+                prefix=prefix,
+                drive_dir=output_dir,
+                data_dir=Path(args.data_dir) if args.data_dir else None,
+            )
         else:
             enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
             print(f"[post_run_analysis] No Summary yet: {summary_path}", flush=True)
 
     enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
     if summary_path.is_file():
+        enrich_summary_csv_with_yfinance(summary_path)
         enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
+        enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
 
     closed_rows = _read_csv(closed_path)
     summary_rows = _read_csv(summary_path)
@@ -960,10 +1056,19 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         prefix=prefix,
         closed_rows=closed_rows,
         miss_themes=miss_themes,
+        drive_dir=output_dir,
+        data_dir=Path(args.data_dir) if args.data_dir else None,
     )
     print(f"[post_run_analysis] Wrote {prio_path.name}", flush=True)
 
-    write_improve_hints(closed_path, output_dir, ts, prefix=prefix)
+    write_improve_hints(
+        closed_path,
+        output_dir,
+        ts,
+        prefix=prefix,
+        drive_dir=output_dir,
+        data_dir=Path(args.data_dir) if args.data_dir else None,
+    )
     return 0
 
 

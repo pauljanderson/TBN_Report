@@ -5,6 +5,9 @@ Compares per-system MagN baselines (config) to the newest Closed CSV under drive
 Fails (exit 1) when historical baseline trades are missing, deleted, or materially
 changed. Allows new trades after the freeze cutoff (forward fills).
 
+EXIT_TYPE: aliases STOP↔STOP_LOSS, GAP_STOP↔GAP_DOWN, TIME_STOP↔TIME; also
+accepts GAP_DOWN↔STOP_LOSS when exit_price <= stop_price (gap-fill re-label).
+
 Usage:
   python tools/reconcile_gate.py
   python tools/reconcile_gate.py --config drive/paul_experiments/reconcile_gate_config.json
@@ -24,6 +27,17 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "drive" / "paul_experiments" / "reconcile_gate_config.json"
+_STOCK_ANALYSIS = ROOT / "stock_analysis"
+if str(_STOCK_ANALYSIS) not in sys.path:
+    sys.path.insert(0, str(_STOCK_ANALYSIS))
+
+try:
+    from exit_type_normalize import exit_types_equivalent as _exit_types_equivalent
+except Exception:  # pragma: no cover - defensive
+
+    def _exit_types_equivalent(a, b, *, exit_price=None, stop_price=None):  # type: ignore
+        return (a or "").strip().upper() == (b or "").strip().upper()
+
 
 DATE_RE = re.compile(r"^(\d{4})-?(\d{2})-?(\d{2})")
 
@@ -87,6 +101,9 @@ def _load_closed_csv(path: Path) -> list[dict[str, Any]]:
                     "DATE_CLOSED": closed,
                     "ENTRY_PRICE": _parse_float(row.get("ENTRY_PRICE") or row.get("ENTRY PRICE")),
                     "EXIT_PRICE": _parse_float(row.get("EXIT_PRICE") or row.get("EXIT PRICE")),
+                    "STOP_PRICE": _parse_float(
+                        row.get("STOP_PRICE") or row.get("STOP PRICE") or row.get("STOP_LOSS") or row.get("STOP")
+                    ),
                     "PNL_PCT": _parse_float(row.get("PNL_PCT") or row.get("PNL %") or row.get("PNL_PCT")),
                     "EXIT_TYPE": str(row.get("EXIT_TYPE") or row.get("EXIT TYPE") or "").strip().upper(),
                 }
@@ -271,7 +288,12 @@ def _compare_system(
             if bv is not None and lv is not None and round(abs(float(bv) - float(lv)), 4) > pnl_tol:
                 diffs.append(f"PNL_PCT {bv} vs {lv}")
             bet, let_ = br.get("EXIT_TYPE") or "", lr.get("EXIT_TYPE") or ""
-            if bet and let_ and bet != let_:
+            if bet and let_ and not _exit_types_equivalent(
+                bet,
+                let_,
+                exit_price=lr.get("EXIT_PRICE") if lr.get("EXIT_PRICE") is not None else br.get("EXIT_PRICE"),
+                stop_price=lr.get("STOP_PRICE") if lr.get("STOP_PRICE") is not None else br.get("STOP_PRICE"),
+            ):
                 diffs.append(f"EXIT_TYPE {bet} vs {let_}")
             if diffs:
                 if len(sr.changed) < max_examples:
@@ -307,7 +329,12 @@ def _compare_system(
             if br.get("PNL_PCT") is not None and lr.get("PNL_PCT") is not None:
                 if round(abs(float(br["PNL_PCT"]) - float(lr["PNL_PCT"])), 4) > pnl_tol:
                     bad = True
-            if (br.get("EXIT_TYPE") or "") and (lr.get("EXIT_TYPE") or "") and br["EXIT_TYPE"] != lr["EXIT_TYPE"]:
+            if (br.get("EXIT_TYPE") or "") and (lr.get("EXIT_TYPE") or "") and not _exit_types_equivalent(
+                br.get("EXIT_TYPE"),
+                lr.get("EXIT_TYPE"),
+                exit_price=lr.get("EXIT_PRICE") if lr.get("EXIT_PRICE") is not None else br.get("EXIT_PRICE"),
+                stop_price=lr.get("STOP_PRICE") if lr.get("STOP_PRICE") is not None else br.get("STOP_PRICE"),
+            ):
                 bad = True
             if bad:
                 chg_n += 1

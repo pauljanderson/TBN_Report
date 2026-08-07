@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-Analyze BRT_Closed CSV: correlation of each numeric column with PNL_PCT, ANN_ROR_PCT,
-and POST_ENTRY_GAIN_HIT (when present).
+Analyze Closed CSV (BRT/YH/SB/…): correlation of each numeric column with PNL_PCT,
+ANN_ROR_PCT, and POST_ENTRY_GAIN_HIT (when present).
 
 Output: CSV with one row per variable and columns:
 Variable, R_PNL_PCT, R_ANN_ROR_PCT, R_POST_ENTRY_GAIN_HIT, R_Total.
 
-Predictor rows exclude look-ahead labels and entry-bar-only fields (see CORRELATION_VAR_EXCLUDE).
+For SB, burst DNA on Closed (PCT_DAY, DCR, RANGE_EXP, VOL_RATIO, VOL_VS_50,
+SIGNAL_LOW, RISK_PCT, MM_RATIO, T1_*) is included automatically after
+``_splice_burst_dna_columns`` in ``rocket_stockbee_burst``.
+SIGNAL_DATE is on Closed but excluded here (date stamp in BASE_EXCLUDE).
+Note: VOL_RATIO = V[T]/V[T−1]; VOL_VS_50 = V[T]/mean(prior 50d volume).
+
+Predictor rows exclude look-ahead labels, date stamps, and entry-bar-only fields
+(see BASE_EXCLUDE / CORRELATION_VAR_EXCLUDE).
 Usage: python correlate_brt_closed.py <BRT_Closed_*.csv> [output.csv]
-Or call run_correlation_report(closed_csv_path, output_csv_path) from rocket_brt after each run.
+Or call run_correlation_report(closed_csv_path, output_csv_path) from rocket_brt / SB after each run.
 """
 from __future__ import annotations
 
@@ -59,6 +66,7 @@ CORRELATION_TARGET_COLUMNS = {
 BASE_EXCLUDE = {
     "SYMBOL", "DATE_OPENED", "DATE_CLOSED", "EXIT_TYPE", "STRUCT_HIGH", "STRUCT_LOW",
     "ENTRY_PIVOT_TYPE", "ENTRY_STRUCT_REGIME", "MATURITY_DATE", "CLOSE_ABOVE_DATE",
+    "BREAKOUT_DATE", "SIGNAL_DATE", "LAST_ATH_DATE_AT_ENTRY",
     "PNL_DOLLARS", "DAYS_HELD", "EXIT_PRICE", "MAX_PRICE",
 }
 _IND_CORR_NUMERIC = frozenset({"IND_DIFF", "IND_SCORE"})

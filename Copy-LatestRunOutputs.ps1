@@ -10,6 +10,8 @@
     WPBR run: latest yyMMddHHmmss from WPBR_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv
              (falls back to legacy PBR_* filenames if no WPBR_* yet).
     RS run: latest yyMMddHHmmss from RS_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv.
+    SB run: latest yyMMddHHmmss from SB_Closed|Open|Watchlist|Summary|RejectedFills|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
+             (standalone StockBee engine; also writes SB_LatestRun_* itself).
 
     Rocket Launcher / audit: timestamp from drive\last_run_ts.txt (same as portfolio_audit.awk).
 
@@ -20,6 +22,7 @@
       MTS_Closed|Open|Scanner|Watchlist|Summary_<mtsTs>.csv  -> MTS_LatestRun_*.csv
       WPBR_Closed|Open|Scanner|Watchlist|Summary_<wpbrTs>.csv  -> WPBR_LatestRun_*.csv
       RS_Closed|Open|Scanner|Watchlist|Summary_<rsTs>.csv   -> RS_LatestRun_*.csv
+      SB_Closed|Open|Watchlist|Summary|RejectedFills|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<sbTs>.csv -> SB_LatestRun_*.csv
       RL_Closed|Open|Scanner|Watchlist|Summary_<rlTs>.csv    -> RL_LatestRun_*.csv
 
 .PARAMETER RepoRoot
@@ -48,6 +51,9 @@
 
 .PARAMETER RsTimestamp
     Force RS yyMMddHHmmss (optional).
+
+.PARAMETER SbTimestamp
+    Force SB yyMMddHHmmss (optional).
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -59,7 +65,8 @@ param(
     [string] $RlTimestamp = "",
     [string] $MtsTimestamp = "",
     [string] $WpbrTimestamp = "",
-    [string] $RsTimestamp = ""
+    [string] $RsTimestamp = "",
+    [string] $SbTimestamp = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +85,7 @@ $YhStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $MtsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $WpbrStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $RsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
+$SbStems = @("Closed", "Open", "Watchlist", "Summary", "RejectedFills", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $IndStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary", "indicators_while_held", "EquityCurve_Aggressive")
 $RlStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 
@@ -149,6 +157,10 @@ function Get-LatestWpbrCoreTimestamp([string]$dir, [string]$override, [string[]]
 
 function Get-LatestRsCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
     return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "RS" -Stems $stems -Override $override
+}
+
+function Get-LatestSbCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
+    return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "SB" -Stems $stems -Override $override
 }
 
 function Get-RlTimestamp([string]$dir, [string]$override) {
@@ -223,6 +235,12 @@ try {
 } catch {
     Write-Warning $_.Exception.Message
 }
+$sbTs = $null
+try {
+    $sbTs = Get-LatestSbCoreTimestamp $OutputDir $SbTimestamp $SbStems
+} catch {
+    Write-Warning $_.Exception.Message
+}
 $rlTs = Get-RlTimestamp $OutputDir $RlTimestamp
 
 Write-Host "Drive:       $OutputDir" -ForegroundColor Cyan
@@ -232,6 +250,7 @@ if ($indTs) { Write-Host "IND core ts: $indTs" -ForegroundColor Yellow }
 if ($mtsTs) { Write-Host "MTS core ts: $mtsTs" -ForegroundColor Yellow }
 if ($wpbrTs) { Write-Host "WPBR core ts: $wpbrTs" -ForegroundColor Yellow }
 if ($rsTs) { Write-Host "RS core ts:  $rsTs" -ForegroundColor Yellow }
+if ($sbTs) { Write-Host "SB core ts:  $sbTs" -ForegroundColor Yellow }
 Write-Host "RL audit ts: $rlTs" -ForegroundColor Yellow
 
 Write-Host "BRT_LatestRun:" -ForegroundColor Cyan
@@ -271,6 +290,13 @@ if ($rsTs) {
     Write-Host "RS_LatestRun:" -ForegroundColor Cyan
     foreach ($stem in $RsStems) {
         Copy-RunCsv -SourcePrefix "RS" -Stem $stem -Timestamp $rsTs -DestPrefix "RS_LatestRun" -Dir $OutputDir
+    }
+}
+
+if ($sbTs) {
+    Write-Host "SB_LatestRun:" -ForegroundColor Cyan
+    foreach ($stem in $SbStems) {
+        Copy-RunCsv -SourcePrefix "SB" -Stem $stem -Timestamp $sbTs -DestPrefix "SB_LatestRun" -Dir $OutputDir
     }
 }
 

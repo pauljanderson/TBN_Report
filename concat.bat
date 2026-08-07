@@ -2,9 +2,10 @@
 setlocal EnableDelayedExpansion
 pushd "%~dp0"
 
-REM Merge audit CSVs into drive\all.csv (or all_yh / all_vec / all_wpbr / all_rs / all_rl for mode filters).
+REM Merge audit CSVs into drive\all.csv (or all_yh / all_vec / all_wpbr / all_rs / all_rl / all_sb / all_mvcp).
 REM NOTE: This script does NOT modify cell contents. Timestamp_Drive uses =HYPERLINK(...)
 REM   for click-through in Excel; Excel may show a leading "'" in the formula bar.
+REM NOTE: Concat merges Audit_Report_* only (no Closed/Open modes). Same as YH/RS/etc.
 REM
 REM Usage:
 REM   concat.bat                  merge BRT+IND+MTS Audit_Report_*.csv -> all.csv
@@ -14,12 +15,18 @@ REM   concat.bat wpbr             merge WPBR_Audit_Report_*.csv -> all_wpbr.csv
 REM   concat.bat pbr              legacy alias for wpbr (also matches old PBR_Audit_Report_*)
 REM   concat.bat rs               merge RS_Audit_Report_*.csv -> all_rs.csv
 REM   concat.bat rl               merge RL_Audit_Report_*.csv -> all_rl.csv
-REM   concat.bat 26062211         merge BRT+IND+YH+VEC+WPBR+PBR+MTS+RS+RL *_Audit_Report_26062211*.csv -> all.csv
+REM   concat.bat sb               merge SB_Audit_Report_*.csv -> all_sb.csv
+REM   concat.bat mvcp             merge MVCP_Audit_Report_*.csv -> all_mvcp.csv
+REM   concat.bat 26062211         merge BRT+IND+YH+VEC+WPBR+PBR+MTS+RS+RL+SB+MVCP *_Audit_Report_26062211*.csv -> all.csv
 REM   concat.bat yh 26062211      merge YH_Audit_Report_26062211*.csv -> all_yh.csv
 REM   concat.bat vec 26062211     merge VEC_Audit_Report_26062211*.csv -> all_vec.csv
 REM   concat.bat wpbr 26062211    merge WPBR_Audit_Report_26062211*.csv -> all_wpbr.csv
 REM   concat.bat rs 26062211      merge RS_Audit_Report_26062211*.csv -> all_rs.csv
 REM   concat.bat rl 26062211      merge RL_Audit_Report_26062211*.csv -> all_rl.csv
+REM   concat.bat sb 26062211      merge SB_Audit_Report_26062211*.csv -> all_sb.csv
+REM   concat.bat mvcp 26062211    merge MVCP_Audit_Report_26062211*.csv -> all_mvcp.csv
+REM   NOTE: Prefer stamp filters for mixed eras. Wide-row audits (Timestamp_Drive header)
+REM   are preferred over legacy key/value when both exist; *.bak / *keyvalue* files skipped.
 REM
 REM If the first file alphabetically has different columns than later files, narrow the filter
 REM or move older CSVs out of the folder before merging.
@@ -65,6 +72,14 @@ if /I "%~1"=="yh" (
   set "MODE=rl"
   set "OUT_NAME=all_rl.csv"
   if not "%~2"=="" set "TS_FILTER=%~2"
+) else if /I "%~1"=="sb" (
+  set "MODE=sb"
+  set "OUT_NAME=all_sb.csv"
+  if not "%~2"=="" set "TS_FILTER=%~2"
+) else if /I "%~1"=="mvcp" (
+  set "MODE=mvcp"
+  set "OUT_NAME=all_mvcp.csv"
+  if not "%~2"=="" set "TS_FILTER=%~2"
 ) else if not "%~1"=="" (
   set "TS_FILTER=%~1"
 )
@@ -99,11 +114,23 @@ if "!MODE!"=="yh" (
   ) else (
     set "PATS=RL_Audit_Report_!TS_FILTER!*.csv"
   )
+) else if "!MODE!"=="sb" (
+  if "!TS_FILTER!"=="" (
+    set "PATS=SB_Audit_Report_*.csv"
+  ) else (
+    set "PATS=SB_Audit_Report_!TS_FILTER!*.csv"
+  )
+) else if "!MODE!"=="mvcp" (
+  if "!TS_FILTER!"=="" (
+    set "PATS=MVCP_Audit_Report_*.csv"
+  ) else (
+    set "PATS=MVCP_Audit_Report_!TS_FILTER!*.csv"
+  )
 ) else (
   if "!TS_FILTER!"=="" (
     set "PATS=BRT_Audit_Report_*.csv;IND_Audit_Report_*.csv;MTS_Audit_Report_*.csv"
   ) else (
-    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv;RS_Audit_Report_!TS_FILTER!*.csv;RL_Audit_Report_!TS_FILTER!*.csv"
+    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv;RS_Audit_Report_!TS_FILTER!*.csv;RL_Audit_Report_!TS_FILTER!*.csv;SB_Audit_Report_!TS_FILTER!*.csv;MVCP_Audit_Report_!TS_FILTER!*.csv"
   )
 )
 
@@ -118,7 +145,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ts = $env:TS_FILTER;" ^
   "$files = @();" ^
   "foreach ($pat in $patterns) { $files += @(Get-ChildItem -LiteralPath $d -Filter $pat -ErrorAction SilentlyContinue) };" ^
-  "$files = @($files | Sort-Object Name -Unique);" ^
+  "$files = @($files | Where-Object { $_.Name -notmatch '(?i)(\.bak|keyvalue)' } | Sort-Object Name -Unique);" ^
   "if ($files.Count -eq 0) {" ^
   "  $msg = 'No files matching ' + ($patterns -join '/') + ' in ' + $d + '.';" ^
   "  if ($ts) {" ^
@@ -131,6 +158,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "    if ($hint.Count -gt 0) { $msg += ' Recent stamps on disk: ' + ($hint -join ', ') + '.' }" ^
   "  };" ^
   "  Write-Error $msg; exit 1" ^
+  "};" ^
+  "function Get-AuditShape($path) {" ^
+  "  $sr = New-Object System.IO.StreamReader($path, [System.Text.Encoding]::UTF8);" ^
+  "  try { $h = $sr.ReadLine() } finally { $sr.Close() }" ^
+  "  if (-not $h) { return 'empty' }" ^
+  "  if ($h -match '(?i)^key\s*,\s*value\b') { return 'kv' }" ^
+  "  if ($h -match '(?i)^Timestamp_Drive\b') { return 'wide' }" ^
+  "  return 'other'" ^
+  "};" ^
+  "$shaped = @();" ^
+  "foreach ($f in $files) { $shaped += [pscustomobject]@{ File = $f; Shape = (Get-AuditShape $f.FullName) } };" ^
+  "$wide = @($shaped | Where-Object { $_.Shape -eq 'wide' });" ^
+  "$kv = @($shaped | Where-Object { $_.Shape -eq 'kv' });" ^
+  "if ($wide.Count -gt 0) {" ^
+  "  $files = @($wide | ForEach-Object { $_.File });" ^
+  "  if ($kv.Count -gt 0) { Write-Host ('Note: preferring ' + $wide.Count + ' wide-row audit(s); skipped ' + $kv.Count + ' legacy key/value.') }" ^
+  "} else {" ^
+  "  $files = @($shaped | ForEach-Object { $_.File });" ^
   "};" ^
   "$out = Join-Path $d $env:OUT_NAME;" ^
   "$utf8 = New-Object System.Text.UTF8Encoding $false;" ^

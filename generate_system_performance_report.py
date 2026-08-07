@@ -20,9 +20,10 @@ DEFAULT_DRIVE = ROOT / "Drive"
 DEFAULT_OUTPUT = ROOT / "docs" / "system_performance.html"
 ET = ZoneInfo("America/New_York")
 
-ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS")
+ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS", "SB")
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
+    "SB": "SB (StockBee)",
 }
 COLORS = {
     "BRT": "#2563eb",
@@ -31,6 +32,7 @@ COLORS = {
     "WPBR": "#d97706",
     "YH": "#16a34a",
     "RS": "#db2777",
+    "SB": "#0d9488",
     "Equal capital": "#2563eb",
     "Risk-balanced": "#d97706",
     "Recommended": "#0f766e",
@@ -104,7 +106,7 @@ def _date(raw: object) -> Optional[date]:
 def resolve_sources(drive: Path) -> dict[str, Optional[Path]]:
     """Select one closed file per logical system, avoiding PBR/WPBR alias duplication."""
     out: dict[str, Optional[Path]] = {}
-    for system in ("BRT", "MTS", "YH", "RS"):
+    for system in ("BRT", "MTS", "YH", "RS", "SB"):
         path = drive / f"{system}_LatestRun_Closed.csv"
         out[system] = path if path.is_file() else None
 
@@ -230,7 +232,20 @@ def _equity_candidates(drive: Path, system: str) -> list[Path]:
     for prefix in prefixes:
         candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve_Regular.csv"))
         candidates.extend(drive.glob(f"{prefix}_EquityCurve_Regular_*.csv"))
+        if system == "SB":
+            # Copy-latest uses SB_LatestRun_EquityCurve.csv; stamp also has EquityCurve_Regular_*.
+            candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve.csv"))
+            candidates.extend(drive.glob(f"{prefix}_EquityCurve_*.csv"))
     unique = {p.resolve(): p for p in candidates if p.is_file()}
+    if system == "SB":
+        return sorted(
+            unique.values(),
+            key=lambda p: (
+                0 if "Regular" in p.name else 1,
+                -p.stat().st_mtime_ns,
+                p.name,
+            ),
+        )
     return sorted(unique.values(), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
 
 

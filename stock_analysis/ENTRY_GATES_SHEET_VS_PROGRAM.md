@@ -91,7 +91,7 @@ When set off their no-op defaults, the main pending entry loop and **relative-st
 - `min_rel_vol_at_entry` / `min_avg_volume_10d_at_entry`
 - `min_atr_pct_at_entry` / `max_atr_pct_at_entry` (on **ATR_PCT_AT_ENTRY** = ATR14/entry×100)
 
-**Market cap:** `min_market_cap` and **`max_market_cap`** filter closed/open **after** yfinance enrichment (trades without `market_cap` are dropped when either bound is active).
+**Market cap:** `min_market_cap` and **`max_market_cap`** filter closed/open **after** yfinance enrichment when either is **>0** (`0` = no op). Missing `market_cap` is **kept** (unknown is neither under-min nor over-max); only trades with a known cap outside the bound are dropped. Production **BRT / YH / WPBR** bats pass **`max_market_cap=0` / `min_market_cap=0`** so the engine default huge max bound cannot wipe Closed (same class of bug as AMD wipe).
 
 For the legacy **OG** / **MTS** engines, see `rocket_brt_og.py` / `rocket_MTS.py` and `entry_filter_*` tri-state fields.
 

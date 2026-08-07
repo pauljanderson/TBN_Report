@@ -26,7 +26,7 @@ BRT_SYMBOLS = [
 ]
 
 YH_SYMBOLS = [
-    "NVDA", "MSFT", "AAPL", "AMZN", "META", "NFLX", "AMD", "AU", "GOOGL", "TSLA",
+    "AAPL", "AMD", "AMZN", "AU", "GOOGL", "META", "MSFT", "NFLX", "NVDA",
 ]
 
 BRT_BASELINE: dict[str, Any] = {

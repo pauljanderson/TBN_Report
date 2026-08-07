@@ -631,76 +631,16 @@ def _rl_block_entries_spy_int_weak(cfg: RLConfig, spy_tc_lookup: Any, trigger_ym
     return str(outlook).strip().lower() == "weak"
 
 
-_RL_POST_TARGET_MODES = frozenset({"stop_loss", "min_stack", "under_sma_limit", "none"})
-
-
-def _rl_post_target_reentry_mode(cfg: RLConfig) -> str:
-    """Normalized post-TARGET re-entry mode (default stop_loss)."""
-    raw = str(getattr(cfg, "rl_post_target_reentry_mode", "stop_loss") or "stop_loss").strip().lower()
-    if raw in ("", "off"):
-        return "stop_loss"
-    if raw in _RL_POST_TARGET_MODES:
-        return raw
-    return "stop_loss"
-
-
-def _rl_in_post_target_window(
-    cfg: RLConfig,
-    *,
-    last_exit_idx: int,
-    last_exit_was_target: bool,
-    entry_idx: int,
-) -> bool:
-    """True when bars>0 and prior TARGET exit is within reentry_bars of fill index."""
-    bars = int(getattr(cfg, "rl_post_target_reentry_bars", 0) or 0)
-    return (
-        bars > 0
-        and last_exit_was_target
-        and last_exit_idx >= 0
-        and (entry_idx - last_exit_idx) <= bars
+try:
+    from stock_analysis.post_target_reentry import (  # type: ignore
+        post_target_blocks_entry as _rl_post_target_blocks_entry,
+        post_target_effective_stop_pct as _post_target_effective_stop_pct,
     )
-
-
-def _rl_post_target_blocks_entry(
-    cfg: RLConfig,
-    *,
-    last_exit_idx: int,
-    last_exit_was_target: bool,
-    entry_idx: int,
-    close: float,
-    sma20: float,
-    sma50: float,
-) -> bool:
-    """True when post-TARGET policy should block this re-entry.
-
-    Quality checks (min_stack / under_sma_limit) use trigger/signal bar close & SMAs.
-    Modes are mutually exclusive; ``stop_loss`` never blocks here.
-    """
-    if not _rl_in_post_target_window(
-        cfg,
-        last_exit_idx=last_exit_idx,
-        last_exit_was_target=last_exit_was_target,
-        entry_idx=entry_idx,
-    ):
-        return False
-    mode = _rl_post_target_reentry_mode(cfg)
-    if mode == "stop_loss":
-        return False
-    if mode == "none":
-        return True
-    if mode == "min_stack":
-        min_stack = float(getattr(cfg, "rl_post_target_min_stack", 0.05) or 0.0)
-        if not (np.isfinite(sma20) and np.isfinite(sma50) and sma50 > 0):
-            return True
-        return (float(sma20) / float(sma50) - 1.0) < min_stack
-    if mode == "under_sma_limit":
-        limit = float(getattr(cfg, "rl_post_target_under_sma20", 0.03) or 0.0)
-        if not (np.isfinite(sma20) and np.isfinite(close) and sma20 > 0):
-            return True
-        # Reject if close is deeper under SMA20 than limit:
-        # close < SMA20 × (1 − limit) ⇔ (SMA20 − close) / SMA20 > limit
-        return float(close) < float(sma20) * (1.0 - limit)
-    return False
+except ImportError:  # pragma: no cover
+    from post_target_reentry import (  # type: ignore
+        post_target_blocks_entry as _rl_post_target_blocks_entry,
+        post_target_effective_stop_pct as _post_target_effective_stop_pct,
+    )
 
 
 def _rl_effective_stop_pct(
@@ -717,19 +657,13 @@ def _rl_effective_stop_pct(
     trading bars from exit bar to entry fill are ≤ N, use the tighter post-TARGET
     stop. Fill gates still use ``rl_stop_pct``. Other modes never change the stop.
     """
-    post_pct = float(getattr(cfg, "rl_post_target_stop_pct", 0.0) or 0.0)
-    if (
-        post_pct > 0
-        and _rl_post_target_reentry_mode(cfg) == "stop_loss"
-        and _rl_in_post_target_window(
-            cfg,
-            last_exit_idx=last_exit_idx,
-            last_exit_was_target=last_exit_was_target,
-            entry_idx=entry_idx,
-        )
-    ):
-        return post_pct
-    return float(cfg.rl_stop_pct)
+    return _post_target_effective_stop_pct(
+        cfg,
+        baseline_stop_pct=float(cfg.rl_stop_pct),
+        last_exit_idx=last_exit_idx,
+        last_exit_was_target=last_exit_was_target,
+        entry_idx=entry_idx,
+    )
 
 
 def _rl_exit_spy_int_turns_weak(cfg: RLConfig, spy_tc_lookup: Any, decision_ymd: str) -> bool:
@@ -1000,10 +934,17 @@ def run_symbol_rl(
                 stop_price = c[idx] if iso == entry_iso else l[idx]
                 if stop_price <= rl_stop:
                     execute_exit = 1
-                    rl_sell = rl_stop if rl_stop > o[idx] else o[idx]
-                    exit_type = (
-                        "TRAIL_STOP2" if rl_trail_active == 2 else ("TRAIL_STOP" if rl_trail_active == 1 else "STOP_LOSS")
-                    )
+                    gap_through_stop = float(o[idx]) <= float(rl_stop)
+                    # BRT/PVH: gap → fill @open; intraday → fill @stop
+                    rl_sell = float(o[idx]) if gap_through_stop else float(rl_stop)
+                    if rl_trail_active == 2:
+                        exit_type = "TRAIL_STOP2"
+                    elif rl_trail_active == 1:
+                        exit_type = "TRAIL_STOP"
+                    elif gap_through_stop:
+                        exit_type = "GAP_DOWN"
+                    else:
+                        exit_type = "STOP_LOSS"
                 else:
                     hit_sma = sma_target_px > 0 and h[idx] >= sma_target_px
                     hit_timed = has_hit_time == 1 and time_counter >= cfg.rl_exit_days
@@ -1039,6 +980,9 @@ def run_symbol_rl(
                     "SPY_LONG_TC_WEAK_EXIT",
                 ):
                     rl_sell = o[idx]
+                elif exit_type in ("GAP_DOWN", "STOP_LOSS", "TRAIL_STOP", "TRAIL_STOP2"):
+                    # Keep fill set above (gap @open, touch @stop); do not overwrite.
+                    pass
                 else:
                     rl_sell = rl_stop
 

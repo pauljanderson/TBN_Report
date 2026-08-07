@@ -2,9 +2,14 @@
 
 Cheap enrichments (DailyRun-safe):
   - Closed ``ONE_LINER``
+  - Summary ``CURRENT_MARKET_CAP`` / ``SECTOR`` / ``INDUSTRY`` (Yahoo cache;
+    same names as BRT/YH/RS ``write_brt_summary``)
+  - Summary ``AVG_DAYS_HELD`` (mean Closed ``DAYS_HELD`` per symbol; aligns with
+    Report/Audit ``Avg_Days_Held``)
   - Summary ``FIT`` / ``FIT_SCORE`` / ``FIT_SCORE_ROBUST`` / outlier cols /
     ``FIT_ASSESSMENT`` (plus ``RL_FIT`` for RL)
-  - ``{prefix}_ImproveHints_<ts>.csv|.md``
+  - ``{prefix}_ImproveHints_<ts>.csv|.md|.html`` (pattern hints + param tweaks +
+    peer-learn when peer Closed books exist under drive/)
 
 Deep / optional (``post_run_analysis.py``, not DailyRun):
   - matplotlib charts under ``{prefix}_Charts_<ts>/``
@@ -15,6 +20,7 @@ RL helpers remain importable from ``rocket_rl_analysis`` (re-exports).
 from __future__ import annotations
 
 import csv
+import html
 import math
 import os
 import statistics
@@ -26,6 +32,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
+
+try:
+    from param_tweak_hints import (
+        collect_param_tweak_hints,
+        find_rejected_fills_path,
+    )
+except ImportError:  # pragma: no cover
+    from stock_analysis.param_tweak_hints import (  # type: ignore
+        collect_param_tweak_hints,
+        find_rejected_fills_path,
+    )
 
 try:
     import matplotlib
@@ -42,6 +59,7 @@ except ImportError:
 KNOWN_SYSTEM_PREFIXES: tuple[str, ...] = (
     "WPBR",
     "ADX",
+    "MVCP",
     "BRT",
     "IND",
     "MTS",
@@ -51,10 +69,18 @@ KNOWN_SYSTEM_PREFIXES: tuple[str, ...] = (
     "RS",
     "RL",
     "DB",
+    "SB",
 )
 
 ZONE_SYSTEMS = frozenset({"BRT", "WPBR", "YH", "VEC", "PBR"})
 RL_SYSTEMS = frozenset({"RL", "DB"})
+
+# Match BRT/YH/RS Summary schema (write_brt_summary): after PCT_OF_TOTAL_PNL.
+SUMMARY_YF_META_COLS: tuple[str, ...] = (
+    "CURRENT_MARKET_CAP",
+    "SECTOR",
+    "INDUSTRY",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +129,7 @@ def _col(row: dict[str, Any], *names: str, default: Any = "") -> Any:
 
 
 def resolve_workers(n: int) -> int:
-    """Map CLI ``--workers`` to process count. ``-1`` → min(4, CPUs); ``0`` → sequential (1)."""
+    """Map CLI ``--workers`` to process count. ``-1`` -> min(4, CPUs); ``0`` -> sequential (1)."""
     cpus = os.cpu_count() or 4
     if n < 0:
         return max(1, min(4, cpus))
@@ -121,7 +147,7 @@ def normalize_system(system: str) -> str:
 
 
 def prefix_from_closed_name(name: str) -> Optional[str]:
-    """Parse ``BRT_Closed_2607….csv`` → ``BRT``."""
+    """Parse ``BRT_Closed_2607....csv`` -> ``BRT``."""
     stem = Path(name).stem
     for p in KNOWN_SYSTEM_PREFIXES:
         if stem.upper().startswith(f"{p}_CLOSED_"):
@@ -297,7 +323,7 @@ def format_trade_one_liner(row: dict[str, Any], *, dip_pct: Optional[float] = No
 
     stop_s = f"{stop:.2f}" if stop > 0 else "?"
     return (
-        f"{sym} | IN {d_in} @ {entry:.2f} → OUT {d_out} @ {exit_px:.2f} | "
+        f"{sym} | IN {d_in} @ {entry:.2f} -> OUT {d_out} @ {exit_px:.2f} | "
         f"{exit_type} {_pct_str(pnl)} | {days}d | MAE {mae_pct:.2f}% (stop {stop_s}) | {narrative}"
     )
 
@@ -340,7 +366,9 @@ class FitResult:
     score_robust: int = 0
     fit_robust: str = ""
     max_win_pct: float = 0.0
-    median_pnl_pct: float = 0.0
+    median_pnl_pct: float = 0.0  # diagnostic only; not used in FIT_SCORE_ROBUST
+    avg_pnl_pct_wo_max: float = 0.0
+    sheet_pnl_wo_max: float = 0.0
     outlier_pct_of_wins: float = 0.0
     outlier_pct_of_sheet: float = 0.0
     outlier_penalty: int = 0
@@ -401,7 +429,7 @@ def _closed_trade_pnls(closed_rows: list[dict[str, Any]]) -> list[float]:
 
 
 def _outlier_fit_metrics(pnls: list[float]) -> tuple[float, float, float, float]:
-    """max_win%, median trade PnL%, top-win/sum(wins), top-win/sum(all) ≈ sheet share."""
+    """max_win%, median trade PnL% (diag), top-win/sum(wins), top-win/sum(all) ≈ sheet share."""
     if not pnls:
         return 0.0, 0.0, 0.0, 0.0
     wins = [p for p in pnls if p > 0]
@@ -416,6 +444,39 @@ def _outlier_fit_metrics(pnls: list[float]) -> tuple[float, float, float, float]
     else:
         outlier_of_sheet = outlier_of_wins
     return max_win, median, outlier_of_wins, outlier_of_sheet
+
+
+def _leave_max_win_out(
+    pnls: list[float],
+    *,
+    avg_pnl_pct: float,
+    sheet_pnl: float,
+) -> tuple[float, float, bool]:
+    """Mean PnL% and sheet $ after dropping the single largest winning trade.
+
+    Returns ``(avg_pnl_wo_max, sheet_pnl_wo_max, dropped)``. When there is no
+    positive max win to drop (or fewer than 2 trades), returns the inputs unchanged
+    and ``dropped=False``.
+    """
+    if len(pnls) < 2:
+        return avg_pnl_pct, sheet_pnl, False
+    max_i = -1
+    max_v = 0.0
+    for i, p in enumerate(pnls):
+        if p > max_v:
+            max_v = p
+            max_i = i
+    if max_i < 0 or max_v <= 0:
+        return avg_pnl_pct, sheet_pnl, False
+    remaining = [p for i, p in enumerate(pnls) if i != max_i]
+    avg_wo = sum(remaining) / len(remaining) if remaining else 0.0
+    sum_all = sum(pnls)
+    # Fixed-notional: sheet $ scales with sum(PnL%). Drop max win's share.
+    if abs(sum_all) > 1e-9:
+        sheet_wo = sheet_pnl * (sum_all - max_v) / sum_all
+    else:
+        sheet_wo = sheet_pnl
+    return avg_wo, sheet_wo, True
 
 
 def _outlier_soft_penalty(outlier_pct_of_wins: float, outlier_pct_of_sheet: float) -> int:
@@ -441,14 +502,21 @@ def assess_symbol_fit(
     """Rule-based High/Medium/Low fit for sheet paste.
 
     ``FIT_SCORE`` (headline) uses mean ``avg_pnl_pct`` as today.
-    ``FIT_SCORE_ROBUST`` uses median trade PnL% for the avg-pnl points bucket and a
-    soft outlier penalty when one win dominates positive PnL% or sheet contribution.
+    ``FIT_SCORE_ROBUST`` re-scores with leave-max-win-out mean PnL% and sheet $,
+    plus a soft outlier penalty when one win dominates positive PnL% or sheet share.
+    Median trade PnL% is kept as a diagnostic column only (not scored).
     """
     closed_rows = closed_rows or []
     notes: list[str] = []
     pnls = _closed_trade_pnls(closed_rows)
     max_win, median_pnl, outlier_of_wins, outlier_of_sheet = _outlier_fit_metrics(pnls)
     outlier_pen = _outlier_soft_penalty(outlier_of_wins, outlier_of_sheet)
+    avg_wo_max, sheet_wo_max, dropped_max = _leave_max_win_out(
+        pnls, avg_pnl_pct=avg_pnl_pct, sheet_pnl=sheet_pnl
+    )
+    if not pnls:
+        avg_wo_max = avg_pnl_pct
+        sheet_wo_max = sheet_pnl
 
     win_pnls = [p for p in pnls if p > 0]
     loss_pnls = [p for p in pnls if p < 0]
@@ -490,10 +558,12 @@ def assess_symbol_fit(
         asym_penalty=asym,
         outlier_penalty=0,
     )
+    # Robust: same win-rate / tpy / clean-book / asymmetry; PnL + sheet buckets use
+    # leave-max-win-out values; soft outlier penalty still applies.
     score_robust = _fit_component_score(
         pct_wins=pct_wins,
-        pnl_pct_for_avg_bucket=median_pnl if pnls else avg_pnl_pct,
-        sheet_pnl=sheet_pnl,
+        pnl_pct_for_avg_bucket=avg_wo_max if pnls else avg_pnl_pct,
+        sheet_pnl=sheet_wo_max if pnls else sheet_pnl,
         avg_tpy=avg_tpy,
         wins=wins,
         losses=losses,
@@ -510,8 +580,9 @@ def assess_symbol_fit(
     if score_robust <= score - 2 or (
         fit_robust != fit and _fit_tier_rank(fit_robust) < _fit_tier_rank(fit)
     ):
+        wo_note = f"wo-max avg {avg_wo_max:+.1f}%" if dropped_max else f"avg {avg_pnl_pct:+.1f}%"
         head = (
-            f"{head}; robust {fit_robust} (med {median_pnl:+.1f}%, "
+            f"{head}; robust {fit_robust} ({wo_note}, "
             f"outlier {outlier_of_wins:.0f}% of wins)"
         )
     return FitResult(
@@ -522,6 +593,8 @@ def assess_symbol_fit(
         fit_robust=fit_robust,
         max_win_pct=max_win,
         median_pnl_pct=median_pnl,
+        avg_pnl_pct_wo_max=avg_wo_max,
+        sheet_pnl_wo_max=sheet_wo_max,
         outlier_pct_of_wins=outlier_of_wins,
         outlier_pct_of_sheet=outlier_of_sheet,
         outlier_penalty=outlier_pen,
@@ -530,6 +603,231 @@ def assess_symbol_fit(
 
 def _fit_tier_rank(fit: str) -> int:
     return {"High": 2, "Medium": 1, "Low": 0}.get(str(fit), 0)
+
+
+def _ensure_summary_yf_meta_fieldnames(fieldnames: list[str]) -> list[str]:
+    """Insert CURRENT_MARKET_CAP / SECTOR / INDUSTRY after PCT_OF_TOTAL_PNL (BRT order)."""
+    out = [c for c in fieldnames if c not in SUMMARY_YF_META_COLS]
+    if "PCT_OF_TOTAL_PNL" in out:
+        i = out.index("PCT_OF_TOTAL_PNL") + 1
+        for col in SUMMARY_YF_META_COLS:
+            out.insert(i, col)
+            i += 1
+        return out
+    # Fallback: before FIRST_DATA_DATE, else append.
+    if "FIRST_DATA_DATE" in out:
+        i = out.index("FIRST_DATA_DATE")
+        for j, col in enumerate(SUMMARY_YF_META_COLS):
+            out.insert(i + j, col)
+        return out
+    out.extend(SUMMARY_YF_META_COLS)
+    return out
+
+
+def _ensure_summary_avg_days_held_fieldnames(fieldnames: list[str]) -> list[str]:
+    """Insert ``AVG_DAYS_HELD`` after ``AVG_TRADES_PER_YEAR`` (or ``AVG_PNL_PCT``).
+
+    Drops legacy ``AVG_DAYS`` so Summary CSVs converge on one name (matches MVCP /
+    ``write_brt_summary``; Report/Audit keep Title-Case ``Avg_Days_Held``).
+    """
+    out = [c for c in fieldnames if c not in ("AVG_DAYS_HELD", "AVG_DAYS")]
+    if "AVG_TRADES_PER_YEAR" in out:
+        out.insert(out.index("AVG_TRADES_PER_YEAR") + 1, "AVG_DAYS_HELD")
+    elif "AVG_PNL_PCT" in out:
+        out.insert(out.index("AVG_PNL_PCT") + 1, "AVG_DAYS_HELD")
+    else:
+        out.append("AVG_DAYS_HELD")
+    return out
+
+
+def enrich_summary_csv_with_avg_days_held(
+    summary_path: Path,
+    closed_path: Path,
+) -> int:
+    """Fill / rename ``AVG_DAYS_HELD`` on Summary from Closed ``DAYS_HELD`` (mean per symbol)."""
+    sp = Path(summary_path)
+    cp = Path(closed_path)
+    if not sp.is_file():
+        return 0
+
+    by_sym: dict[str, list[float]] = defaultdict(list)
+    if cp.is_file():
+        with cp.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                sym = str(row.get("SYMBOL", "")).strip().upper()
+                if not sym or sym == "ALL":
+                    continue
+                days = _fnum(_col(row, "DAYS_HELD", "DAYS HELD", "DAYS"), default=float("nan"))
+                if days == days:  # not NaN
+                    by_sym[sym].append(float(days))
+
+    with sp.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not fieldnames:
+        return 0
+
+    fieldnames = _ensure_summary_avg_days_held_fieldnames(fieldnames)
+    for row in rows:
+        sym = str(row.get("SYMBOL", "")).strip().upper()
+        legacy = str(row.get("AVG_DAYS", "") or "").strip()
+        days_list = by_sym.get(sym, [])
+        if days_list:
+            row["AVG_DAYS_HELD"] = f"{(sum(days_list) / len(days_list)):.1f}"
+        elif legacy:
+            row["AVG_DAYS_HELD"] = legacy
+        else:
+            existing = str(row.get("AVG_DAYS_HELD", "") or "").strip()
+            row["AVG_DAYS_HELD"] = existing
+        row.pop("AVG_DAYS", None)
+
+    with sp.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return len(rows)
+
+
+def lookup_yfinance_symbol_meta(
+    symbols: list[str] | set[str],
+    *,
+    yfinance_workers: Optional[int] = None,
+    allow_stale_cache: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{SYM: {market_cap, sector, industry, ...}}`` using repo ``yfinance_cache.json``.
+
+    Same cache / fetch path as BRT ``_enrich_trades_yfinance`` (today-fresh preferred;
+    ``allow_stale_cache`` keeps prior-day cache hits to avoid Yahoo when backfilling).
+    """
+    syms = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    if not syms:
+        return {}
+    try:
+        from rocket_tbn import (  # type: ignore
+            _load_yfinance_cache,
+            _save_yfinance_cache,
+            _yfinance_backfill_market_cap,
+            _yfinance_cache_entry_fresh,
+            _yfinance_fetch_symbol_info,
+        )
+    except ImportError:
+        from stock_analysis.rocket_tbn import (  # type: ignore
+            _load_yfinance_cache,
+            _save_yfinance_cache,
+            _yfinance_backfill_market_cap,
+            _yfinance_cache_entry_fresh,
+            _yfinance_fetch_symbol_info,
+        )
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    file_cache = _load_yfinance_cache()
+    cache: dict[str, dict[str, Any]] = {}
+    to_fetch: list[str] = []
+    for sym in syms:
+        entry = dict(file_cache.get(sym, {}) or {})
+        if _yfinance_cache_entry_fresh(entry, today, allow_stale=bool(allow_stale_cache)):
+            cache[sym] = _yfinance_backfill_market_cap(entry)
+        else:
+            to_fetch.append(sym)
+
+    n_cached = len(syms) - len(to_fetch)
+    if n_cached or to_fetch:
+        print(
+            f"[analysis] yfinance summary meta: {n_cached} from cache, "
+            f"{len(to_fetch)} fetch",
+            flush=True,
+        )
+
+    if to_fetch:
+        if yfinance_workers is None or yfinance_workers < 1:
+            _yf_w = min(8, os.cpu_count() or 4, max(1, len(to_fetch)))
+        else:
+            _yf_w = min(int(yfinance_workers), 24, max(1, len(to_fetch)))
+        if len(to_fetch) > 1 and _yf_w > 1:
+            with ThreadPoolExecutor(max_workers=_yf_w) as ex:
+                futs = [ex.submit(_yfinance_fetch_symbol_info, sym, today) for sym in to_fetch]
+                for fut in as_completed(futs):
+                    sym, data = fut.result()
+                    cache[sym] = data or {}
+        else:
+            for sym in to_fetch:
+                sym2, data = _yfinance_fetch_symbol_info(sym, today)
+                cache[sym2] = data or {}
+        merged = dict(file_cache)
+        for sym, data in cache.items():
+            if not data:
+                continue
+            if data.get("as_of_date") == today or data.get("_yf_checked"):
+                row = dict(data)
+                if row.get("as_of_date") != today:
+                    row["as_of_date"] = today
+                row["_yf_checked"] = True
+                merged[sym] = row
+        _save_yfinance_cache(merged)
+
+    return {s: cache.get(s, {}) for s in syms}
+
+
+def enrich_summary_csv_with_yfinance(
+    summary_path: Path,
+    *,
+    no_yfinance: bool = False,
+    yfinance_workers: Optional[int] = None,
+) -> int:
+    """Ensure Summary has CURRENT_MARKET_CAP / SECTOR / INDUSTRY (BRT/YH/RS names).
+
+    Inserts columns after ``PCT_OF_TOTAL_PNL`` when missing, then fills from Yahoo cache
+    (and fresh fetch on miss). Safe for SB/MVCP backfill via ``--refresh-cheap``.
+    """
+    sp = Path(summary_path)
+    if not sp.is_file():
+        return 0
+
+    with sp.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not fieldnames:
+        return 0
+
+    fieldnames = _ensure_summary_yf_meta_fieldnames(fieldnames)
+    if no_yfinance:
+        for row in rows:
+            for col in SUMMARY_YF_META_COLS:
+                row.setdefault(col, "")
+        with sp.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        return len(rows)
+
+    symbols = [
+        str(r.get("SYMBOL", "")).strip().upper()
+        for r in rows
+        if str(r.get("SYMBOL", "")).strip()
+    ]
+    meta = lookup_yfinance_symbol_meta(symbols, yfinance_workers=yfinance_workers)
+    for row in rows:
+        sym = str(row.get("SYMBOL", "")).strip().upper()
+        c = meta.get(sym, {}) or {}
+        mc = c.get("market_cap")
+        try:
+            row["CURRENT_MARKET_CAP"] = f"{float(mc):.0f}" if mc is not None else ""
+        except (TypeError, ValueError):
+            row["CURRENT_MARKET_CAP"] = ""
+        sector = c.get("sector")
+        industry = c.get("industry")
+        row["SECTOR"] = str(sector).replace(",", " ") if sector is not None else ""
+        row["INDUSTRY"] = str(industry).replace(",", " ") if industry is not None else ""
+
+    with sp.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return len(rows)
 
 
 def enrich_summary_csv_with_fit(
@@ -559,11 +857,16 @@ def enrich_summary_csv_with_fit(
     if not fieldnames:
         return 0
 
+    # Keep Yahoo meta columns in BRT position if a prior enrich already added them.
+    if any(c in fieldnames for c in SUMMARY_YF_META_COLS):
+        fieldnames = _ensure_summary_yf_meta_fieldnames(fieldnames)
+
     fit_cols = [
         "FIT",
         "FIT_SCORE",
         "FIT_SCORE_ROBUST",
         "MAX_WIN_PCT",
+        "AVG_PNL_PCT_WO_MAX",
         "MEDIAN_PNL_PCT",
         "OUTLIER_PCT_OF_WINS",
         "FIT_ASSESSMENT",
@@ -599,6 +902,7 @@ def enrich_summary_csv_with_fit(
         row["FIT_SCORE"] = str(fr.score)
         row["FIT_SCORE_ROBUST"] = str(fr.score_robust)
         row["MAX_WIN_PCT"] = f"{fr.max_win_pct:.2f}%" if fr.max_win_pct else "0.00%"
+        row["AVG_PNL_PCT_WO_MAX"] = f"{fr.avg_pnl_pct_wo_max:+.2f}%"
         row["MEDIAN_PNL_PCT"] = f"{fr.median_pnl_pct:+.2f}%"
         row["OUTLIER_PCT_OF_WINS"] = f"{fr.outlier_pct_of_wins:.1f}%"
         row["FIT_ASSESSMENT"] = fr.text
@@ -624,16 +928,22 @@ class ImproveHint:
     lever: str
     suggestion: str
     evidence: str
+    category: str = "pattern"
+    param: str = ""
+    direction: str = ""
+    confidence: str = ""
+    pct_of_trades: float = 0.0
+    heuristic: str = ""
 
 
 def _hint_catalog(prefix: str) -> dict[str, tuple[str, str]]:
-    """Hypothesis id → (lever, suggestion). RL keeps dip/trail levers; others generic."""
+    """Hypothesis id -> (lever, suggestion). RL keeps dip/trail levers; others generic."""
     p = normalize_system(prefix)
     generic = {
         "post_target_quick_stop": (
-            "symbol_reentry_cooldown_days / stricter re-entry gates",
+            "rl_post_target_reentry_bars + mode (or longer symbol_reentry_cooldown_days)",
             "Many symbols take a TARGET then immediately re-enter and STOP quickly — "
-            "test a short post-win cooldown or stricter re-entry filter.",
+            "test post-TARGET-only cooldown (mode=none / under_sma_limit) or longer blanket cd.",
         ),
         "shallow_entry_sma50_fail": (
             "entry quality / SMA or zone proximity gates",
@@ -697,8 +1007,9 @@ def _hint_catalog(prefix: str) -> dict[str, tuple[str, str]]:
             "raise min touch_count / zone_strength.",
         )
         generic["post_target_quick_stop"] = (
-            "symbol_reentry_cooldown_days / require_no_zone_above",
-            "TARGET then quick STOP re-entry — cooldown or block crowded zone stacks.",
+            "rl_post_target_reentry_bars + rl_post_target_reentry_mode "
+            "(none/under_sma_limit/min_stack/stop_loss) or longer symbol_reentry_cooldown_days",
+            "TARGET then quick STOP re-entry — prefer post-win-only gates over blanket cd alone.",
         )
     return generic
 
@@ -707,6 +1018,12 @@ def _collect_improve_hints(
     closed_rows: list[dict[str, Any]],
     *,
     prefix: str = "RL",
+    tickers=None,
+    data_dir=None,
+    drive_dir=None,
+    rejected_fills_path=None,
+    include_param_tweaks: bool = True,
+    include_peer_learn: bool = True,
 ) -> list[ImproveHint]:
     by_sym: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in closed_rows:
@@ -748,7 +1065,7 @@ def _collect_improve_hints(
                     hit_trades[hid] += 1
                     if len(evidence[hid]) < 8:
                         evidence[hid].append(
-                            f"{sym} TARGET {_iso_dash(_col(r, 'DATE CLOSED', 'DATE_CLOSED'))} → "
+                            f"{sym} TARGET {_iso_dash(_col(r, 'DATE CLOSED', 'DATE_CLOSED'))} -> "
                             f"STOP {_iso_dash(_col(nxt, 'DATE CLOSED', 'DATE_CLOSED'))} ({nxt_days}d)"
                         )
 
@@ -769,7 +1086,7 @@ def _collect_improve_hints(
                 hit_trades[hid] += 1
                 if len(evidence[hid]) < 8:
                     evidence[hid].append(
-                        f"{sym} peak~{max_gain_pct:.0f}% → STOP {_pct_str(pnl)} "
+                        f"{sym} peak~{max_gain_pct:.0f}% -> STOP {_pct_str(pnl)} "
                         f"({_iso_dash(_col(r, 'DATE CLOSED', 'DATE_CLOSED'))})"
                     )
 
@@ -808,10 +1125,221 @@ def _collect_improve_hints(
                 lever=lever,
                 suggestion=suggestion,
                 evidence="; ".join(evidence.get(hid, [])[:5]),
+                category="pattern",
             )
         )
+
+    if include_param_tweaks:
+        try:
+            for ph in collect_param_tweak_hints(
+                closed_rows,
+                prefix=prefix,
+                tickers=tickers,
+                data_dir=data_dir,
+                drive_dir=drive_dir,
+                rejected_fills_path=rejected_fills_path,
+                include_peer_learn=include_peer_learn,
+            ):
+                hints.append(
+                    ImproveHint(
+                        hypothesis_id=ph.hypothesis_id,
+                        priority=ph.priority,
+                        symbol_count=ph.symbol_count,
+                        trade_count=ph.trade_count,
+                        symbols=list(ph.symbols)[:40],
+                        lever=ph.lever,
+                        suggestion=ph.suggestion,
+                        evidence=ph.evidence,
+                        category=ph.category,
+                        param=ph.param,
+                        direction=ph.direction,
+                        confidence=ph.confidence,
+                        pct_of_trades=float(ph.pct_of_trades),
+                        heuristic=ph.heuristic,
+                    )
+                )
+        except Exception as e:
+            print(
+                f"[{normalize_system(prefix) or prefix} analysis] param tweak hints failed: {e}",
+                file=sys.stderr,
+            )
+
     hints.sort(key=lambda h: (-h.priority, h.hypothesis_id))
     return hints
+
+
+_IMPROVE_HINTS_HTML_CSS = """
+th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; }
+th.sortable-th:hover { background:#e2e8f0; }
+th.sortable-th .sort-ind::after { content:" \\2195"; opacity:0.35; font-size:0.85em; }
+th.sortable-th.sort-asc .sort-ind::after { content:" \\2191"; opacity:0.9; }
+th.sortable-th.sort-desc .sort-ind::after { content:" \\2193"; opacity:0.9; }
+.conf-high { color:#166534; font-weight:600; }
+.conf-medium { color:#92400e; font-weight:600; }
+.conf-low { color:#475569; }
+.conf-insufficient { color:#94a3b8; font-style:italic; }
+"""
+
+
+_IMPROVE_HINTS_SORT_SCRIPT = """
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "date") {
+      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bind(table) {
+    var ths = table.querySelectorAll("th.sortable-th");
+    ths.forEach(function (th, idx) {
+      function activate() {
+        var type = th.getAttribute("data-sort") || "text";
+        var asc = !th.classList.contains("sort-asc");
+        ths.forEach(function (x) { x.classList.remove("sort-asc", "sort-desc"); x.setAttribute("aria-sort", "none"); });
+        th.classList.add(asc ? "sort-asc" : "sort-desc");
+        th.setAttribute("aria-sort", asc ? "ascending" : "descending");
+        sortTable(table, idx, type, asc ? 1 : -1);
+      }
+      th.addEventListener("click", activate);
+      th.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+      });
+    });
+  }
+  document.querySelectorAll("table.sortable").forEach(bind);
+})();
+</script>
+"""
+
+
+def _sortable_th_hint(label: str, sort_type: str) -> str:
+    return (
+        f'<th class="sortable-th" data-sort="{sort_type}" tabindex="0" '
+        f'role="columnheader" aria-sort="none">{html.escape(label)}'
+        f'<span class="sort-ind"></span></th>'
+    )
+
+
+def _hint_md_title(h: ImproveHint, idx: int) -> str:
+    title = f"## {idx}. `{h.hypothesis_id}` ({h.symbol_count} sym / {h.trade_count} trades)"
+    meta: list[str] = []
+    if h.direction:
+        meta.append(f"direction: {h.direction}")
+    if h.confidence:
+        meta.append(f"confidence: {h.confidence}")
+    if h.pct_of_trades:
+        meta.append(f"{h.pct_of_trades:.1f}% of trades")
+    if meta:
+        title += " — " + ", ".join(meta)
+    return title
+
+
+def _hint_md_lines(h: ImproveHint, idx: int) -> list[str]:
+    lines = [_hint_md_title(h, idx)]
+    if h.param:
+        lines.append(f"- **Param:** {h.param}")
+    lines.append(f"- **Lever:** {h.lever}")
+    lines.append(f"- **Suggestion:** {h.suggestion}")
+    if h.heuristic:
+        lines.append(f"- **Heuristic:** {h.heuristic}")
+    lines.append(f"- **Symbols:** {', '.join(h.symbols[:20])}")
+    if h.evidence:
+        lines.append(f"- **Evidence:** {h.evidence}")
+    lines.append("")
+    return lines
+
+
+def _hints_by_category(hints: list[ImproveHint], category: str) -> list[ImproveHint]:
+    return [h for h in hints if h.category == category]
+
+
+def _conf_html(conf: str) -> str:
+    c = (conf or "").strip().lower()
+    if not c:
+        return "—"
+    cls = {
+        "high": "conf-high",
+        "medium": "conf-medium",
+        "low": "conf-low",
+        "insufficient": "conf-insufficient",
+    }.get(c, "")
+    if cls:
+        return f'<span class="{cls}">{html.escape(conf)}</span>'
+    return html.escape(conf)
+
+
+def _improve_hints_table_rows(hints: list[ImproveHint], *, start_idx: int = 1) -> list[str]:
+    rows: list[str] = []
+    for i, h in enumerate(hints, start_idx):
+        pct = f"{h.pct_of_trades:.1f}" if h.pct_of_trades else "—"
+        rows.append(
+            "<tr>"
+            f"<td>{i}</td>"
+            f"<td>{html.escape(h.category)}</td>"
+            f"<td>{html.escape(h.hypothesis_id)}</td>"
+            f"<td>{html.escape(h.param or '—')}</td>"
+            f"<td>{html.escape(h.direction or '—')}</td>"
+            f"<td>{_conf_html(h.confidence)}</td>"
+            f"<td>{h.symbol_count}</td>"
+            f"<td>{h.trade_count}</td>"
+            f"<td>{pct}</td>"
+            f"<td>{html.escape(h.lever)}</td>"
+            f"<td>{html.escape(h.suggestion)}</td>"
+            f"<td>{html.escape(','.join(h.symbols[:15]))}</td>"
+            f"<td>{html.escape(h.evidence)}</td>"
+            f"<td>{html.escape(h.heuristic or '—')}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td colspan="14">No hints in this section.</td></tr>')
+    return rows
+
+
+def _improve_hints_table_html(hints: list[ImproveHint], *, start_idx: int = 1) -> str:
+    head = "".join(
+        [
+            _sortable_th_hint("#", "num"),
+            _sortable_th_hint("Category", "text"),
+            _sortable_th_hint("Hypothesis", "text"),
+            _sortable_th_hint("Param", "text"),
+            _sortable_th_hint("Direction", "text"),
+            _sortable_th_hint("Confidence", "text"),
+            _sortable_th_hint("Symbols", "num"),
+            _sortable_th_hint("Trades", "num"),
+            _sortable_th_hint("% trades", "num"),
+            _sortable_th_hint("Lever", "text"),
+            _sortable_th_hint("Suggestion", "text"),
+            _sortable_th_hint("Example symbols", "text"),
+            _sortable_th_hint("Evidence", "text"),
+            _sortable_th_hint("Heuristic", "text"),
+        ]
+    )
+    body = "".join(_improve_hints_table_rows(hints, start_idx=start_idx))
+    return f'<table class="sortable"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
 
 
 def write_improve_hints(
@@ -820,69 +1348,180 @@ def write_improve_hints(
     ts: str,
     *,
     prefix: str = "RL",
+    tickers=None,
+    data_dir=None,
+    drive_dir=None,
+    rejected_fills_path=None,
+    include_param_tweaks: bool = True,
+    include_peer_learn: bool = True,
 ) -> Optional[Path]:
-    """Write ``{prefix}_ImproveHints_<ts>.csv`` (+ short .md). Returns CSV path or None."""
+    """Write ``{prefix}_ImproveHints_<ts>.csv|.md|.html``. Returns CSV path or None."""
     cp = Path(closed_path)
     if not cp.is_file():
         return None
     with cp.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-    hints = _collect_improve_hints(rows, prefix=prefix)
+
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pref = normalize_system(prefix) or "RL"
+    drive = drive_dir or out_dir
+
+    rej = rejected_fills_path
+    if rej is None and include_param_tweaks:
+        rej = find_rejected_fills_path(cp, pref, ts)
+
+    hints = _collect_improve_hints(
+        rows,
+        prefix=prefix,
+        tickers=tickers,
+        data_dir=data_dir,
+        drive_dir=drive,
+        rejected_fills_path=rej,
+        include_param_tweaks=include_param_tweaks,
+        include_peer_learn=include_peer_learn,
+    )
+
     csv_path = out_dir / f"{pref}_ImproveHints_{ts}.csv"
     md_path = out_dir / f"{pref}_ImproveHints_{ts}.md"
+    html_path = out_dir / f"{pref}_ImproveHints_{ts}.html"
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(
             [
                 "PRIORITY",
+                "CATEGORY",
                 "HYPOTHESIS_ID",
+                "PARAM",
+                "DIRECTION",
+                "CONFIDENCE",
                 "SYMBOL_COUNT",
                 "TRADE_COUNT",
+                "PCT_OF_TRADES",
                 "LEVER",
                 "SUGGESTION",
                 "EXAMPLE_SYMBOLS",
                 "EVIDENCE",
+                "HEURISTIC",
             ]
         )
         for i, h in enumerate(hints, 1):
             w.writerow(
                 [
                     i,
+                    h.category,
                     h.hypothesis_id,
+                    h.param,
+                    h.direction,
+                    h.confidence,
                     h.symbol_count,
                     h.trade_count,
+                    f"{h.pct_of_trades:.2f}" if h.pct_of_trades else "",
                     h.lever,
                     h.suggestion,
                     ",".join(h.symbols[:15]),
                     h.evidence,
+                    h.heuristic,
                 ]
             )
+
+    pattern_hints = _hints_by_category(hints, "pattern")
+    param_hints = _hints_by_category(hints, "param")
+    peer_hints = _hints_by_category(hints, "peer_learn")
 
     lines = [
         f"# {pref} Improve Hints — stamp `{ts}`",
         "",
-        "Rule-based hypotheses ranked by how often they fire across symbols. "
-        "Not a substitute for chart review; use with ONE_LINER / FIT_ASSESSMENT / charts.",
+        "Rule-based **hypotheses** (missed-trade / pattern evidence), not an optimization mandate. "
+        "If nothing actionable and charts already look on-thesis, leave params alone. "
+        "Acting on a hint: one knob, ≤2 alternatives, ToS before/after, quality over max PnL "
+        "(see docs/HYPOTHESIS_TEST.md). Use with ONE_LINER / FIT_ASSESSMENT / charts.",
+        "",
+        "## Taken-trade patterns",
         "",
     ]
-    if not hints:
+    if not pattern_hints:
         lines.append("_No multi-symbol patterns met the minimum frequency threshold._")
+        lines.append("")
     else:
-        for i, h in enumerate(hints, 1):
-            lines.append(f"## {i}. `{h.hypothesis_id}` ({h.symbol_count} sym / {h.trade_count} trades)")
-            lines.append(f"- **Lever:** {h.lever}")
-            lines.append(f"- **Suggestion:** {h.suggestion}")
-            lines.append(f"- **Symbols:** {', '.join(h.symbols[:20])}")
-            if h.evidence:
-                lines.append(f"- **Evidence:** {h.evidence}")
-            lines.append("")
-    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return csv_path
+        for i, h in enumerate(pattern_hints, 1):
+            lines.extend(_hint_md_lines(h, i))
 
+    lines.extend(
+        [
+            "## Parameter suggestions (band / target / stop)",
+            "",
+        ]
+    )
+    if not param_hints:
+        lines.append("_No parameter-tweak hypotheses met the threshold._")
+        lines.append("")
+    else:
+        for i, h in enumerate(param_hints, 1):
+            lines.extend(_hint_md_lines(h, i))
+
+    lines.extend(
+        [
+            "## Peer-learn (cross-system overlap)",
+            "",
+        ]
+    )
+    if not peer_hints:
+        lines.append("_No peer-learn overlap patterns met the threshold._")
+        lines.append("")
+    else:
+        for i, h in enumerate(peer_hints, 1):
+            lines.extend(_hint_md_lines(h, i))
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+    pattern_table = _improve_hints_table_html(pattern_hints)
+    param_table = _improve_hints_table_html(param_hints)
+    peer_table = _improve_hints_table_html(peer_hints)
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{html.escape(pref)} Improve Hints — {html.escape(ts)}</title>
+<style>
+  body {{ margin:0; padding:28px; font-family:"Segoe UI",Georgia,serif; background:#fafaf8; color:#1a1a18; }}
+  .wrap {{ max-width:1400px; margin:0 auto; }}
+  h1 {{ font-size:1.5rem; }}
+  h2 {{ font-size:1.2rem; margin-top:2rem; }}
+  .muted {{ color:#5c5c56; }}
+  table.sortable {{ border-collapse:collapse; width:100%; font-size:13px; margin-bottom:1.5rem; }}
+  table.sortable th, table.sortable td {{ border:1px solid #d8d8d0; padding:6px 8px; vertical-align:top; }}
+  table.sortable th {{ background:#f0f0ea; }}
+  {_IMPROVE_HINTS_HTML_CSS}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>{html.escape(pref)} Improve Hints — stamp {html.escape(ts)}</h1>
+  <p class="muted">Portfolio-level rule <strong>hypotheses</strong> (patterns, param directions, peer-learn)—not an order to optimize.
+  If empty / thin and charts look good, do not hunt knobs. One knob + ToS gate when you do test
+  (<code>docs/HYPOTHESIS_TEST.md</code>).
+  Companion to <code>{html.escape(pref)}_ImproveHints_{html.escape(ts)}.csv</code>.
+  Click column headers to sort. Not LLM; use with charts + SymbolAssessments.</p>
+
+  <h2>Taken-trade patterns</h2>
+  {pattern_table}
+
+  <h2>Parameter suggestions (band / target / stop)</h2>
+  {param_table}
+
+  <h2>Peer-learn (cross-system overlap)</h2>
+  {peer_table}
+</div>
+{_IMPROVE_HINTS_SORT_SCRIPT}
+</body>
+</html>
+"""
+    html_path.write_text(html_doc, encoding="utf-8")
+    return csv_path
 
 # ---------------------------------------------------------------------------
 # Charts
@@ -1335,7 +1974,7 @@ def write_system_charts(
     n_ok = 0
     if total > 0:
         if n_workers > 1 and total > 1:
-            print(f"[{pref} charts] {total} symbols, workers={n_workers} …", flush=True)
+            print(f"[{pref} charts] {total} symbols, workers={n_workers} ...", flush=True)
             with ProcessPoolExecutor(max_workers=n_workers) as ex:
                 futs = {ex.submit(_chart_one_task, t): t[0] for t in tasks}
                 done = 0
@@ -1345,17 +1984,17 @@ def write_system_charts(
                         n_ok += 1
                     done += 1
                     if done % 10 == 0 or done == total:
-                        print(f"[{pref} charts] {done}/{total} …", flush=True)
+                        print(f"[{pref} charts] {done}/{total} ...", flush=True)
         else:
             for i, task in enumerate(tasks, 1):
                 _sym, ok = _chart_one_task(task)
                 if ok:
                     n_ok += 1
                 if i % 10 == 0 or i == total:
-                    print(f"[{pref} charts] {i}/{total} …", flush=True)
+                    print(f"[{pref} charts] {i}/{total} ...", flush=True)
 
     n_total = n_ok + n_mem
-    print(f"[{pref} charts] Wrote {n_total} PNG(s) → {chart_dir}", flush=True)
+    print(f"[{pref} charts] Wrote {n_total} PNG(s) -> {chart_dir}", flush=True)
     return chart_dir
 
 
@@ -1398,14 +2037,23 @@ def write_analysis_artifacts(
     summary_path: Path,
     open_path: Optional[Path] = None,
     prefix: str = "RL",
+    no_yfinance: bool = False,
 ) -> dict[str, Path]:
-    """Cheap enrichments only (no charts, no deep HTML)."""
-    del tickers, open_path  # reserved
+    """Cheap enrichments only (no charts, no deep HTML).
+
+    ImproveHints include pattern hypotheses plus parameter-tweak / peer-learn
+    suggestions. When ``tickers`` is provided (in-run backtest frames), OHLC-based
+    post-exit / stop-rebound / RejectedFills follow-through heuristics also run.
+    """
+    del open_path  # reserved
     out: dict[str, Path] = {}
     pref = normalize_system(prefix) or "RL"
     dip = 1.041
+    skip_yf = bool(no_yfinance)
     if cfg is not None:
         dip = float(getattr(cfg, "rl_dip_pct", 1.041) or 1.041)
+        if _truthy(getattr(cfg, "no_yfinance", False)):
+            skip_yf = True
     out_dir = Path(output_dir)
 
     if cfg is not None and (
@@ -1420,22 +2068,51 @@ def write_analysis_artifacts(
 
     try:
         n = enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
-        print(f"[{pref} analysis] ONE_LINER on {n} closed rows → {Path(closed_path).name}", flush=True)
+        print(f"[{pref} analysis] ONE_LINER on {n} closed rows -> {Path(closed_path).name}", flush=True)
         out["closed"] = Path(closed_path)
     except Exception as e:
         print(f"[{pref} analysis] ONE_LINER failed: {e}", file=sys.stderr)
 
     try:
+        n = enrich_summary_csv_with_yfinance(summary_path, no_yfinance=skip_yf)
+        print(
+            f"[{pref} analysis] CURRENT_MARKET_CAP/SECTOR/INDUSTRY on {n} summary rows "
+            f"-> {Path(summary_path).name}"
+            + (" (skipped fetch)" if skip_yf else ""),
+            flush=True,
+        )
+        out["summary"] = Path(summary_path)
+    except Exception as e:
+        print(f"[{pref} analysis] yfinance Summary meta failed: {e}", file=sys.stderr)
+
+    try:
         n = enrich_summary_csv_with_fit(summary_path, closed_path, prefix=pref)
-        print(f"[{pref} analysis] FIT columns on {n} summary rows → {Path(summary_path).name}", flush=True)
+        print(f"[{pref} analysis] FIT columns on {n} summary rows -> {Path(summary_path).name}", flush=True)
         out["summary"] = Path(summary_path)
     except Exception as e:
         print(f"[{pref} analysis] FIT enrichment failed: {e}", file=sys.stderr)
 
     try:
-        hints_path = write_improve_hints(closed_path, out_dir, ts, prefix=pref)
+        n = enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
+        print(
+            f"[{pref} analysis] AVG_DAYS_HELD on {n} summary rows -> {Path(summary_path).name}",
+            flush=True,
+        )
+        out["summary"] = Path(summary_path)
+    except Exception as e:
+        print(f"[{pref} analysis] AVG_DAYS_HELD enrichment failed: {e}", file=sys.stderr)
+
+    try:
+        hints_path = write_improve_hints(
+            closed_path,
+            out_dir,
+            ts,
+            prefix=pref,
+            tickers=tickers,
+            drive_dir=out_dir,
+        )
         if hints_path:
-            print(f"[{pref} analysis] Wrote {hints_path.name} (+ .md)", flush=True)
+            print(f"[{pref} analysis] Wrote {hints_path.name} (+ .md/.html)", flush=True)
             out["improve_hints"] = hints_path
     except Exception as e:
         print(f"[{pref} analysis] ImproveHints failed: {e}", file=sys.stderr)

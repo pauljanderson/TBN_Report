@@ -24,6 +24,7 @@ NAV_FOOTER = """
   · <a href="convergence.html">System convergence</a>
   · <a href="monthly.html">Monthly report (all systems)</a>
   · <a href="system_performance.html">Historical performance</a>
+  · <a href="system_setup_process.html">System setup process</a>
   · Refresh this page for the latest copy.
 </p>
 """
@@ -40,15 +41,25 @@ def _resolve_drive(drive: Path) -> Path:
 
 
 def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
-    if not show_nav or "system_performance.html" in html:
+    if not show_nav or "system_setup_process.html" in html:
         return html
+    # Upgrade older nav that already has performance but not setup process.
+    if "system_performance.html" in html:
+        return re.sub(
+            r'(<a\s+href=["\']system_performance\.html["\'][^>]*>.*?</a>)',
+            r'\1\n  · <a href="system_setup_process.html">System setup process</a>',
+            html,
+            count=1,
+            flags=re.I | re.S,
+        )
     monthly_link = re.compile(
         r'(<a\s+href=["\']monthly\.html["\'][^>]*>.*?</a>)',
         flags=re.I | re.S,
     )
     if monthly_link.search(html):
         return monthly_link.sub(
-            r'\1\n  · <a href="system_performance.html">Historical performance</a>',
+            r'\1\n  · <a href="system_performance.html">Historical performance</a>'
+            r'\n  · <a href="system_setup_process.html">System setup process</a>',
             html,
             count=1,
         )
@@ -58,7 +69,8 @@ def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
     )
     if compact_nav.search(html):
         return compact_nav.sub(
-            r'\1 · <a href="system_performance.html">Historical performance</a>\2',
+            r'\1 · <a href="system_performance.html">Historical performance</a>'
+            r' · <a href="system_setup_process.html">System setup process</a>\2',
             html,
             count=1,
         )
@@ -151,6 +163,16 @@ def publish_monthly_backtest(*, drive: Path, docs_dir: Path, show_nav: bool) -> 
     if not src.is_file():
         raise FileNotFoundError(f"Missing {src.name}")
     dst = docs_dir / "monthly.html"
+    prepare_html_for_pages(src, dst, show_nav=show_nav)
+    return dst
+
+
+def publish_setup_process(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
+    """Copy system_setup_process.html (static process doc) into docs/ for Pages."""
+    src = _resolve_drive(drive) / "paul_experiments" / "system_setup_process.html"
+    if not src.is_file():
+        raise FileNotFoundError(f"Missing {src}")
+    dst = docs_dir / "system_setup_process.html"
     prepare_html_for_pages(src, dst, show_nav=show_nav)
     return dst
 
@@ -342,6 +364,15 @@ def main() -> int:
     elif include_investment:
         print(f"[pages] Skipped historical performance (no {performance_dst.name})")
 
+    setup_src = _resolve_drive(drive) / "paul_experiments" / "system_setup_process.html"
+    if setup_src.is_file():
+        setup_dst = publish_setup_process(drive=drive, docs_dir=docs_dir, show_nav=False)
+        published.append(setup_dst)
+        show_nav = True
+        print(f"[pages] Wrote {setup_dst}")
+    else:
+        print(f"[pages] Skipped setup process (no {setup_src})")
+
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
@@ -359,6 +390,7 @@ def main() -> int:
     print("[pages]   Convergence:  https://pauljanderson.github.io/TBN_Report/convergence.html")
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
     print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
+    print("[pages]   Setup process: https://pauljanderson.github.io/TBN_Report/system_setup_process.html")
     if args.push:
         print(
             "[pages] After push, check Actions > Publish reports to Pages (deploy ~1-2 min)."

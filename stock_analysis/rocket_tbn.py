@@ -63,6 +63,19 @@ except ImportError:
     from stock_analysis.sheet_column_reference import ENTRY_GATE_SHEET_TITLES
 
 try:
+    from post_target_reentry import (
+        exit_type_is_target as _exit_type_is_target,
+        post_target_blocks_entry as _post_target_blocks_entry,
+        post_target_effective_stop_pct as _post_target_effective_stop_pct,
+    )
+except ImportError:
+    from stock_analysis.post_target_reentry import (  # type: ignore
+        exit_type_is_target as _exit_type_is_target,
+        post_target_blocks_entry as _post_target_blocks_entry,
+        post_target_effective_stop_pct as _post_target_effective_stop_pct,
+    )
+
+try:
     from ohlcv_store import (
         filter_symbols_to_universe as _db_filter_symbols_to_universe,
         list_symbols as _db_list_symbols,
@@ -238,6 +251,105 @@ class BRTConfig:
     vec_confluence_pct: float = 0.0075  # Max |POC - extreme| / extreme for confluence (0.75%).
     vec_move_away_pct: float = 0.02  # Min rally above zone center before activation (0 = same bar).
     vec_min_bars_between: int = 20  # Dedup: min bars between activations at similar center.
+    # Minervini VCP Stage-2 pivot breakout (new module rocket_minervini_vcp.py).
+    # true → MVCP_ prefix; forces isolation from BRT/YH/WPBR/RL/RS in run_minervini_vcp.bat.
+    mvcp_mode: bool = False
+    mvcp_rs_min_percentile: float = 80.0
+    mvcp_rs_lookback: int = 252
+    mvcp_sma200_rise_bars: int = 21
+    mvcp_min_pct_above_52w_low: float = 0.30
+    mvcp_max_pct_below_52w_high: float = 0.25
+    mvcp_min_contractions: int = 2
+    mvcp_max_contractions: int = 6
+    mvcp_swing_k: int = 3
+    mvcp_depth_shrink: float = 0.65
+    mvcp_max_first_depth: float = 0.40
+    mvcp_min_final_depth: float = 0.02
+    mvcp_min_base_bars: int = 15
+    mvcp_max_base_bars: int = 120
+    mvcp_vol_dry_ratio: float = 0.85
+    mvcp_vol_dry_soft_confirm: bool = True
+    mvcp_require_prior_advance: bool = True
+    mvcp_prior_advance_pct: float = 0.20
+    mvcp_prior_advance_bars: int = 63
+    mvcp_vol_breakout_mult: float = 1.5
+    mvcp_max_extension_above_pivot: float = 0.05
+    mvcp_stop_eps: float = 0.001
+    mvcp_strength_pct: float = 0.25
+    mvcp_strength_bars: int = 15
+    mvcp_trail_sma: int = 20
+    mvcp_trail_arm_pct: float = 0.10
+    mvcp_time_stop_bars: int = 10
+    mvcp_time_stop_min_gain: float = 0.05
+    mvcp_rs_universe: str = "data_dir"  # data_dir | run
+    # Qullamaggie HTF / EP proxy (rocket_qull_htf.py). true → QULL_ prefix.
+    qull_mode: bool = False
+    qull_setup: str = "htf"  # htf | ep | both
+    qull_prior_run_bars: int = 42
+    qull_prior_run_pct: float = 0.50
+    qull_coil_bars: int = 10
+    qull_coil_range_pct: float = 0.15
+    qull_ema_surf_pct: float = 0.04
+    qull_require_ema_surf: bool = True
+    qull_vol_dry_ratio: float = 0.85
+    qull_vol_dry_soft: bool = True
+    qull_vol_breakout_mult: float = 1.5
+    qull_min_price: float = 3.0
+    qull_min_adv_usd: float = 2_000_000.0
+    qull_adv_lookback: int = 20
+    qull_market_filter: bool = True
+    qull_ep_gap_pct: float = 0.10
+    qull_ep_vol_mult: float = 3.0
+    qull_ep_require_flat_prior: bool = True
+    qull_ep_flat_lookback: int = 63
+    qull_ep_flat_max_run_pct: float = 0.30
+    qull_stop_under: str = "breakout_low"
+    qull_max_stop_adr_mult: float = 1.0
+    qull_adr_lookback: int = 20
+    qull_trail_ema: int = 10
+    qull_partial_days: int = 0
+    qull_partial_frac: float = 0.33
+    qull_fill: str = "next_open"
+    # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
+    sb_mode: bool = False
+    burst_min_pct: float = 0.04
+    burst_vol_gt_prior: bool = True
+    burst_range_lookback: int = 5
+    burst_dcr_min: float = 0.70
+    burst_max_prior_up_days: int = 1
+    burst_fill: str = "next_open"
+    burst_max_risk_pct: float = 0.08
+    burst_time_stop_days: int = 5
+    burst_no_ft_days: int = 3
+    burst_mm_gate: bool = False
+    burst_mm_min_ratio: float = 2.0
+    # Market Monitor membership / liquidity (rocket_stockbee_mm; used when gate ON).
+    mm_min_shares: float = 1000.0
+    mm_min_adv_usd: float = 250_000.0  # 0 = disable $ filter
+    mm_min_price: float = 5.0
+    mm_move_pct: float = 0.04
+    mm_lookback: int = 10
+    mm_force_rebuild: bool = False
+    # 2Lynch T−1 narrow/down (“N”); default OFF.
+    burst_require_t1_narrow_or_down: bool = False
+    burst_t1_narrow_mode: str = "median"  # median | mean | max
+    burst_min_price: float = 5.0
+    burst_min_adv_usd: float = 0.0
+    burst_adv_lookback: int = 20
+    burst_size_from_stop: bool = False
+    burst_risk_frac: float = 0.01
+    # Optional SB trigger-bar gates (0 = off). Applied in rocket_stockbee_burst signal path.
+    burst_min_atr_pct_at_trigger: float = 0.0  # ATR14/trigger_close*100 >= this
+    burst_max_atr_pct_at_trigger: float = 0.0  # ATR% <= this
+    burst_min_dist_to_52w_high_pct: float = 0.0  # % below 52w high >= this
+    burst_max_dist_to_52w_high_pct: float = 0.0  # % below 52w high <= this (closer to highs)
+    # Vol ≥ k× prior-N avg (exclude signal bar). 0 = off. DNA: VOL_VS_50.
+    burst_vol_vs_avg_mult: float = 0.0
+    burst_vol_avg_lookback: int = 50
+    # SB host dollar-scale (ignored when burst_size_from_stop); blanked on non-SB Audit rows.
+    host_dollar_scale: bool = True
+    # Optional note when SB run used GOLD_UNIVERSE.csv (blank otherwise).
+    sb_gold_universe: str = ""
     # Rocket Launcher (50-SMA dip buy): true/false (separate run from BRT zone/retest).
     # true → RL_ output prefix; AWK math is authoritative (docs/RL_ENGINE_INTEGRATION.md).
     rl_mode: str = "false"
@@ -361,8 +473,8 @@ class BRTConfig:
     min_rel_vol_at_entry: float = -2.0  # Require rel_vol_at_entry >= this (-2 = no op). Audit: REL_VOL_AT_ENTRY
     # Exit at next session open when REL_VOL_AT_ENTRY (entry-day volume) is below this. 0 = off.
     sell_on_low_vol: float = 0.0
-    min_market_cap: float = 0.0  # Require trade market_cap >= this (0 = no op). Applied after enrichment. Audit: MARKET_CAP
-    max_market_cap: float = 15130840772900 # Require trade market_cap <= this when >0 (0 = no op). Applied after enrichment.
+    min_market_cap: float = 0.0  # Require trade market_cap >= this when >0 (0 = no op). None market_cap passes. Applied after enrichment. Audit: MARKET_CAP
+    max_market_cap: float = 15130840772900  # Require trade market_cap <= this when >0 (0 = no op). None market_cap passes. Applied after enrichment.
     min_hist_ann_ror_avg: float = -100.0  # Require prior closed trades for symbol and avg ann ROR >= this (-100 = no op). Audit: HIST_ANN_ROR_AVG
     min_avg_volume_10d_at_entry: float = 0.0  # Require AVG_VOLUME_10D_AT_ENTRY >= this when >0 (0 = no op).
     min_atr_pct_at_trigger: float = 0.0  # Require ATR_PCT_AT_TRIGGER (ATR14/trigger_close*100) >= this when >0 (0 = no op).
@@ -463,6 +575,12 @@ class BRTConfig:
     # (2) atr_progress==0 — timed flat at that same first open after the deadline.
     atr_progress: float = 0.0
     atr_days: int = 0
+    # Portable SB-style exits for BRT/RS/YH host path (0 = off). Same semantics as
+    # StockBee burst_no_ft_days / burst_time_stop_days: bars held = i - entry_bar;
+    # NO_FT sells at close of fill+N if never Close > entry; TIME sells at close after N bars.
+    # Distinct from atr_days (calendar deadline → first open). SB host still uses burst_*.
+    no_ft_days: int = 0
+    time_stop_days: int = 0
     # Final entry gate: block when next open is "too high" above trigger-bar low.
     # Example default 1.14 means block if entry_open > trigger_low * 1.14.
     too_high_multiplier: float = 1.058
@@ -1063,6 +1181,12 @@ def _output_file_prefix(cfg: "BRTConfig") -> str:
         return "ADX"
     if bool(getattr(cfg, "mts_mode", False)):
         return "MTS"
+    if bool(getattr(cfg, "sb_mode", False)):
+        return "SB"
+    if bool(getattr(cfg, "qull_mode", False)):
+        return "QULL"
+    if bool(getattr(cfg, "mvcp_mode", False)):
+        return "MVCP"
     if bool(getattr(cfg, "relative_strength_enabled", False)):
         return "RS"
     if _rl_mode_active(getattr(cfg, "rl_mode", "false")):
@@ -3828,6 +3952,14 @@ def _min_bars_required_for_cfg(cfg: Any) -> int:
         p = max(1, int(getattr(cfg, "adx_period", 15) or 15))
         channel = max(1, int(getattr(cfg, "channel_length", 10) or 10))
         return max(2 * p + 2, channel + 2, 20)
+    if bool(getattr(cfg, "mvcp_mode", False)):
+        return max(260, int(getattr(cfg, "mvcp_rs_lookback", 252) or 252) + 10)
+    if bool(getattr(cfg, "qull_mode", False)):
+        prior = int(getattr(cfg, "qull_prior_run_bars", 42) or 42)
+        coil = int(getattr(cfg, "qull_coil_bars", 10) or 10)
+        return max(80, prior + coil + 25)
+    if bool(getattr(cfg, "sb_mode", False)):
+        return max(20, int(getattr(cfg, "burst_range_lookback", 5) or 5) + 5)
     if bool(getattr(cfg, "relative_strength_enabled", False)):
         return _RS_SPY_LAG_3Y + 10
     if _indicator_only_mode(cfg):
@@ -6546,7 +6678,11 @@ def _adaptive_stop_exit_label(
     gap: bool,
     is_long: bool,
 ) -> str:
-    """Prefer incremental → chandelier → SMA → trailing → ATR/gap/stop labels."""
+    """Prefer incremental → chandelier → SMA → trailing → gap → ATR/stop labels.
+
+    Gap-through-stop keeps GAP_DOWN/GAP_UP even under ATR exit mode so fat-gap
+    analytics stay distinct from ATR_STOP / STOP_LOSS.
+    """
     if hit_inc:
         return "atr_incremental_stop"
     if hit_chandelier:
@@ -6555,10 +6691,10 @@ def _adaptive_stop_exit_label(
         return "SMA_STOP"
     if hit_trailing:
         return "TRAILING_STOP"
-    if use_atr_exits:
-        return "ATR_STOP"
     if gap:
         return "GAP_DOWN" if is_long else "GAP_UP"
+    if use_atr_exits:
+        return "ATR_STOP"
     return "STOP_LOSS"
 
 
@@ -6605,6 +6741,11 @@ def _brt_attempt_exit_at_bar(
     _trade_side = str(getattr(open_trade, "side", "LONG") or "LONG")
     # Peak high for gain-trail may include bar i; Chandelier uses highs only through i-1.
     max_high_since_entry = max(max_high_since_entry, hi)
+    # SB-style NO_FT follow-through: any close beyond entry (long: close>entry; short: close<entry).
+    _ep_ft = float(getattr(open_trade, "entry_price", 0.0) or 0.0)
+    if _ep_ft > 0:
+        if (_trade_is_long and float(cl) > _ep_ft) or ((not _trade_is_long) and float(cl) < _ep_ft):
+            setattr(open_trade, "_saw_ft", True)
     _pending_zscore = bool(getattr(open_trade, "_pending_zscore_exit", False))
     _zscore_exit_now = False
     if _pending_zscore:
@@ -6762,7 +6903,8 @@ def _brt_attempt_exit_at_bar(
         )
     elif _trade_is_long and gap_up:
         exit_price = op
-        exit_type = "ATR_TARGET" if use_atr_exits else "GAP_UP"
+        # Preserve GAP_UP even in ATR mode (do not swallow into ATR_TARGET).
+        exit_type = "GAP_UP"
     elif (not _trade_is_long) and gap_up:
         exit_price = op
         exit_type = _adaptive_stop_exit_label(
@@ -6776,7 +6918,8 @@ def _brt_attempt_exit_at_bar(
         )
     elif (not _trade_is_long) and gap_down:
         exit_price = op
-        exit_type = "ATR_TARGET" if use_atr_exits else "GAP_DOWN"
+        # Short favorable gap through target — keep GAP_DOWN (price-direction).
+        exit_type = "GAP_DOWN"
     elif stop_hit:
         exit_price = cl if cfg.exit_at_close_when_stopped else sp
         exit_type = _adaptive_stop_exit_label(
@@ -6792,29 +6935,54 @@ def _brt_attempt_exit_at_bar(
         exit_price = tp
         exit_type = "ATR_TARGET" if use_atr_exits else "TARGET"
     else:
-        _ai_ok, _ai_px, _ai_typ = _atr_schedule_exit_now(cfg, open_trade, i, high_arr, open_arr, index_iso)
-        if _ai_ok:
-            exit_price = _ai_px
-            exit_type = _ai_typ
-        else:
-            if cfg_sell_ind_diff_below is not None and _arm_ind_diff_exit_if_signal(
-                threshold=int(cfg_sell_ind_diff_below),
-                sym_indicator_pre=sym_indicator_pre,
-                aligned_fn=aligned_bull_bear_diff_fn,
-                bar_i=i,
-                side=_trade_side,
-            ):
-                pending_ind_diff_exit = True
-            if bool(getattr(cfg, "zscore_exit_enabled", False)) and _zscore_exit_signal(
-                zscore_exit_arr,
-                i,
-                float(getattr(cfg, "zscore_exit_k", 0.0) or 0.0),
-                _trade_is_long,
-            ):
-                setattr(open_trade, "_pending_zscore_exit", True)
-            # breakdown_plus (and only): arm after no price exit this bar.
-            _arm_rs_breakdown_if_signal()
-            return None, max_high_since_entry, pending_ind_diff_exit, False
+        # Portable SB-style NO_FT / TIME (bars from fill; sell at close). 0 = off.
+        _no_ft_n = int(getattr(cfg, "no_ft_days", 0) or 0)
+        _time_n = int(getattr(cfg, "time_stop_days", 0) or 0)
+        _sb_style_exit = False
+        if _no_ft_n > 0 or _time_n > 0:
+            _entry_i = getattr(open_trade, "_entry_bar_i", None)
+            if _entry_i is None:
+                _entry_i = _trade_ymd_to_bar_index(
+                    index_iso, str(getattr(open_trade, "date_opened", "") or "")
+                )
+                if _entry_i is not None:
+                    setattr(open_trade, "_entry_bar_i", int(_entry_i))
+            _held_bars = (i - int(_entry_i)) if _entry_i is not None else 0
+            _saw_ft = bool(getattr(open_trade, "_saw_ft", False))
+            if _no_ft_n > 0 and _held_bars >= _no_ft_n and not _saw_ft:
+                exit_price = float(cl)
+                exit_type = "NO_FT"
+                _sb_style_exit = True
+            elif _time_n > 0 and _held_bars >= _time_n:
+                exit_price = float(cl)
+                exit_type = "TIME"
+                _sb_style_exit = True
+        if not _sb_style_exit:
+            _ai_ok, _ai_px, _ai_typ = _atr_schedule_exit_now(
+                cfg, open_trade, i, high_arr, open_arr, index_iso
+            )
+            if _ai_ok:
+                exit_price = _ai_px
+                exit_type = _ai_typ
+            else:
+                if cfg_sell_ind_diff_below is not None and _arm_ind_diff_exit_if_signal(
+                    threshold=int(cfg_sell_ind_diff_below),
+                    sym_indicator_pre=sym_indicator_pre,
+                    aligned_fn=aligned_bull_bear_diff_fn,
+                    bar_i=i,
+                    side=_trade_side,
+                ):
+                    pending_ind_diff_exit = True
+                if bool(getattr(cfg, "zscore_exit_enabled", False)) and _zscore_exit_signal(
+                    zscore_exit_arr,
+                    i,
+                    float(getattr(cfg, "zscore_exit_k", 0.0) or 0.0),
+                    _trade_is_long,
+                ):
+                    setattr(open_trade, "_pending_zscore_exit", True)
+                # breakdown_plus (and only): arm after no price exit this bar.
+                _arm_rs_breakdown_if_signal()
+                return None, max_high_since_entry, pending_ind_diff_exit, False
 
     closed_t = _brt_closed_from_open(
         open_trade,
@@ -6875,6 +7043,8 @@ def run_brt_backtest(
     _secondary_pending_ind: list[bool] = []
     _cfg_allow_secondary = bool(getattr(cfg, "allow_secondary_entries", False))
     last_exit_yyyymmdd: str = ""
+    last_exit_idx: int = -1
+    last_exit_was_target: bool = False
     scanner: list[dict] = []
     short_candidates: list[dict] = []
     would_have: list[dict] = []
@@ -7732,6 +7902,10 @@ def run_brt_backtest(
                 if _cfg_wpbr_zones:
                     _wpbr_on_exit(_closed_t, i)
                 last_exit_yyyymmdd = str(iso).strip().replace("-", "")[:8]
+                last_exit_idx = int(i)
+                last_exit_was_target = _exit_type_is_target(
+                    getattr(_closed_t, "exit_type", "")
+                )
                 open_trade = None
                 _exited_this_bar = True
         if _cfg_allow_secondary:
@@ -7776,6 +7950,10 @@ def run_brt_backtest(
                     if _cfg_wpbr_zones:
                         _wpbr_on_exit(_closed_t, i)
                     last_exit_yyyymmdd = str(iso).strip().replace("-", "")[:8]
+                    last_exit_idx = int(i)
+                    last_exit_was_target = _exit_type_is_target(
+                        getattr(_closed_t, "exit_type", "")
+                    )
                     extra_open_trades.pop(_si)
                     _secondary_max_high.pop(_si)
                     _secondary_pending_ind.pop(_si)
@@ -9321,6 +9499,38 @@ def run_brt_backtest(
                 _keep_pending()
                 _pg()
                 continue
+            # Post-TARGET-only re-entry gate (rl_post_target_*; shared with RL/RS).
+            _pt_entry_bar = int(_i_bar) + 1
+            _pt_sig = int(_eval_bar) if 0 <= int(_eval_bar) < n else int(_i_bar)
+            _pt_close = float(close_arr[_pt_sig]) if 0 <= _pt_sig < n else float("nan")
+            _pt_s20 = (
+                float(sma20_csv_arr[_pt_sig])
+                if sma20_csv_arr is not None and 0 <= _pt_sig < len(sma20_csv_arr)
+                else float("nan")
+            )
+            _pt_s50 = (
+                float(sma50_csv_arr[_pt_sig])
+                if sma50_csv_arr is not None and 0 <= _pt_sig < len(sma50_csv_arr)
+                else float("nan")
+            )
+            if _post_target_blocks_entry(
+                cfg,
+                last_exit_idx=last_exit_idx,
+                last_exit_was_target=last_exit_was_target,
+                entry_idx=_pt_entry_bar,
+                close=_pt_close,
+                sma20=_pt_s20,
+                sma50=_pt_s50,
+            ):
+                _count_block("rl_post_target_reentry")
+                _trace_gate(
+                    "block: rl_post_target_reentry "
+                    f"(mode={getattr(cfg, 'rl_post_target_reentry_mode', '')}; "
+                    f"bars={int(getattr(cfg, 'rl_post_target_reentry_bars', 0) or 0)})"
+                )
+                _keep_pending()
+                _pg()
+                continue
             # Entry is always bar _i_bar+1 (same as outer next_op); ATR at entry uses that bar index.
             atr_14_at_entry_val = float(atr_14_arr[_i_bar + 1]) if (_i_bar + 1 < n and not (atr_14_arr[_i_bar + 1] != atr_14_arr[_i_bar + 1])) else None
             atr_pct = None
@@ -9376,6 +9586,18 @@ def run_brt_backtest(
                 )
             elif (_cfg_stop_pct > 0 and _is_long_side) or (_cfg_short_stop_pct > 0 and (not _is_long_side)):
                 _sp = _cfg_stop_pct if _is_long_side else _cfg_short_stop_pct
+                if (
+                    bool(getattr(cfg, "stop_pct_is_multiplier", True))
+                    and _is_long_side
+                    and float(getattr(cfg, "rl_post_target_stop_pct", 0.0) or 0.0) > 0
+                ):
+                    _sp = _post_target_effective_stop_pct(
+                        cfg,
+                        baseline_stop_pct=float(_sp),
+                        last_exit_idx=last_exit_idx,
+                        last_exit_was_target=last_exit_was_target,
+                        entry_idx=int(_i_bar) + 1,
+                    )
                 if _is_long_side:
                     stop_price = (
                         entry_price * _sp
@@ -10140,6 +10362,8 @@ def _run_scan_entry_backtest(
     closed: list[BRTTrade] = []
     open_trade: Optional[BRTTrade] = None
     last_exit_yyyymmdd: str = ""
+    last_exit_idx: int = -1
+    last_exit_was_target: bool = False
     scanner: list[dict] = []
     short_candidates: list[dict] = []
     would_have: list[dict] = []
@@ -10392,6 +10616,38 @@ def _run_scan_entry_backtest(
                     cfg, spy_tc_int_lookup_rs, index_iso[t] if t < len(index_iso) else ""
                 ):
                     continue
+                # Overlay: indicator_buy=both requires trade-aligned IND_DIFF >= indicator_diff
+                # on the RS trigger bar (same add-on used on zone/retest path). IND-only mode
+                # already gated above; indicator_buy=off skips this.
+                if (
+                    _cfg_indicator_buy_rs == "both"
+                    and _aligned_bull_bear_diff_fn_rs is not None
+                ):
+                    _d_both = _aligned_bull_bear_diff_fn_rs(
+                        _sym_indicator_pre_rs, t, _cfg_entry_side_rs
+                    )
+                    _thr_both = _cfg_indicator_diff_scan
+                    if _use_avg_ind_scan and 0 <= t < len(index_iso):
+                        _av_both = _avg_ind_map_scan.get(index_iso[t])
+                        if _av_both is not None:
+                            _thr_both = (
+                                max(_cfg_indicator_diff_scan, _av_both)
+                                if _avg_ind_combine_scan
+                                else _av_both
+                            )
+                    if _d_both is None or float(_d_both) < float(_thr_both):
+                        continue
+            _max_ind_diff_scan = getattr(cfg, "max_ind_diff_at_trigger", None)
+            if (
+                _max_ind_diff_scan is not None
+                and _aligned_bull_bear_diff_fn_rs is not None
+                and _sym_indicator_pre_rs is not None
+            ):
+                _md_scan = _aligned_bull_bear_diff_fn_rs(
+                    _sym_indicator_pre_rs, t, _cfg_entry_side_rs
+                )
+                if _md_scan is None or int(_md_scan) > int(_max_ind_diff_scan):
+                    continue
             if _dist_52w_high_at_trigger_gate_blocks(cfg, high_arr, close_arr, t):
                 continue
             if _spy_compare_1y_at_trigger_gate_blocks(cfg, st, sp, t):
@@ -10540,6 +10796,31 @@ def _run_scan_entry_backtest(
                     else entry_price * (1 + _def_frac_below)
                 )
 
+        # Post-TARGET stop tighten (mode=stop_loss only; same cfg fields as RL).
+        if bool(getattr(cfg, "stop_pct_is_multiplier", True)) and float(
+            getattr(cfg, "rl_post_target_stop_pct", 0.0) or 0.0
+        ) > 0:
+            _pt_base = (
+                float(_cfg_stop_pct)
+                if _is_long_side and _cfg_stop_pct > 0
+                else (
+                    float(_cfg_short_stop_pct)
+                    if (not _is_long_side) and _cfg_short_stop_pct > 0
+                    else 0.934
+                )
+            )
+            _pt_eff = _post_target_effective_stop_pct(
+                cfg,
+                baseline_stop_pct=_pt_base,
+                last_exit_idx=last_exit_idx,
+                last_exit_was_target=last_exit_was_target,
+                entry_idx=int(entry_bar),
+            )
+            if _is_long_side:
+                stop_price = entry_price * _pt_eff
+            else:
+                stop_price = entry_price * (2.0 - _pt_eff)
+
         next_iso = index_iso[entry_bar] if entry_bar < len(index_iso) else ""
         cl_sig = float(close_arr[signal_t])
 
@@ -10641,6 +10922,29 @@ def _run_scan_entry_backtest(
             if _symbol_reentry_cooldown_blocks(last_exit_yyyymmdd, next_iso, _cd_days_rs):
                 search_from = signal_t + 1
                 continue
+
+        # Post-TARGET-only re-entry gate (rl_post_target_* on BRTConfig; shared with RL).
+        _pt_s20 = (
+            float(sma20_at_trigger_val)
+            if sma20_at_trigger_val is not None
+            else float("nan")
+        )
+        _pt_s50 = (
+            float(sma50_at_trigger_val)
+            if sma50_at_trigger_val is not None
+            else float("nan")
+        )
+        if _post_target_blocks_entry(
+            cfg,
+            last_exit_idx=last_exit_idx,
+            last_exit_was_target=last_exit_was_target,
+            entry_idx=int(entry_bar),
+            close=float(close_arr[signal_t]),
+            sma20=_pt_s20,
+            sma50=_pt_s50,
+        ):
+            search_from = signal_t + 1
+            continue
 
         _spy_int_lag_rs, _spy_int_out_rs = _spy_int_tc_gate_snapshot(
             cfg,
@@ -10763,6 +11067,10 @@ def _run_scan_entry_backtest(
             if _closed_t is not None:
                 closed.append(_closed_t)
                 last_exit_yyyymmdd = str(index_iso[j]).strip().replace("-", "")[:8]
+                last_exit_idx = int(j)
+                last_exit_was_target = _exit_type_is_target(
+                    getattr(_closed_t, "exit_type", "")
+                )
                 open_trade = None
                 exit_bar = j
                 break
@@ -11401,12 +11709,144 @@ def _save_yfinance_cache(cache: dict[str, dict]) -> None:
         pass
 
 
+def _yfinance_cache_entry_fresh(entry: dict, today: str, *, allow_stale: bool = False) -> bool:
+    """True when JSON cache entry is usable (do not re-hit Yahoo).
+
+    Yahoo often omits ``marketCap`` while still returning sector/price/beta. Requiring
+    non-null market_cap caused the same ~dozen symbols to be re-fetched every run.
+    A same-day ``_yf_checked`` sentinel covers hard misses (negative cache).
+    """
+    if not entry or not isinstance(entry, dict):
+        return False
+    as_of = str(entry.get("as_of_date", "") or "")
+    if as_of == today:
+        pass
+    elif allow_stale and as_of:
+        pass
+    else:
+        return False
+    if entry.get("market_cap") is not None:
+        return True
+    if entry.get("current_price") is not None:
+        return True
+    if entry.get("sector") or entry.get("industry"):
+        return True
+    if entry.get("_yf_checked"):
+        return True
+    return False
+
+
+def _yfinance_miss_sentinel(today: str) -> dict:
+    """Negative-cache row: skip Yahoo again until ``as_of_date`` rolls."""
+    return {
+        "market_cap": None,
+        "current_price": None,
+        "sector": None,
+        "industry": None,
+        "beta": None,
+        "as_of_date": today,
+        "_yf_checked": True,
+    }
+
+
+def _yfinance_backfill_market_cap(out: dict) -> dict:
+    """Fill market_cap from float_shares × price when Yahoo left cap empty."""
+    if out.get("market_cap") is not None:
+        return out
+    try:
+        from fundamentals_yfinance import estimate_market_cap
+    except ImportError:
+        try:
+            from stock_analysis.fundamentals_yfinance import estimate_market_cap  # type: ignore
+        except ImportError:
+            estimate_market_cap = None  # type: ignore
+    if estimate_market_cap is None:
+        fs, px = out.get("float_shares"), out.get("current_price")
+        try:
+            if fs is not None and px is not None and float(fs) > 0 and float(px) > 0:
+                out = dict(out)
+                out["market_cap"] = float(fs) * float(px)
+        except (TypeError, ValueError):
+            pass
+        return out
+    mc = estimate_market_cap(out.get("market_cap"), out.get("float_shares"), out.get("current_price"))
+    if mc is not None:
+        out = dict(out)
+        out["market_cap"] = mc
+    return out
+
+
 def _yfinance_fetch_symbol_info(sym: str, today: str) -> tuple[str, dict]:
-    """One Yahoo quote/info fetch for ``sym``; safe for ThreadPoolExecutor (no shared state)."""
+    """One Yahoo quote/info fetch for ``sym``; safe for ThreadPoolExecutor (no shared state).
+
+    Prefers ``fundamentals_yfinance`` DuckDB cache (shared with CAN SLIM / Qull) when fresh.
+    """
+    try:
+        from fundamentals_yfinance import get_symbol_fundamentals, yfinance_disabled
+    except ImportError:
+        try:
+            from stock_analysis.fundamentals_yfinance import (  # type: ignore
+                get_symbol_fundamentals,
+                yfinance_disabled,
+            )
+        except ImportError:
+            get_symbol_fundamentals = None  # type: ignore
+            yfinance_disabled = None  # type: ignore
+
+    if yfinance_disabled is not None and yfinance_disabled():
+        return sym, _yfinance_miss_sentinel(today)
+
+    if get_symbol_fundamentals is not None:
+        try:
+            bundle = get_symbol_fundamentals(sym, quiet=True)
+            if bundle is not None and bundle.source not in ("", "EMPTY"):
+                out = bundle.as_info_dict(as_of_date=today)
+                out = _yfinance_backfill_market_cap(out)
+                has_quote = (
+                    out.get("market_cap") is not None
+                    or bool(out.get("sector"))
+                    or bool(out.get("industry"))
+                    or out.get("current_price") is not None
+                )
+                if bundle.cache_hit or has_quote:
+                    # Rare: fresh DuckDB info row with no sector/price — one light .info fill.
+                    if (
+                        bundle.cache_hit
+                        and not out.get("sector")
+                        and not out.get("industry")
+                        and out.get("current_price") is None
+                    ):
+                        try:
+                            import yfinance as yf
+
+                            info = getattr(yf.Ticker(sym), "info", None) or {}
+                            cp = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+                            try:
+                                out["current_price"] = float(cp) if cp is not None else None
+                            except (TypeError, ValueError):
+                                pass
+                            out["sector"] = out.get("sector") or info.get("sector")
+                            out["industry"] = out.get("industry") or info.get("industry")
+                            if out.get("beta") is None:
+                                out["beta"] = info.get("beta")
+                            sh = info.get("floatShares") or info.get("sharesOutstanding")
+                            if out.get("float_shares") is None and sh is not None:
+                                try:
+                                    out["float_shares"] = float(sh)
+                                except (TypeError, ValueError):
+                                    pass
+                            out = _yfinance_backfill_market_cap(out)
+                        except Exception:
+                            pass
+                    out["_yf_checked"] = True
+                    return sym, out
+        except Exception:
+            pass
+
     try:
         import yfinance as yf
     except ImportError:
-        return sym, {}
+        return sym, _yfinance_miss_sentinel(today)
     try:
         ticker = yf.Ticker(sym)
         info = getattr(ticker, "info", None) or {}
@@ -11416,16 +11856,25 @@ def _yfinance_fetch_symbol_info(sym: str, today: str) -> tuple[str, dict]:
                 current_price = float(current_price)
             except (TypeError, ValueError):
                 current_price = None
-        return sym, {
+        float_shares = info.get("floatShares") or info.get("sharesOutstanding")
+        try:
+            float_shares = float(float_shares) if float_shares is not None else None
+        except (TypeError, ValueError):
+            float_shares = None
+        out = {
             "market_cap": info.get("marketCap"),
             "current_price": current_price,
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "beta": info.get("beta"),
+            "float_shares": float_shares,
             "as_of_date": today,
+            "_yf_checked": True,
         }
+        out = _yfinance_backfill_market_cap(out)
+        return sym, out
     except Exception:
-        return sym, {}
+        return sym, _yfinance_miss_sentinel(today)
 
 
 def _enrich_trades_yfinance(
@@ -11444,7 +11893,19 @@ def _enrich_trades_yfinance(
     Network fetches run in parallel (ThreadPoolExecutor) when more than one symbol needs a refresh.
     ``yfinance_workers``: max threads (capped); ``None`` = min(8, CPU count, symbol count). Pass the same
     value as ``-w`` from the CLI when > 0 to align post-run Yahoo throughput with the backtest pool size.
+
+    Honors env ``NO_YFINANCE`` (skip entirely).
     """
+    try:
+        from fundamentals_yfinance import yfinance_disabled as _yf_disabled
+    except ImportError:
+        try:
+            from stock_analysis.fundamentals_yfinance import yfinance_disabled as _yf_disabled  # type: ignore
+        except ImportError:
+            _yf_disabled = None  # type: ignore
+    if _yf_disabled is not None and _yf_disabled():
+        print("[TBN] yfinance enrichment skipped (NO_YFINANCE).", flush=True)
+        return
     try:
         import importlib.util
 
@@ -11466,11 +11927,32 @@ def _enrich_trades_yfinance(
     symbols_to_fetch = []
     for sym in symbols:
         entry = file_cache.get(sym, {})
-        as_of = entry.get("as_of_date", "")
-        if as_of == today and entry.get("market_cap") is not None:
-            cache[sym] = dict(entry)
+        if _yfinance_cache_entry_fresh(entry, today):
+            cache[sym] = _yfinance_backfill_market_cap(dict(entry))
         else:
             symbols_to_fetch.append(sym)
+    # Same-day JSON hits often lack market_cap (Yahoo omit) but DuckDB has float_shares —
+    # upgrade cap via DuckDB only (no Yahoo) and persist so later runs stay at 0 fetched.
+    duck_upgraded = False
+    for sym, row in list(cache.items()):
+        if row.get("market_cap") is not None:
+            continue
+        try:
+            _s2, data = _yfinance_fetch_symbol_info(sym, today)
+        except Exception:
+            continue
+        if not data:
+            continue
+        if data.get("market_cap") is not None or data.get("float_shares") is not None:
+            merged_row = dict(row)
+            for k, v in data.items():
+                if v is not None:
+                    merged_row[k] = v
+            merged_row = _yfinance_backfill_market_cap(merged_row)
+            merged_row["as_of_date"] = today
+            merged_row["_yf_checked"] = True
+            cache[sym] = merged_row
+            duck_upgraded = True
     n_cached = len(symbols) - len(symbols_to_fetch)
     if n_cached > 0 or symbols_to_fetch:
         print(f"[TBN] yfinance: {n_cached} from cache, {len(symbols_to_fetch)} fetched")
@@ -11504,12 +11986,18 @@ def _enrich_trades_yfinance(
                 _print_symbol_progress(i_done, n_to_fetch, t_yf_prog, label="[PROGRESS yfinance]")
     if n_to_fetch > 1 and sys.stdout.isatty():
         print(file=sys.stdout, flush=True)
-    # Persist updated cache (merge file_cache with new fetches)
-    if symbols_to_fetch:
+    # Persist updated cache (merge file_cache with new fetches; include negative sentinels)
+    if symbols_to_fetch or duck_upgraded:
         merged = dict(file_cache)
         for sym, data in cache.items():
-            if data.get("as_of_date") == today:
-                merged[sym] = data
+            if not data:
+                continue
+            if data.get("as_of_date") == today or data.get("_yf_checked"):
+                row = dict(data)
+                if row.get("as_of_date") != today:
+                    row["as_of_date"] = today
+                row["_yf_checked"] = True
+                merged[sym] = row
         _save_yfinance_cache(merged)
     # Helper: set market_cap on trade (entry-scaled when prices available), market_cap_current raw from feed
     def _set_market_cap_and_rest(trade: BRTTrade, c: dict) -> None:
@@ -11615,6 +12103,219 @@ def _enrich_trades_entry_indicators(
         cache_dir=(str(getattr(cfg, "indicator_cache_dir", "") or "").strip() or None),
         use_cache=bool(getattr(cfg, "indicator_cache", True)),
     )
+
+
+def _trade_needs_ohlc_feature_enrichment(t: BRTTrade) -> bool:
+    """True when OHLC peer fields (ATR_PCT_AT_TRIGGER, volumes, …) were never set at trade build."""
+    return getattr(t, "atr_pct_at_trigger", None) is None
+
+
+def _enrich_symbol_ohlc_features(
+    sym: str,
+    tlist: list[BRTTrade],
+    df: Optional[pd.DataFrame],
+    cfg: Optional[BRTConfig],
+    spy_df: Optional[pd.DataFrame],
+) -> str:
+    """Fill ATR/volume/SMA/52w/ATH/meteoric/SPY_COMPARE/trigger metrics for one symbol's trades."""
+    needs = [t for t in tlist if _trade_needs_ohlc_feature_enrichment(t)]
+    if not needs or df is None or df.empty:
+        return sym
+    if "Close" not in df.columns or "High" not in df.columns or "Low" not in df.columns:
+        return sym
+
+    open_arr = (
+        df["Open"].to_numpy(dtype=np.float64)
+        if "Open" in df.columns
+        else df["Close"].to_numpy(dtype=np.float64)
+    )
+    high_arr = df["High"].to_numpy(dtype=np.float64)
+    low_arr = df["Low"].to_numpy(dtype=np.float64)
+    close_arr = df["Close"].to_numpy(dtype=np.float64)
+    volume_arr = (
+        df["Volume"].to_numpy(dtype=np.float64)
+        if "Volume" in df.columns
+        else None
+    )
+    n = len(close_arr)
+    if n == 0:
+        return sym
+
+    index_iso = [
+        (d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d)[:10].replace("-", ""))
+        for d in df.index
+    ]
+    atr_14_arr = _compute_atr_14_arr(high_arr, low_arr, close_arr, 14)
+
+    sma20_arr = _precomputed_sma_arr_from_df(df, "SMA20")
+    sma50_arr = _precomputed_sma_arr_from_df(df, "SMA50")
+    sma100_arr = _precomputed_sma_arr_from_df(df, "SMA100")
+    if sma20_arr is None:
+        sma20_arr = _compute_sma_arr(close_arr, 20)
+    if sma50_arr is None:
+        sma50_arr = _compute_sma_arr(close_arr, 50)
+    if sma100_arr is None:
+        sma100_arr = _compute_sma_arr(close_arr, 100)
+
+    rise_pct = float(getattr(cfg, "meteoric_rise_pct", 300.0) or 0.0) if cfg is not None else 300.0
+    rise_n = int(getattr(cfg, "meteoric_rise_lookback", 100) or 0) if cfg is not None else 100
+    fall_pct = float(getattr(cfg, "meteoric_fall_pct", 50.0) or 0.0) if cfg is not None else 50.0
+    fall_y = int(getattr(cfg, "meteoric_fall_lookback", 100) or 0) if cfg is not None else 100
+    meteor_rise_ever, meteor_fall_ever = _precompute_meteoric_cumulative_flags(
+        close_arr, low_arr, high_arr, rise_pct, rise_n, fall_pct, fall_y
+    )
+
+    rs_st: Optional[np.ndarray] = None
+    rs_sp: Optional[np.ndarray] = None
+    if spy_df is not None:
+        al = _align_stock_spy_close_for_rs(df, spy_df)
+        if al is not None:
+            rs_st, rs_sp = al
+
+    for t in needs:
+        entry_bar = int(getattr(t, "entry_bar_index", -1) or -1)
+        if entry_bar < 0:
+            mapped = _trade_ymd_to_bar_index(index_iso, str(getattr(t, "date_opened", "") or ""))
+            entry_bar = int(mapped) if mapped is not None else -1
+        if entry_bar < 0 or entry_bar >= n:
+            continue
+        t.entry_bar_index = entry_bar
+
+        sig_raw = str(getattr(t, "signal_date", "") or "").strip()
+        trigger_bar = -1
+        if sig_raw:
+            mapped_sig = _trade_ymd_to_bar_index(index_iso, sig_raw)
+            if mapped_sig is not None:
+                trigger_bar = int(mapped_sig)
+        if trigger_bar < 0:
+            # next_open / typical TBN: trigger is prior trading bar
+            trigger_bar = entry_bar - 1 if entry_bar > 0 else entry_bar
+        if trigger_bar < 0 or trigger_bar >= n:
+            trigger_bar = entry_bar
+
+        entry_price = float(getattr(t, "entry_price", 0.0) or 0.0)
+
+        # --- Entry volume / ATR ---
+        if volume_arr is not None and entry_bar < n:
+            v1 = volume_arr[entry_bar]
+            if v1 == v1:  # not NaN
+                vol_entry = float(v1)
+                t.volume_at_entry = vol_entry
+                start_10 = max(0, entry_bar - 9)
+                slice_10 = volume_arr[start_10 : entry_bar + 1]
+                if slice_10.size > 0:
+                    avg_10d = float(np.nanmean(slice_10))
+                    if avg_10d and avg_10d > 0:
+                        t.avg_volume_10d_at_entry = avg_10d
+                        t.rel_vol_at_entry = vol_entry / avg_10d
+        if volume_arr is not None:
+            t.rel_vol_on_trigger = _rel_vol_at_bar(volume_arr, trigger_bar)
+
+        atr_e, atr_pct_e = _atr_14_and_pct_at_bar(atr_14_arr, close_arr, entry_bar)
+        if atr_e is not None and entry_price > 0:
+            # ATR_PCT_AT_ENTRY uses entry fill price (matches backtest)
+            t.atr_14_at_entry = atr_e
+            t.atr_pct_at_entry = (atr_e / entry_price) * 100.0
+        elif atr_e is not None:
+            t.atr_14_at_entry = atr_e
+            t.atr_pct_at_entry = atr_pct_e
+
+        # --- Trigger metrics (no future bars) ---
+        try:
+            cl_i = close_arr[trigger_bar]
+            op_i = open_arr[trigger_bar]
+            hi_i = high_arr[trigger_bar]
+            lo_i = low_arr[trigger_bar]
+            lookback_z = 20
+            start_z = max(0, trigger_bar - lookback_z + 1)
+            closes_slice = close_arr[start_z : trigger_bar + 1]
+            if closes_slice.size > 1:
+                mean_close = float(np.nanmean(closes_slice))
+                std_close = float(np.nanstd(closes_slice))
+                if std_close > 0:
+                    t.z_score_at_trigger = float((cl_i - mean_close) / std_close)
+            atr_tr = float(atr_14_arr[trigger_bar]) if atr_14_arr[trigger_bar] == atr_14_arr[trigger_bar] else 0.0
+            upper_wick = max(0.0, hi_i - max(op_i, cl_i))
+            lower_wick = max(0.0, min(op_i, cl_i) - lo_i)
+            if atr_tr > 0:
+                t.upper_wick_atr_at_trigger = upper_wick / atr_tr
+                t.lower_wick_atr_at_trigger = lower_wick / atr_tr
+            start_rng = max(0, trigger_bar - 19)
+            hi_slice = high_arr[start_rng : trigger_bar + 1]
+            lo_slice = low_arr[start_rng : trigger_bar + 1]
+            if hi_slice.size > 0 and lo_slice.size > 0:
+                t.is_20bar_high_at_trigger = 1 if hi_i >= float(np.nanmax(hi_slice)) else 0
+                t.is_20bar_low_at_trigger = 1 if lo_i <= float(np.nanmin(lo_slice)) else 0
+            if trigger_bar > 0 and atr_tr > 0:
+                t.move_body_atr_at_trigger = abs(cl_i - close_arr[trigger_bar - 1]) / atr_tr
+        except Exception:
+            pass
+
+        atr_14_trig, atr_pct_trig = _atr_14_and_pct_at_bar(atr_14_arr, close_arr, trigger_bar)
+        t.atr_14_at_trigger = atr_14_trig
+        t.atr_pct_at_trigger = atr_pct_trig
+        t.sma20_at_trigger = _sma_at_bar(sma20_arr, trigger_bar)
+        t.sma50_at_trigger = _sma_at_bar(sma50_arr, trigger_bar)
+        t.sma100_at_trigger = _sma_at_bar(sma100_arr, trigger_bar)
+
+        hi52_e, dist52_e = _high_52w_and_dist_pct(high_arr, entry_bar, entry_price)
+        t.high_52w_at_entry = hi52_e
+        t.dist_to_52w_high_pct = dist52_e
+        trig_close = float(close_arr[trigger_bar]) if trigger_bar < n else 0.0
+        hi52_t, dist52_t = _high_52w_and_dist_pct(high_arr, trigger_bar, trig_close)
+        t.high_52w_at_trigger = hi52_t
+        t.dist_to_52w_high_pct_at_trigger = dist52_t
+
+        last_ath_bar, td_since = _running_ath_last_bar_index(high_arr, entry_bar)
+        t.last_ath_date_at_entry = (
+            index_iso[last_ath_bar][:8] if 0 <= last_ath_bar < len(index_iso) else ""
+        )
+        t.trading_days_since_last_ath_at_entry = int(td_since)
+
+        if 0 <= trigger_bar < len(meteor_rise_ever):
+            t.had_meteoric_rise_before_entry = int(meteor_rise_ever[trigger_bar])
+            t.had_meteoric_fall_before_entry = int(meteor_fall_ever[trigger_bar])
+
+        if rs_st is not None and rs_sp is not None and trigger_bar >= 0:
+            c1, c2, c3 = _rs_excess_pct_points(rs_st, rs_sp, trigger_bar)
+            t.spy_compare_1y = c1
+            t.spy_compare_2y = c2
+            t.spy_compare_3y = c3
+
+    return sym
+
+
+def _enrich_trades_ohlc_features(
+    trades: list[BRTTrade],
+    tickers: Optional[dict[str, pd.DataFrame]],
+    cfg: Optional[BRTConfig] = None,
+    *,
+    spy_df: Optional[pd.DataFrame] = None,
+    data_dir: Optional[Path] = None,
+) -> None:
+    """Post-pass OHLC feature fill for thin trade dicts (SB burst, mirrors, etc.).
+
+    Populates ATR_*/VOLUME_*/SMA*_AT_TRIGGER/HIGH_52W_*/ATH/meteoric/SPY_COMPARE when
+    OHLC history allows. Leaves zone/WPBR/sheet fields untouched (N/A for non-zone systems).
+    No-ops when atr_pct_at_trigger is already set (BRT/YH backtest path).
+    """
+    if not trades:
+        return
+    needs = [t for t in trades if _trade_needs_ohlc_feature_enrichment(t)]
+    if not needs:
+        return
+    tickers = tickers or {}
+    if spy_df is None and data_dir is not None:
+        try:
+            spy_df = _load_benchmark_local(Path(data_dir))
+        except Exception:
+            spy_df = None
+
+    by_sym: dict[str, list[BRTTrade]] = {}
+    for t in needs:
+        by_sym.setdefault((t.symbol or "").strip().upper(), []).append(t)
+    for sym, tlist in by_sym.items():
+        _enrich_symbol_ohlc_features(sym, tlist, tickers.get(sym), cfg, spy_df)
 
 
 def _wpbr_strength_csv_header() -> list[str]:
@@ -14687,6 +15388,7 @@ def write_brt_pivots(rows: list[tuple[str, str, str, float, str]], path: str) ->
 
 _SUMMARY_DAYS_PER_YEAR = 365.25  # calendar years for AVG_TRADES_PER_YEAR
 # Google-sheet position size for Summary SHEET_PNL scaling (engine PnL × SHEET_INVESTMENT / brt_cash).
+# Audit/Report sheet_brt_cash / sheet_PnL use tbn_host_sizing.SHEET_BRT_CASH (47_500, engine default).
 SHEET_INVESTMENT = 45_000.0
 
 
@@ -14790,6 +15492,8 @@ def write_brt_summary(
       Start = max(FIRST_DATA_DATE, entry_start_date) when study start (``entry_start_date`` /
       ``-v start_date``) is set and later than first data; else FIRST_DATA_DATE.
       End = ``backtest_end_date`` if set, else last OHLC date, else max ``date_closed`` for the symbol.
+    - ``AVG_DAYS_HELD``: mean calendar days held across this symbol's closed trades
+      (same idea as Report/Audit ``Avg_Days_Held``, per symbol). Blank when no trades.
     - ``SHEET_PNL``: engine ``TOTAL_PNL`` scaled to sheet size —
       ``SHEET_PNL = TOTAL_PNL × (SHEET_INVESTMENT / brt_cash)`` where ``SHEET_INVESTMENT`` is
       45,000 and ``brt_cash`` is the same per-trade notional used in Report/Audit (post
@@ -14833,6 +15537,7 @@ def write_brt_summary(
                 "INDUSTRY",
                 "FIRST_DATA_DATE",
                 "AVG_TRADES_PER_YEAR",
+                "AVG_DAYS_HELD",
             ]
         )
         for sym in sorted(by_sym.keys()):
@@ -14847,6 +15552,8 @@ def write_brt_summary(
             sheet_pnl_s = f"{(total * sheet_scale):.2f}" if sheet_scale is not None else ""
             avg_pct = sum(t.pnl_pct for t in trades) / n_trades if n_trades else 0
             pct_of_total = (total / total_pnl_overall * 100) if total_pnl_overall and total_pnl_overall != 0 else 0.0
+            days_held = [int(getattr(t, "days_held", 0) or 0) for t in trades]
+            avg_days_s = f"{(sum(days_held) / n_trades):.1f}" if n_trades else ""
             mc_cur = None
             for t in trades:
                 v = getattr(t, "market_cap_current", None)
@@ -14891,6 +15598,7 @@ def write_brt_summary(
                     industry,
                     first_s,
                     avg_tpy_s,
+                    avg_days_s,
                 ]
             )
 
@@ -15017,6 +15725,54 @@ def _write_aggressive_equity_curve(
         print(f"[WARN] Could not write aggressive equity curve: {e}", file=sys.stderr)
 
 
+def _apply_audit_display_and_triple_cash(row: dict[str, Any], cfg: BRTConfig) -> None:
+    """Legacy Audit brt_cash=1M/Max + Total_PNL rescale; then add capacity/effective/sheet fields.
+
+    Metrics Total_PNL on ``row`` is Closed/host capacity scale before this call. Legacy
+    ``brt_cash`` / ``Total_PNL`` keep the 1M display path for reconcile; new columns are additive.
+    """
+    try:
+        from tbn_host_sizing import apply_triple_cash_to_audit_row as _atc
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import apply_triple_cash_to_audit_row as _atc  # type: ignore
+
+    # Capture capacity-scale Total_PNL before display rescale.
+    capacity_total_pnl = row.get("Total_PNL", 0)
+    if isinstance(capacity_total_pnl, str):
+        try:
+            capacity_total_pnl = float(capacity_total_pnl.replace(",", "").replace("%", "").strip() or 0)
+        except (TypeError, ValueError):
+            capacity_total_pnl = 0.0
+    else:
+        try:
+            capacity_total_pnl = float(capacity_total_pnl or 0)
+        except (TypeError, ValueError):
+            capacity_total_pnl = 0.0
+
+    # Post-run capital scaling (same for aggressive and non-aggressive):
+    # Trades and metrics["Total_PNL"] are already in dollars after _apply_report_dollar_scale_to_trades
+    # (cfg.brt_cash = deployable/Max). Scale to report row only if cfg.brt_cash still differs from 1M/max_pos.
+    # Do NOT use initial_capital here — that incorrectly doubled Total_PNL when initial_capital=500k.
+    max_pos = int(row.get("Max_Positions", 1) or 1)
+    if max_pos > 0:
+        adjusted_brt_cash = 1_000_000.0 / max_pos
+        orig_cash = float(cfg.brt_cash) if getattr(cfg, "brt_cash", None) and cfg.brt_cash > 0 else adjusted_brt_cash
+        scale_for_total_pnl = (adjusted_brt_cash / orig_cash) if orig_cash > 0 else 1.0
+        row["Total_PNL"] = capacity_total_pnl * scale_for_total_pnl
+        # Aggressive_Total_PNL stays from metrics (equity sim on initial_capital); do not overwrite with trade sum.
+        row["brt_cash"] = adjusted_brt_cash
+        # Profit_Per_Capital_Day scales with Total_PNL (dollars per day)
+        cap_days = row.get("Capital_Days") or 0
+        try:
+            cap_days = int(cap_days) if isinstance(cap_days, (int, float)) else int(float(str(cap_days).strip() or 0))
+        except (TypeError, ValueError):
+            cap_days = 0
+        if cap_days > 0:
+            row["Profit_Per_Capital_Day"] = row["Total_PNL"] / cap_days
+
+    _atc(row, cfg, capacity_total_pnl=capacity_total_pnl)
+
+
 def write_brt_report(
     cfg: BRTConfig,
     metrics: dict,
@@ -15031,36 +15787,21 @@ def write_brt_report(
     drive_link_cell = f'=hyperlink("{link}","{ts}")'
     cfg_dict = asdict(cfg)
     row: dict[str, Any] = {"Timestamp_Drive": drive_link_cell, "Param_Name": "", "Param_Value": "", "Score": ""}
+    headers = _get_audit_cols_order()
+    for k in headers:
+        if k in cfg_dict:
+            row[k] = cfg_dict.get(k, "")
     for k in _AUDIT_CFG_COLS:
-        row[k] = cfg_dict.get(k, "")
+        if k not in row or row.get(k, "") == "":
+            row[k] = cfg_dict.get(k, "")
     _fill_rs_mode_audit(row, cfg)
+    _fill_mvcp_mode_audit(row, cfg)
+    _fill_qull_mode_audit(row, cfg)
+    _fill_sb_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
-    # Post-run capital scaling (same for aggressive and non-aggressive):
-    # Trades and metrics["Total_PNL"] are already in dollars after _apply_report_dollar_scale_to_trades
-    # (brt_cash = 1M/Max_Positions). Scale to report row only if cfg.brt_cash still differs from 1M/max_pos.
-    # Do NOT use initial_capital here — that incorrectly doubled Total_PNL when initial_capital=500k.
-    max_pos = int(row.get("Max_Positions", 1) or 1)
-    if max_pos > 0:
-        adjusted_brt_cash = 1_000_000.0 / max_pos
-        orig_cash = float(cfg.brt_cash) if getattr(cfg, "brt_cash", None) and cfg.brt_cash > 0 else adjusted_brt_cash
-        scale_for_total_pnl = (adjusted_brt_cash / orig_cash) if orig_cash > 0 else 1.0
-        total_pnl_val = row.get("Total_PNL", 0)
-        if isinstance(total_pnl_val, str):
-            total_pnl_val = float(total_pnl_val.replace(",", "").replace("%", "").strip() or 0)
-        row["Total_PNL"] = total_pnl_val * scale_for_total_pnl
-        # Aggressive_Total_PNL stays from metrics (equity sim on initial_capital); do not overwrite with trade sum.
-        row["brt_cash"] = adjusted_brt_cash
-        # Profit_Per_Capital_Day scales with Total_PNL (dollars per day)
-        cap_days = row.get("Capital_Days") or 0
-        try:
-            cap_days = int(cap_days) if isinstance(cap_days, (int, float)) else int(float(str(cap_days).strip() or 0))
-        except (TypeError, ValueError):
-            cap_days = 0
-        if cap_days > 0:
-            row["Profit_Per_Capital_Day"] = row["Total_PNL"] / cap_days
-    headers = _get_audit_cols_order()
+    _apply_audit_display_and_triple_cash(row, cfg)
     values = [row.get(c, "") for c in headers]
     prefix = file_prefix or _output_file_prefix(cfg)
     path = os.path.join(output_dir, f"{prefix}_Report_{ts}.csv")
@@ -15262,6 +16003,7 @@ _AUDIT_CFG_COLS = [
     "transaction_type", "entry_type", "zone_role_mode", "zone_role_override",
     "brt_cash", "stop_pct", "short_stop_pct", "stop_pct_is_multiplier", "stop_loss_based", "stop_anchor", "target_pct", "target_enabled", "use_sma50", "short_target_pct", "too_high_multiplier", "too_low_multiplier",
     "atr_target", "atr_stop", "trailing_stop_increment", "atr_progress", "atr_days", "atr_progress_incremental_stop",
+    "no_ft_days", "time_stop_days",
     "sma_stop_days", "chandelier_enabled", "chandelier_atr_period", "chandelier_atr_mult",
     "zscore_exit_enabled", "zscore_exit_lookback", "zscore_exit_k",
     "slippage_bps", "commission_per_trade", "liquidate_at_end",
@@ -15282,6 +16024,47 @@ _AUDIT_CFG_COLS = [
     "max_positions",
     "symbol_reentry_cooldown_days",
     "allow_secondary_entries",
+    # StockBee burst (appended; blanked on non-SB via _fill_sb_mode_audit)
+    "sb_mode",
+    "burst_min_pct",
+    "burst_vol_gt_prior",
+    "burst_range_lookback",
+    "burst_dcr_min",
+    "burst_max_prior_up_days",
+    "burst_fill",
+    "burst_max_risk_pct",
+    "burst_time_stop_days",
+    "burst_no_ft_days",
+    "burst_mm_gate",
+    "burst_mm_min_ratio",
+    "mm_min_shares",
+    "mm_min_adv_usd",
+    "mm_min_price",
+    "mm_move_pct",
+    "mm_lookback",
+    "mm_force_rebuild",
+    "burst_require_t1_narrow_or_down",
+    "burst_t1_narrow_mode",
+    "burst_min_price",
+    "burst_min_adv_usd",
+    "burst_adv_lookback",
+    "burst_size_from_stop",
+    "burst_risk_frac",
+    "burst_min_atr_pct_at_trigger",
+    "burst_max_atr_pct_at_trigger",
+    "burst_min_dist_to_52w_high_pct",
+    "burst_max_dist_to_52w_high_pct",
+    "burst_vol_vs_avg_mult",
+    "burst_vol_avg_lookback",
+    "host_dollar_scale",
+    "sb_gold_universe",
+    "sb_signals_total",
+    "sb_rejected_fills_total",
+    "sb_rejected_too_low",
+    "sb_rejected_too_high",
+    "sb_rejected_mm",
+    "sb_rejected_t1_n",
+    "sb_rejected_vol_vs_avg",
 ]
 
 _AGGRESSIVE_METRIC_COLS = [
@@ -15296,6 +16079,9 @@ _AGGRESSIVE_METRIC_COLS = [
 # Result metrics written after Param_Name / Param_Value (see brt_audit_columns.py).
 _METRIC_AUDIT_COLS = [
     "Total_PNL",
+    "capacity_Total_PNL",
+    "effective_Total_PNL",
+    "sheet_PnL",
     "Wins",
     "Losses",
     "BE",
@@ -15409,18 +16195,19 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934).",
     "rl_post_target_reentry_bars": (
         "Trading bars after a TARGET exit during which rl_post_target_reentry_mode applies (0=off). "
-        "Alias: rl_post_target_reentry_days / RL_POST_TARGET_REENTRY_DAYS. Modes are mutually exclusive."
+        "Alias: rl_post_target_reentry_days / RL_POST_TARGET_REENTRY_DAYS. Modes are mutually exclusive. "
+        "Honored in RL mode and in RS/IND scan entry (rocket_tbn relative_strength / indicator_only)."
     ),
     "rl_post_target_reentry_mode": (
         "Post-TARGET re-entry policy when bars>0: stop_loss (default; allow + tighter stop via "
         "rl_post_target_stop_pct) | min_stack (block unless SMA20/SMA50−1 ≥ rl_post_target_min_stack) | "
         "under_sma_limit (block if close < SMA20×(1−rl_post_target_under_sma20)) | none (block all). "
-        "Quality checks use trigger/signal bar SMA/close."
+        "Quality checks use trigger/signal bar SMA/close. Applies to RL and RS/IND."
     ),
     "rl_post_target_stop_pct": (
-        "Tighter stop multiplier (like rl_stop_pct; higher = tighter, e.g. 0.97 ≈ 3% under signal low) "
+        "Tighter stop multiplier (RL: like rl_stop_pct vs signal low; RS: replaces stop_pct vs entry) "
         "for mode=stop_loss when re-entering within rl_post_target_reentry_bars after a TARGET exit "
-        "(0=off / unused when bars=0 or mode≠stop_loss). Fill gates still use rl_stop_pct."
+        "(0=off / unused when bars=0 or mode≠stop_loss). RL fill gates still use rl_stop_pct."
     ),
     "rl_post_target_min_stack": (
         "For mode=min_stack: require (SMA20/SMA50 − 1) ≥ this on the trigger bar (default 0.05)."
@@ -15485,7 +16272,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "mandatory_ind_states_path": "Mandatory IND state rules JSON filename (e.g. mandatory_ind_states.json). Empty = gate off. Resolves from cwd, stock_analysis/, or repo root.",
     "exclude_ind_states_path": "Exclude IND state rules JSON filename (e.g. exclude_ind_states_vol_surge_bull.json). Blocks entry when listed indicators match forbidden states at trigger. Empty = off.",
     "use_sma50": "When true and atr_target=0: long target = SMA(50)*target_pct at entry; short uses SMA(50)*short_target_pct formula.",
-    "indicator_buy": "off | only | both — only = IND-only entry (trade-aligned IND_DIFF >= indicator_diff at trigger close, no zone/retest/RS); both = zone/retest + diff gate + sheet gates; growth_filter still applies when enabled.",
+    "indicator_buy": "off | only | both — only = IND-only entry (trade-aligned IND_DIFF >= indicator_diff at trigger close, no zone/retest/RS); both = zone/retest OR RS scan + diff gate (+ sheet gates on zone path); growth_filter still applies when enabled.",
     "indicator_diff": "Minimum trade-aligned (bull−bear) IND count at trigger bar close when indicator_buy is only or both (default 10). Negative values allowed (e.g. -100). LONG: bullish-aligned; SHORT: bearish-aligned.",
     "max_ind_diff_at_trigger": "Upper-bound gate: require trade-aligned IND_DIFF <= N at trigger bar close (None = off). Independent of indicator_buy; enables low-DIFF overlays on YH/BRT/etc.",
     "entry_start_date": "Inclusive earliest strategy date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries before this date; for WPBR also excludes pivots/zones with pivot Monday before this date (no BO/retest/rocket from those pivots). OHLC warmup/history before this date still loads for weekly/indicator calc. Engine-wide alias: -v start_date= (also data_start / history_start) maps here across BRT/WPBR/PBR/RL/MTS/VEC.",
@@ -15602,12 +16389,38 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "zscore_exit_k": "Z-score exit threshold k (first-stage grid: 2.0 or 2.5).",
     "atr_progress": "ATR schedule: <=0 with atr_days>0 = timed exit only (ATR_timed) at first open after entry_date+atr_days calendar days. >0 = inaction rule (ATR_inaction) unless High clears entry*(1+atr_progress*ATR%%/100) before that scheduled open.",
     "atr_days": "ATR schedule: calendar days from entry date. Exit check occurs at the first trading-bar open strictly after entry_date+atr_days.",
+    "no_ft_days": (
+        "SB-style no-follow-through exit for BRT/RS host path (0=off). "
+        "Sell at close when bars_held >= N and never Close > entry (long). "
+        "Same idea as StockBee burst_no_ft_days; priority after stop/target, before TIME / ATR schedule."
+    ),
+    "time_stop_days": (
+        "SB-style time stop for BRT/RS host path (0=off). "
+        "Sell at close when bars_held >= N (bars from fill bar). "
+        "Same idea as StockBee burst_time_stop_days; after NO_FT, before ATR schedule. "
+        "Not the same as atr_days (calendar → next open)."
+    ),
     # Concentration metrics
     "Pct_PNL_Max_Symbol": "Largest single-symbol contribution as % of total PnL.",
     "Pct_PNL_Max_Trade": "Largest single-trade contribution as % of total PnL.",
     "Pct_PNL_Max_Industry": "Largest single-industry contribution as % of total PnL.",
     "Avg_Positions": "Mean daily open-position count over business days from first open to last close (flat 0-position days included; same hold window as Max_Positions).",
     "Median_Positions": "Median daily open-position count over the same business-day timeline as Avg_Positions.",
+    "capacity_brt_cash": (
+        "Host Closed per-slot notional: D / Max_Positions where "
+        "D = initial_capital × aggressive_max_multiple × margin_utilization (default 600k). "
+        "Same scale as Closed PNL_DOLLARS. Legacy Audit brt_cash stays 1M/Max for reconcile."
+    ),
+    "effective_brt_cash": (
+        "D / max(1.5 × Avg_Positions, 5). When Avg_Positions is missing/0, uses Median_Positions; "
+        "if still unavailable, equals capacity_brt_cash."
+    ),
+    "sheet_brt_cash": (
+        "Fixed Google-sheet / engine per-trade notional (47_500). Distinct from Summary SHEET_INVESTMENT (45_000)."
+    ),
+    "capacity_Total_PNL": "Sum of Closed PNL_DOLLARS on capacity_brt_cash scale (pre Audit 1M display rescale).",
+    "effective_Total_PNL": "capacity_Total_PNL × (effective_brt_cash / capacity_brt_cash).",
+    "sheet_PnL": "capacity_Total_PNL × (sheet_brt_cash / capacity_brt_cash).",
     "meteoric_rise_pct": "Meteoric rise: a day counts if Close >= (1+pct/100)×min(Low) over prior meteoric_rise_lookback bars.",
     "meteoric_rise_lookback": "Trading-bar window N for meteoric rise min-low (default 100).",
     "meteoric_fall_pct": "Meteoric fall: a day counts if Close <= (1-pct/100)×max(High) over prior meteoric_fall_lookback bars.",
@@ -15682,6 +16495,118 @@ def _fill_rs_mode_audit(row: dict, cfg: Any) -> None:
     )
 
 
+def _sb_audit_lever_cols() -> tuple[str, ...]:
+    try:
+        from brt_audit_columns import get_sb_audit_lever_cols
+
+        return get_sb_audit_lever_cols()
+    except ImportError:
+        try:
+            from stock_analysis.brt_audit_columns import get_sb_audit_lever_cols  # type: ignore
+
+            return get_sb_audit_lever_cols()
+        except ImportError:
+            return (
+                "sb_mode",
+                "burst_min_pct",
+                "burst_vol_gt_prior",
+                "burst_range_lookback",
+                "burst_dcr_min",
+                "burst_max_prior_up_days",
+                "burst_fill",
+                "burst_max_risk_pct",
+                "burst_time_stop_days",
+                "burst_no_ft_days",
+                "burst_mm_gate",
+                "burst_mm_min_ratio",
+                "mm_min_shares",
+                "mm_min_adv_usd",
+                "mm_min_price",
+                "mm_move_pct",
+                "mm_lookback",
+                "mm_force_rebuild",
+                "burst_require_t1_narrow_or_down",
+                "burst_t1_narrow_mode",
+                "burst_min_price",
+                "burst_min_adv_usd",
+                "burst_adv_lookback",
+                "burst_size_from_stop",
+                "burst_risk_frac",
+                "burst_min_atr_pct_at_trigger",
+                "burst_max_atr_pct_at_trigger",
+                "burst_min_dist_to_52w_high_pct",
+                "burst_max_dist_to_52w_high_pct",
+                "burst_vol_vs_avg_mult",
+                "burst_vol_avg_lookback",
+                "host_dollar_scale",
+                "sb_gold_universe",
+            )
+
+
+def _mvcp_audit_lever_cols() -> tuple[str, ...]:
+    try:
+        from brt_audit_columns import get_mvcp_audit_lever_cols
+
+        return get_mvcp_audit_lever_cols()
+    except ImportError:
+        try:
+            from stock_analysis.brt_audit_columns import get_mvcp_audit_lever_cols  # type: ignore
+
+            return get_mvcp_audit_lever_cols()
+        except ImportError:
+            return ("mvcp_mode",)
+
+
+def _fill_sb_mode_audit(row: dict, cfg: Any) -> None:
+    """Emit sb_mode; blank StockBee-only burst levers when not in sb_mode."""
+    sb = bool(getattr(cfg, "sb_mode", False))
+    row["sb_mode"] = "true" if sb else "false"
+    if sb:
+        return
+    for k in _sb_audit_lever_cols():
+        if k == "sb_mode":
+            continue
+        row[k] = ""
+
+
+def _fill_mvcp_mode_audit(row: dict, cfg: Any) -> None:
+    """Emit mvcp_mode; blank Minervini VCP-only levers when not in mvcp_mode."""
+    mvcp = bool(getattr(cfg, "mvcp_mode", False))
+    row["mvcp_mode"] = "true" if mvcp else "false"
+    if mvcp:
+        return
+    for k in _mvcp_audit_lever_cols():
+        if k == "mvcp_mode":
+            continue
+        row[k] = ""
+
+
+def _qull_audit_lever_cols() -> tuple[str, ...]:
+    try:
+        from brt_audit_columns import get_qull_audit_lever_cols
+
+        return get_qull_audit_lever_cols()
+    except ImportError:
+        try:
+            from stock_analysis.brt_audit_columns import get_qull_audit_lever_cols  # type: ignore
+
+            return get_qull_audit_lever_cols()
+        except ImportError:
+            return ("qull_mode",)
+
+
+def _fill_qull_mode_audit(row: dict, cfg: Any) -> None:
+    """Emit qull_mode; blank Qull-only levers when not in qull_mode."""
+    qull = bool(getattr(cfg, "qull_mode", False))
+    row["qull_mode"] = "true" if qull else "false"
+    if qull:
+        return
+    for k in _qull_audit_lever_cols():
+        if k == "qull_mode":
+            continue
+        row[k] = ""
+
+
 def _fill_rl_awk_subsystem_audit_defaults(row: dict, cfg: Any) -> None:
     """Fill RL100 / Dive Bomber audit columns (AWK-only) from BEGIN defaults when unset on cfg."""
     try:
@@ -15732,7 +16657,7 @@ def _metrics_to_audit_row(metrics: dict) -> dict:
     dd_raw = metrics.get("DD_Per_Trade", "N/A")
     dd_per_trade = dd_raw if (dd_raw is None or dd_raw == "N/A" or str(dd_raw).strip() == "N/A") else num(dd_raw)
 
-    return {
+    out = {
         "Total_PNL": num(metrics.get("Total_PNL", 0)),
         "Wins": wins, "Losses": losses, "BE": bes,
         "Pct_Wins": pct_wins, "Pct_Losses": pct_losses,
@@ -15783,6 +16708,22 @@ def _metrics_to_audit_row(metrics: dict) -> dict:
         "Trades_Post_Entry_Gain_Hit": int(metrics.get("Trades_Post_Entry_Gain_Hit", 0) or 0),
         "Pct_Trades_Post_Entry_Gain_Hit": num(metrics.get("Pct_Trades_Post_Entry_Gain_Hit", 0)),
     }
+    # SB rejected-fill counters (only when present; blank on non-SB via _fill_sb_mode_audit)
+    for k in (
+        "sb_signals_total",
+        "sb_rejected_fills_total",
+        "sb_rejected_too_low",
+        "sb_rejected_too_high",
+        "sb_rejected_mm",
+        "sb_rejected_t1_n",
+        "sb_rejected_vol_vs_avg",
+    ):
+        if k in metrics and metrics[k] is not None and str(metrics[k]).strip() != "":
+            try:
+                out[k] = int(metrics[k])
+            except (TypeError, ValueError):
+                out[k] = metrics[k]
+    return out
 
 
 def write_brt_audit_report(
@@ -15795,35 +16736,27 @@ def write_brt_audit_report(
     audit_report_suffix: str = "",
 ) -> None:
     """Write audit-format CSV (same structure as BRT_Optimization_Audit) for standalone runs.
-    Uses same post-run capital scaling as BRT_Report (brt_cash = 1M/max_positions, Total_PNL scaled)."""
+    Uses same post-run capital scaling as BRT_Report (brt_cash = 1M/max_positions, Total_PNL scaled).
+    Also writes capacity/effective/sheet cash + PnL companions (see tbn_host_sizing)."""
     link = drive_link or f"https://drive.google.com/drive/search?q={ts}"
     drive_link_cell = f'=hyperlink("{link}","{ts}")'
     cfg_dict = asdict(cfg)
     row = {"Timestamp_Drive": drive_link_cell, "Param_Name": "", "Param_Value": "", "Score": ""}
+    headers = _get_audit_cols_order()
+    for k in headers:
+        if k in cfg_dict:
+            row[k] = cfg_dict.get(k, "")
     for k in _AUDIT_CFG_COLS:
-        row[k] = cfg_dict.get(k, "")
+        if k not in row or row.get(k, "") == "":
+            row[k] = cfg_dict.get(k, "")
     _fill_rs_mode_audit(row, cfg)
+    _fill_mvcp_mode_audit(row, cfg)
+    _fill_qull_mode_audit(row, cfg)
+    _fill_sb_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
-    max_pos = int(row.get("Max_Positions", 1) or 1)
-    if max_pos > 0:
-        adjusted_brt_cash = 1_000_000.0 / max_pos
-        orig_cash = float(cfg.brt_cash) if getattr(cfg, "brt_cash", None) and cfg.brt_cash > 0 else adjusted_brt_cash
-        scale_for_total_pnl = (adjusted_brt_cash / orig_cash) if orig_cash > 0 else 1.0
-        total_pnl_val = row.get("Total_PNL", 0)
-        if isinstance(total_pnl_val, str):
-            total_pnl_val = float(total_pnl_val.replace(",", "").replace("%", "").strip() or 0)
-        row["Total_PNL"] = total_pnl_val * scale_for_total_pnl
-        row["brt_cash"] = adjusted_brt_cash
-        cap_days = row.get("Capital_Days") or 0
-        try:
-            cap_days = int(cap_days) if isinstance(cap_days, (int, float)) else int(float(str(cap_days).strip() or 0))
-        except (TypeError, ValueError):
-            cap_days = 0
-        if cap_days > 0:
-            row["Profit_Per_Capital_Day"] = row["Total_PNL"] / cap_days
-    headers = _get_audit_cols_order()
+    _apply_audit_display_and_triple_cash(row, cfg)
     values = [row.get(c, "") for c in headers]
     prefix = file_prefix or _output_file_prefix(cfg)
     path = os.path.join(output_dir, f"{prefix}_Audit_Report{audit_report_suffix}_{ts}.csv")
@@ -16029,48 +16962,57 @@ def _effective_margin_utilization(cfg: "BRTConfig") -> float:
     Used for passive deployable capital / brt_cash / Max_DD. Independent of ``--aggressive``
     so flipping aggressive only changes Aggressive_* overlay metrics.
     """
-    util = float(getattr(cfg, "margin_utilization", 0.6) or 0.6)
-    return max(0.0, min(util, 1.0))
+    try:
+        from tbn_host_sizing import effective_margin_utilization as _emu
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import effective_margin_utilization as _emu  # type: ignore
+    return _emu(float(getattr(cfg, "margin_utilization", 0.6) or 0.6))
 
 
 def _aggressive_sim_margin_utilization(cfg: "BRTConfig") -> float:
     """Utilization for the aggressive share-level equity overlay only (full 1.0 when aggressive)."""
-    if bool(getattr(cfg, "aggressive", False)):
-        return 1.0
-    return _effective_margin_utilization(cfg)
+    try:
+        from tbn_host_sizing import aggressive_sim_margin_utilization as _amu
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import aggressive_sim_margin_utilization as _amu  # type: ignore
+    return _amu(
+        bool(getattr(cfg, "aggressive", False)),
+        float(getattr(cfg, "margin_utilization", 0.6) or 0.6),
+    )
 
 
 def _margin_deployable_capital(cfg: "BRTConfig") -> float:
     """Total notional budget: initial_capital × leverage × margin_utilization (passive path)."""
+    try:
+        from tbn_host_sizing import margin_deployable_capital as _mdc
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import margin_deployable_capital as _mdc  # type: ignore
     init = float(cfg.initial_capital) if getattr(cfg, "initial_capital", None) and cfg.initial_capital > 0 else 1_000_000.0
     mult = float(getattr(cfg, "aggressive_max_multiple", 2.0) or 2.0)
-    return init * mult * _effective_margin_utilization(cfg)
+    return _mdc(init, mult, float(getattr(cfg, "margin_utilization", 0.6) or 0.6))
 
 
 def _report_adjusted_brt_cash(max_positions: int, cfg: "BRTConfig") -> float:
     """Per-slot notional = deployable margin budget / max(Max_Positions, 1)."""
-    mp = max(int(max_positions or 0), 1)
-    return _margin_deployable_capital(cfg) / mp
+    try:
+        from tbn_host_sizing import report_adjusted_brt_cash as _rabc
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import report_adjusted_brt_cash as _rabc  # type: ignore
+    return _rabc(
+        max_positions,
+        initial_capital=float(cfg.initial_capital) if getattr(cfg, "initial_capital", None) and cfg.initial_capital > 0 else 500_000.0,
+        aggressive_max_multiple=float(getattr(cfg, "aggressive_max_multiple", 2.0) or 2.0),
+        margin_utilization=float(getattr(cfg, "margin_utilization", 0.6) or 0.6),
+    )
 
 
 def _max_concurrent_positions(closed: list[BRTTrade]) -> int:
     """Compute max number of overlapping positions from closed trades."""
-    if not closed:
-        return 0
-    events: list[tuple[pd.Timestamp, int]] = []
-    for t in closed:
-        dopen = _parse_trade_date(t.date_opened)
-        dclose = _parse_trade_date(t.date_closed)
-        if dopen is None or dclose is None:
-            continue
-        events.append((dopen, 1))
-        events.append((dclose, -1))
-    events.sort(key=lambda x: (x[0], -x[1]))  # closes before opens on same day
-    cur, mx = 0, 0
-    for _, delta in events:
-        cur += delta
-        mx = max(mx, cur)
-    return mx
+    try:
+        from tbn_host_sizing import max_concurrent_positions as _mcp
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import max_concurrent_positions as _mcp  # type: ignore
+    return _mcp(closed)
 
 
 def _daily_open_position_counts(closed: list[BRTTrade]) -> list[int]:
@@ -16111,10 +17053,11 @@ def _avg_median_daily_positions(closed: list[BRTTrade]) -> tuple[float, float]:
 
 def _resolve_max_positions(closed: list[BRTTrade], cfg: BRTConfig) -> int:
     """Slot budget for brt_cash scaling: cfg.max_positions when >0, else peak concurrent (min 1)."""
-    override = int(getattr(cfg, "max_positions", 0) or 0)
-    if override > 0:
-        return override
-    return max(_max_concurrent_positions(closed), 1)
+    try:
+        from tbn_host_sizing import resolve_max_positions as _rmp
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import resolve_max_positions as _rmp  # type: ignore
+    return _rmp(closed, int(getattr(cfg, "max_positions", 0) or 0))
 
 
 def _apply_report_dollar_scale_to_trades(
@@ -16130,17 +17073,12 @@ def _apply_report_dollar_scale_to_trades(
 
     Returns (adjusted_brt_cash, scale_factor_applied_to_pnl) where scale is 1.0 if no pnl change.
     """
-    max_pos = _resolve_max_positions(closed, cfg)
-    adjusted = _report_adjusted_brt_cash(max_pos, cfg)
-    orig = float(cfg.brt_cash) if getattr(cfg, "brt_cash", None) and cfg.brt_cash > 0 else adjusted
-    scale = adjusted / orig if orig > 0 else 1.0
-    if abs(scale - 1.0) >= 1e-12:
-        for t in closed:
-            t.pnl_dollars = float(t.pnl_dollars) * scale
-        for t in open_trades:
-            t.pnl_dollars = float(getattr(t, "pnl_dollars", 0) or 0) * scale
-    cfg.brt_cash = adjusted
-    return adjusted, scale if abs(scale - 1.0) >= 1e-12 else 1.0
+    try:
+        from tbn_host_sizing import apply_host_dollar_scale as _ahds
+    except ImportError:
+        from stock_analysis.tbn_host_sizing import apply_host_dollar_scale as _ahds  # type: ignore
+    adjusted, scale, _mp = _ahds(closed, open_trades, cfg)
+    return adjusted, scale
 
 
 def compute_metrics(closed: list[BRTTrade], cfg: BRTConfig) -> dict:
@@ -17913,6 +18851,24 @@ def main() -> int:
             "Zone flags unused. Soft-defaults: min_spy_compare_1y=0, too_high=0, "
             "growth_filter=off (BRT zone defaults; override with -v)."
         )
+    elif bool(getattr(cfg, "mvcp_mode", False)):
+        print(
+            "[TBN] Minervini VCP mode (mvcp_mode=true): Trend Template + VCP pivot breakout - "
+            "Python engine (stock_analysis/rocket_minervini_vcp.py); outputs MVCP_* prefix. "
+            "Isolate with brt/yh/wpbr/rl/rs flags false (see run_minervini_vcp.bat)."
+        )
+    elif bool(getattr(cfg, "qull_mode", False)):
+        print(
+            "[TBN] Qullamaggie HTF/EP (qull_mode=true): prior-run coil breakout + EMA trail - "
+            "Python engine (stock_analysis/rocket_qull_htf.py); outputs QULL_* prefix. "
+            "EP catalyst stubbed (UNKNOWN). Isolate peer systems (see run_qull.bat)."
+        )
+    elif bool(getattr(cfg, "sb_mode", False)):
+        print(
+            "[TBN] StockBee Momentum Burst (sb_mode=true): next_open / LOD / max_risk / NO_FT / TIME - "
+            "Python engine (stock_analysis/rocket_stockbee_burst.py); outputs SB_* prefix. "
+            "Isolate with brt/yh/wpbr/rl/rs/mvcp flags false (see run_sb.bat)."
+        )
     elif _rl_mode_active(getattr(cfg, "rl_mode", "false")):
         print(
             "[TBN] Rocket Launcher mode (rl_mode=true): 50-SMA dip-buy — "
@@ -17971,6 +18927,13 @@ def main() -> int:
             print(f"[TBN] ATR schedule exit (inaction): atr_progress={cfg.atr_progress} atr_days={cfg.atr_days}")
         else:
             print(f"[TBN] ATR schedule exit (timed only): atr_progress=0 atr_days={cfg.atr_days}")
+    _no_ft = int(getattr(cfg, "no_ft_days", 0) or 0)
+    _time_stop = int(getattr(cfg, "time_stop_days", 0) or 0)
+    if _no_ft > 0 or _time_stop > 0:
+        print(
+            f"[TBN] SB-style exits (host path): no_ft_days={_no_ft} time_stop_days={_time_stop} "
+            f"(priority after stop/target: NO_FT -> TIME; bars from fill, sell at close)"
+        )
     if getattr(args, "cprofile", False):
         if len(symbol_list) != 1:
             print("[TBN] --cprofile requires exactly one ticker with -s/--symbol (no comma list).", file=sys.stderr)
@@ -18224,30 +19187,107 @@ def main() -> int:
         if args.profile and profile_symbol_rows:
             print("[PROFILE] --- Post-processing ---")
 
-    if not skip_backtest:
-        t0 = time.time()
-    print(
-        f"[{datetime.now().strftime('%H:%M:%S')}] Starting backtest over "
-        f"{len(_duckdb_parallel_symbol_list) if _duckdb_parallel_symbol_list is not None else len(tickers)} symbols"
-        + (f" ({n_workers} workers)" if n_workers > 0 else "")
-        + "...",
-        flush=True,
-    )
-    if args.profile:
-        print("[PROFILE] Timing enabled (use --profile on the command line to see this and other phase timings).")
-
-    use_parallel = n_workers > 0 and len(symbol_list) != 1
+    use_parallel = (not skip_backtest) and n_workers > 0 and len(symbol_list) != 1
     _print_zones = bool(getattr(args, "print_zones", False))
-    if _print_zones and use_parallel:
+
+    if skip_backtest:
+        # Checkpoint trade lists / pivots already loaded; do not rebuild ticker_list from
+        # tickers (may include SPY for equity) or re-run the backtest (would duplicate Closed).
         print(
-            f"[TBN] --print-zones: each worker writes {{prefix}}_ZONES_<sym>_{ts}.csv under {output_dir}",
+            f"[TBN] --post-only: skipping backtest loop "
+            f"({len(all_closed)} closed, {len(all_open)} open from checkpoint).",
             flush=True,
         )
-    if _duckdb_parallel_symbol_list is not None:
-        ticker_list = list(_duckdb_parallel_symbol_list)
     else:
-        ticker_list = sorted([s for s, df in tickers.items() if len(df) >= _min_bars_required_for_cfg(cfg)])
-    n_total = len(ticker_list)
+        t0 = time.time()
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] Starting backtest over "
+            f"{len(_duckdb_parallel_symbol_list) if _duckdb_parallel_symbol_list is not None else len(tickers)} symbols"
+            + (f" ({n_workers} workers)" if n_workers > 0 else "")
+            + "...",
+            flush=True,
+        )
+        if args.profile:
+            print("[PROFILE] Timing enabled (use --profile on the command line to see this and other phase timings).")
+        if _print_zones and use_parallel:
+            print(
+                f"[TBN] --print-zones: each worker writes {{prefix}}_ZONES_<sym>_{ts}.csv under {output_dir}",
+                flush=True,
+            )
+        if _duckdb_parallel_symbol_list is not None:
+            ticker_list = list(_duckdb_parallel_symbol_list)
+        else:
+            ticker_list = sorted([s for s, df in tickers.items() if len(df) >= _min_bars_required_for_cfg(cfg)])
+        n_total = len(ticker_list)
+
+    if not skip_backtest and bool(getattr(cfg, "sb_mode", False)):
+        try:
+            from rocket_stockbee_burst import run_sb_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_stockbee_burst import run_sb_from_brt_main  # type: ignore
+
+        _sb_rc = run_sb_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _sb_rc
+
+    if not skip_backtest and bool(getattr(cfg, "qull_mode", False)):
+        try:
+            from rocket_qull_htf import run_qull_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_qull_htf import run_qull_from_brt_main  # type: ignore
+
+        _qull_rc = run_qull_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _qull_rc
+
+    if not skip_backtest and bool(getattr(cfg, "mvcp_mode", False)):
+        try:
+            from rocket_minervini_vcp import run_mvcp_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_minervini_vcp import run_mvcp_from_brt_main  # type: ignore
+
+        _mvcp_rc = run_mvcp_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _mvcp_rc
 
     if not skip_backtest and _rl_mode_active(getattr(cfg, "rl_mode", "false")):
         try:
@@ -18272,495 +19312,496 @@ def main() -> int:
         _maybe_play_completion_sound(args.play_sound)
         return _rl_rc
 
-    if pipeline is not None:
-        pipeline.set_meta(
-            ts=ts,
-            n_symbols=n_total,
-            workers=n_workers,
-            use_indicators=bool(getattr(cfg, "use_indicators", False)),
-            indicator_buy=str(getattr(cfg, "indicator_buy", "off")),
-        )
-        pipeline.configure_backtest(n_total)
-    all_pivot_rows: list[tuple[str, str, str, float, str]] = []
-
-    # Z-score: one pass (accept all), then filter trade list by z-scored score before writing
-    need_post_filter = cfg.realtime_filter_enabled and getattr(cfg, "realtime_filter_use_zscore", True)
-    if need_post_filter:
-        ref_stats = None
-        run_cfg = replace(cfg, realtime_filter_threshold=-1e9)
-        print("[TBN] Z-score: one pass (filter off), then filter trades by z-scored score before writing...")
-    else:
-        ref_stats = _load_reference_stats(output_dir)
-        run_cfg = cfg
-        if ref_stats:
-            # Misleading if we said "realtime filter": z-scores are only used when realtime_filter_enabled is True
-            # (entry gate or post-pass filter). Here ref_stats only enriches BRT_Closed optional columns.
-            print(
-                f"[TBN] BRT_ReferenceStats: {len(ref_stats)} variables loaded (audit columns only; "
-                f"realtime_filter_enabled={cfg.realtime_filter_enabled})"
+    if not skip_backtest:
+        if pipeline is not None:
+            pipeline.set_meta(
+                ts=ts,
+                n_symbols=n_total,
+                workers=n_workers,
+                use_indicators=bool(getattr(cfg, "use_indicators", False)),
+                indicator_buy=str(getattr(cfg, "indicator_buy", "off")),
             )
-    run_cfg = replace(run_cfg, emit_would_have=getattr(args, "emit_would_have", False))
-    if getattr(args, "emit_would_have", False):
-        print("[TBN] Emit would-have: recording maturities blocked by growth/tight_range/consolidation for BRT_WouldHave CSV")
+            pipeline.configure_backtest(n_total)
+        all_pivot_rows: list[tuple[str, str, str, float, str]] = []
 
-    try:
-        from per_symbol_settings import load_per_symbol_settings, resolve_settings_path
-    except ImportError:
-        from stock_analysis.per_symbol_settings import load_per_symbol_settings, resolve_settings_path  # type: ignore
-    _ps_arg = str(getattr(args, "per_symbol_settings", "") or "").strip()
-    _ps_path = resolve_settings_path(_ps_arg) if _ps_arg else resolve_settings_path()
-    _per_symbol_settings = load_per_symbol_settings(_ps_path) if _ps_path else {}
-    _run_system = "RL" if _rl_mode_active(getattr(run_cfg, "rl_mode", "false")) else "BRT"
-    _brt_field_names = set(BRTConfig.__dataclass_fields__)
-    if _per_symbol_settings:
-        _n_ps = sum(
-            1
-            for e in _per_symbol_settings.values()
-            if str(e.get("system", "")).strip().upper() in ("", _run_system)
-        )
-        print(
-            f"[TBN] Per-symbol settings: {_ps_path} ({_n_ps} symbols for {_run_system})",
-            flush=True,
-        )
-
-    # use_average_ind: replace the static indicator_diff gate with the per-date cross-sectional
-    # average IND_DIFF across this run's universe. Delegates to the incremental, disk-cached
-    # pre-pass (ind_avg_prepass) so only dates not already covered for this universe are computed.
-    if bool(getattr(run_cfg, "use_average_ind", False)) and str(getattr(run_cfg, "indicator_buy", "off")).lower() in ("only", "both"):
-        try:
-            from ind_avg_prepass import get_or_build_avg_ind_diff_by_date
-        except ImportError:
-            from stock_analysis.ind_avg_prepass import get_or_build_avg_ind_diff_by_date  # type: ignore
-
-        def _avg_load(sym: str):
-            df = tickers.get(sym) if tickers else None
-            if df is not None and len(df):
-                return df
-            return _load_symbol_data(sym, data_dir, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table)
-
-        _avg_side = "SHORT" if str(getattr(run_cfg, "indicator_sides", "")).strip().lower() == "short" else "LONG"
-        print(
-            f"[TBN] use_average_ind: building/loading per-date universe-average IND_DIFF "
-            f"({len(ticker_list)} symbols, side={_avg_side})...",
-            flush=True,
-        )
-        _avg_map = get_or_build_avg_ind_diff_by_date(
-            ticker_list, _avg_load, cfg=run_cfg, side=_avg_side, verbose=True
-        )
-        run_cfg = replace(run_cfg, avg_ind_diff_by_date=_avg_map)
-
-    if use_parallel:
-        # Pre-build SPY IND_DIFF lookup in parent; workers receive it via pool initializer (no per-symbol rebuild).
-        _t_spy_prewarm = time.time()
-        _spy_prewarm_df = _load_benchmark_unified(
-            use_duckdb=use_duckdb,
-            db_path=db_path,
-            db_table=db_table,
-            data_dir=data_dir,
-        )
-        _spy_prewarm_lookup = None
-        _spy_tc_int_prewarm = None
-        if _spy_prewarm_df is not None and not _spy_prewarm_df.empty:
-            _spy_prewarm_lookup = _get_spy_ind_diff_lookup(_spy_prewarm_df, run_cfg)
-            if _spy_prewarm_lookup is not None:
+        # Z-score: one pass (accept all), then filter trade list by z-scored score before writing
+        need_post_filter = cfg.realtime_filter_enabled and getattr(cfg, "realtime_filter_use_zscore", True)
+        if need_post_filter:
+            ref_stats = None
+            run_cfg = replace(cfg, realtime_filter_threshold=-1e9)
+            print("[TBN] Z-score: one pass (filter off), then filter trades by z-scored score before writing...")
+        else:
+            ref_stats = _load_reference_stats(output_dir)
+            run_cfg = cfg
+            if ref_stats:
+                # Misleading if we said "realtime filter": z-scores are only used when realtime_filter_enabled is True
+                # (entry gate or post-pass filter). Here ref_stats only enriches BRT_Closed optional columns.
                 print(
-                    f"[TBN] SPY IND_DIFF precomputed ({len(_spy_prewarm_lookup.long_by_date)} days) "
-                    f"in {time.time() - _t_spy_prewarm:.1f}s (workers reuse parent lookup)",
-                    flush=True,
+                    f"[TBN] BRT_ReferenceStats: {len(ref_stats)} variables loaded (audit columns only; "
+                    f"realtime_filter_enabled={cfg.realtime_filter_enabled})"
                 )
-            if _spy_int_tc_any_filter_active(run_cfg):
-                _spy_tc_int_prewarm = _get_spy_tc_int_outlook_lookup(_spy_prewarm_df, run_cfg)
-                if _spy_tc_int_prewarm is not None:
-                    _hz = _cfg_spy_tc_weak_horizon(run_cfg)
-                    _col = _cfg_spy_tc_outlook_col(run_cfg)
+        run_cfg = replace(run_cfg, emit_would_have=getattr(args, "emit_would_have", False))
+        if getattr(args, "emit_would_have", False):
+            print("[TBN] Emit would-have: recording maturities blocked by growth/tight_range/consolidation for BRT_WouldHave CSV")
+
+        try:
+            from per_symbol_settings import load_per_symbol_settings, resolve_settings_path
+        except ImportError:
+            from stock_analysis.per_symbol_settings import load_per_symbol_settings, resolve_settings_path  # type: ignore
+        _ps_arg = str(getattr(args, "per_symbol_settings", "") or "").strip()
+        _ps_path = resolve_settings_path(_ps_arg) if _ps_arg else resolve_settings_path()
+        _per_symbol_settings = load_per_symbol_settings(_ps_path) if _ps_path else {}
+        _run_system = "RL" if _rl_mode_active(getattr(run_cfg, "rl_mode", "false")) else "BRT"
+        _brt_field_names = set(BRTConfig.__dataclass_fields__)
+        if _per_symbol_settings:
+            _n_ps = sum(
+                1
+                for e in _per_symbol_settings.values()
+                if str(e.get("system", "")).strip().upper() in ("", _run_system)
+            )
+            print(
+                f"[TBN] Per-symbol settings: {_ps_path} ({_n_ps} symbols for {_run_system})",
+                flush=True,
+            )
+
+        # use_average_ind: replace the static indicator_diff gate with the per-date cross-sectional
+        # average IND_DIFF across this run's universe. Delegates to the incremental, disk-cached
+        # pre-pass (ind_avg_prepass) so only dates not already covered for this universe are computed.
+        if bool(getattr(run_cfg, "use_average_ind", False)) and str(getattr(run_cfg, "indicator_buy", "off")).lower() in ("only", "both"):
+            try:
+                from ind_avg_prepass import get_or_build_avg_ind_diff_by_date
+            except ImportError:
+                from stock_analysis.ind_avg_prepass import get_or_build_avg_ind_diff_by_date  # type: ignore
+
+            def _avg_load(sym: str):
+                df = tickers.get(sym) if tickers else None
+                if df is not None and len(df):
+                    return df
+                return _load_symbol_data(sym, data_dir, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table)
+
+            _avg_side = "SHORT" if str(getattr(run_cfg, "indicator_sides", "")).strip().lower() == "short" else "LONG"
+            print(
+                f"[TBN] use_average_ind: building/loading per-date universe-average IND_DIFF "
+                f"({len(ticker_list)} symbols, side={_avg_side})...",
+                flush=True,
+            )
+            _avg_map = get_or_build_avg_ind_diff_by_date(
+                ticker_list, _avg_load, cfg=run_cfg, side=_avg_side, verbose=True
+            )
+            run_cfg = replace(run_cfg, avg_ind_diff_by_date=_avg_map)
+
+        if use_parallel:
+            # Pre-build SPY IND_DIFF lookup in parent; workers receive it via pool initializer (no per-symbol rebuild).
+            _t_spy_prewarm = time.time()
+            _spy_prewarm_df = _load_benchmark_unified(
+                use_duckdb=use_duckdb,
+                db_path=db_path,
+                db_table=db_table,
+                data_dir=data_dir,
+            )
+            _spy_prewarm_lookup = None
+            _spy_tc_int_prewarm = None
+            if _spy_prewarm_df is not None and not _spy_prewarm_df.empty:
+                _spy_prewarm_lookup = _get_spy_ind_diff_lookup(_spy_prewarm_df, run_cfg)
+                if _spy_prewarm_lookup is not None:
                     print(
-                        f"[TBN] SPY {_col} (horizon={_hz}) precomputed "
-                        f"({len(_spy_tc_int_prewarm.outlook_by_date)} days) for SPY TC Weak filters",
+                        f"[TBN] SPY IND_DIFF precomputed ({len(_spy_prewarm_lookup.long_by_date)} days) "
+                        f"in {time.time() - _t_spy_prewarm:.1f}s (workers reuse parent lookup)",
                         flush=True,
                     )
-        # Explicit dict for worker processes: ensure all BRTConfig fields are passed
-        try:
-            from per_symbol_settings import cfg_dict_with_overrides
-        except ImportError:
-            from stock_analysis.per_symbol_settings import cfg_dict_with_overrides  # type: ignore
-        _zones_task_tail = (
-            str(output_dir),
-            ts,
-            _file_prefix,
-            _print_zones,
-        ) if _print_zones else ()
-        tasks = [
-            (
-                sym,
-                str(data_dir / f"{sym}.csv"),
-                cfg_dict_with_overrides(
-                    run_cfg, sym, _per_symbol_settings, _run_system, field_names=_brt_field_names
-                ),
-                ref_stats,
-                _profile_backtest_workers,
-                use_duckdb,
-                db_path,
-                db_table,
-                *_zones_task_tail,
+                if _spy_int_tc_any_filter_active(run_cfg):
+                    _spy_tc_int_prewarm = _get_spy_tc_int_outlook_lookup(_spy_prewarm_df, run_cfg)
+                    if _spy_tc_int_prewarm is not None:
+                        _hz = _cfg_spy_tc_weak_horizon(run_cfg)
+                        _col = _cfg_spy_tc_outlook_col(run_cfg)
+                        print(
+                            f"[TBN] SPY {_col} (horizon={_hz}) precomputed "
+                            f"({len(_spy_tc_int_prewarm.outlook_by_date)} days) for SPY TC Weak filters",
+                            flush=True,
+                        )
+            # Explicit dict for worker processes: ensure all BRTConfig fields are passed
+            try:
+                from per_symbol_settings import cfg_dict_with_overrides
+            except ImportError:
+                from stock_analysis.per_symbol_settings import cfg_dict_with_overrides  # type: ignore
+            _zones_task_tail = (
+                str(output_dir),
+                ts,
+                _file_prefix,
+                _print_zones,
+            ) if _print_zones else ()
+            tasks = [
+                (
+                    sym,
+                    str(data_dir / f"{sym}.csv"),
+                    cfg_dict_with_overrides(
+                        run_cfg, sym, _per_symbol_settings, _run_system, field_names=_brt_field_names
+                    ),
+                    ref_stats,
+                    _profile_backtest_workers,
+                    use_duckdb,
+                    db_path,
+                    db_table,
+                    *_zones_task_tail,
+                )
+                for sym in ticker_list
+            ]
+            n_tasks = len(tasks)
+            done = 0
+            progress_t0 = time.perf_counter()
+            print(
+                f"[TBN] Spawning {n_workers} worker process(es) for {n_tasks} symbols — "
+                "no progress line until the first symbol completes (often several minutes on a cold run).",
+                flush=True,
             )
-            for sym in ticker_list
-        ]
-        n_tasks = len(tasks)
-        done = 0
-        progress_t0 = time.perf_counter()
-        print(
-            f"[TBN] Spawning {n_workers} worker process(es) for {n_tasks} symbols — "
-            "no progress line until the first symbol completes (often several minutes on a cold run).",
-            flush=True,
-        )
-        with _make_brt_process_pool(
-            n_workers,
-            _spy_prewarm_lookup,
-            use_duckdb=use_duckdb,
-            db_path=db_path,
-            db_table=db_table,
-            data_dir=data_dir,
-            spy_tc_int_lookup=_spy_tc_int_prewarm,
-        ) as ex:
-            for future in as_completed(ex.submit(_process_symbol, t) for t in tasks):
-                # _process_symbol returns 13 values (watchlist, breakout_retest_rows, extra_open_trades, indicators_while_held, …).
-                # Be tolerant of older 7-tuple / 9-tuple / 10-tuple / 12-tuple returns if a mixed/partial deploy ever happens.
-                res = future.result()
-                extra_open_parallel: list[BRTTrade] = []
-                br_rows: list = []
-                ind_wh_rows: list = []
-                if len(res) >= 13:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows, extra_open_parallel, ind_wh_rows = (
-                        res[:13]
+            with _make_brt_process_pool(
+                n_workers,
+                _spy_prewarm_lookup,
+                use_duckdb=use_duckdb,
+                db_path=db_path,
+                db_table=db_table,
+                data_dir=data_dir,
+                spy_tc_int_lookup=_spy_tc_int_prewarm,
+            ) as ex:
+                for future in as_completed(ex.submit(_process_symbol, t) for t in tasks):
+                    # _process_symbol returns 13 values (watchlist, breakout_retest_rows, extra_open_trades, indicators_while_held, …).
+                    # Be tolerant of older 7-tuple / 9-tuple / 10-tuple / 12-tuple returns if a mixed/partial deploy ever happens.
+                    res = future.result()
+                    extra_open_parallel: list[BRTTrade] = []
+                    br_rows: list = []
+                    ind_wh_rows: list = []
+                    if len(res) >= 13:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows, extra_open_parallel, ind_wh_rows = (
+                            res[:13]
+                        )
+                        all_breakout_retest.extend(br_rows)
+                        all_indicators_while_held.extend(ind_wh_rows)
+                    elif len(res) >= 12:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows, extra_open_parallel = (
+                            res[:12]
+                        )
+                        all_breakout_retest.extend(br_rows)
+                    elif len(res) == 11:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows = res
+                        all_breakout_retest.extend(br_rows)
+                    elif len(res) == 10:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist = res
+                    elif len(res) == 9:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts = res
+                        watchlist = []
+                    elif len(res) == 7:
+                        sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have = res
+                        timing_row, block_counts, watchlist = {}, {}, []
+                    else:
+                        raise ValueError(f"_process_symbol returned {len(res)} values (expected 7, 9, 10, 11, 12, or 13)")
+                    all_closed.extend(closed)
+                    if getattr(args, "emit_would_have", False):
+                        all_would_have.extend(would_have)
+                    if open_trade:
+                        all_open.append(open_trade)
+                    for _xo in extra_open_parallel or []:
+                        all_open.append(_xo)
+                    all_scanner.extend(scanner)
+                    all_watchlist.extend(watchlist)
+                    all_short_candidates.extend(short_cands)
+                    all_pivot_rows.extend(pivot_rows)
+                    if _collect_symbol_timings and timing_row:
+                        profile_symbol_rows.append(timing_row)
+                        for reason, count in sorted(block_counts.items()):
+                            profile_block_rows.append({"symbol": sym, "reason": reason, "count": int(count)})
+                    done += 1
+                    _backtest_progress(done, n_tasks, progress_t0, pipeline)
+            if n_tasks > 1:
+                print()
+            if _normalize_indicator_buy(getattr(run_cfg, "indicator_buy", "off")) in ("only", "both"):
+                print(
+                    "[TBN] Parallel run: suppressed per-symbol stderr for short-history indicator_buy precompute "
+                    "(keeps the [PROGRESS] line stable). Use -w 0 or -s SYMBOL to log each symbol.",
+                    flush=True,
+                )
+        else:
+            # Load benchmark once for all symbols (sequential path)
+            _t_bench = time.time()
+            if pipeline is not None:
+                with pipeline.phase("benchmark_load"):
+                    benchmark_df_seq = _load_benchmark_unified(
+                        use_duckdb=use_duckdb,
+                        db_path=db_path,
+                        db_table=db_table,
+                        data_dir=data_dir,
                     )
-                    all_breakout_retest.extend(br_rows)
-                    all_indicators_while_held.extend(ind_wh_rows)
-                elif len(res) >= 12:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows, extra_open_parallel = (
-                        res[:12]
+            elif use_duckdb:
+                benchmark_df_seq = _load_benchmark_unified(
+                    use_duckdb=True,
+                    db_path=db_path,
+                    db_table=db_table,
+                    data_dir=data_dir,
+                )
+            else:
+                benchmark_df_seq = _load_benchmark_unified(
+                    use_duckdb=False,
+                    db_path="",
+                    db_table=db_table,
+                    data_dir=data_dir,
+                )
+            if args.profile:
+                print(f"[PROFILE] benchmark_load (SPY): {time.time() - _t_bench:.2f}s")
+            spy_lookup_seq = _resolve_spy_ind_diff_lookup(run_cfg, benchmark_df_seq)
+            profile_beta_times = [] if args.profile else None
+            _ind_wh_out_seq = all_indicators_while_held if _indicator_mode_active(run_cfg) else None
+            progress_t0 = time.perf_counter()
+            for idx, sym in enumerate(ticker_list, 1):
+                _sym_t0 = time.time()
+                df = tickers[sym]
+                try:
+                    from per_symbol_settings import overrides_for_symbol
+                except ImportError:
+                    from stock_analysis.per_symbol_settings import overrides_for_symbol  # type: ignore
+                _sym_ov = (
+                    overrides_for_symbol(_per_symbol_settings, sym, _run_system, valid_fields=_brt_field_names)
+                    if _per_symbol_settings
+                    else {}
+                )
+                _sym_cfg = replace(run_cfg, **_sym_ov) if _sym_ov else run_cfg
+                _alt_entry_run = _skip_brt_pivot_stack(_sym_cfg)
+                if not _alt_entry_run:
+                    _t = time.time()
+                    pivot_high, pivot_low, ph_price, pl_price = compute_pivots(
+                        df, _sym_cfg.pivot_k, _sym_cfg.pivot_d, _sym_cfg.pivot_disp, _sym_cfg.pivot_m, realtime_filter_enabled=_sym_cfg.realtime_filter_enabled
                     )
-                    all_breakout_retest.extend(br_rows)
-                elif len(res) == 11:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist, br_rows = res
-                    all_breakout_retest.extend(br_rows)
-                elif len(res) == 10:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts, watchlist = res
-                elif len(res) == 9:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have, timing_row, block_counts = res
-                    watchlist = []
-                elif len(res) == 7:
-                    sym, closed, open_trade, scanner, short_cands, pivot_rows, would_have = res
-                    timing_row, block_counts, watchlist = {}, {}, []
+                    t_pivots = time.time() - _t
+                    _t = time.time()
+                    struct = compute_market_structure(df, pivot_high, pivot_low, ph_price, pl_price)
+                    t_structure = time.time() - _t
+                    _t = time.time()
+                    level3 = build_level3_for_cfg(
+                        df, _sym_cfg, pivot_high, pivot_low, ph_price, pl_price, debug_symbol=sym,
+                    )
+                    t_touch = time.time() - _t
                 else:
-                    raise ValueError(f"_process_symbol returned {len(res)} values (expected 7, 9, 10, 11, 12, or 13)")
+                    t_pivots = 0.0
+                    t_structure = 0.0
+                    t_touch = 0.0
+                zone_entries_debug: list = []
+                benchmark_df = benchmark_df_seq
+                block_counts: dict[str, int] = {}
+                bt_sections: dict[str, float] = {}
+                _t = time.time()
+                _cprof_sym = bool(
+                    getattr(args, "cprofile", False) and len(symbol_list) == 1 and sym == symbol_list[0]
+                )
+                _cprof_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_sym else None
+                _cprof_smt_sym = bool(
+                    getattr(args, "cprofile_sheet_magic_touch", False)
+                    and len(symbol_list) == 1
+                    and sym == symbol_list[0]
+                )
+                _cprof_smt_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_smt_sym else None
+                _cprof_prep_sym = bool(
+                    getattr(args, "cprofile_pending_sheet_prep", False)
+                    and len(symbol_list) == 1
+                    and sym == symbol_list[0]
+                )
+                _cprof_prep_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_prep_sym else None
+                if _cprof_obj is not None:
+                    _cprof_obj.enable()
+                _dual_sym = _normalize_transaction_type(getattr(_sym_cfg, "transaction_type", "long")) == "both"
+                extra_open_trades_loop: list[BRTTrade] = []
+                try:
+                    if _alt_entry_run:
+                        closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = (
+                            _run_alt_entry_backtest_bundle(sym, df, _sym_cfg, benchmark_df)
+                        )
+                    elif _print_zones:
+                        if _dual_sym:
+                            br_zl: list[dict] = []
+                            br_zs: list[dict] = []
+                            cfg_zl = replace(_sym_cfg, entry_type="long", transaction_type="long")
+                            cfg_zs = replace(_sym_cfg, entry_type="short", transaction_type="short")
+                            closed_l, ot_l, scan_l, sc_l, wh_l, wl_l, extra_l = run_brt_backtest(
+                                sym, df, cfg_zl, ph_price, pl_price, struct, level3, zone_entries_debug=zone_entries_debug,
+                                benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=br_zl,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                            _tag_breakout_rows_side(br_zl, "LONG")
+                            all_breakout_retest.extend(br_zl)
+                            closed_s, ot_s, scan_s, sc_s, wh_s, wl_s, extra_s = run_brt_backtest(
+                                sym, df, cfg_zs, ph_price, pl_price, struct, level3, zone_entries_debug=None,
+                                benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=br_zs,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                            _tag_breakout_rows_side(br_zs, "SHORT")
+                            all_breakout_retest.extend(br_zs)
+                            closed = _merge_closed_dual_streams(closed_l, closed_s)
+                            scanner = scan_l + scan_s
+                            short_cands = sc_l + sc_s
+                            would_have = wh_l + wh_s
+                            watchlist = wl_l + wl_s
+                            open_trade, extra_from_dual = _dual_bundle_primary_extra_open(ot_l, ot_s)
+                            extra_open_trades_loop = list(extra_l) + list(extra_s) + list(extra_from_dual)
+                        else:
+                            closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = run_brt_backtest(
+                                sym, df, _sym_cfg, ph_price, pl_price, struct, level3, zone_entries_debug=zone_entries_debug,
+                                benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=all_breakout_retest,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                    else:
+                        if _dual_sym:
+                            br_dl: list[dict] = []
+                            br_ds: list[dict] = []
+                            cfg_dl = replace(_sym_cfg, entry_type="long", transaction_type="long")
+                            cfg_ds = replace(_sym_cfg, entry_type="short", transaction_type="short")
+                            closed_l, ot_l, scan_l, sc_l, wh_l, wl_l, extra_l = run_brt_backtest(
+                                sym, df, cfg_dl, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
+                                profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=br_dl,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                            _tag_breakout_rows_side(br_dl, "LONG")
+                            all_breakout_retest.extend(br_dl)
+                            closed_s, ot_s, scan_s, sc_s, wh_s, wl_s, extra_s = run_brt_backtest(
+                                sym, df, cfg_ds, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
+                                profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=br_ds,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                            _tag_breakout_rows_side(br_ds, "SHORT")
+                            all_breakout_retest.extend(br_ds)
+                            closed = _merge_closed_dual_streams(closed_l, closed_s)
+                            scanner = scan_l + scan_s
+                            short_cands = sc_l + sc_s
+                            would_have = wh_l + wh_s
+                            watchlist = wl_l + wl_s
+                            open_trade, extra_from_dual = _dual_bundle_primary_extra_open(ot_l, ot_s)
+                            extra_open_trades_loop = list(extra_l) + list(extra_s) + list(extra_from_dual)
+                        else:
+                            closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = run_brt_backtest(
+                                sym, df, _sym_cfg, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
+                                profile_beta_times=profile_beta_times, reference_stats=ref_stats,
+                                profile_block_reasons=block_counts,
+                                profile_backtest_sections=bt_sections if args.profile else None,
+                                cprofile_magic_touch=_cprof_smt_obj,
+                                cprofile_pending_sheet_prep=_cprof_prep_obj,
+                                breakout_retest_rows_out=all_breakout_retest,
+                                indicators_while_held_rows_out=_ind_wh_out_seq,
+                            )
+                finally:
+                    if _cprof_obj is not None:
+                        _cprof_obj.disable()
+                        _co = (args.cprofile_out or "").strip()
+                        if _co:
+                            _cprof_path = Path(_co)
+                        else:
+                            _cprof_path = output_dir / f"{_file_prefix}_cProfile_{sym}_{ts}.prof"
+                        if _cprof_path.suffix.lower() not in (".prof", ".pstats"):
+                            _cprof_path = _cprof_path.with_suffix(".prof")
+                        _cprof_path.parent.mkdir(parents=True, exist_ok=True)
+                        _cprof_obj.dump_stats(str(_cprof_path))
+                        print(f"[PROFILE] cProfile (run_brt_backtest only): {_cprof_path.resolve()}")
+                        print(f"[PROFILE]   python -m pstats {_cprof_path}   # then: sort cumulative / stats 40")
+                        print(f"[PROFILE]   snakeviz {_cprof_path}   # pip install snakeviz")
+                        print("[PROFILE] Wall-time flame (optional): py-spy record -o flame.svg -- python ... rocket_tbn.py ...")
+                    if _cprof_smt_obj is not None:
+                        _smt_co = (getattr(args, "cprofile_sheet_magic_touch_out", "") or "").strip()
+                        if _smt_co:
+                            _smt_path = Path(_smt_co)
+                        else:
+                            _smt_path = output_dir / f"{_file_prefix}_cProfile_sheet_magic_touch_{sym}_{ts}.prof"
+                        if _smt_path.suffix.lower() not in (".prof", ".pstats"):
+                            _smt_path = _smt_path.with_suffix(".prof")
+                        _smt_path.parent.mkdir(parents=True, exist_ok=True)
+                        _cprof_smt_obj.dump_stats(str(_smt_path))
+                        print(f"[PROFILE] cProfile (bt_loop_sheet_magic_touch block only): {_smt_path.resolve()}")
+                        print(f"[PROFILE]   python -m pstats {_smt_path}   # sort cumulative; stats 30")
+                        print(f"[PROFILE]   snakeviz {_smt_path}")
+                    if _cprof_prep_obj is not None:
+                        _prep_co = (getattr(args, "cprofile_pending_sheet_prep_out", "") or "").strip()
+                        if _prep_co:
+                            _prep_path = Path(_prep_co)
+                        else:
+                            _prep_path = output_dir / f"{_file_prefix}_cProfile_pending_sheet_prep_{sym}_{ts}.prof"
+                        if _prep_path.suffix.lower() not in (".prof", ".pstats"):
+                            _prep_path = _prep_path.with_suffix(".prof")
+                        _prep_path.parent.mkdir(parents=True, exist_ok=True)
+                        _cprof_prep_obj.dump_stats(str(_prep_path))
+                        print(f"[PROFILE] cProfile (bt_loop_pending_sheet_prep block only): {_prep_path.resolve()}")
+                        print(f"[PROFILE]   python -m pstats {_prep_path}   # sort cumulative; stats 30")
+                        print(f"[PROFILE]   snakeviz {_prep_path}")
+                t_backtest = time.time() - _t
+                _apply_spy_ind_diff_at_entry(closed, open_trade, extra_open_trades_loop, spy_lookup_seq)
                 all_closed.extend(closed)
                 if getattr(args, "emit_would_have", False):
                     all_would_have.extend(would_have)
                 if open_trade:
                     all_open.append(open_trade)
-                for _xo in extra_open_parallel or []:
-                    all_open.append(_xo)
+                all_open.extend(extra_open_trades_loop)
                 all_scanner.extend(scanner)
                 all_watchlist.extend(watchlist)
                 all_short_candidates.extend(short_cands)
-                all_pivot_rows.extend(pivot_rows)
-                if _collect_symbol_timings and timing_row:
-                    profile_symbol_rows.append(timing_row)
+                _t = time.time()
+                if not _alt_entry_run:
+                    all_pivot_rows.extend(collect_brt_pivots(sym, df, pivot_high, pivot_low, ph_price, pl_price, struct))
+                t_collect_pivots = time.time() - _t
+                if _collect_symbol_timings:
+                    _row = {
+                        "symbol": sym,
+                        "bars": int(len(df)),
+                        "t_load": 0.0,  # already loaded in parent path
+                        "t_spy_lookup": 0.0,
+                        "t_pivots": t_pivots,
+                        "t_structure": t_structure,
+                        "t_touch": t_touch,
+                        "t_backtest": t_backtest,
+                        "t_collect_pivots": t_collect_pivots,
+                        "t_total": time.time() - _sym_t0,
+                    }
+                    _row.update(bt_sections)
+                    profile_symbol_rows.append(_row)
                     for reason, count in sorted(block_counts.items()):
                         profile_block_rows.append({"symbol": sym, "reason": reason, "count": int(count)})
-                done += 1
-                _backtest_progress(done, n_tasks, progress_t0, pipeline)
-        if n_tasks > 1:
-            print()
-        if _normalize_indicator_buy(getattr(run_cfg, "indicator_buy", "off")) in ("only", "both"):
-            print(
-                "[TBN] Parallel run: suppressed per-symbol stderr for short-history indicator_buy precompute "
-                "(keeps the [PROGRESS] line stable). Use -w 0 or -s SYMBOL to log each symbol.",
-                flush=True,
-            )
-    else:
-        # Load benchmark once for all symbols (sequential path)
-        _t_bench = time.time()
-        if pipeline is not None:
-            with pipeline.phase("benchmark_load"):
-                benchmark_df_seq = _load_benchmark_unified(
-                    use_duckdb=use_duckdb,
-                    db_path=db_path,
-                    db_table=db_table,
-                    data_dir=data_dir,
-                )
-        elif use_duckdb:
-            benchmark_df_seq = _load_benchmark_unified(
-                use_duckdb=True,
-                db_path=db_path,
-                db_table=db_table,
-                data_dir=data_dir,
-            )
-        else:
-            benchmark_df_seq = _load_benchmark_unified(
-                use_duckdb=False,
-                db_path="",
-                db_table=db_table,
-                data_dir=data_dir,
-            )
-        if args.profile:
-            print(f"[PROFILE] benchmark_load (SPY): {time.time() - _t_bench:.2f}s")
-        spy_lookup_seq = _resolve_spy_ind_diff_lookup(run_cfg, benchmark_df_seq)
-        profile_beta_times = [] if args.profile else None
-        _ind_wh_out_seq = all_indicators_while_held if _indicator_mode_active(run_cfg) else None
-        progress_t0 = time.perf_counter()
-        for idx, sym in enumerate(ticker_list, 1):
-            _sym_t0 = time.time()
-            df = tickers[sym]
-            try:
-                from per_symbol_settings import overrides_for_symbol
-            except ImportError:
-                from stock_analysis.per_symbol_settings import overrides_for_symbol  # type: ignore
-            _sym_ov = (
-                overrides_for_symbol(_per_symbol_settings, sym, _run_system, valid_fields=_brt_field_names)
-                if _per_symbol_settings
-                else {}
-            )
-            _sym_cfg = replace(run_cfg, **_sym_ov) if _sym_ov else run_cfg
-            _alt_entry_run = _skip_brt_pivot_stack(_sym_cfg)
-            if not _alt_entry_run:
-                _t = time.time()
-                pivot_high, pivot_low, ph_price, pl_price = compute_pivots(
-                    df, _sym_cfg.pivot_k, _sym_cfg.pivot_d, _sym_cfg.pivot_disp, _sym_cfg.pivot_m, realtime_filter_enabled=_sym_cfg.realtime_filter_enabled
-                )
-                t_pivots = time.time() - _t
-                _t = time.time()
-                struct = compute_market_structure(df, pivot_high, pivot_low, ph_price, pl_price)
-                t_structure = time.time() - _t
-                _t = time.time()
-                level3 = build_level3_for_cfg(
-                    df, _sym_cfg, pivot_high, pivot_low, ph_price, pl_price, debug_symbol=sym,
-                )
-                t_touch = time.time() - _t
-            else:
-                t_pivots = 0.0
-                t_structure = 0.0
-                t_touch = 0.0
-            zone_entries_debug: list = []
-            benchmark_df = benchmark_df_seq
-            block_counts: dict[str, int] = {}
-            bt_sections: dict[str, float] = {}
-            _t = time.time()
-            _cprof_sym = bool(
-                getattr(args, "cprofile", False) and len(symbol_list) == 1 and sym == symbol_list[0]
-            )
-            _cprof_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_sym else None
-            _cprof_smt_sym = bool(
-                getattr(args, "cprofile_sheet_magic_touch", False)
-                and len(symbol_list) == 1
-                and sym == symbol_list[0]
-            )
-            _cprof_smt_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_smt_sym else None
-            _cprof_prep_sym = bool(
-                getattr(args, "cprofile_pending_sheet_prep", False)
-                and len(symbol_list) == 1
-                and sym == symbol_list[0]
-            )
-            _cprof_prep_obj: Optional[cProfile.Profile] = cProfile.Profile() if _cprof_prep_sym else None
-            if _cprof_obj is not None:
-                _cprof_obj.enable()
-            _dual_sym = _normalize_transaction_type(getattr(_sym_cfg, "transaction_type", "long")) == "both"
-            extra_open_trades_loop: list[BRTTrade] = []
-            try:
-                if _alt_entry_run:
-                    closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = (
-                        _run_alt_entry_backtest_bundle(sym, df, _sym_cfg, benchmark_df)
+
+                if not _alt_entry_run and _print_zones:
+                    _write_zone_debug_files(
+                        sym,
+                        df,
+                        level3,
+                        zone_entries_debug,
+                        _sym_cfg.band_pct,
+                        str(output_dir),
+                        ts,
+                        _file_prefix,
                     )
-                elif _print_zones:
-                    if _dual_sym:
-                        br_zl: list[dict] = []
-                        br_zs: list[dict] = []
-                        cfg_zl = replace(_sym_cfg, entry_type="long", transaction_type="long")
-                        cfg_zs = replace(_sym_cfg, entry_type="short", transaction_type="short")
-                        closed_l, ot_l, scan_l, sc_l, wh_l, wl_l, extra_l = run_brt_backtest(
-                            sym, df, cfg_zl, ph_price, pl_price, struct, level3, zone_entries_debug=zone_entries_debug,
-                            benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=br_zl,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-                        _tag_breakout_rows_side(br_zl, "LONG")
-                        all_breakout_retest.extend(br_zl)
-                        closed_s, ot_s, scan_s, sc_s, wh_s, wl_s, extra_s = run_brt_backtest(
-                            sym, df, cfg_zs, ph_price, pl_price, struct, level3, zone_entries_debug=None,
-                            benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=br_zs,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-                        _tag_breakout_rows_side(br_zs, "SHORT")
-                        all_breakout_retest.extend(br_zs)
-                        closed = _merge_closed_dual_streams(closed_l, closed_s)
-                        scanner = scan_l + scan_s
-                        short_cands = sc_l + sc_s
-                        would_have = wh_l + wh_s
-                        watchlist = wl_l + wl_s
-                        open_trade, extra_from_dual = _dual_bundle_primary_extra_open(ot_l, ot_s)
-                        extra_open_trades_loop = list(extra_l) + list(extra_s) + list(extra_from_dual)
-                    else:
-                        closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = run_brt_backtest(
-                            sym, df, _sym_cfg, ph_price, pl_price, struct, level3, zone_entries_debug=zone_entries_debug,
-                            benchmark_df=benchmark_df, profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=all_breakout_retest,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-                else:
-                    if _dual_sym:
-                        br_dl: list[dict] = []
-                        br_ds: list[dict] = []
-                        cfg_dl = replace(_sym_cfg, entry_type="long", transaction_type="long")
-                        cfg_ds = replace(_sym_cfg, entry_type="short", transaction_type="short")
-                        closed_l, ot_l, scan_l, sc_l, wh_l, wl_l, extra_l = run_brt_backtest(
-                            sym, df, cfg_dl, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
-                            profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=br_dl,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-                        _tag_breakout_rows_side(br_dl, "LONG")
-                        all_breakout_retest.extend(br_dl)
-                        closed_s, ot_s, scan_s, sc_s, wh_s, wl_s, extra_s = run_brt_backtest(
-                            sym, df, cfg_ds, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
-                            profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=br_ds,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-                        _tag_breakout_rows_side(br_ds, "SHORT")
-                        all_breakout_retest.extend(br_ds)
-                        closed = _merge_closed_dual_streams(closed_l, closed_s)
-                        scanner = scan_l + scan_s
-                        short_cands = sc_l + sc_s
-                        would_have = wh_l + wh_s
-                        watchlist = wl_l + wl_s
-                        open_trade, extra_from_dual = _dual_bundle_primary_extra_open(ot_l, ot_s)
-                        extra_open_trades_loop = list(extra_l) + list(extra_s) + list(extra_from_dual)
-                    else:
-                        closed, open_trade, scanner, short_cands, would_have, watchlist, extra_open_trades_loop = run_brt_backtest(
-                            sym, df, _sym_cfg, ph_price, pl_price, struct, level3, benchmark_df=benchmark_df,
-                            profile_beta_times=profile_beta_times, reference_stats=ref_stats,
-                            profile_block_reasons=block_counts,
-                            profile_backtest_sections=bt_sections if args.profile else None,
-                            cprofile_magic_touch=_cprof_smt_obj,
-                            cprofile_pending_sheet_prep=_cprof_prep_obj,
-                            breakout_retest_rows_out=all_breakout_retest,
-                            indicators_while_held_rows_out=_ind_wh_out_seq,
-                        )
-            finally:
-                if _cprof_obj is not None:
-                    _cprof_obj.disable()
-                    _co = (args.cprofile_out or "").strip()
-                    if _co:
-                        _cprof_path = Path(_co)
-                    else:
-                        _cprof_path = output_dir / f"{_file_prefix}_cProfile_{sym}_{ts}.prof"
-                    if _cprof_path.suffix.lower() not in (".prof", ".pstats"):
-                        _cprof_path = _cprof_path.with_suffix(".prof")
-                    _cprof_path.parent.mkdir(parents=True, exist_ok=True)
-                    _cprof_obj.dump_stats(str(_cprof_path))
-                    print(f"[PROFILE] cProfile (run_brt_backtest only): {_cprof_path.resolve()}")
-                    print(f"[PROFILE]   python -m pstats {_cprof_path}   # then: sort cumulative / stats 40")
-                    print(f"[PROFILE]   snakeviz {_cprof_path}   # pip install snakeviz")
-                    print("[PROFILE] Wall-time flame (optional): py-spy record -o flame.svg -- python ... rocket_tbn.py ...")
-                if _cprof_smt_obj is not None:
-                    _smt_co = (getattr(args, "cprofile_sheet_magic_touch_out", "") or "").strip()
-                    if _smt_co:
-                        _smt_path = Path(_smt_co)
-                    else:
-                        _smt_path = output_dir / f"{_file_prefix}_cProfile_sheet_magic_touch_{sym}_{ts}.prof"
-                    if _smt_path.suffix.lower() not in (".prof", ".pstats"):
-                        _smt_path = _smt_path.with_suffix(".prof")
-                    _smt_path.parent.mkdir(parents=True, exist_ok=True)
-                    _cprof_smt_obj.dump_stats(str(_smt_path))
-                    print(f"[PROFILE] cProfile (bt_loop_sheet_magic_touch block only): {_smt_path.resolve()}")
-                    print(f"[PROFILE]   python -m pstats {_smt_path}   # sort cumulative; stats 30")
-                    print(f"[PROFILE]   snakeviz {_smt_path}")
-                if _cprof_prep_obj is not None:
-                    _prep_co = (getattr(args, "cprofile_pending_sheet_prep_out", "") or "").strip()
-                    if _prep_co:
-                        _prep_path = Path(_prep_co)
-                    else:
-                        _prep_path = output_dir / f"{_file_prefix}_cProfile_pending_sheet_prep_{sym}_{ts}.prof"
-                    if _prep_path.suffix.lower() not in (".prof", ".pstats"):
-                        _prep_path = _prep_path.with_suffix(".prof")
-                    _prep_path.parent.mkdir(parents=True, exist_ok=True)
-                    _cprof_prep_obj.dump_stats(str(_prep_path))
-                    print(f"[PROFILE] cProfile (bt_loop_pending_sheet_prep block only): {_prep_path.resolve()}")
-                    print(f"[PROFILE]   python -m pstats {_prep_path}   # sort cumulative; stats 30")
-                    print(f"[PROFILE]   snakeviz {_prep_path}")
-            t_backtest = time.time() - _t
-            _apply_spy_ind_diff_at_entry(closed, open_trade, extra_open_trades_loop, spy_lookup_seq)
-            all_closed.extend(closed)
-            if getattr(args, "emit_would_have", False):
-                all_would_have.extend(would_have)
-            if open_trade:
-                all_open.append(open_trade)
-            all_open.extend(extra_open_trades_loop)
-            all_scanner.extend(scanner)
-            all_watchlist.extend(watchlist)
-            all_short_candidates.extend(short_cands)
-            _t = time.time()
-            if not _alt_entry_run:
-                all_pivot_rows.extend(collect_brt_pivots(sym, df, pivot_high, pivot_low, ph_price, pl_price, struct))
-            t_collect_pivots = time.time() - _t
-            if _collect_symbol_timings:
-                _row = {
-                    "symbol": sym,
-                    "bars": int(len(df)),
-                    "t_load": 0.0,  # already loaded in parent path
-                    "t_spy_lookup": 0.0,
-                    "t_pivots": t_pivots,
-                    "t_structure": t_structure,
-                    "t_touch": t_touch,
-                    "t_backtest": t_backtest,
-                    "t_collect_pivots": t_collect_pivots,
-                    "t_total": time.time() - _sym_t0,
-                }
-                _row.update(bt_sections)
-                profile_symbol_rows.append(_row)
-                for reason, count in sorted(block_counts.items()):
-                    profile_block_rows.append({"symbol": sym, "reason": reason, "count": int(count)})
 
-            if not _alt_entry_run and _print_zones:
-                _write_zone_debug_files(
-                    sym,
-                    df,
-                    level3,
-                    zone_entries_debug,
-                    _sym_cfg.band_pct,
-                    str(output_dir),
-                    ts,
-                    _file_prefix,
-                )
-
+                if n_total > 1:
+                    _backtest_progress(idx, n_total, progress_t0, pipeline)
             if n_total > 1:
-                _backtest_progress(idx, n_total, progress_t0, pipeline)
-        if n_total > 1:
-            print()
+                print()
 
-        if args.profile and profile_beta_times:
-            print(f"[PROFILE] beta_at_entry (total {len(profile_beta_times)} calls): {sum(profile_beta_times):.2f}s")
+            if args.profile and profile_beta_times:
+                print(f"[PROFILE] beta_at_entry (total {len(profile_beta_times)} calls): {sum(profile_beta_times):.2f}s")
 
     if not skip_backtest:
         elapsed = time.time() - t0
@@ -19085,15 +20126,37 @@ def main() -> int:
             print(f"[TBN] Post-run: yfinance enrichment finished in {time.time() - _t_yf:.1f}s", flush=True)
         if args.profile and (all_closed or all_open):
             print(f"[PROFILE] yfinance enrich: {time.time() - _t_yf:.2f}s")
-        # Min market cap filter (applied after enrichment; 0 = no op)
+        # Market cap filter (after enrichment; 0 = no op). Missing market_cap is kept
+        # (unknown is neither under-min nor over-max) so Yahoo gaps cannot silently wipe trades.
         with (pipeline.phase("market_cap_filter") if pipeline is not None else contextlib.nullcontext()):
             if getattr(cfg, "min_market_cap", 0) > 0:
-                all_closed = [t for t in all_closed if getattr(t, "market_cap", None) is not None and t.market_cap >= cfg.min_market_cap]
-                all_open = [t for t in all_open if getattr(t, "market_cap", None) is not None and t.market_cap >= cfg.min_market_cap]
+                mn = float(cfg.min_market_cap)
+                n_before = len(all_closed) + len(all_open)
+                all_closed = [
+                    t for t in all_closed
+                    if getattr(t, "market_cap", None) is None or float(t.market_cap) >= mn
+                ]
+                all_open = [
+                    t for t in all_open
+                    if getattr(t, "market_cap", None) is None or float(t.market_cap) >= mn
+                ]
+                n_drop = n_before - (len(all_closed) + len(all_open))
+                if n_drop:
+                    print(f"[TBN] market_cap_filter min={mn:g}: dropped {n_drop} trade(s) with known cap below min", flush=True)
             if float(getattr(cfg, "max_market_cap", 0) or 0) > 0:
                 mx = float(cfg.max_market_cap)
-                all_closed = [t for t in all_closed if getattr(t, "market_cap", None) is not None and float(t.market_cap) <= mx]
-                all_open = [t for t in all_open if getattr(t, "market_cap", None) is not None and float(t.market_cap) <= mx]
+                n_before = len(all_closed) + len(all_open)
+                all_closed = [
+                    t for t in all_closed
+                    if getattr(t, "market_cap", None) is None or float(t.market_cap) <= mx
+                ]
+                all_open = [
+                    t for t in all_open
+                    if getattr(t, "market_cap", None) is None or float(t.market_cap) <= mx
+                ]
+                n_drop = n_before - (len(all_closed) + len(all_open))
+                if n_drop:
+                    print(f"[TBN] market_cap_filter max={mx:g}: dropped {n_drop} trade(s) with known cap above max", flush=True)
         if pipeline is not None:
             pipeline.complete_phase_units("market_cap_filter")
     with (pipeline.phase("post_entry_gain_hit") if pipeline is not None else contextlib.nullcontext()):

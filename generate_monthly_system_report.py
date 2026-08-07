@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB).
 
 Uses paper-trading outputs from the latest engine runs:
-  Drive/{BRT,IND,YH,MTS,WPBR,RS}_LatestRun_Closed.csv / _Open.csv
+  Drive/{BRT,IND,YH,MTS,WPBR,RS,SB}_LatestRun_Closed.csv / _Open.csv
   Drive/BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv (newest RL mirror)
 
 Writes:
@@ -27,8 +27,21 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS")
-SYSTEM_LABELS = {"IND": "IND (deprecated)"}
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB")
+
+try:
+    from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
+except Exception:
+    try:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "stock_analysis"))
+        from exit_type_normalize import normalize_exit_type as _normalize_exit_type
+    except Exception:
+
+        def _normalize_exit_type(exit_type: str | None) -> str:
+            return (exit_type or "").strip().upper()
+SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB"}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -166,7 +179,7 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS"):
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB"):
         closed = drive / f"{sys}_LatestRun_Closed.csv"
         open_p = drive / f"{sys}_LatestRun_Open.csv"
         if sys == "WPBR" and not closed.is_file():
@@ -233,7 +246,9 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
                     date_closed=d_close,
                     entry_price=entry,
                     exit_price=_parse_money(r.get(exit_c)) if exit_c else None,
-                    exit_type=str(r.get(exit_type_c, "")).strip() if exit_type_c else "",
+                    exit_type=_normalize_exit_type(
+                        str(r.get(exit_type_c, "")).strip() if exit_type_c else ""
+                    ),
                     days_held=_parse_int(r.get(days_c)) if days_c else 0,
                     pnl_dollars=_parse_money(r.get(pnl_d_c)) if pnl_d_c else 0.0,
                     pnl_pct=_parse_pct(r.get(pnl_p_c)) if pnl_p_c else 0.0,
@@ -296,7 +311,9 @@ def _load_rl_native_closed(path: Path) -> list[TradeRow]:
                 date_closed=d_close,
                 entry_price=entry,
                 exit_price=exit_p,
-                exit_type=str(r.get(exit_type_c, "")).strip() if exit_type_c else "",
+                exit_type=_normalize_exit_type(
+                    str(r.get(exit_type_c, "")).strip() if exit_type_c else ""
+                ),
                 days_held=_parse_int(r.get(days_c)) if days_c else 0,
                 pnl_dollars=pnl_d,
                 pnl_pct=_parse_pct(r.get(pnl_p_c)) if pnl_p_c else 0.0,
