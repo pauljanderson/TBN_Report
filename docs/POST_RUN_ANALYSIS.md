@@ -25,7 +25,7 @@ Emitted after Summary write:
 |----------|-----------------|
 | Closed | `ONE_LINER` |
 | Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `MEDIAN_PNL_PCT`, `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`) |
-| Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` |
+| Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` + `.html` |
 
 `FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
 
@@ -37,6 +37,28 @@ Emitted after Summary write:
 When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (med …%, outlier …% of wins)`.
 
 Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, avg not carried by one outlier”).
+
+### Parameter tweaks + peer-learn (ImproveHints)
+
+Emitted automatically with cheap ImproveHints (no extra flag). Additive sections in the same
+`{prefix}_ImproveHints_<ts>.*` artifacts:
+
+| Section | What it scores | Direction signals |
+|---------|----------------|-------------------|
+| **band_pct** | Weak fills (low `MAX_PRICE` MFE then STOP/TIME) → **tighten**; RejectedFills near-band rejects with OHLC follow-through → **loosen** | Counts, % of scored, confidence |
+| **target_pct** | TARGET exits that keep running (in-hold MAX past target, or post-exit OHLC) → **expand**; approach 50–95% of entry→target then fail → **contract** | Same |
+| **stop_pct** | STOP then rebound above entry (OHLC) or MFE≥5% then STOP → **expand**; never-worked losers (MFE&lt;2%) → **hold** / tighten only if fat losses cluster | Same |
+| **peer-learn** | Hold-range overlaps vs peer `*_LatestRun_Closed.csv` (or newest stamp) under `drive/` | Adopt only when countable (peer TARGET after our STOP; wider stop won; longer hold won) |
+
+Heuristics are documented on each row (`HEURISTIC` column / MD bullets). Confidence is
+`high` / `medium` / `low` / `insufficient` — do not change production knobs on thin samples.
+
+- **Closed-only** always runs (DailyRun-safe).
+- **OHLC extras** (post-exit continuation, stop rebound, RejectedFills follow-through) run when
+  in-run `tickers` are passed to `write_analysis_artifacts`, or when deep CLI passes `--data-dir`
+  (e.g. `--refresh-cheap`).
+- Peer scan reads other systems’ Closed books from `drive/`; it does not call
+  `tools/sb_system_convergence.py` (same overlap idea, lighter).
 
 `FIT_SCORE` trades/year component (`AVG_TRADES_PER_YEAR` in `assess_symbol_fit`): higher frequency is rewarded; there is no “busy” penalty for high tpy.
 
@@ -114,6 +136,7 @@ Optional deep path only (`--missed-moves`). **Not** part of DailyRun.
 | Path | Role |
 |------|------|
 | `stock_analysis/rocket_post_analysis.py` | Shared one-liners, FIT, hints, charts (+ workers) |
+| `stock_analysis/param_tweak_hints.py` | Band/target/stop + peer-learn heuristics (ImproveHints) |
 | `stock_analysis/rocket_rl_analysis.py` | Thin re-export (backward compatible) |
 | `stock_analysis/post_run_analysis.py` | System-agnostic deep CLI |
 | `stock_analysis/rl_post_run_analysis.py` | RL wrapper (`--system RL`) |
