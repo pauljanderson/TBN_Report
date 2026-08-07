@@ -29,12 +29,12 @@ Emitted after Summary write:
 
 `FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
 
-`FIT_SCORE_ROBUST` uses the same point rules but:
+**Before → after (robust):** median Closed `PNL %` was retired as the robust PnL input (it over-punished ~50% WR books). Current `FIT_SCORE_ROBUST` uses the same point rules but:
 
 1. **Leave-max-win-out** mean trade `PNL %` (drop the single largest winning trade, then re-average) for the avg-pnl points bucket — `AVG_PNL_PCT_WO_MAX`. Sheet PnL is scaled the same way (fixed-notional share of the dropped win).
 2. Soft outlier penalty: **−1** if top win &gt;50% of sum of winning PnL% **or** that trade’s fixed-notional share &gt;60% of sum(PnL%); **−2** if &gt;70% of win PnLs or &gt;80% of sheet share.
 
-`MEDIAN_PNL_PCT` remains on Summary for inspection but is **not** used in the robust score (a negative median when WR≈50% was over-punishing profitable books).
+`MEDIAN_PNL_PCT` remains on Summary for inspection but is **not** used in the robust score. Process write-up (formula + AMZN before/after): `drive/paul_experiments/system_setup_process.html` § FIT / robust (mirrored in `docs/system_setup_process.html`).
 
 When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (wo-max avg …%, outlier …% of wins)`.
 
@@ -65,7 +65,7 @@ Heuristics are documented on each row (`HEURISTIC` column / MD bullets). Confide
 `high` / `medium` / `low` / `insufficient` — do not change production knobs on thin samples.
 Hints suggest a **direction** for a hypothesis test; they are not a license for combinatorial sweeps.
 
-**YH param-hint A/B:** `run_yh_param_hint_ab.bat <stamp>` (driver `tools/yh_param_hint_ab.py`) runs control vs one alt each for top ImproveHints `stop_pct` / `target_pct` / `band_pct` cards (frozen `run_yh.bat` baselines; ≤1 alternative per knob). Writes `drive/paul_experiments/yh_param_hint_ab/comparison.html`. ImprovePriority puts Parameter suggestions first and links the bat / comparison.
+**YH param-hint A/B:** `run_yh_param_hint_ab.bat <stamp>` (driver `tools/yh_param_hint_ab.py`) runs control vs one alt each for top ImproveHints `stop_pct` / `target_pct` / `band_pct` cards (frozen `run_yh.bat` baselines; ≤1 alternative per knob). Writes `drive/paul_experiments/yh_param_hint_ab/comparison.html`. Deep ImprovePriority HTML (`write_improve_priority_html`) puts **Parameter suggestions** first (with a **Run AB** column for YH), then taken-trade patterns / peer-learn — hypothesis-test framing, not optimal search (`docs/HYPOTHESIS_TEST.md`).
 
 - **Closed-only** always runs (DailyRun-safe).
 - **OHLC extras** (post-exit continuation, stop rebound, RejectedFills follow-through) run when

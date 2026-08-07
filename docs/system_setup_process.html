@@ -375,7 +375,7 @@
   <p class="lede">
     End-to-end path from theory → sheet ground truth → <strong>TBN</strong> engine →
     seed ToS validation → post-run analysis → <strong>hypothesis tests</strong> (missed-trade fixes) →
-    ToS before/after → trade-diff → universe promotion.
+    trade-diff HTML (control vs candidate) → ToS before/after → universe promotion.
     Shareable documentation for product-owner iteration.
     Param changes are evidence-driven—not open-ended optimization for max profit.
   </p>
@@ -387,7 +387,7 @@
   </p>
   <div class="meta-row">
     <span><strong>Workspace</strong> stockresearch</span>
-    <span><strong>Owner iteration</strong> <span class="path">drive/paul_experiments/</span></span>
+    <span><strong>Owner iteration</strong> <span class="path">drive/paul_experiments/</span></span><span><strong>Process SSoT</strong> <span class="path">drive/paul_experiments/system_setup_process.html</span> (mirrored to <span class="path">docs/system_setup_process.html</span>)</span>
     <span><strong>Printable</strong> Ctrl+P</span>
   </div>
 </header>
@@ -402,14 +402,15 @@
     <li><a href="#post-run">Post-run analysis (evidence / hints)</a>
       <ol style="margin:2px 0 0;padding-left:1.1rem;list-style:lower-alpha;">
         <li><a href="#fit-score-robust">FIT / robust FIT formula</a></li>
-        <li><a href="#fit-robust-amzn">AMZN vs GOOGL example</a></li>
-        <li><a href="#fit-robust-faq">FAQ: median vs winners</a></li>
+        <li><a href="#fit-robust-amzn">AMZN vs GOOGL (before/after)</a></li>
+        <li><a href="#fit-robust-faq">FAQ: why leave-max-win-out</a></li>
         <li><a href="#fit-robust-intent">Intent &amp; overrides</a></li>
+        <li><a href="#improvepriority-layout">ImprovePriority layout + YH Run AB</a></li>
       </ol>
     </li>
     <li><a href="#seed-opt">Hypothesis test on seed set</a></li>
+    <li><a href="#trade-diff">Trade-diff HTML (control vs candidate)</a></li>
     <li><a href="#tos">ToS studies per variable</a></li>
-    <li><a href="#trade-diff">Compare 2 variables (trade-diff)</a></li>
     <li><a href="#universe">Full universe run</a></li>
     <li><a href="#promote">Promotion filters</a></li>
     <li><a href="#rerun">Re-run promotion candidates</a></li>
@@ -429,8 +430,8 @@
     <span class="stage">Seed ToS</span><span class="arrow">→</span>
     <span class="stage">Post-run</span><span class="arrow">→</span>
     <span class="stage">Hypothesis</span><span class="arrow">→</span>
+    <span class="stage">Trade-diff HTML</span><span class="arrow">→</span>
     <span class="stage">ToS / lever</span><span class="arrow">→</span>
-    <span class="stage">Trade-diff</span><span class="arrow">→</span>
     <span class="stage">Universe</span><span class="arrow">→</span>
     <span class="stage">Filter</span><span class="arrow">→</span>
     <span class="stage">Re-run</span><span class="arrow">→</span>
@@ -444,7 +445,7 @@
     One hypothesis, one knob; freeze everything else; same universe/stamp for A/B.
     At most 1–2 pre-agreed alternatives tied to that hypothesis—no combinatorial / “find optimal” grids.
     Judge on trade quality, thesis fit, drawdown, and reconcile—not max profit.
-    ToS before/after is the gate: reject PnL-up changes that do not look like the same setup.
+    Trade-diff HTML (Closed control vs candidate), then ToS before/after, is the gate: reject PnL-up changes that do not look like the same setup.
     Adopt only with product-owner (PO) sign-off plus reconcile freeze / re-baseline.
     If setups, charts, trade count, and results already look good—and post-run has no missed-trade or lever suggestions—leave params alone.
     Template: <a href="#hyp-one-pager">Hypothesis test one-pager</a> ·
@@ -528,7 +529,8 @@
     <div class="callout">
       <strong>Two ToS gates:</strong>
       Seed ToS (this step) = baseline visual check that trades match the intended setup.
-      Later ToS (steps 7–8) = accept or reject each hypothesis-test lever / A-B trade-diff on the chart
+      Later: after A/B Closed stamps exist, produce the <a href="#trade-diff">trade-diff HTML</a> (step 7),
+      then human ToS (step 8) to accept or reject each hypothesis-test lever on the chart
       (PnL alone is not enough).
     </div>
     <p class="do-label">Do</p>
@@ -577,15 +579,17 @@
         Auto-detect via <code>drive/{PREFIX}_Closed_{stamp}.csv</code> or pass <code>--closed</code>.</span></li>
       <li>Read cheap artifacts already on Summary / ImproveHints.
         <span class="detail">Summary: <code>FIT</code>, <code>FIT_SCORE</code>, <code>FIT_SCORE_ROBUST</code>,
-        <code>MAX_WIN_PCT</code>, <code>MEDIAN_PNL_PCT</code>, <code>OUTLIER_PCT_OF_WINS</code>,
-        <code>FIT_ASSESSMENT</code>. Hints: <code>{prefix}_ImproveHints_&lt;ts&gt;.csv</code> + <code>.md</code>.
+        <code>MAX_WIN_PCT</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag only),
+        <code>OUTLIER_PCT_OF_WINS</code>, <code>FIT_ASSESSMENT</code>.
+        Hints: <code>{prefix}_ImproveHints_&lt;ts&gt;.csv</code> + <code>.md</code> (+ cheap <code>.html</code>).
         Use headline <code>FIT_SCORE</code> for continuity; use <code>FIT_SCORE_ROBUST</code>
-        (median PnL% + outlier penalty) when deciding what to change—see
+        (leave-max-win-out mean + outlier penalty) when deciding what to change—see
         <a href="#fit-score-robust">How FIT / robust FIT is calculated</a>.</span></li>
       <li>Open deep HTML and decide whether there is <em>evidence</em> for one hypothesis (or none).
         <span class="detail">Outputs under <span class="path">drive/</span>:
         <code>{prefix}_SymbolAssessments_&lt;ts&gt;.html</code>,
-        <code>{prefix}_ImprovePriority_&lt;ts&gt;.html</code>,
+        <code>{prefix}_ImprovePriority_&lt;ts&gt;.html</code> (Parameter suggestions + Run AB first—see
+        <a href="#improvepriority-layout">ImprovePriority layout</a>),
         <code>{prefix}_Charts_&lt;ts&gt;/</code>. Prefer one coherent missed-trade / lever hypothesis—
         or explicitly record “no change” and skip step 6.</span></li>
       <li>Optional (RL only): scan near-misses / blind spots.
@@ -597,24 +601,39 @@
         <span class="detail">Use the <a href="#hyp-one-pager">one-pager</a> /
         <span class="path">docs/HYPOTHESIS_TEST.md</span>. Document next to the stamp in
         <span class="path">drive/paul_experiments/</span>. Step 6 tests that hypothesis on the seed set—
-        it does not sweep for a better score.</span></li>
+        it does not sweep for a better score. YH band/target/stop cards: start from ImprovePriority Run AB →
+        <code>run_yh_param_hint_ab.bat &lt;stamp&gt;</code>.</span></li>
     </ul>
 
     <h3 id="fit-score-robust">How FIT / robust FIT is calculated</h3>
     <p>Cheap FIT columns are written by <span class="path">stock_analysis/rocket_post_analysis.py</span>
     (<code>assess_symbol_fit</code>) after every Summary write. Both scores share the same point rules;
-    <strong>robust</strong> only changes the avg-PnL% input and adds an outlier soft penalty.</p>
+    <strong>robust</strong> re-scores avg-PnL% and sheet $ after dropping the single largest winning trade,
+    and may subtract a soft outlier penalty. Full twin: <span class="path">docs/POST_RUN_ANALYSIS.md</span>.</p>
+    <div class="callout">
+      <strong>Before → after (robust PnL input):</strong>
+      <ul style="margin:0.4rem 0 0;padding-left:1.2rem;">
+        <li><strong>Before (retired):</strong> <code>FIT_SCORE_ROBUST</code> fed the PnL% points bucket with
+          <em>median</em> Closed trade <code>PNL %</code> (<code>MEDIAN_PNL_PCT</code>). That over-punished
+          profitable ~50% win-rate books (middle trade often a small loss).</li>
+        <li><strong>After (current code):</strong> median is <em>diagnostic only</em>. Robust uses
+          <strong>leave-max-win-out</strong> mean trade PnL% — drop the single largest winning trade, then
+          re-average → Summary <code>AVG_PNL_PCT_WO_MAX</code>. Sheet PnL is scaled the same way
+          (fixed-notional share of the dropped win). Soft outlier −1/−2 still applies.</li>
+      </ul>
+    </div>
     <div class="callout">
       <strong>Headline vs robust:</strong>
       <code>FIT</code> / <code>FIT_SCORE</code> use mean Summary <code>AVG_PNL_PCT</code> (continuity / sheet paste).
-      <code>FIT_SCORE_ROBUST</code> uses <em>median</em> Closed trade <code>PNL %</code> for that same bucket and may subtract
-      1–2 for a single-win-dominated book. Prefer robust for promotion / “is this edge real?” decisions.
-      Code does not write a separate <code>FIT_ROBUST</code> tier column—tier for robust is only implied via score
-      thresholds and the optional note in <code>FIT_ASSESSMENT</code>.
+      <code>FIT_SCORE_ROBUST</code> uses <code>AVG_PNL_PCT_WO_MAX</code> (+ scaled sheet $) and may subtract
+      1–2 for a single-win-dominated book. Prefer robust for promotion / “is this edge real without one outlier?”.
+      No separate <code>FIT_ROBUST</code> tier column—tier is implied via score thresholds and optional
+      <code>FIT_ASSESSMENT</code> note (<code>wo-max avg …%</code>).
     </div>
     <p class="hint">Inputs (per symbol): Summary <code>PCT_WINS</code>, <code>AVG_PNL_PCT</code>, <code>SHEET_PNL</code>,
     <code>AVG_TRADES_PER_YEAR</code>, <code>WINS</code>/<code>LOSSES</code>/<code>TRADES</code>; Closed rows supply each trade’s
-    <code>PNL %</code> (median + outlier math). Zero trades → score 0 / Low.</p>
+    <code>PNL %</code> (leave-max-win-out + outlier math; median written for inspection only).
+    Zero trades → score 0 / Low. Implementation: <code>_leave_max_win_out</code> + <code>_fit_component_score</code>.</p>
     <p class="do-label">Shared point rules (both scores)</p>
     <div class="table-wrap">
       <table class="sortable">
@@ -629,10 +648,10 @@
         <tbody>
           <tr><td>Win rate</td><td><code>PCT_WINS</code> ≥ 55%</td><td class="num">+2</td></tr>
           <tr><td>Win rate</td><td>≥ 45% and &lt; 55%</td><td class="num">+1</td></tr>
-          <tr><td>Avg / median PnL%</td><td>bucket input ≥ 8%</td><td class="num">+2</td></tr>
-          <tr><td>Avg / median PnL%</td><td>≥ 3% and &lt; 8%</td><td class="num">+1</td></tr>
-          <tr><td>Avg / median PnL%</td><td>&lt; 0%</td><td class="num">−2</td></tr>
-          <tr><td>Sheet PnL</td><td><code>SHEET_PNL</code> &gt; 5000</td><td class="num">+2</td></tr>
+          <tr><td>Avg PnL% (mean or wo-max)</td><td>bucket input ≥ 8%</td><td class="num">+2</td></tr>
+          <tr><td>Avg PnL% (mean or wo-max)</td><td>≥ 3% and &lt; 8%</td><td class="num">+1</td></tr>
+          <tr><td>Avg PnL% (mean or wo-max)</td><td>&lt; 0%</td><td class="num">−2</td></tr>
+          <tr><td>Sheet PnL</td><td>sheet $ &gt; 5000 (headline: raw; robust: wo-max scaled)</td><td class="num">+2</td></tr>
           <tr><td>Sheet PnL</td><td>&gt; 0 and ≤ 5000</td><td class="num">+1</td></tr>
           <tr><td>Sheet PnL</td><td>&lt; −2000</td><td class="num">−2</td></tr>
           <tr><td>Trades / year</td><td><code>AVG_TRADES_PER_YEAR</code> ≥ 1.0</td><td class="num">+2</td></tr>
@@ -644,9 +663,12 @@
     </div>
     <p class="do-label">What “robust” adds</p>
     <ul class="bullets">
-      <li><strong>Median instead of mean</strong> for the avg-PnL% points bucket.
-        <span class="detail">Headline uses Summary mean <code>AVG_PNL_PCT</code>. Robust uses median of Closed
-        <code>PNL %</code> values (<code>MEDIAN_PNL_PCT</code> on Summary)—so one mega-win (e.g. +254%) cannot carry the bucket alone.</span></li>
+      <li><strong>Leave-max-win-out mean</strong> for the avg-PnL% (and sheet $) points buckets.
+        <span class="detail">Headline uses Summary mean <code>AVG_PNL_PCT</code> / raw <code>SHEET_PNL</code>.
+        Robust drops the single largest <em>winning</em> Closed <code>PNL %</code>, re-averages remaining trades
+        (<code>AVG_PNL_PCT_WO_MAX</code>), and scales sheet $ by the dropped win’s fixed-notional share.
+        One mega-win cannot carry either bucket alone. <code>MEDIAN_PNL_PCT</code> stays on Summary for charts /
+        inspection—it is <strong>not</strong> scored.</span></li>
       <li><strong>Soft outlier penalty</strong> (−1 / −2) from top win share.
         <span class="detail">Compute max winning <code>PNL %</code> vs sum of winning PnL%s (<code>OUTLIER_PCT_OF_WINS</code>) and vs sum of all trade PnL%s (sheet share under fixed notional).
         −1 if top win &gt;50% of win PnLs <em>or</em> &gt;60% of sheet share; −2 if &gt;70% of win PnLs <em>or</em> &gt;80% of sheet share.
@@ -655,39 +677,36 @@
     <p class="do-label">Scaling to FIT tier</p>
     <ul class="bullets">
       <li>Integer sum → tier: score ≥ 5 → <strong>High</strong>; ≥ 2 → <strong>Medium</strong>; else <strong>Low</strong>
-        (<span class="detail"><code>FIT</code> is the headline tier. Near-zero tpy (0 &lt; tpy &lt; 0.2) adds a
+        <span class="detail"><code>FIT</code> is the headline tier. Near-zero tpy (0 &lt; tpy &lt; 0.2) adds a
         <code>rare setups</code> note only—no score hit. High tpy is never penalized as “busy.”</span></li>
       <li>When robust is materially weaker, <code>FIT_ASSESSMENT</code> appends a flag.
         <span class="detail">If robust score ≤ headline − 2, or robust tier drops below headline:
-        <code>robust Low/Medium… (med …%, outlier …% of wins)</code>. Full detail also in
+        <code>robust Low/Medium… (wo-max avg …%, outlier …% of wins)</code>. Full detail also in
         <span class="path">docs/POST_RUN_ANALYSIS.md</span>.</span></li>
     </ul>
 
     <h3 id="fit-robust-formula">Robust score in one formula</h3>
-    <p>Robust FIT is the <em>same</em> integer point sum as headline FIT, with exactly two changes: the
-    PnL% bucket is fed the <strong>median</strong> Closed trade instead of the mean, and a soft outlier
-    penalty may subtract 1–2. In shorthand:</p>
+    <p>Robust FIT is the <em>same</em> integer point sum as headline FIT, with these changes: PnL% and sheet
+    buckets use leave-max-win-out values, and a soft outlier penalty may subtract 1–2. In shorthand:</p>
     <div class="callout">
-      <code>FIT_SCORE_ROBUST = win_rate_pts + pnl_pts(<strong>MEDIAN_PNL_PCT</strong>) + sheet_pnl_pts + trades_per_year_pts + clean_book_pt − asymmetry_pt − outlier_penalty</code>
+      <code>FIT_SCORE_ROBUST = win_rate_pts + pnl_pts(<strong>AVG_PNL_PCT_WO_MAX</strong>) + sheet_pnl_pts(<strong>SHEET_PNL_WO_MAX</strong>) + trades_per_year_pts + clean_book_pt − asymmetry_pt − outlier_penalty</code>
       <br><br>
       where <code>pnl_pts(x) = +2 if x ≥ 8%, +1 if 3% ≤ x &lt; 8%, 0 if 0 ≤ x &lt; 3%, −2 if x &lt; 0%</code>,
       and <code>outlier_penalty = 2 if top win &gt; 70% of win PnL% (or &gt; 80% of sheet share), 1 if &gt; 50% (or &gt; 60%), else 0</code>.
       Tier: score ≥ 5 → High, ≥ 2 → Medium, else Low. Headline uses the identical formula but with
-      <code>pnl_pts(AVG_PNL_PCT)</code> (the mean) and <code>outlier_penalty = 0</code>.
+      <code>pnl_pts(AVG_PNL_PCT)</code>, raw <code>SHEET_PNL</code>, and <code>outlier_penalty = 0</code>.
     </div>
-    <p class="hint">So the <em>only</em> structural difference is the PnL% input. When the median trade is a small
-    loss but the mean is positive, the PnL bucket swings from <code>+1/+2</code> (headline) to <code>−2</code> (robust) —
-    a 3-to-4-point drop on a scale where 5 = High. That single substitution is what produces the low robust
-    scores the product owner is seeing.</p>
+    <p class="hint">Median is no longer in this formula. A negative median at WR≈50% no longer forces a −2 PnL
+    bucket by itself—only dropping the max win (and/or the outlier penalty) can pull robust below headline.</p>
 
-    <h3 id="fit-robust-amzn">Worked example — AMZN vs GOOGL (recent YH run)</h3>
-    <p>From <span class="path">drive/YH_LatestRun_Summary.csv</span> (stamp <code>260804183556</code>). AMZN makes
-    <strong>more money</strong> than GOOGL on every dollar metric (higher <code>TOTAL_PNL</code> and
-    <code>SHEET_PNL</code>) and has the same headline <code>FIT_SCORE</code> (6), yet its robust score is
-    <strong>3</strong> vs GOOGL’s <strong>7</strong>. The entire gap is the median.</p>
+    <h3 id="fit-robust-amzn">Worked example — AMZN vs GOOGL (before median → after wo-max)</h3>
+    <p>From <span class="path">drive/YH_Summary_260807111023.csv</span>. Same Closed books as the old median
+    write-up: AMZN still makes <strong>more sheet dollars</strong> than GOOGL with headline <code>FIT_SCORE</code> = 6
+    for both. Under the <em>retired</em> median rule AMZN’s robust would collapse to ~3; under current
+    leave-max-win-out both stay at <strong>6</strong>.</p>
     <div class="table-wrap">
       <table class="sortable">
-        <caption>Click column headers to sort. Source: YH Summary FIT columns, 2026-08-04.</caption>
+        <caption>Click column headers to sort. Source: YH Summary FIT columns, stamp 260807111023.</caption>
         <thead>
           <tr>
             <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Symbol<span class="sort-ind"></span></th>
@@ -695,27 +714,28 @@
             <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">W / L<span class="sort-ind"></span></th>
             <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Sheet PnL $<span class="sort-ind"></span></th>
             <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Mean PnL%<span class="sort-ind"></span></th>
-            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Median PnL%<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Wo-max avg%<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Median% (diag)<span class="sort-ind"></span></th>
             <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">FIT_SCORE<span class="sort-ind"></span></th>
-            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">ROBUST<span class="sort-ind"></span></th>
-            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Robust tier<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">ROBUST (now)<span class="sort-ind"></span></th>
+            <th class="sortable-th num" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Old median robust<span class="sort-ind"></span></th>
           </tr>
         </thead>
         <tbody>
-          <tr><td><strong>AMZN</strong></td><td class="num">42</td><td>21 / 21</td><td class="num">115,874</td><td class="num">+6.13%</td><td class="num">−2.81%</td><td class="num">6</td><td class="num">3</td><td>Medium</td></tr>
-          <tr><td><strong>GOOGL</strong></td><td class="num">33</td><td>17 / 16</td><td class="num">96,616</td><td class="num">+6.51%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">7</td><td>High</td></tr>
-          <tr><td>AAPL</td><td class="num">41</td><td>19 / 22</td><td class="num">84,166</td><td class="num">+4.56%</td><td class="num">−6.77%</td><td class="num">6</td><td class="num">3</td><td>Medium</td></tr>
-          <tr><td>AMD</td><td class="num">52</td><td>22 / 30</td><td class="num">79,323</td><td class="num">+3.39%</td><td class="num">−7.79%</td><td class="num">5</td><td class="num">2</td><td>Medium</td></tr>
-          <tr><td>NFLX</td><td class="num">52</td><td>22 / 30</td><td class="num">71,999</td><td class="num">+3.08%</td><td class="num">−7.83%</td><td class="num">5</td><td class="num">2</td><td>Medium</td></tr>
-          <tr><td>MSFT</td><td class="num">31</td><td>19 / 12</td><td class="num">135,158</td><td class="num">+9.69%</td><td class="num">+21.00%</td><td class="num">8</td><td class="num">8</td><td>High</td></tr>
-          <tr><td>NVDA</td><td class="num">54</td><td>29 / 25</td><td class="num">169,281</td><td class="num">+6.97%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">7</td><td>High</td></tr>
+          <tr><td><strong>AMZN</strong></td><td class="num">42</td><td>21 / 21</td><td class="num">115,874</td><td class="num">+6.13%</td><td class="num">+5.55%</td><td class="num">−2.81%</td><td class="num">6</td><td class="num">6</td><td class="num">~3</td></tr>
+          <tr><td><strong>GOOGL</strong></td><td class="num">33</td><td>17 / 16</td><td class="num">96,616</td><td class="num">+6.51%</td><td class="num">+5.85%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">6</td><td class="num">~7</td></tr>
+          <tr><td>AAPL</td><td class="num">41</td><td>19 / 22</td><td class="num">84,166</td><td class="num">+4.56%</td><td class="num">+4.15%</td><td class="num">−6.77%</td><td class="num">6</td><td class="num">6</td><td class="num">~3</td></tr>
+          <tr><td>AMD</td><td class="num">52</td><td>22 / 30</td><td class="num">79,323</td><td class="num">+3.39%</td><td class="num">+2.64%</td><td class="num">−7.79%</td><td class="num">5</td><td class="num">4</td><td class="num">~2</td></tr>
+          <tr><td>NFLX</td><td class="num">52</td><td>22 / 30</td><td class="num">71,999</td><td class="num">+3.08%</td><td class="num">+2.46%</td><td class="num">−7.83%</td><td class="num">5</td><td class="num">4</td><td class="num">~2</td></tr>
+          <tr><td>MSFT</td><td class="num">31</td><td>19 / 12</td><td class="num">135,158</td><td class="num">+9.69%</td><td class="num">+9.25%</td><td class="num">+21.00%</td><td class="num">8</td><td class="num">8</td><td class="num">8</td></tr>
+          <tr><td>NVDA</td><td class="num">54</td><td>29 / 25</td><td class="num">169,281</td><td class="num">+6.97%</td><td class="num">+6.25%</td><td class="num">+21.00%</td><td class="num">6</td><td class="num">6</td><td class="num">~7</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="do-label">Point-by-point: where AMZN loses 4 vs GOOGL</p>
+    <p class="do-label">Point-by-point: AMZN under current robust (leave-max-win-out)</p>
     <div class="table-wrap">
       <table class="sortable">
-        <caption>Both share win-rate, sheet-PnL, and trades/year points; only the PnL bucket differs.</caption>
+        <caption>Win-rate / sheet / tpy unchanged; PnL bucket uses wo-max (+5.55% ≥ 3% → +1), not median (−2).</caption>
         <thead>
           <tr>
             <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Component<span class="sort-ind"></span></th>
@@ -725,56 +745,76 @@
         </thead>
         <tbody>
           <tr><td>Win rate (50.0% / 51.5%, both ≥45%)</td><td class="num">+1</td><td class="num">+1</td></tr>
-          <tr><td>PnL bucket — <strong>median</strong> (−2.81% &lt; 0 vs +21% ≥ 8%)</td><td class="num">−2</td><td class="num">+2</td></tr>
-          <tr><td>Sheet PnL (both &gt; 5000)</td><td class="num">+2</td><td class="num">+2</td></tr>
+          <tr><td>PnL bucket — <strong>wo-max</strong> (+5.55% / +5.85%, both ≥3%)</td><td class="num">+1</td><td class="num">+1</td></tr>
+          <tr><td>Sheet PnL (both &gt; 5000 after wo-max scale)</td><td class="num">+2</td><td class="num">+2</td></tr>
           <tr><td>Trades / year (2.53 / 1.99, both ≥ 1.0)</td><td class="num">+2</td><td class="num">+2</td></tr>
-          <tr><td>Outlier penalty (7% / 8% of wins — below trigger)</td><td class="num">0</td><td class="num">0</td></tr>
-          <tr class="total-row"><td><strong>Robust total</strong></td><td class="num"><strong>3</strong></td><td class="num"><strong>7</strong></td></tr>
+          <tr><td>Outlier penalty (~7% / ~8% of wins — below trigger)</td><td class="num">0</td><td class="num">0</td></tr>
+          <tr class="total-row"><td><strong>Robust total (now)</strong></td><td class="num"><strong>6</strong></td><td class="num"><strong>6</strong></td></tr>
+          <tr><td class="muted">Old median PnL pts (−2.81% vs +21%) → old robust</td><td class="num muted">~3</td><td class="num muted">~7</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3 id="fit-robust-faq">FAQ — why the median hurts some winners</h3>
-    <p><strong>Q: AMZN earns more dollars than GOOGL and has strong stats. Why is its robust score low?</strong><br>
-    Because robust asks a different question than “how much did it make?” It asks “was the <em>typical</em> trade
-    profitable?” AMZN’s book is 21 wins / 21 losses, so the median (middle) trade sits right on the win/loss
-    boundary at <strong>−2.81%</strong> — a small loss. The median PnL bucket therefore scores <code>−2</code>
-    instead of the <code>+2</code> a healthy median (≥ 8%) would earn. GOOGL, with 17 wins / 16 losses, has its
-    median land on a <em>winning</em> trade (+21%), so it collects <code>+2</code>. That one component is the
-    whole 4-point difference. AMZN’s larger total dollars come from a handful of big winners lifting the
-    <em>mean</em> — which is exactly what robust is designed to look past.</p>
-    <p><strong>Q: The PO says AMZN is “~1 win away.” Is that right?</strong><br>
-    Yes, literally. With 42 trades split 21/21, the median is the average of the 21st and 22nd sorted trades —
-    straddling the boundary. If one more trade closed green (22 wins / 20 losses), the median would jump from
-    the loss side up onto a winner (in this book, into the ~+21% neighborhood), flipping the PnL bucket from
-    <code>−2</code> to <code>+2</code> and lifting robust from <strong>3 (Medium)</strong> to <strong>7 (High)</strong>.
-    Robust is deliberately sensitive at this 50/50 hinge because that is where “real edge” vs “outlier-carried”
-    is genuinely uncertain.</p>
-    <p><strong>Q: Why do other strong performers (AAPL, AMD, NFLX) also score low on robust?</strong><br>
-    Same mechanism. They post large total dollars but carry ≥ as many losers as winners, so their median trade
-    is a small loss (−6.8% / −7.8% / −7.8%). The mean is dragged positive by a few asymmetric winners; the
-    median — the middle, everyday trade — is red. Robust rewards a book that is broadly profitable trade-by-trade,
-    not one rescued by its top few.</p>
+    <h3 id="fit-robust-faq">FAQ — why leave-max-win-out replaced median</h3>
+    <p><strong>Q: Why drop median from robust scoring?</strong><br>
+    Median asked “was the middle trade green?” On a ~50% win-rate book that answer is often a small loss even when
+    the system is profitable and not one-trade-dominated (AMZN 21/21, median −2.81%). That turned robust into a
+    near-WR hinge rather than an outlier check—over-punishing names the PO still wants to promote.</p>
+    <p><strong>Q: What does leave-max-win-out ask instead?</strong><br>
+    “If we remove the single best win, is the remaining average still decent?” AMZN’s wo-max avg stays
+    <strong>+5.55%</strong> (still +1 on the PnL bucket), so robust matches headline at 6. The edge is not carried
+    solely by one outlier. AMD/NFLX on the same stamp show when it <em>does</em> bite: wo-max falls below 3%
+    (+3.39%→+2.64%, +3.08%→+2.46%) and robust drops 5→4.</p>
+    <p><strong>Q: Is <code>MEDIAN_PNL_PCT</code> gone?</strong><br>
+    No—still written on Summary for inspection and charts. It is simply <strong>not</strong> an input to
+    <code>FIT_SCORE_ROBUST</code> anymore (<code>assess_symbol_fit</code> docstring +
+    <span class="path">docs/POST_RUN_ANALYSIS.md</span>).</p>
+    <p><strong>Q: Does robust still catch outlier-carried books?</strong><br>
+    Yes, two ways: (1) wo-max mean / scaled sheet can lose PnL or sheet points after the top win is removed;
+    (2) soft −1/−2 when top win &gt;50%/70% of win PnLs or &gt;60%/80% of sheet share.</p>
 
     <h3 id="fit-robust-intent">Intent, limitations, and when to override</h3>
     <ul class="bullets">
-      <li><strong>Intent.</strong> Robust FIT answers “is the edge <em>broad and repeatable</em>?” rather than
-        “how big is the total?” Total PnL and win rate can both be dominated by a few large trades; the median
-        cannot. A high robust score means a randomly chosen trade in that book was likely a decent winner.</li>
+      <li><strong>Intent.</strong> Robust FIT answers “does this edge survive without the single best win?” rather than
+        “was the middle trade green?” or “how big is the total?” A high robust score means the book is not
+        propped up by one outlier trade.</li>
       <li><strong>vs raw total PnL / win rate.</strong> Use headline <code>FIT_SCORE</code> / total dollars for
         “how much did this contribute” and sheet-paste continuity. Use robust for promotion and “should I trust
-        this edge going forward” — it is the harder, more conservative test.</li>
-      <li><strong>Limitation — boundary sensitivity.</strong> Near a 50% win rate the median can flip on a single
-        trade (the AMZN case), so a 3 vs 7 swing can overstate a real difference. Read robust alongside median,
-        mean, and total, not in isolation.</li>
+        this edge going forward” — the harder, more conservative test.</li>
+      <li><strong>Limitation — threshold hops.</strong> Wo-max can nudge a mean across a point boundary (e.g. 3.1%→2.6%
+        loses the +1 PnL point). Read robust alongside <code>AVG_PNL_PCT_WO_MAX</code>, mean, max-win%, and total.</li>
       <li><strong>Limitation — not a dollar measure.</strong> A low robust score does <em>not</em> mean a name
-        loses money; AMZN is highly profitable. It means the profit is concentrated, not typical.</li>
+        loses money; it means profit concentration or thin leftover mean after dropping the top win.</li>
       <li><strong>When to override with judgment.</strong> Keep an outlier-carried winner (low robust, high
-        dollars) when the big trades are structurally repeatable (e.g. the system is explicitly a
-        breakout/HTF runner where a few large moves are the thesis), when history is short, or when charts show
-        the winners are on-thesis rather than lucky. Demote a high-robust name if its trades don’t match the
-        intended setup on ToS review. Robust is a flag for a closer look — not an automatic reject.</li>
+        dollars) when the big trades are structurally repeatable (e.g. breakout / High Tight Flag (HTF) runners
+        where a few large moves are the thesis), when history is short, or when charts show on-thesis winners.
+        Demote a high-robust name if trades don’t match the intended setup on ToS review. Robust is a flag for
+        a closer look — not an automatic reject.</li>
     </ul>
+
+    <h3 id="improvepriority-layout">ImprovePriority layout + YH Run AB</h3>
+    <p>Deep ImprovePriority HTML is written by
+    <span class="path">stock_analysis/post_run_analysis.py</span> <code>write_improve_priority_html</code>
+    (not DailyRun). Section order is intentional so one-knob A/B is the primary workbench:</p>
+    <ol style="margin:0.4rem 0 0.8rem;padding-left:1.2rem;">
+      <li><strong>Parameter suggestions (band / target / stop)</strong> — first table; includes a
+        <strong>Run AB</strong> column for Year-High (YH) <code>band_pct</code> / <code>target_pct</code> /
+        <code>stop_pct</code> cards (links <code>run_yh_param_hint_ab.bat &lt;stamp&gt;</code> and
+        <span class="path">paul_experiments/yh_param_hint_ab/comparison.html</span>).</li>
+      <li><strong>Taken-trade patterns</strong> — portfolio frequency themes (false starts, fat stops, …).</li>
+      <li><strong>Peer-learn</strong> — cross-system hold-range overlaps.</li>
+      <li><strong>Why we miss winners</strong> — only with <code>--missed-moves</code> (RL).</li>
+    </ol>
+    <div class="callout">
+      Caption frames next step as a <strong>one-knob hypothesis test</strong>
+      (<span class="path">docs/HYPOTHESIS_TEST.md</span>), not a search for optimal params.
+      Opposing lenses on the same knob are merged into one tension card by
+      <span class="path">stock_analysis/param_tweak_hints.py</span> (confidence capped when mixed).
+      YH driver: <span class="path">run_yh_param_hint_ab.bat</span> → <span class="path">tools/yh_param_hint_ab.py</span>
+      (frozen <span class="path">run_yh.bat</span> baselines; ≤1 alternative per knob).
+      Re-run deep post-run (or <code>--refresh-cheap</code> + deep HTML) to regenerate older stamps that still
+      list patterns first.
+    </div>
   </article>
 
   <article class="step" id="seed-opt">
@@ -805,7 +845,9 @@
         <span class="detail">Legacy sweep tools (<span class="path">RL_Optimizer.py</span>,
         <span class="path">BRT_Optimizer.py</span>, <span class="path">RocketOptimizer.py</span>,
         <span class="path">run_per_symbol_optimizer.bat</span>) exist for engineering experiments only—
-        they are <em>not</em> the default system-review path. Do not treat “best score” as adopt.</span></li>
+        they are <em>not</em> the default system-review path. Do not treat “best score” as adopt.
+        YH ImprovePriority band/target/stop: <code>run_yh_param_hint_ab.bat &lt;stamp&gt;</code>
+        (one knob, frozen <span class="path">run_yh.bat</span> baselines).</span></li>
       <li>Record A/B settings and the one-pager next to the experiment folder.
         <span class="detail">Under <span class="path">drive/paul_experiments/</span>. Do not silently edit
         production bats during exploration.</span></li>
@@ -815,52 +857,81 @@
     </ul>
   </article>
 
-  <article class="step" id="tos">
+  <article class="step" id="trade-diff">
     <div class="step-head">
       <div class="step-num">7</div>
-      <h3 class="step-title">For each variable change: Thinkorswim studies (accept / reject gate)</h3>
+      <h3 class="step-title">Trade-diff HTML — control vs candidate (before ToS)</h3>
     </div>
-    <p>After each hypothesis-test lever change, charts must still show the same intended setup:
-    SMAs, bands, stops, In/Out markers. This is the <em>post-change</em> ToS gate—distinct from seed
-    ToS validation in step 4. <strong>Reject PnL-up arms that do not look like the same setup.</strong>
-    Output studies under <span class="path">drive/paul_studies/</span>.</p>
+    <p>After the seed hypothesis A/B run (step 6) produces two Closed stamps — <strong>control</strong>
+    (baseline / frozen settings) vs <strong>candidate</strong> (one new variable or setting) — produce a
+    detailed sortable HTML table comparison <em>before</em> any human Thinkorswim (ToS) study comparison.
+    Inputs are the Closed CSVs for those stamps (e.g. <code>RL_Closed_&lt;control&gt;.csv</code> vs
+    <code>RL_Closed_&lt;candidate&gt;.csv</code>), plus Report/Summary for side-by-side metrics.
+    Prefer trade quality and thesis fit over which arm made more money.</p>
+    <div class="chip-row">
+      <span class="chip">Tool · drive/paul_experiments/_gen_too_high_diff.py</span>
+      <span class="chip">Sibling · _gen_markten_band_diff.py</span>
+      <span class="chip">HTML out · drive/paul_experiments/rl_stamp_trade_diff_*.html</span>
+      <span class="chip">Closed stamps · control vs arm</span>
+    </div>
+    <div class="callout">
+      <strong>When to run:</strong> immediately after control + candidate Closed stamps exist for a one-knob
+      A/B, and <strong>before</strong> step 8 (human ToS / trade-diff studies). Reuse the same generators for
+      later re-tests (step 12). Do not jump to charts without this book-level diff.
+    </div>
     <p class="do-label">Do</p>
     <ul class="bullets">
-      <li>Generate a closed-trade study for the stamp.
-        <span class="detail">RL: <span class="path">tos/gen_rl_closed_studies.py</span> → e.g. <span class="path">drive/paul_studies/rl_closed_&lt;stamp&gt;</span>. Plots SMA20/50/100/200, dip band, SMA50Exp, In/Out, stop segments.</span></li>
-      <li>Load the study on charts for every seed symbol that traded.
-        <span class="detail">Confirm entries sit in the intended band / zone; stops match Closed <code>ORIGINAL STOP</code>.</span></li>
-      <li>Make the variable change visible on the chart (not only in CSV metrics).
-        <span class="detail">If you cannot see the lever’s effect, the experiment is incomplete. If new trades
-        look like a different system, reject even if dollars improved.</span></li>
-      <li>Save study path + notes next to the experiment folder.
-        <span class="detail">Pair with HTML under <span class="path">drive/paul_experiments/</span> and the one-pager adopt/reject line.</span></li>
+      <li>Point the trade-diff generator at the two Closed stamps (control vs candidate arm).
+        <span class="detail">Canonical tool: <span class="path">drive/paul_experiments/_gen_too_high_diff.py</span>
+        (helpers: <code>load_closed</code>, <code>sortable_th</code>, <code>SORTABLE_TABLE_SCRIPT</code> / monthly-style
+        sortable headers). Sibling example: <span class="path">drive/paul_experiments/_gen_markten_band_diff.py</span>
+        (imports those helpers). Edit stamp IDs at the top; write under
+        <span class="path">drive/paul_experiments/</span> (pattern:
+        <span class="path">rl_stamp_trade_diff_too_high_113129_vs_113132.html</span>).</span></li>
+      <li>Require the HTML to include these <strong>three trade sections</strong> (sortable tables):
+        <span class="detail">
+          (1) <strong>Old trades no longer taken</strong> — in control Closed, not in candidate
+          (generator label e.g. “Only in default / stricter”);
+          (2) <strong>New trades taken</strong> — in candidate Closed, not in control
+          (e.g. “New trades (… only)”);
+          (3) <strong>Same or similar (“close enough”)</strong> — exact key matches plus close matches
+          (same symbol, nearby open, same/similar exit). Optional: run metrics side-by-side and
+          per-symbol counts above the three sections.
+        </span></li>
+      <li>Confirm match key + close-enough rule are documented in the HTML subcopy.
+        <span class="detail">Typical key: SYMBOL + DATE OPENED + ENTRY PRICE; close window ≤N days with
+        same/similar exit. Click column headers to sort (project sortable-table rule).</span></li>
+      <li>Keep only one primary lever different between stamps; document shared settings in the HTML note.
+        <span class="detail">Report/Audit columns should confirm A/B isolation. Archive the HTML path on the
+        one-pager before opening ToS.</span></li>
     </ul>
   </article>
 
-  <article class="step" id="trade-diff">
+  <article class="step" id="tos">
     <div class="step-head">
       <div class="step-num">8</div>
-      <h3 class="step-title">Comparing two variables: trade-diff HTML + ToS</h3>
+      <h3 class="step-title">For each variable change: Thinkorswim studies (accept / reject gate)</h3>
     </div>
-    <p>When comparing arm A vs arm B (two stamps / two lever values for <em>one</em> pre-agreed hypothesis),
-    produce a sortable trade-diff report and dual-band ToS studies showing shared vs new trades.
-    Prefer trade quality and thesis fit over which arm made more money.</p>
+    <p>Only after the step 7 trade-diff HTML exists: charts must still show the same intended setup —
+    SMAs, bands, stops, In/Out markers. Use the three HTML sections as the review agenda (old / new /
+    close-enough). This is the <em>post-change</em> ToS gate—distinct from seed ToS validation in step 4.
+    <strong>Reject PnL-up arms that do not look like the same setup.</strong>
+    Output studies under <span class="path">drive/paul_studies/</span>.</p>
     <div class="chip-row">
-      <span class="chip">HTML · drive/paul_experiments/rl_stamp_trade_diff_*.html</span>
-      <span class="chip">ToS · tos/gen_rl_trade_diff_studies.py</span>
-      <span class="chip">ToS out · drive/paul_studies/rl_trade_diff_*</span>
+      <span class="chip">ToS closed · tos/gen_rl_closed_studies.py</span>
+      <span class="chip">ToS trade-diff · tos/gen_rl_trade_diff_studies.py</span>
+      <span class="chip">Out · drive/paul_studies/</span>
     </div>
     <p class="do-label">Do</p>
     <ul class="bullets">
-      <li>Write trade-diff HTML (exact + close matches, new-only, metrics side-by-side).
-        <span class="detail">Pattern: <span class="path">rl_stamp_trade_diff_too_high_113129_vs_113132.html</span>. Tables use sortable headers (project rule).</span></li>
-      <li>Generate ToS trade-diff study for symbols that differ.
-        <span class="detail"><span class="path">tos/gen_rl_trade_diff_studies.py</span>: grey = shared/close-match; green = new-only; dual dip bands when comparing e.g. 2.4% vs 4.1%.</span></li>
-      <li>Ensure a reviewer can explain every new trade from the chart.
-        <span class="detail">If new trades are opaque or off-thesis, freeze promotion—even if PnL improved.</span></li>
-      <li>Keep only one primary lever different between stamps; document shared settings.
-        <span class="detail">Report/Audit columns should confirm the A/B isolation. No multi-knob “combo” wins.</span></li>
+      <li>Generate a closed-trade study for each stamp under review.
+        <span class="detail">RL: <span class="path">tos/gen_rl_closed_studies.py</span> → e.g. <span class="path">drive/paul_studies/rl_closed_&lt;stamp&gt;</span>. Plots SMA20/50/100/200, dip band, SMA50Exp, In/Out, stop segments.</span></li>
+      <li>For A/B pairs: generate ToS trade-diff studies for symbols that differ in the HTML.
+        <span class="detail"><span class="path">tos/gen_rl_trade_diff_studies.py</span>: grey = shared/close-match; green = new-only; dual dip bands when comparing e.g. 2.4% vs 4.1%. Out: <span class="path">drive/paul_studies/rl_trade_diff_*</span>.</span></li>
+      <li>Load studies on charts guided by the HTML sections (dropped / new / close-enough rows).
+        <span class="detail">Confirm entries sit in the intended band / zone; stops match Closed <code>ORIGINAL STOP</code>. Make the lever change visible on the chart—not only in CSV metrics.</span></li>
+      <li>Ensure a reviewer can explain every new (and dropped) trade from the chart.
+        <span class="detail">If new trades are opaque or off-thesis, freeze promotion—even if PnL improved. Save study paths + notes next to the experiment folder and the one-pager adopt/reject line.</span></li>
     </ul>
   </article>
 
@@ -984,9 +1055,9 @@
     <p><strong>Not a mandatory re-optimize.</strong> Once the candidate universe is trusted, change params on
     that larger set <em>only</em> when post-run / ToS / counted misses supply a new hypothesis.
     If trade setups, charts, trade count, and results are already good—stop. Every accepted change
-    again gets ToS + (when A/B) trade-diff (same gate as steps 7–8).</p>
+    again gets trade-diff HTML then ToS (same gate as steps 7–8).</p>
     <div class="callout warn">
-      Same rules as step 6: one knob, ≤2 pre-agreed alternatives, no combinatorial grids, ToS before/after
+      Same rules as step 6: one knob, ≤2 pre-agreed alternatives, no combinatorial grids; trade-diff HTML then ToS before/after
       beats PnL. Adopt into production only with <strong>PO sign-off</strong> and a
       <strong>reconcile freeze / re-baseline</strong> (sheet ↔ engine parity on the frozen levers).
     </div>
@@ -997,10 +1068,10 @@
       <li>When evidence exists: run the same single-knob A/B on the promotion universe.
         <span class="detail">Update experiment config / gold list; avoid contaminating production bats until approved.
         Do not default to multi-parameter optimizer sweeps as system review.</span></li>
-      <li>For each accepted lever change: regenerate ToS closed studies.
-        <span class="detail"><span class="path">tos/gen_rl_closed_studies.py</span> (or system equivalent) on the new stamp.</span></li>
-      <li>For each A/B lever test: trade-diff HTML + trade-diff ToS.
-        <span class="detail">Same pattern as step 8; archive under <span class="path">drive/paul_experiments/</span> and <span class="path">drive/paul_studies/</span>.</span></li>
+      <li>For each A/B lever test: trade-diff HTML first (step 7 pattern), then ToS.
+        <span class="detail">Run <span class="path">drive/paul_experiments/_gen_too_high_diff.py</span> (or sibling) on control vs candidate Closed stamps — three sections: old / new / close-enough — then <span class="path">tos/gen_rl_closed_studies.py</span> / <span class="path">tos/gen_rl_trade_diff_studies.py</span>. Archive under <span class="path">drive/paul_experiments/</span> and <span class="path">drive/paul_studies/</span>.</span></li>
+      <li>For each accepted lever change: regenerate ToS closed studies after the HTML diff.
+        <span class="detail"><span class="path">tos/gen_rl_closed_studies.py</span> (or system equivalent) on the new stamp; charts guided by the three HTML sections.</span></li>
       <li>Validate charts on every variable change (no “CSV-only” accepts).
         <span class="detail">Reject off-thesis books even if dollars rose.</span></li>
       <li>If RL: confirm AWK↔Python parity is still green after lever freeze.
@@ -1017,7 +1088,7 @@
       <h3 class="step-title">Hypothesis test one-pager (template)</h3>
     </div>
     <p>Copy into <span class="path">drive/paul_experiments/</span> next to the A/B stamps
-    (Markdown twin: <span class="path">docs/HYPOTHESIS_TEST.md</span>). Fill before running; close with adopt/reject after ToS.</p>
+    (Markdown twin: <span class="path">docs/HYPOTHESIS_TEST.md</span>). Fill before running; close with adopt/reject after trade-diff HTML + ToS.</p>
     <div class="callout">
       <ol style="margin:0;padding-left:1.2rem;">
         <li><strong>Evidence</strong> — ImproveHints / post-run ID, ToS note, or counted miss / band-touch pattern (what failed, how often).</li>
@@ -1025,7 +1096,8 @@
         <li><strong>Single knob</strong> — exact <code>-v</code> / lever name; list frozen settings; same universe.</li>
         <li><strong>Alternatives</strong> — baseline + at most 1–2 pre-agreed values (no grid).</li>
         <li><strong>A/B table</strong> — stamps, trade count, win%, DD / robust FIT, reconcile status (not max PnL as primary).</li>
-        <li><strong>ToS links</strong> — before/after study paths under <span class="path">drive/paul_studies/</span>; trade-diff HTML if used.</li>
+        <li><strong>Trade-diff HTML</strong> — control vs candidate Closed stamps; three sections (old / new / close-enough) via <span class="path">_gen_too_high_diff.py</span> (required before ToS).</li>
+        <li><strong>ToS links</strong> — before/after study paths under <span class="path">drive/paul_studies/</span> (after HTML).</li>
         <li><strong>Decision</strong> — adopt / reject / hold; reviewer; PO sign-off; reconcile freeze / re-baseline checkbox if adopt.</li>
       </ol>
     </div>
@@ -1063,27 +1135,32 @@
         <tr>
           <td>Post-run analysis</td>
           <td><span class="path">stock_analysis/post_run_analysis.py</span></td>
-          <td>Deep CLI; RL wrapper <span class="path">rl_post_run_analysis.py</span>. Docs: <span class="path">docs/POST_RUN_ANALYSIS.md</span>. Outputs: SymbolAssessments, ImprovePriority, Charts; cheap FIT / ImproveHints / <code>FIT_SCORE_ROBUST</code> on Summary</td>
+          <td>Deep CLI; RL wrapper <span class="path">rl_post_run_analysis.py</span>. Docs: <span class="path">docs/POST_RUN_ANALYSIS.md</span>. Outputs: SymbolAssessments, ImprovePriority (params + Run AB first), Charts; cheap FIT / <code>FIT_SCORE_ROBUST</code> via leave-max-win-out (<code>AVG_PNL_PCT_WO_MAX</code>) / ImproveHints on Summary</td>
+        </tr>
+        <tr>
+          <td>YH param-hint A/B</td>
+          <td><span class="path">run_yh_param_hint_ab.bat</span> · <span class="path">tools/yh_param_hint_ab.py</span></td>
+          <td>One-knob control vs alt for ImprovePriority band/target/stop cards → <span class="path">drive/paul_experiments/yh_param_hint_ab/comparison.html</span>. Hypothesis-test framing, not optimal search.</td>
         </tr>
         <tr>
           <td>Trade-diff HTML</td>
-          <td><span class="path">drive/paul_experiments/</span></td>
-          <td><code>rl_stamp_trade_diff_*.html</code>; sortable tables required</td>
+          <td><span class="path">drive/paul_experiments/_gen_too_high_diff.py</span> · sibling <span class="path">_gen_markten_band_diff.py</span> → <span class="path">drive/paul_experiments/rl_stamp_trade_diff_*.html</span></td>
+          <td>Step 7 (before ToS): Closed stamps control vs candidate; three sortable sections — old trades dropped, new trades, same/close-enough. Monthly-style sortable headers.</td>
         </tr>
         <tr>
           <td>ToS studies</td>
           <td><span class="path">drive/paul_studies/</span></td>
-          <td>Generators in <span class="path">tos/gen_rl_*_studies.py</span>. Step 4 = seed trade validation; steps 7–8 = accept/reject each hypothesis lever / trade-diff (ToS beats PnL)</td>
+          <td>Generators in <span class="path">tos/gen_rl_*_studies.py</span>. Step 4 = seed validation; step 8 = accept/reject after step 7 HTML (ToS beats PnL)</td>
         </tr>
         <tr>
           <td>Hypothesis test one-pager</td>
           <td><span class="path">docs/HYPOTHESIS_TEST.md</span> · process § <a href="#hyp-one-pager">one-pager</a></td>
-          <td>Evidence → single knob → A/B → ToS → adopt/reject + PO + reconcile freeze</td>
+          <td>Evidence → single knob → A/B → trade-diff HTML → ToS → adopt/reject + PO + reconcile freeze</td>
         </tr>
         <tr>
           <td>Summary columns</td>
           <td><code>*_Summary_&lt;ts&gt;.csv</code></td>
-          <td><code>FIRST_DATA_DATE</code>, <code>AVG_TRADES_PER_YEAR</code>, <code>SHEET_PNL</code>, <code>PCT_WINS</code>, …</td>
+          <td><code>FIRST_DATA_DATE</code>, <code>AVG_TRADES_PER_YEAR</code>, <code>SHEET_PNL</code>, <code>PCT_WINS</code>, <code>FIT</code>/<code>FIT_SCORE</code>/<code>FIT_SCORE_ROBUST</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag), …</td>
         </tr>
         <tr>
           <td>Sheet PnL scale</td>
