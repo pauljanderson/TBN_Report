@@ -7,7 +7,8 @@ Cheap enrichments (DailyRun-safe):
   - Summary ``AVG_DAYS_HELD`` (mean Closed ``DAYS_HELD`` per symbol; aligns with
     Report/Audit ``Avg_Days_Held``)
   - Summary ``FIT`` / ``FIT_SCORE`` / ``FIT_SCORE_ROBUST`` / outlier cols /
-    ``FIT_ASSESSMENT`` (plus ``RL_FIT`` for RL)
+    ``FIT_ASSESSMENT`` (plus ``RL_FIT`` for RL); ``PAUL_SCORE`` (0–8 peer
+    thresholds vs run mean/median) / ``PAUL_SCORE``
   - ``{prefix}_ImproveHints_<ts>.csv|.md|.html`` (pattern hints + param tweaks +
     peer-learn when peer Closed books exist under drive/)
 
@@ -830,13 +831,142 @@ def enrich_summary_csv_with_yfinance(
     return len(rows)
 
 
+# Paul Score: per-run peer thresholds on Summary (after FIT / WO_MAX cols exist).
+# +1 each if value ≥ max(mean, median): PCT_WINS, TOTAL_PNL, SHEET_PNL, AVG_PNL_PCT,
+# AVG_PNL_PCT_WO_MAX, AVG_TRADES_PER_YEAR; +1 if ≤ min(mean, median):
+# OUTLIER_PCT_OF_WINS, AVG_DAYS_HELD (faster turnover = better).
+# Integer 0–8. Blank/non-numeric cells skipped for thresholds and that component.
+_PAUL_SCORE_COL = "PAUL_SCORE"
+_PAUL_SCORE_HIGH_CANDIDATES: tuple[tuple[str, ...], ...] = (
+    ("PCT_WINS", "Pct_Wins", "PCT_WINS_%"),
+    ("TOTAL_PNL", "Total_PNL", "Total_PnL"),
+    ("SHEET_PNL", "Sheet_PNL", "sheet_Total_PNL", "SHEET_TOTAL_PNL"),
+    ("AVG_PNL_PCT", "Avg_PNL_Pct", "AVG_PNL_%"),
+    ("AVG_PNL_PCT_WO_MAX", "Avg_PNL_Pct_WO_Max"),
+    ("AVG_TRADES_PER_YEAR", "Avg_Trades_Per_Year", "AVG_TPY"),
+)
+_PAUL_SCORE_LOW_CANDIDATES: tuple[tuple[str, ...], ...] = (
+    ("OUTLIER_PCT_OF_WINS", "Outlier_Pct_Of_Wins"),
+    ("AVG_DAYS_HELD", "Avg_Days_Held", "AVG_DAYS"),
+)
+
+
+def _optional_fnum(val: Any) -> Optional[float]:
+    """Parse a numeric Summary cell; return None for blank / non-numeric (keeps 0.0)."""
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return None
+    s = str(val).strip().replace("%", "").replace(",", "")
+    if not s or s.upper() in ("N/A", "NAN", "NONE"):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _resolve_summary_col(fieldnames: list[str], *candidates: str) -> Optional[str]:
+    """Return the actual header matching any candidate (exact, then case-insensitive)."""
+    if not fieldnames:
+        return None
+    exact = {c: c for c in fieldnames}
+    lower = {str(c).strip().lower(): c for c in fieldnames}
+    for name in candidates:
+        if name in exact:
+            return exact[name]
+        hit = lower.get(str(name).strip().lower())
+        if hit is not None:
+            return hit
+    return None
+
+
+def apply_paul_scores_to_summary_rows(
+    rows: list[dict[str, Any]],
+    fieldnames: list[str],
+) -> dict[str, Any]:
+    """Write ``PAUL_SCORE`` (0–8) on each row; ensure column is in *fieldnames*.
+
+    Returns threshold diagnostics: resolved cols, per-field mean/median/threshold.
+    """
+    if _PAUL_SCORE_COL not in fieldnames:
+        fieldnames.append(_PAUL_SCORE_COL)
+
+    high_specs: list[tuple[str, str]] = []  # (resolved_col, label)
+    for cands in _PAUL_SCORE_HIGH_CANDIDATES:
+        col = _resolve_summary_col(fieldnames, *cands)
+        if col:
+            high_specs.append((col, cands[0]))
+    low_specs: list[tuple[str, str]] = []
+    for cands in _PAUL_SCORE_LOW_CANDIDATES:
+        col = _resolve_summary_col(fieldnames, *cands)
+        if col:
+            low_specs.append((col, cands[0]))
+
+    thresholds: dict[str, dict[str, Any]] = {}
+    high_thr: dict[str, float] = {}
+    low_thr: dict[str, float] = {}
+
+    for col, label in high_specs:
+        vals = [v for row in rows if (v := _optional_fnum(row.get(col))) is not None]
+        if not vals:
+            continue
+        mean_v = float(statistics.mean(vals))
+        med_v = float(statistics.median(vals))
+        thr = max(mean_v, med_v)
+        high_thr[col] = thr
+        thresholds[label] = {
+            "col": col,
+            "n": len(vals),
+            "mean": mean_v,
+            "median": med_v,
+            "threshold": thr,
+            "rule": ">= max(mean, median)",
+        }
+
+    for col, label in low_specs:
+        vals = [v for row in rows if (v := _optional_fnum(row.get(col))) is not None]
+        if not vals:
+            continue
+        mean_v = float(statistics.mean(vals))
+        med_v = float(statistics.median(vals))
+        thr = min(mean_v, med_v)
+        low_thr[col] = thr
+        thresholds[label] = {
+            "col": col,
+            "n": len(vals),
+            "mean": mean_v,
+            "median": med_v,
+            "threshold": thr,
+            "rule": "<= min(mean, median)",
+        }
+
+    for row in rows:
+        score = 0
+        for col, _label in high_specs:
+            thr = high_thr.get(col)
+            if thr is None:
+                continue
+            v = _optional_fnum(row.get(col))
+            if v is not None and v >= thr:
+                score += 1
+        for col, _label in low_specs:
+            thr = low_thr.get(col)
+            if thr is None:
+                continue
+            v = _optional_fnum(row.get(col))
+            if v is not None and v <= thr:
+                score += 1
+        row[_PAUL_SCORE_COL] = str(int(score))
+
+    return {"column": _PAUL_SCORE_COL, "max_score": 8, "thresholds": thresholds}
+
+
 def enrich_summary_csv_with_fit(
     summary_path: Path,
     closed_path: Path,
     *,
     prefix: str = "RL",
 ) -> int:
-    """Add FIT (+ RL_FIT when prefix is RL) and robust/outlier columns to Summary CSV."""
+    """Add FIT (+ RL_FIT when prefix is RL), robust/outlier cols, and PAUL_SCORE to Summary CSV."""
     sp = Path(summary_path)
     cp = Path(closed_path)
     if not sp.is_file():
@@ -902,10 +1032,14 @@ def enrich_summary_csv_with_fit(
         row["FIT_SCORE"] = str(fr.score)
         row["FIT_SCORE_ROBUST"] = str(fr.score_robust)
         row["MAX_WIN_PCT"] = f"{fr.max_win_pct:.2f}%" if fr.max_win_pct else "0.00%"
-        row["AVG_PNL_PCT_WO_MAX"] = f"{fr.avg_pnl_pct_wo_max:+.2f}%"
-        row["MEDIAN_PNL_PCT"] = f"{fr.median_pnl_pct:+.2f}%"
-        row["OUTLIER_PCT_OF_WINS"] = f"{fr.outlier_pct_of_wins:.1f}%"
+        # Numeric pct points (like Report Avg_PNL_Pct); format with % only at HTML/render time.
+        row["AVG_PNL_PCT_WO_MAX"] = f"{fr.avg_pnl_pct_wo_max:.2f}"
+        row["MEDIAN_PNL_PCT"] = f"{fr.median_pnl_pct:.2f}"
+        row["OUTLIER_PCT_OF_WINS"] = f"{fr.outlier_pct_of_wins:.1f}"
         row["FIT_ASSESSMENT"] = fr.text
+
+    # After WO_MAX / outlier FIT cols exist: peer Paul Score (0–8) vs this Summary's mean/median.
+    apply_paul_scores_to_summary_rows(rows, fieldnames)
 
     with sp.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -967,6 +1101,24 @@ def _hint_catalog(prefix: str) -> dict[str, tuple[str, str]]:
             "stop_pct (tighter) or time-stop / cut_the_losers",
             "Large STOP losses dominate — tighter stop or time-based exit.",
         ),
+        # Slow-winner / long-hold turnover lenses (Ann_ROR / trades-per-year over max single PnL)
+        "slow_target_grind": (
+            "target_pct (contract) — alt: shorter time_stop_days or STRENGTH-style early take",
+            "Many TARGET hits took ≥100 days — hypothesis: closer target (or early take) "
+            "recycles capital sooner; prefer turnover/Ann_ROR over waiting for one fat tag "
+            "(one knob A/B; not an optimize sweep).",
+        ),
+        "winner_peak_giveback": (
+            "trail (trailing_stop_increment / sma_stop_days / chandelier) or partial scale-out",
+            "Winners that peaked ≥15% MFE then exited ≥10pp below peak — "
+            "trail or scale-out may lock more of the run (hypothesis; one trail knob).",
+        ),
+        "early_run_long_tail": (
+            "trail after +10% / lower target_pct / shorter time_stop after milestone",
+            "Hit +10% within 25 days then held ≥80 days — capital sat after the early run; "
+            "test trail-after-+10%, STRENGTH-style early take, or shorter time_stop "
+            "(turnover over max single-trade profit).",
+        ),
     }
     if p in RL_SYSTEMS:
         return {
@@ -999,6 +1151,21 @@ def _hint_catalog(prefix: str) -> dict[str, tuple[str, str]]:
                 "rl_stop_pct (tighter) or rl_exit_percent/days time-stop",
                 "Large STOP losses dominate — tighter stop or time-based cut_the_losers exit.",
             ),
+            "slow_target_grind": (
+                "rl_target_pct (contract) — alt: rl_exit_percent/days or rl_partial_exit",
+                "Many TARGET hits took ≥100 days — hypothesis: closer target / partial exit / "
+                "RL_EXIT_DAYS after a profit gate recycles capital sooner (turnover/Ann_ROR; one knob).",
+            ),
+            "winner_peak_giveback": (
+                "rl_trail_profit / rl_trail_stop (or trail2) or rl_partial_exit",
+                "Winners that peaked ≥15% MFE then exited ≥10pp below peak — "
+                "enable trail or partial scale-out (hypothesis; one knob).",
+            ),
+            "early_run_long_tail": (
+                "rl_trail_profit after ~+10% / rl_target_pct contract / rl_exit_days",
+                "Hit +10% within 25 days then held ≥80 days — test trail-after-profit, "
+                "closer target, or RL_EXIT_DAYS (turnover over max single-trade).",
+            ),
         }
     if p in ZONE_SYSTEMS:
         generic["shallow_entry_sma50_fail"] = (
@@ -1010,6 +1177,30 @@ def _hint_catalog(prefix: str) -> dict[str, tuple[str, str]]:
             "rl_post_target_reentry_bars + rl_post_target_reentry_mode "
             "(none/under_sma_limit/min_stack/stop_loss) or longer symbol_reentry_cooldown_days",
             "TARGET then quick STOP re-entry — prefer post-win-only gates over blanket cd alone.",
+        )
+    if p == "SB":
+        generic["slow_target_grind"] = (
+            "target_pct (contract) — alt: shorter burst_time_stop_days",
+            "Slow TARGET grinds (≥100d) — SB already times out fast in prod; if this fires, "
+            "closer target_pct may still improve turnover (one knob).",
+        )
+        generic["early_run_long_tail"] = (
+            "target_pct (contract) / burst_time_stop_days / burst_no_ft_days",
+            "Early +10% then long hold — closer target or tighter TIME/NO_FT (hypothesis).",
+        )
+    if p == "MVCP":
+        generic["slow_target_grind"] = (
+            "mvcp_strength_pct/bars (earlier STRENGTH) or target_pct contract",
+            "Slow full TARGET — raise STRENGTH early-take aggressiveness or lower full target "
+            "(one knob; turnover/Ann_ROR framing).",
+        )
+        generic["winner_peak_giveback"] = (
+            "mvcp_trail_sma / mvcp_trail_arm_pct (earlier arm) or partial scale-out",
+            "Winners that gave back MFE — arm trail sooner after +X% (hypothesis).",
+        )
+        generic["early_run_long_tail"] = (
+            "mvcp_strength_* early take / mvcp_trail_arm_pct / mvcp_time_stop_*",
+            "Early +10% then long hold — STRENGTH early take or earlier trail arm (one knob).",
         )
     return generic
 
@@ -1106,6 +1297,47 @@ def _collect_improve_hints(
                 hid = "fat_stops"
                 hit_syms[hid].add(sym)
                 hit_trades[hid] += 1
+
+            # --- Slow-winner / long-hold turnover lenses ---
+            # Prefer Closed MAX_PRICE MFE when present; fall back to MAX_GAIN %.
+            entry_px = entry
+            max_px = _fnum(_col(r, "MAX_PRICE", "MAX PRICE"))
+            if entry_px > 0 and max_px > entry_px:
+                mfe_pct = (max_px / entry_px - 1.0) * 100.0
+            else:
+                mfe_pct = max_gain_pct
+            d10 = _fnum(_col(r, "DAYS_HELD_FIRST_UP_10PCT", "DAYS HELD FIRST UP 10PCT"), -1.0)
+
+            if "TARGET" in exit_type and days >= 100:
+                hid = "slow_target_grind"
+                hit_syms[hid].add(sym)
+                hit_trades[hid] += 1
+                if len(evidence[hid]) < 8:
+                    ppd = (pnl / days) if days > 0 else 0.0
+                    evidence[hid].append(
+                        f"{sym} TARGET {days}d {_pct_str(pnl)} (~{ppd:.2f}%/d) "
+                        f"{_iso_dash(_col(r, 'DATE CLOSED', 'DATE_CLOSED'))}"
+                    )
+
+            if pnl > 0 and mfe_pct >= 15.0 and (mfe_pct - pnl) >= 10.0 and days >= 15:
+                hid = "winner_peak_giveback"
+                hit_syms[hid].add(sym)
+                hit_trades[hid] += 1
+                if len(evidence[hid]) < 8:
+                    evidence[hid].append(
+                        f"{sym} peak~{mfe_pct:.0f}% -> exit {_pct_str(pnl)} "
+                        f"(giveback~{mfe_pct - pnl:.0f}pp, {days}d, {exit_type})"
+                    )
+
+            if pnl > 0 and 0 < d10 <= 25 and days >= 80:
+                hid = "early_run_long_tail"
+                hit_syms[hid].add(sym)
+                hit_trades[hid] += 1
+                if len(evidence[hid]) < 8:
+                    evidence[hid].append(
+                        f"{sym} +10% by day {int(d10)} then held {days}d "
+                        f"exit {_pct_str(pnl)} ({exit_type})"
+                    )
 
     catalog = _hint_catalog(prefix)
     hints: list[ImproveHint] = []
@@ -2085,13 +2317,7 @@ def write_analysis_artifacts(
     except Exception as e:
         print(f"[{pref} analysis] yfinance Summary meta failed: {e}", file=sys.stderr)
 
-    try:
-        n = enrich_summary_csv_with_fit(summary_path, closed_path, prefix=pref)
-        print(f"[{pref} analysis] FIT columns on {n} summary rows -> {Path(summary_path).name}", flush=True)
-        out["summary"] = Path(summary_path)
-    except Exception as e:
-        print(f"[{pref} analysis] FIT enrichment failed: {e}", file=sys.stderr)
-
+    # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire (0–8).
     try:
         n = enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
         print(
@@ -2101,6 +2327,13 @@ def write_analysis_artifacts(
         out["summary"] = Path(summary_path)
     except Exception as e:
         print(f"[{pref} analysis] AVG_DAYS_HELD enrichment failed: {e}", file=sys.stderr)
+
+    try:
+        n = enrich_summary_csv_with_fit(summary_path, closed_path, prefix=pref)
+        print(f"[{pref} analysis] FIT columns on {n} summary rows -> {Path(summary_path).name}", flush=True)
+        out["summary"] = Path(summary_path)
+    except Exception as e:
+        print(f"[{pref} analysis] FIT enrichment failed: {e}", file=sys.stderr)
 
     try:
         hints_path = write_improve_hints(

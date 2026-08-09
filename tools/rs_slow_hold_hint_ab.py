@@ -1,15 +1,30 @@
 #!/usr/bin/env python3
-"""RS ImprovePriority / pattern A/B suite (expanded-65 gold).
+"""RS slow-hold / early-TP ImprovePriority A/B suite (expanded-65 gold).
 
-Control = production run_rs.bat (time_stop_days=252, stop 0.85, target 1.25,
-spy_int + cd=60, RS_universe.csv 65). One knob (or coherent gate) per arm;
-<=2 alts per hypothesis. See docs/HYPOTHESIS_TEST.md.
+Control = production run_rs.bat stamp 260807141317
+  (time_stop_days=252, stop 0.85, target 1.25, spy_int + cd=60, univ 65).
+
+Arms from ImprovePriority taken-trade patterns (contract / trail / shorter time —
+NO target expand in this suite):
+
+  1. target_pct 1.25 → 1.15          (slow_target_grind / early_run_long_tail)
+  2. time_stop_days 252 → 120        (slow_target_grind alt)
+  3. trailing_stop_increment=10      (early_run "trail after +10%" closest knob)
+  4. trailing_stop_increment=5       (winner_peak_giveback — tighter trail)
+  5. sma_stop_days=20                (winner_peak_giveback — SMA trail)
+
+One knob per arm. See docs/HYPOTHESIS_TEST.md.
+
+Trail note (RS/TBN): there is no rl_trail_profit profit-gate. Closest production
+lever is ``trailing_stop_increment`` (gain-based ratchet from first peak gain).
+Exact CLI: ``-v trailing_stop_increment=10`` means each 10pp of peak gain raises
+working stop by 1% of entry above the initial stop (docs/TRAILING_STOPS.md).
 
 Usage (repo root)::
 
-  python tools/rs_post252_hint_ab.py --reuse-control 260807141317
-  run_rs_post252_hint_ab.bat
-  run_rs_post252_hint_ab.bat 260807141317
+  python tools/rs_slow_hold_hint_ab.py --reuse-control 260807141317
+  run_rs_slow_hold_hint_ab.bat
+  run_rs_slow_hold_hint_ab.bat 260807141317
 """
 from __future__ import annotations
 
@@ -30,7 +45,7 @@ REPO = Path(__file__).resolve().parents[1]
 SA = REPO / "stock_analysis"
 DATA_DIR = REPO / "data" / "newdata" / "data"
 DRIVE = REPO / "drive"
-DEFAULT_OUT = DRIVE / "paul_experiments" / "rs_expand65_hint_ab"
+DEFAULT_OUT = DRIVE / "paul_experiments" / "rs_slow_hold_hint_ab"
 DEFAULT_CONTROL = "260807141317"
 
 # Production BASE matching run_rs.bat (expanded-65 + stop 0.85)
@@ -60,6 +75,9 @@ RS_BASE_V = [
     "rl_post_target_reentry_bars=0",
     "exit_when_spy_int_turns_weak=false",
     "max_atr_pct_at_trigger=0",
+    "trailing_stop_increment=0",
+    "sma_stop_days=0",
+    "chandelier_enabled=false",
 ]
 
 SORTABLE_TH_CSS = """
@@ -135,7 +153,7 @@ def sortable_th(label: str, sort_type: str) -> str:
 class Arm:
     arm_id: str
     hypothesis_id: str
-    family: str  # param | pattern | skip
+    family: str  # param | pattern
     suggestion: str
     extras: list[str] = field(default_factory=list)
     is_control: bool = False
@@ -185,93 +203,52 @@ def load_universe_symbols() -> str:
 
 
 def build_arms() -> list[Arm]:
-    """Arms from ImproveHints 260807141317 — one knob / coherent gate each."""
+    """Slow-hold / early-TP arms — one knob each; no target expand."""
     return [
         Arm(
             "00_control",
             "baseline_run_rs_expand65",
             "param",
-            "Production run_rs.bat: time_stop=252, stop 0.85, target 1.25, spy_int + cd=60, univ 65.",
+            "Production run_rs.bat: time_stop=252, stop 0.85, target 1.25, trail off, sma_stop off.",
             is_control=True,
         ),
-        # Parameter suggestions (ImprovePriority tension cards)
         Arm(
-            "01_target_expand_130",
-            "target_pct_tension_expand",
+            "01_target_contract_115",
+            "slow_target_grind_early_run_contract",
             "param",
-            "Mixed target card expand lens: TARGET exits that continued higher — widen target to 1.30.",
-            ["target_pct=1.30"],
+            "slow_target_grind / early_run: closer target 1.15 (contract; no expand in this suite).",
+            ["target_pct=1.15"],
         ),
         Arm(
-            "02_target_contract_120",
-            "target_pct_tension_contract",
-            "param",
-            "Mixed target card contract lens: near-miss then STOP/TIME — closer target 1.20.",
-            ["target_pct=1.20"],
-        ),
-        Arm(
-            "03_stop_contract_088",
-            "stop_pct_tension_contract",
-            "param",
-            "Stop tension lean contract: tighten stop to 0.88 (prior production width).",
-            ["stop_pct=0.88"],
-        ),
-        Arm(
-            "04_stop_contract_090",
-            "stop_pct_tension_contract_fat_stops",
-            "param",
-            "Stop tension / fat_stops tighter alt: stop 0.90 (higher mult = tighter).",
-            ["stop_pct=0.90"],
-        ),
-        Arm(
-            "05_band_pct_skip",
-            "band_tighten_weak_fill",
-            "skip",
-            "band_pct / pivot proximity — not an RS entry lever (zones off).",
-            skip=True,
-            skip_reason="RS does not use band_pct; dismiss for this system",
-        ),
-        # Taken-trade patterns
-        Arm(
-            "06_fat_atr_days_45",
-            "fat_stops_atr_time",
+            "02_time_stop_120",
+            "slow_target_grind_shorter_time",
             "pattern",
-            "fat_stops alt beyond tighter stop: atr_days=45 cut schedule (TIME=252 already on).",
-            ["atr_days=45", "atr_progress=0"],
+            "slow_target_grind alt: shorter time_stop_days 252→120 (recycle capital sooner).",
+            ["time_stop_days=120"],
         ),
         Arm(
-            "07_pt_none_15",
-            "post_target_quick_stop",
+            "03_trail_inc_10",
+            "early_run_trail_after_10",
             "pattern",
-            "post_target_quick_stop: rl_post_target_reentry_bars=15 mode=none "
-            "(block all same-symbol re-entry for 15 trading bars after TARGET only). "
-            "Likely noop under production symbol_reentry_cooldown_days=60 "
-            "(calendar days after any exit; 15 bars ≪ 60d).",
-            [
-                "rl_post_target_reentry_bars=15",
-                "rl_post_target_reentry_mode=none",
-            ],
+            "early_run_long_tail: closest RS/TBN knob for trail-after-+10% — "
+            "-v trailing_stop_increment=10 (each 10pp peak gain raises stop +1% entry; "
+            "no rl_trail_profit gate on RS).",
+            ["trailing_stop_increment=10"],
         ),
         Arm(
-            "08_cd_90",
-            "post_target_quick_stop_cd",
+            "04_trail_inc_5",
+            "winner_peak_giveback_trail_inc",
             "pattern",
-            "post_target_quick_stop alt: longer blanket symbol_reentry_cooldown_days=90.",
-            ["symbol_reentry_cooldown_days=90"],
+            "winner_peak_giveback: tighter gain trail -v trailing_stop_increment=5 "
+            "(5pp peak gain → +1% entry stop raise).",
+            ["trailing_stop_increment=5"],
         ),
         Arm(
-            "09_false_growth_252",
-            "false_start_2022_2023_growth",
+            "05_sma_stop_20",
+            "winner_peak_giveback_sma_trail",
             "pattern",
-            "false_start regime proxy: growth_filter 252 bars.",
-            ["growth_filter_enabled=true", "growth_bars=252"],
-        ),
-        Arm(
-            "10_false_spy_int_exit",
-            "false_start_2022_2023_spy_exit",
-            "pattern",
-            "false_start: exit when SPY IND_TC_INT turns Weak (entry gate already on).",
-            ["exit_when_spy_int_turns_weak=true"],
+            "winner_peak_giveback alt: -v sma_stop_days=20 (SMA trailing floor; chandelier not used).",
+            ["sma_stop_days=20"],
         ),
     ]
 
@@ -305,6 +282,8 @@ def extract_metrics(outdir: Path) -> Optional[dict[str, Any]]:
         "brt_cash": _safe_num(row.get("brt_cash")),
         "max_pos": _safe_num(row.get("Max_Positions")),
         "pf": _safe_num(row.get("Profit_Factor")),
+        "ppcd": _safe_num(row.get("Profit_Per_Capital_Day")),
+        "capital_days": _safe_num(row.get("Capital_Days")),
     }
 
 
@@ -343,46 +322,20 @@ def build_cmd(py: str, outdir: Path, workers: int, symbols: str, extras: list[st
 
 
 def lean_decision(r: dict[str, Any], cm: dict[str, Any]) -> tuple[str, str]:
-    """Return (lean, why) vs control metrics.
-
-    Lean labels:
-      adopt? / hold / dismiss — triage for possible change
-      noop — identical (or strictly dominated-by-existing-gate) book; not a hold candidate
-    """
+    """Return (lean, why) vs control metrics."""
     if r.get("skip"):
         return "dismiss", r.get("skip_reason") or "not applicable"
-    if r.get("is_control"):
-        return "hold", "baseline"
     m = r.get("metrics") or {}
     if not m or not cm:
         return "hold", "no metrics"
+    if r.get("is_control"):
+        return "control", "baseline"
     d_pnl = float(m.get("pnl", 0)) - float(cm.get("pnl", 0))
     d_dd = float(m.get("max_dd", 0)) - float(cm.get("max_dd", 0))
     d_ror = float(m.get("ann_ror", 0)) - float(cm.get("ann_ror", 0))
     d_wr = float(m.get("wr", 0)) - float(cm.get("wr", 0))
-    d_tr = int(m.get("trades", 0) or 0) - int(cm.get("trades", 0) or 0)
-    extras = str(r.get("extras") or "")
-    hyp = str(r.get("hypothesis_id") or "")
-    # Exact book match → noop (not "hold", which implies a live tradeoff / candidate)
-    if (
-        abs(d_pnl) < 1.0
-        and abs(d_ror) < 0.01
-        and abs(d_dd) < 0.01
-        and abs(d_wr) < 0.01
-        and d_tr == 0
-    ):
-        if "rl_post_target_reentry" in extras or "post_target" in hyp:
-            return (
-                "noop",
-                "Identical to control: bars=15 mode=none blocks same-symbol re-entry for 15 "
-                "trading bars after TARGET only; production symbol_reentry_cooldown_days=60 "
-                "already blocks ~60 calendar days after any exit — 15 bars ≪ 60d so this gate "
-                "never binds. Lean=noop means no effect / don't bother (not a hold candidate).",
-            )
-        return (
-            "noop",
-            "Identical metrics vs control — no effect (noop, not a hold candidate)",
-        )
+    d_ppcd = float(m.get("ppcd", 0)) - float(cm.get("ppcd", 0))
+    d_days = float(m.get("avg_days", 0)) - float(cm.get("avg_days", 0))
     # Soft adopt: material PnL lift without DD blow-up; dismiss clear regressions
     if d_pnl < -200_000:
         return "dismiss", f"PnL {d_pnl:+.0f} vs control (large $ regression; ignore ROR noise)"
@@ -390,6 +343,12 @@ def lean_decision(r: dict[str, Any], cm: dict[str, Any]) -> tuple[str, str]:
         return "dismiss", f"PnL {d_pnl:+.0f} / Ann_ROR {d_ror:+.2f} vs control — worse"
     if d_pnl > 80_000 and d_dd <= 1.5 and d_ror >= 0:
         return "adopt?", f"PnL {d_pnl:+.0f}, Ann_ROR {d_ror:+.2f}, DD {d_dd:+.2f} — candidate (PO/ToS)"
+    # Turnover thesis: shorter holds + better $/cap-day + non-worse DD can still be interesting
+    if d_days < -15 and d_ppcd > 1.0 and d_dd <= 1.0 and d_pnl > -40_000:
+        return "hold", (
+            f"turnover mix: days {d_days:+.1f}, $/cap-day {d_ppcd:+.2f}, "
+            f"PnL {d_pnl:+.0f}, DD {d_dd:+.2f} — inspect trade-diff"
+        )
     if abs(d_pnl) < 40_000 and abs(d_ror) < 0.8 and abs(d_dd) < 0.8:
         return "hold", f"flat vs control (PnL {d_pnl:+.0f}, ROR {d_ror:+.2f}, DD {d_dd:+.2f})"
     if d_pnl > 0 and d_dd > 1.5:
@@ -435,7 +394,6 @@ def run_arm(
         n = copy_stamp_artifacts(DRIVE, arm_dir, reuse_control_stamp)
         metrics = extract_metrics(arm_dir) or extract_metrics(DRIVE)
         if metrics and metrics.get("stamp") != reuse_control_stamp:
-            # Prefer exact stamp from drive
             copy_stamp_artifacts(DRIVE, arm_dir, reuse_control_stamp)
             metrics = extract_metrics(arm_dir)
         result["ok"] = bool(metrics)
@@ -496,7 +454,6 @@ def write_comparison(
         r["lean"] = lean
         r["lean_why"] = why
 
-    # CSV
     csv_path = out_root / "comparison.csv"
     fields = [
         "arm",
@@ -511,6 +468,7 @@ def write_comparison(
         "avg_days",
         "pnl",
         "max_dd",
+        "ppcd",
         "losing_streak",
         "p90_days",
         "brt_cash",
@@ -520,6 +478,8 @@ def write_comparison(
         "d_wr",
         "d_ann_ror",
         "d_max_dd",
+        "d_ppcd",
+        "d_avg_days",
         "lean",
         "lean_why",
         "suggestion",
@@ -556,6 +516,7 @@ def write_comparison(
                     "avg_days": m.get("avg_days"),
                     "pnl": m.get("pnl"),
                     "max_dd": m.get("max_dd"),
+                    "ppcd": m.get("ppcd"),
                     "losing_streak": m.get("losing_streak"),
                     "p90_days": m.get("p90_days"),
                     "brt_cash": m.get("brt_cash"),
@@ -565,6 +526,8 @@ def write_comparison(
                     "d_wr": (float(m.get("wr", 0)) - float(cm.get("wr", 0))) if cm else "",
                     "d_ann_ror": (float(m.get("ann_ror", 0)) - float(cm.get("ann_ror", 0))) if cm else "",
                     "d_max_dd": (float(m.get("max_dd", 0)) - float(cm.get("max_dd", 0))) if cm else "",
+                    "d_ppcd": (float(m.get("ppcd", 0)) - float(cm.get("ppcd", 0))) if cm else "",
+                    "d_avg_days": (float(m.get("avg_days", 0)) - float(cm.get("avg_days", 0))) if cm else "",
                     "lean": r.get("lean"),
                     "lean_why": r.get("lean_why"),
                     "suggestion": r.get("suggestion"),
@@ -591,7 +554,7 @@ def write_comparison(
         [
             sortable_th("Arm", "text"),
             sortable_th("Family", "text"),
-            sortable_th("Knob", "text"),
+            sortable_th("Knob (-v)", "text"),
             sortable_th("Stamp", "text"),
             sortable_th("Trades", "num"),
             sortable_th("WR%", "num"),
@@ -600,6 +563,7 @@ def write_comparison(
             sortable_th("AvgDays", "num"),
             sortable_th("Total_PNL", "num"),
             sortable_th("Max_DD", "num"),
+            sortable_th("$/cap-day", "num"),
             sortable_th("LoseStreak", "num"),
             sortable_th("P90", "num"),
             sortable_th("brt_cash", "num"),
@@ -607,6 +571,7 @@ def write_comparison(
             sortable_th("Δ PnL", "num"),
             sortable_th("Δ ROR", "num"),
             sortable_th("Δ DD", "num"),
+            sortable_th("Δ $/cap-day", "num"),
             sortable_th("Lean", "text"),
             sortable_th("Why", "text"),
         ]
@@ -615,28 +580,16 @@ def write_comparison(
     for r in rows:
         m = r.get("metrics") or {}
         cls = "total-row" if r.get("is_control") else ""
-        if r.get("skip"):
-            body_rows.append(
-                f"<tr class='{cls}'><td>{html.escape(r['arm'])}</td>"
-                f"<td>{html.escape(str(r.get('family','')))}</td>"
-                f"<td colspan='16'>{html.escape(r.get('skip_reason') or 'skipped')}</td>"
-                f"<td>{html.escape(str(r.get('lean','')))}</td>"
-                f"<td>{html.escape(str(r.get('lean_why','')))}</td></tr>"
-            )
-            continue
         d_pnl = float(m.get("pnl", 0)) - float(cm.get("pnl", 0)) if cm else 0.0
         d_ror = float(m.get("ann_ror", 0)) - float(cm.get("ann_ror", 0)) if cm else 0.0
         d_dd = float(m.get("max_dd", 0)) - float(cm.get("max_dd", 0)) if cm else 0.0
+        d_ppcd = float(m.get("ppcd", 0)) - float(cm.get("ppcd", 0)) if cm else 0.0
         lean = str(r.get("lean", ""))
         lean_cls = ""
         if lean.startswith("adopt"):
             lean_cls = " style='background:#dcfce7'"
         elif lean == "dismiss":
             lean_cls = " style='background:#fee2e2'"
-        elif lean == "noop":
-            lean_cls = " style='background:#e2e8f0'"
-        elif lean == "hold":
-            lean_cls = " style='background:#fef9c3'"
         body_rows.append(
             f"<tr class='{cls}'>"
             f"<td>{html.escape(r['arm'])}</td>"
@@ -650,6 +603,7 @@ def write_comparison(
             f"<td>{fmt(m.get('avg_days'), 1)}</td>"
             f"<td>{fmt(m.get('pnl'), 0)}</td>"
             f"<td>{fmt(m.get('max_dd'), 2)}</td>"
+            f"<td>{fmt(m.get('ppcd'), 2)}</td>"
             f"<td>{fmt_i(m.get('losing_streak'))}</td>"
             f"<td>{fmt(m.get('p90_days'), 0)}</td>"
             f"<td>{fmt(m.get('brt_cash'), 0)}</td>"
@@ -657,6 +611,7 @@ def write_comparison(
             f"<td>{fmt(d_pnl, 0)}</td>"
             f"<td>{fmt(d_ror, 2)}</td>"
             f"<td>{fmt(d_dd, 2)}</td>"
+            f"<td>{fmt(d_ppcd, 2)}</td>"
             f"<td{lean_cls}><strong>{html.escape(lean)}</strong></td>"
             f"<td>{html.escape(str(r.get('lean_why','')))}</td>"
             f"</tr>"
@@ -668,13 +623,15 @@ def write_comparison(
             "<tr>"
             f"<td>{html.escape(r['arm'])}</td>"
             f"<td><code>{html.escape(str(r.get('hypothesis_id','')))}</code></td>"
+            f"<td><code>{html.escape(str(r.get('extras','')))}</code></td>"
             f"<td>{html.escape(str(r.get('suggestion','')))}</td>"
             "</tr>"
         )
 
+    n_sym = len(symbols.split(","))
     html_doc = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
-<title>RS expanded-65 ImprovePriority A/B</title>
+<title>RS slow-hold / early-TP A/B</title>
 <style>
 body{{font-family:Segoe UI,system-ui,sans-serif;margin:1.5rem;color:#0f172a;background:#f8fafc}}
 h1{{font-size:1.4rem;margin:0 0 .4rem}}
@@ -686,16 +643,17 @@ tr.total-row{{background:#eff6ff;font-weight:600}}
 code{{font-size:.8rem}}
 {SORTABLE_TH_CSS}
 </style></head><body>
-<h1>RS expanded-65 ImprovePriority / pattern A/B</h1>
+<h1>RS slow-hold / early-TP ImprovePriority A/B</h1>
 <p class="muted">Control = production <code>run_rs.bat</code> (stop 0.85 / target 1.25 /
 <code>time_stop_days=252</code>, stamp <code>{html.escape(stamp_src)}</code>).
-Universe: RS_universe.csv ({html.escape(str(len(symbols.split(','))))} symbols).
-One knob / coherent gate per arm; ≤2 alts per hypothesis
+Universe: RS_universe.csv ({n_sym} symbols). One knob per arm; <strong>no target expand</strong>
 (<code>docs/HYPOTHESIS_TEST.md</code>). Click column headers to sort.</p>
-<p class="muted">Output: <code>drive/paul_experiments/rs_expand65_hint_ab/</code></p>
-<p class="muted">Lean: <strong>adopt?</strong> = candidate · <strong>hold</strong> = mixed/tradeoff (still interesting) ·
-<strong>dismiss</strong> = clear regression · <strong>noop</strong> = no effect vs control (not a hold candidate;
-e.g. post_target bars=15 under production cd=60).</p>
+<p class="muted"><strong>Trail lever:</strong> RS/TBN has no <code>rl_trail_profit</code> gate.
+Closest production knob: <code>-v trailing_stop_increment=10</code> (each 10pp peak gain →
++1% of entry above initial stop; arms from any peak gain &gt; 0). Giveback alts:
+<code>-v trailing_stop_increment=5</code>, <code>-v sma_stop_days=20</code>.
+Chandelier left off (defaults research-only).</p>
+<p class="muted">Output: <code>drive/paul_experiments/rs_slow_hold_hint_ab/</code></p>
 
 <h2>Results vs control</h2>
 <table class="sortable"><thead><tr>{ths}</tr></thead>
@@ -703,16 +661,14 @@ e.g. post_target bars=15 under production cd=60).</p>
 {''.join(body_rows)}
 </tbody></table>
 
-<h2>Hypotheses (from ImproveHints)</h2>
+<h2>Hypotheses &amp; exact -v</h2>
 <table class="sortable"><thead><tr>
-{sortable_th('Arm','text')}{sortable_th('Hypothesis','text')}{sortable_th('Suggestion','text')}
+{sortable_th('Arm','text')}{sortable_th('Hypothesis','text')}{sortable_th('Knob','text')}{sortable_th('Suggestion','text')}
 </tr></thead><tbody>
 {''.join(hyp_rows)}
 </tbody></table>
 
-<p class="muted">Lean is automated triage only — adopt needs PO sign-off + ToS + re-baseline.
-<code>noop</code> means the knob did not change the book (often because an existing gate already
-covers it) — do not read it as “keep watching / promising.”</p>
+<p class="muted">Lean is automated triage only — adopt needs PO sign-off + trade-diff + ToS + re-baseline.</p>
 {SORTABLE_TABLE_SCRIPT}
 </body></html>
 """
@@ -720,35 +676,42 @@ covers it) — do not read it as “keep watching / promising.”</p>
     html_path.write_text(html_doc, encoding="utf-8")
 
     md = [
-        "# RS expanded-65 ImprovePriority / pattern A/B",
+        "# RS slow-hold / early-TP ImprovePriority A/B",
         "",
-        f"Control stamp `{stamp_src}` (stop 0.85 / target 1.25 / time_stop=252). Universe `{symbols}`.",
+        f"Control stamp `{stamp_src}` (stop 0.85 / target 1.25 / time_stop=252). "
+        f"Universe n={n_sym}. **No target expand.**",
         "",
-        "| Arm | Knob | Trades | WR% | Avg% | Ann_ROR | AvgDays | Total_PNL | Max_DD | LoseStreak | P90 | brt_cash | MaxPos | Lean | Why |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        "## Exact -v knobs",
+        "",
+        "| Arm | Knob |",
+        "|---|---|",
     ]
     for r in rows:
+        md.append(f"| `{r['arm']}` | `{r.get('extras')}` |")
+    md.extend(
+        [
+            "",
+            "## Metrics",
+            "",
+            "| Arm | Knob | Trades | WR% | Avg% | Ann_ROR | AvgDays | Total_PNL | Max_DD | $/cap-day | LoseStreak | P90 | brt_cash | MaxPos | Lean | Why |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        ]
+    )
+    for r in rows:
         m = r.get("metrics") or {}
-        if r.get("skip"):
-            md.append(
-                f"| `{r['arm']}` | skip | — | — | — | — | — | — | — | — | — | — | — | "
-                f"**{r.get('lean')}** | {r.get('lean_why')} |"
-            )
-            continue
-        d_pnl = float(m.get("pnl", 0)) - float(cm.get("pnl", 0)) if cm else 0.0
         md.append(
             f"| `{r['arm']}` | `{r.get('extras')}` | {fmt_i(m.get('trades'))} | {fmt(m.get('wr'))} | "
             f"{fmt(m.get('avg_pnl_pct'))} | {fmt(m.get('ann_ror'))} | {fmt(m.get('avg_days'),1)} | "
-            f"{fmt(m.get('pnl'),0)} | {fmt(m.get('max_dd'))} | {fmt_i(m.get('losing_streak'))} | "
-            f"{fmt(m.get('p90_days'),0)} | {fmt(m.get('brt_cash'),0)} | {fmt_i(m.get('max_pos'))} | "
+            f"{fmt(m.get('pnl'),0)} | {fmt(m.get('max_dd'))} | {fmt(m.get('ppcd'))} | "
+            f"{fmt_i(m.get('losing_streak'))} | {fmt(m.get('p90_days'),0)} | "
+            f"{fmt(m.get('brt_cash'),0)} | {fmt_i(m.get('max_pos'))} | "
             f"**{r.get('lean')}** | {r.get('lean_why')} |"
         )
-        _ = d_pnl
     md_path = out_root / "comparison.md"
     md_path.write_text("\n".join(md) + "\n", encoding="utf-8")
-    print(f"[rs_post252_hint_ab] wrote {csv_path}")
-    print(f"[rs_post252_hint_ab] wrote {html_path}")
-    print(f"[rs_post252_hint_ab] wrote {md_path}")
+    print(f"[rs_slow_hold_hint_ab] wrote {csv_path}")
+    print(f"[rs_slow_hold_hint_ab] wrote {html_path}")
+    print(f"[rs_slow_hold_hint_ab] wrote {md_path}")
     return html_path
 
 
@@ -760,6 +723,11 @@ def main() -> int:
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--smoke", action="store_true", help="control only")
+    ap.add_argument(
+        "--only",
+        default="",
+        help="Comma-separated arm ids to run (still writes comparison for completed rows if present)",
+    )
     args = ap.parse_args()
 
     stamp = (args.stamp or args.reuse_control or DEFAULT_CONTROL).strip()
@@ -772,10 +740,13 @@ def main() -> int:
     py = _resolve_python()
     arms = build_arms()
     if args.smoke:
-        arms = [a for a in arms if a.is_control or a.skip][:2]
+        arms = [a for a in arms if a.is_control][:1]
+    only = {x.strip() for x in args.only.split(",") if x.strip()}
+    if only:
+        arms = [a for a in arms if a.arm_id in only or a.is_control]
 
-    print(f"[rs_post252_hint_ab] control_stamp={reuse} workers={args.workers}")
-    print(f"[rs_post252_hint_ab] symbols={len(symbols.split(','))} out={out_root}")
+    print(f"[rs_slow_hold_hint_ab] control_stamp={reuse} workers={args.workers}")
+    print(f"[rs_slow_hold_hint_ab] symbols={len(symbols.split(','))} out={out_root}")
     if args.dry_run:
         for a in arms:
             print(f"  {a.arm_id}: {'SKIP '+a.skip_reason if a.skip else ' '.join(a.extras) or '(control)'}")
@@ -800,7 +771,8 @@ def main() -> int:
         else:
             print(
                 f"  stamp={r.get('stamp')} trades={m.get('trades')} "
-                f"PNL={m.get('pnl')} DD={m.get('max_dd')} ok={r.get('ok')}"
+                f"PNL={m.get('pnl')} DD={m.get('max_dd')} ppcd={m.get('ppcd')} "
+                f"ok={r.get('ok')} elapsed={r.get('elapsed_s', 0):.0f}s"
             )
 
     write_comparison(out_root, results, stamp_src=reuse, symbols=symbols)

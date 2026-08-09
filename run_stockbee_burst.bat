@@ -12,11 +12,11 @@ rem          set SB_SYMBOLS=AAPL,MSFT
 rem Full universe (all data\newdata\data\*.csv) — no env vars:
 rem   run_stockbee_burst.bat ALL
 rem   run_stockbee_burst.bat --all
-rem   run_stockbee_burst.bat "*"   (quote * in PowerShell; bare * often expands)
-rem Legacy env: set SB_SYMBOLS=* / ALL / set SB_ALL_CSV=1
+rem   run_stockbee_burst.bat "*"          (quote * in PowerShell; bare * often expands)
+rem Legacy env still works: set SB_SYMBOLS=* / ALL / set SB_ALL_CSV=1
 rem Legacy: GOLD_UNIVERSE.csv (one-line comma list) still used by older AB bats.
 rem
-rem ONE-LINER (gold 56-name production list):
+rem ONE-LINER (gold 56-name production list — same CLI shape as run_rs / run_brt):
 rem   run_sb.bat
 rem
 rem Default sizing = rocket_tbn host parity (NOT Seed-opt $100R):
@@ -68,7 +68,11 @@ if not "%SB_UNIV_ARG%"=="" set "SB_FORWARD="
 call "%~dp0tools\load_universe_csv.bat" SB "%SB_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [SB] Universe src=%SB_UNIVERSE_SRC% pass_s=%SB_PASS_SYMBOLS%
-rem Loud WARN for full-universe overrides (do not block)
+rem Loud WARN whenever -s will be omitted (full data CSV scan)
+if not "%SB_PASS_SYMBOLS%"=="1" (
+  echo [SB] WARN: pass_s=0 — omitting -s ^(FULL data CSV scan^). src=%SB_UNIVERSE_SRC%
+  echo [SB] WARN: Production default is gold-56 via drive\universes\SB_universe.csv. Intentional full scan: run_sb.bat ALL
+)
 if /i "!SB_SYMBOLS!"=="*" (
   echo [SB] WARN: SB_SYMBOLS=* - scanning FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production gold run.
 )
@@ -78,14 +82,24 @@ if /i "!SB_SYMBOLS!"=="ALL" (
 if "!SB_ALL_CSV!"=="1" (
   echo [SB] WARN: SB_ALL_CSV=1 - scanning FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production gold run.
 )
-
+if /i "%SB_UNIVERSE_SRC%"=="missing" (
+  echo [SB] ERROR: drive\universes\SB_universe.csv missing — refusing silent full-universe fallback.
+  echo [SB] ERROR: Restore SB_universe.csv or pass an explicit CSV / run_sb.bat ALL.
+  exit /b 1
+)
 if /i "!SB_SYMBOLS!" EQU "-s" (
-  echo ERROR: SB_SYMBOLS is the flag -s ??? pass the ticker list, e.g. set SB_SYMBOLS=AAPL,NVDA
+  echo ERROR: SB_SYMBOLS is the flag -s — pass the ticker list, e.g. set SB_SYMBOLS=AAPL,NVDA
   exit /b 1
 )
 if /i "!SB_SYMBOLS!" EQU "--symbol" (
-  echo ERROR: SB_SYMBOLS is the flag --symbol ??? pass the ticker list
+  echo ERROR: SB_SYMBOLS is the flag --symbol — pass the ticker list
   exit /b 1
+)
+if "%SB_PASS_SYMBOLS%"=="1" (
+  set "_SB_N=0"
+  for %%T in (!SB_SYMBOLS!) do set /a _SB_N+=1
+  echo [SB] Whitelist tickers=!_SB_N! ^(pass -s^)
+  set "_SB_N="
 )
 
 rem Neutralize peer systems; SB owns entry path via sb_mode.

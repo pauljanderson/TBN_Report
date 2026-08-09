@@ -242,6 +242,9 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
     shallow_fails = 0
     givebacks = 0
     false_2223 = 0
+    slow_targets = 0
+    peak_givebacks = 0
+    early_long_tails = 0
     for i, r in enumerate(sorted_rows):
         exit_type = str(_col(r, "EXIT TYPE", "EXIT_TYPE", default="")).upper()
         days = int(_fnum(_col(r, "DAYS HELD", "DAYS_HELD"), 0))
@@ -249,6 +252,13 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
         max_gain = _fnum(_col(r, "MAX GAIN", "MAX_GAIN"))
         max_gain_pct = abs(max_gain) * 100 if 0 < abs(max_gain) < 2 else abs(max_gain)
         entry = _fnum(_col(r, "ENTRY PRICE", "ENTRY_PRICE"))
+        max_px = _fnum(_col(r, "MAX_PRICE", "MAX PRICE"))
+        mfe_pct = (
+            (max_px / entry - 1.0) * 100.0
+            if entry > 0 and max_px > entry
+            else max_gain_pct
+        )
+        d10 = _fnum(_col(r, "DAYS_HELD_FIRST_UP_10PCT", "DAYS HELD FIRST UP 10PCT"), -1.0)
         s50 = _fnum(_col(r, "SMA50"))
         ymd = _ymd8(_col(r, "DATE CLOSED", "DATE_CLOSED"))
         year = int(ymd[:4]) if len(ymd) >= 4 and ymd[:4].isdigit() else 0
@@ -265,6 +275,12 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
             givebacks += 1
         if "STOP" in exit_type and year in (2022, 2023) and days <= 15 and pnl < 0:
             false_2223 += 1
+        if "TARGET" in exit_type and days >= 100:
+            slow_targets += 1
+        if pnl > 0 and mfe_pct >= 15.0 and (mfe_pct - pnl) >= 10.0 and days >= 15:
+            peak_givebacks += 1
+        if pnl > 0 and 0 < d10 <= 25 and days >= 80:
+            early_long_tails += 1
 
     p = normalize_system(prefix)
     if p in RL_SYSTEMS:
@@ -288,6 +304,19 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
             lines.append(
                 f"2022–2023 false-start STOPs ×{false_2223} → slope/extension gates or SPY weak block."
             )
+        if slow_targets:
+            lines.append(
+                f"Slow TARGET (≥100d) ×{slow_targets} → contract ``rl_target_pct`` or "
+                f"``rl_exit_percent``/``rl_exit_days`` / partial exit (turnover)."
+            )
+        if peak_givebacks:
+            lines.append(
+                f"Winner peak giveback ×{peak_givebacks} → ``rl_trail_profit`` / ``rl_trail_stop``."
+            )
+        if early_long_tails:
+            lines.append(
+                f"Early +10% then long hold ×{early_long_tails} → trail-after-profit or closer target."
+            )
     else:
         if quick_stop_after_target:
             lines.append(
@@ -305,6 +334,20 @@ def _symbol_hypotheses(rows: list[dict[str, Any]], *, prefix: str) -> list[str]:
         if false_2223:
             lines.append(
                 f"2022–2023 false-start STOPs ×{false_2223} → regime / start_date filters."
+            )
+        if slow_targets:
+            lines.append(
+                f"Slow TARGET (≥100d) ×{slow_targets} → contract ``target_pct`` or shorter "
+                f"``time_stop_days`` / STRENGTH-style early take (turnover/Ann_ROR)."
+            )
+        if peak_givebacks:
+            lines.append(
+                f"Winner peak giveback ×{peak_givebacks} → trail "
+                f"(``trailing_stop_increment`` / ``sma_stop_days`` / chandelier) or scale-out."
+            )
+        if early_long_tails:
+            lines.append(
+                f"Early +10% then long hold ×{early_long_tails} → trail after +10% or closer target."
             )
     if not lines:
         lines.append("No strong rule-based pattern cluster; review charts + one-liners manually.")
@@ -911,8 +954,9 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         if summary_path.is_file():
             enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
             enrich_summary_csv_with_yfinance(summary_path)
-            enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
+            # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire.
             enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
+            enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
             write_improve_hints(
                 closed_path,
                 output_dir,
@@ -928,8 +972,9 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
     enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
     if summary_path.is_file():
         enrich_summary_csv_with_yfinance(summary_path)
-        enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
+        # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire.
         enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
+        enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
 
     closed_rows = _read_csv(closed_path)
     summary_rows = _read_csv(summary_path)

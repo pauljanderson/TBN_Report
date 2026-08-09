@@ -13,7 +13,8 @@ rem   2. Else if %%SYS%%_ALL_CSV is 1/true/yes → set SYMBOLS=*
 rem   3. Else if arg2 or %%SYS%%_UNIVERSE_CSV set → load that CSV
 rem   4. Else load drive\universes\%%SYS%%_universe.csv
 rem
-rem CSV: one ticker per line (# / blanks ignored). * or ALL / missing / empty → *
+rem CSV: one ticker per line (# / blanks ignored). missing / empty → *
+rem   Sole-token * or ALL → * (full scan). ALL among other rows = Allstate ticker.
 rem Legacy single-line comma lists OK (via Python helper).
 rem
 rem Sets in caller env:
@@ -108,7 +109,8 @@ if not defined _LU_PYCMD where python >nul 2>&1 && set "_LU_PYCMD=python"
 if defined _LU_PYCMD (
   %_LU_PYCMD% "%_LU_ROOT%\tools\load_universe_csv.py" "%_LU_FILE%" --out "%_LU_OUT%" 2>nul
   if not errorlevel 1 if exist "%_LU_OUT%" (
-    set /p _LU_VAL=<"%_LU_OUT%"
+    rem set /p truncates at 1023 chars — use for /f for expanded universes
+    for /f "usebackq delims=" %%A in ("%_LU_OUT%") do set "_LU_VAL=%%A"
     del "%_LU_OUT%" >nul 2>&1
     goto _lu_finalize
   )
@@ -131,18 +133,24 @@ for /f "usebackq eol=# tokens=* delims=" %%L in ("%_LU_FILE%") do (
     rem trim spaces
     for /f "tokens=* delims= " %%T in ("!_LINE!") do set "_LINE=%%T"
     if not "!_LINE!"=="" (
-      if /i "!_LINE!"=="*" (
-        set "_LU_VAL=*"
-        set "_LU_STOP=1"
-      ) else if /i "!_LINE!"=="ALL" (
-        set "_LU_VAL=*"
-        set "_LU_STOP=1"
-      ) else if "!_LINE:,=!" NEQ "!_LINE!" (
-        rem Legacy one-liner with commas
+      if "!_LINE:,=!" NEQ "!_LINE!" (
+        rem Legacy one-liner with commas (may include ALL ticker)
         set "_LU_VAL=!_LINE!"
         set "_LU_STOP=1"
+      ) else if /i "!_LINE!"=="*" (
+        rem collect; sole * handled after loop / finalize
+        if defined _LU_VAL (
+          rem bare * mixed with tickers — skip
+        ) else (
+          set "_LU_VAL=*"
+        )
       ) else if defined _LU_VAL (
-        set "_LU_VAL=!_LU_VAL!,!_LINE!"
+        if /i "!_LU_VAL!"=="*" (
+          rem prior sole * was provisional; real ticker wins — start list
+          set "_LU_VAL=!_LINE!"
+        ) else (
+          set "_LU_VAL=!_LU_VAL!,!_LINE!"
+        )
       ) else (
         set "_LU_VAL=!_LINE!"
       )
@@ -150,6 +158,8 @@ for /f "usebackq eol=# tokens=* delims=" %%L in ("%_LU_FILE%") do (
   )
 )
 if not defined _LU_VAL set "_LU_VAL=*"
+rem Sole ALL → full scan (legacy); ALL in a comma list stays as Allstate
+if /i "!_LU_VAL!"=="ALL" set "_LU_VAL=*"
 endlocal & set "_LU_VAL=%_LU_VAL%"
 
 :_lu_finalize

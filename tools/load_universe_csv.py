@@ -8,7 +8,8 @@ Usage:
 Rules:
   - Blank lines and # comments ignored
   - Lines may be comma-separated (legacy one-liner GOLD format still works)
-  - If file missing, empty, or first non-comment token is * / ALL → prints *
+  - If file missing or empty → prints *
+  - Sole token * or ALL → prints * (full scan). ALL among other tickers is Allstate.
 
 Stdout (or --out file) is a single line: comma list or *.
 """
@@ -20,7 +21,12 @@ from pathlib import Path
 
 
 def load_tickers(path: Path) -> list[str] | str:
-    """Return ticker list, or '*' for full-scan sentinel."""
+    """Return ticker list, or '*' for full-scan sentinel.
+
+    Full-scan sentinels (* / ALL) apply only when that is the *sole* token in the
+    file. ALL is a real ticker (Allstate); treating it as a sentinel mid-list
+    incorrectly forced pass_s=0 / full universe on expanded CSVs.
+    """
     if not path.is_file():
         return "*"
     text = path.read_text(encoding="utf-8-sig", errors="replace")
@@ -38,12 +44,17 @@ def load_tickers(path: Path) -> list[str] | str:
             tok = part.strip().strip('"').strip("'").upper()
             if not tok:
                 continue
-            if tok in ("*", "ALL"):
-                return "*"
             tickers.append(tok)
     if not tickers:
         return "*"
-    # Dedupe preserving order
+    # Sole-token sentinels only (* = full scan; ALL alone = legacy full-scan CSV)
+    if len(tickers) == 1 and tickers[0] in ("*", "ALL"):
+        return "*"
+    # Bare * is never a symbol; drop if mixed with real tickers
+    tickers = [t for t in tickers if t != "*"]
+    if not tickers:
+        return "*"
+    # Dedupe preserving order (ALL among others is Allstate)
     seen: set[str] = set()
     out: list[str] = []
     for t in tickers:

@@ -40,6 +40,13 @@ When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT
 
 Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, edge not carried by one outlier”).
 
+### Control vs candidate compares (canonical metrics)
+
+Stamp A/B reports (universe, trade-diff, param) must include the full book + Summary aggregate set in
+`drive/paul_experiments/CANONICAL_COMPARE_METRICS.md` (Ann ROR, Max DD, sheet/Total PnL, PF, win%,
+days held, capital days, Paul / FIT / FIT_SCORE_ROBUST, AVG_PNL_PCT_WO_MAX, outlier%, trades/year,
+exit mix, etc.) — absolute values and deltas. Do not ship a short subset.
+
 ### Parameter tweaks + peer-learn (ImproveHints)
 
 Emitted automatically with cheap ImproveHints (no extra flag). Additive sections in the same

@@ -11,12 +11,12 @@ rem     set RL_SYMBOLS=AMD,NFLX  (default universe lives in run_rl.bat / run_aud
 rem     set RS_SYMBOLS=NVDA,AVGO
 rem     set RS_TARGET=1.21
 rem     set RS_STOP=0.934
-rem     SB (StockBee) step [10/13]: call run_sb.bat ??? default gold 56-name list
-rem       GOLD_UNIVERSE.csv = drive\paul_experiments\tbn_new_systems\stockbee_momentum_burst\GOLD_UNIVERSE.csv
+rem     SB (StockBee) step [10/13]: call run_sb.bat — default gold 56 from drive\universes\SB_universe.csv
+rem       Same CLI as other run_??.bat: no args = CSV whitelist; run_sb.bat ALL = full universe
 rem       Standalone same default: run_sb.bat   (no args)
 rem     set SB_SYMBOLS=NVDA,TSLA  override gold list
 rem     set SB_SYMBOLS=*          (or ALL / SB_ALL_CSV=1) = all data\newdata\data\*.csv (no -s)
-rem     Prefer set "SB_SYMBOLS=*" ??? bare set SB_SYMBOLS=* && leaves a trailing space (bat trims)
+rem     Prefer set "SB_SYMBOLS=*" — bare set SB_SYMBOLS=* && leaves a trailing space (bat trims)
 rem     set SKIP_SB=1             skip StockBee step
 rem     set SKIP_RECONCILE_GATE=1 skip frozen Closed gate
 rem     set SKIP_GET=1            skip pygetallMore (run_update_data)
@@ -188,7 +188,7 @@ call "%~dp0run_rs.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 10) SB (StockBee Momentum Burst) -----------------------------------------
-rem Default: run_sb.bat with no args loads GOLD_UNIVERSE.csv (56 names)
+rem Default: run_sb.bat with no args loads drive\universes\SB_universe.csv (56 names)
 rem Disable: set SKIP_SB=1
 rem Docs: drive\paul_experiments\tbn_new_systems\stockbee_momentum_burst\HOW_TO_RUN.html
 if /i "%SKIP_SB%"=="1" (
@@ -208,8 +208,8 @@ if /i "%SKIP_SB%"=="1" (
     echo [10/13] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.
     echo [10/13] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.>>"%LOG%"
   )
-  echo [10/13] run_sb ^(gold GOLD_UNIVERSE.csv^)
-  echo [10/13] run_sb ^(gold GOLD_UNIVERSE.csv^)>>"%LOG%"
+  echo [10/13] run_sb ^(gold SB_universe.csv^)
+  echo [10/13] run_sb ^(gold SB_universe.csv^)>>"%LOG%"
   call "%~dp0run_sb.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 )

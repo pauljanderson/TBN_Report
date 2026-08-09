@@ -1406,7 +1406,7 @@ def build_summary(
                     else ""
                 ),
                 "MAX_WIN_PCT": f"{max_win:.2f}%",
-                "MEDIAN_PNL_PCT": f"{med_pct:+.2f}%",
+                "MEDIAN_PNL_PCT": f"{med_pct:.2f}",
                 "EXIT_STOP": sum(1 for t in trades if t.exit_type == "STOP_LOSS"),
                 "EXIT_GAP_DOWN": sum(1 for t in trades if t.exit_type == "GAP_DOWN"),
                 "EXIT_TARGET": sum(1 for t in trades if t.exit_type == "TARGET"),

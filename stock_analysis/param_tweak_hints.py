@@ -47,6 +47,7 @@ _TARGET_APPROACH_LO = 0.50
 _TARGET_APPROACH_HI = 0.95
 _LEFT_MONEY_HOLD_PCT = 3.0  # MAX_PRICE above TARGET by >= this % of entry
 _STOP_MFE_WINNER_PCT = 5.0
+_SLOW_TARGET_DAYS = 100  # TARGET holds this long → contract/turnover lens
 _PEER_HOLD_EXTRA_DAYS = 5
 _PEER_PNL_EDGE = 5.0  # percentage points
 # Clear lean when one opposing lens has ≥ this multiple of the other's trade_count
@@ -525,6 +526,10 @@ def _collect_target_hints(
     appr_syms: set[str] = set()
     appr_ev: list[str] = []
     appr_n = 0
+    # Contract: slow TARGET grind (turnover / Ann_ROR framing)
+    slow_syms: set[str] = set()
+    slow_ev: list[str] = []
+    slow_n = 0
 
     for r in rows:
         sym = str(_col(r, "SYMBOL", default="")).strip().upper()
@@ -536,9 +541,17 @@ def _collect_target_hints(
         exit_px = _fnum(_col(r, "EXIT_PRICE", "EXIT PRICE"))
         exit_f = _exit_family(str(_col(r, "EXIT_TYPE", "EXIT TYPE", default="")))
         d_out = _parse_date(_col(r, "DATE_CLOSED", "DATE CLOSED"))
+        days = int(_fnum(_col(r, "DAYS_HELD", "DAYS HELD"), 0))
+        pnl = _fnum(_col(r, "PNL_PCT", "PNL %", "PNL"))
 
         if exit_f == "TARGET":
             target_n += 1
+            if days >= _SLOW_TARGET_DAYS:
+                slow_n += 1
+                slow_syms.add(sym)
+                if len(slow_ev) < 6:
+                    ppd = (pnl / days) if days > 0 else 0.0
+                    slow_ev.append(f"{sym} TARGET {days}d {pnl:+.1f}% (~{ppd:.2f}%/d)")
             if entry > 0 and target > entry and mx > target:
                 over = (mx - target) / entry * 100.0
                 if over >= _LEFT_MONEY_HOLD_PCT:
@@ -674,6 +687,31 @@ def _collect_target_hints(
                     f"non-TARGET exit AND target_progress in "
                     f"[{_TARGET_APPROACH_LO},{_TARGET_APPROACH_HI})"
                 ),
+            )
+        )
+
+    if slow_n >= _MIN_TRADES_LOW and target_n > 0:
+        pct = _pct(slow_n, target_n)
+        hints.append(
+            ParamHint(
+                hypothesis_id="target_contract_slow_hold",
+                category="param",
+                param="target_pct",
+                direction="contract",
+                priority=slow_n * 9 + len(slow_syms),
+                symbol_count=len(slow_syms),
+                trade_count=slow_n,
+                pct_of_trades=round(pct, 1),
+                confidence=_confidence(slow_n, pct),
+                symbols=sorted(slow_syms)[:40],
+                lever=levers["target"],
+                suggestion=(
+                    f"Contract target (turnover): {slow_n}/{target_n} TARGET exits ({pct:.0f}%) "
+                    f"held ≥{_SLOW_TARGET_DAYS}d — closer target may recycle capital sooner "
+                    f"(Ann_ROR / trades-per-year over max single-trade PnL; one-knob hypothesis)."
+                ),
+                evidence="; ".join(slow_ev),
+                heuristic=f"TARGET exit AND DAYS_HELD >= {_SLOW_TARGET_DAYS}",
             )
         )
 

@@ -14,18 +14,20 @@ rem   run_rs.bat --all
 rem   run_rs.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env still works: set RS_SYMBOLS=* / ALL / set RS_ALL_CSV=1
 rem          set RS_TARGET=1.25
-rem          set RS_STOP=0.88
+rem          set RS_STOP=0.85
 rem          set RS_TIME_STOP=252   (default; set 0 to disable TIME exit)
 rem
 rem Production / reconcile freeze (see drive\paul_experiments\rs_baseline_*\README.md):
 rem   rs_spy_int_tc_not_weak=true, symbol_reentry_cooldown_days=60
-rem   target_pct=1.25, stop_pct=0.88 (Closed STOP/TARGET ratios)
+rem   target_pct=1.25, stop_pct=0.85 (Closed STOP/TARGET ratios; RS_STOP default)
 rem   time_stop_days=252 (default; override set RS_TIME_STOP=0 for experiments / off)
-rem   Adopted from rs_noft_time_ab arm 15_time_252: Total_PNL +$161k vs control; slight DD up (~0.9pt)
-rem   Prior research stamp 260801104344 used 0.934/1.21 — NOT production; caused DailyRun PNL_PCT drift
+rem   Freeze stamp 260807141317: expanded 65-name FIT universe + stop 0.85
+rem   Prior freeze 260807114545: FIT-54, stop 0.88 / target 1.25 / time_stop=252
 rem   Prior freeze 260801111512 had time_stop_days=0 (no TIME exit)
+rem   Adopted earlier: rs_noft_time_ab arm 15_time_252; post252 A/B stop widen 0.85
+rem   Prior research stamp 260801104344 used 0.934/1.21 — NOT production
 rem   NOT adopted: fat_stops arm 03_stop_091 (stop 0.91)
-rem   Universe: drive\universes\RS_universe.csv (same 54 names as freeze)
+rem   Universe: drive\universes\RS_universe.csv (65 names; synced from RS_universe_expand.csv)
 rem
 rem Inherits (via rocket_tbn -v): target_pct, stop_pct, use_indicators, start_date/entry_start_date,
 rem   max_positions, duckdb, workers, stop_pct_is_multiplier, symbol_reentry_cooldown_days,
