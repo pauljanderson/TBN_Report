@@ -55,9 +55,10 @@ freeze. Template: `docs/HYPOTHESIS_TEST.md` · process steps 5–8 / 12 in
 | Section | What it scores | Direction signals |
 |---------|----------------|-------------------|
 | **band_pct** | Weak fills (low `MAX_PRICE` MFE then STOP/TIME) → **tighten**; RejectedFills near-band rejects with OHLC follow-through → **loosen** | Counts, % of scored, confidence |
-| **target_pct** | TARGET exits that keep running (in-hold MAX past target, or post-exit OHLC) → **expand**; approach 50–95% of entry→target then fail → **contract** | Same |
+| **target_pct** | TARGET exits that keep running (in-hold MAX past target, or post-exit OHLC) → **expand**; approach 50–95% of entry→target then fail → **contract**; TARGET held ≥100d → **contract** (turnover / Ann_ROR over max single PnL) | Same |
 | **stop_pct** | STOP then rebound above entry (OHLC) or MFE≥5% then STOP → **expand**; never-worked losers (MFE&lt;2%) → **hold** / tighten only if fat losses cluster | Same |
 | **peer-learn** | Hold-range overlaps vs peer `*_LatestRun_Closed.csv` (or newest stamp) under `drive/` | Adopt only when countable (peer TARGET after our STOP; wider stop won; longer hold won) |
+| **slow-winner patterns** | `slow_target_grind` (TARGET ≥100d); `winner_peak_giveback` (win but MFE−PnL ≥10pp); `early_run_long_tail` (+10% by day≤25 then hold ≥80d) → closer target / trail / shorter time-stop **hypotheses** | Evidence counts; one knob |
 
 **Opposing lenses:** expand vs hold/contract (and tighten vs loosen) can both fire on **different trade subsets**. `param_tweak_hints.collect_param_tweak_hints` reconciles those into **one tension card** (direction lean or `mixed`, confidence capped at `medium`) so ImproveHints / ImprovePriority do not ship two high-confidence opposite knob moves — prefer one coherent hypothesis / A/B arm (see `docs/system_setup_process.html` steps 5–6 and `docs/HYPOTHESIS_TEST.md`).
 
