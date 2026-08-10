@@ -72,7 +72,9 @@ After the passive path is built (unless fast mode — §7), the engine **replace
 
 5. **End-of-day exits** at close/exit price for trades closing that day.
 
-**Max_Drawdown** and underwater metrics are computed from this **aggressive** equity series, not from passive OHLC sum (when aggressive succeeds).
+**Audit field split (rocket / `compute_equity_metrics`):** primary `Max_Drawdown` / underwater stay on the **passive** OHLC curve (audit Total_PNL-aligned). Aggressive ledger DD is stored separately as `Aggressive_Max_Drawdown` / `_aggressive_max_dd_raw`. The equity series itself (`equity_values` / `Equity` column) is still the aggressive ledger.
+
+**DrawdownCalc chart (`--aggressive`):** Max DD annotation and printed Max DD follow the **aggressive** primary series (not the passive audit Max_DD). When both curves are plotted, the chart also shows passive Max DD for comparison. PNG names get an `_aggressive` suffix so they do not overwrite the default stamp chart.
 
 ### 3.3 Comparison series (`Equity_Regular`)
 
@@ -82,6 +84,13 @@ When aggressive runs the **full** path (not `--equity-fast-aggressive`), the pas
 - `{BRT|IND}_EquityCurve_Regular_<ts>.csv` on disk (if written)
 
 `BRT_DrawdownCalc` can chart **both** lines: aggressive (primary) vs regular OHLC.
+
+**PNG naming (DrawdownCalc / BRT_DrawdownCalc):**
+
+| Mode | Stamp PNG | Latest PNG |
+|------|-----------|------------|
+| Default (no flag) | `{PREFIX}_Portfolio_Performance_{stamp}.png` | `{PREFIX}_Portfolio_Performance_latest.png` |
+| `--aggressive` | `{PREFIX}_Portfolio_Performance_{stamp}_aggressive.png` | `{PREFIX}_Portfolio_Performance_latest_aggressive.png` |
 
 ---
 
