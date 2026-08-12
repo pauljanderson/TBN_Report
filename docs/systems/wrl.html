@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WRL — Weekly Range / Swing</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.2rem; margin: 0 0 12px; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header>
+    <p class="eyebrow">Research · Weekly Range / Swing</p>
+    <h1>WRL — Weekly Range / Swing</h1>
+    <p class="lede">Demand-zone bounce: previous-week range plus a walk-back swing high and swing low. Watch a daily close in the lower zone; buy the next day if price trades up out of it. Targets are the range high, then the swing high.</p>
+    <div class="badge badge-warn">Research sleeve — not DailyRun-wired</div>
+  </header>
+
+  <h2>How to run</h2>
+  <div class="card">
+    <p>Runner: <code>run_wrl.bat</code> → <code>rocket_tbn.py -v wrl_mode=true</code> → <code>stock_analysis/rocket_wrl.py</code> + <code>stock_analysis/wrl_zones.py</code>.</p>
+    <p>Default universe: Mag10 (<code>AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA,TSLA</code>) when <span class="path">drive/universes/WRL_universe.csv</span> is missing. Override with <code>run_wrl.bat ALL</code> or <code>set WRL_SYMBOLS=...</code>.</p>
+    <p>Target mode: <code>set WRL_TARGET_MODE=scale</code> (default, 50% at range high then remainder at swing high), <code>range</code>, or <code>swing</code>. Also <code>-v wrl_target_mode=...</code>.</p>
+    <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> (Closed / Open / Watchlist / Scanner / Summary / Audit / Equity) plus <code>WRL_LatestRun_*</code>.</p>
+  </div>
+
+  <h2>Weekly levels</h2>
+  <ol>
+    <li><strong>Range high / range low</strong> — high and low of the previous <em>completed</em> week (week ending Friday strictly before the as-of daily bar). The in-progress week is never used.</li>
+    <li><strong>Swing high</strong> — walking backward from the week before that, the first weekly high that is higher than the previous week's high.</li>
+    <li><strong>Swing low</strong> — independently, the first weekly low that is lower than the previous week's low. Swing high and swing low may come from different weeks.</li>
+  </ol>
+  <p>Valid structure requires <code>swing_low &lt; range_low ≤ range_high &lt; swing_high</code>.</p>
+
+  <h2>Daily sequence</h2>
+  <ol>
+    <li>If the daily close is inside the demand zone <code>[swing_low, range_low]</code> → <strong>WATCH</strong>.</li>
+    <li>Next session: if the open is not through the swing low, and the high trades <em>up out</em> of the zone (High &gt; range low) → <strong>BUY</strong>.</li>
+    <li>Fill at the open if already above range low; otherwise at range low (intraday break).</li>
+    <li>Stop at the swing low (or <code>swing_low * stop_pct</code>).</li>
+    <li>Targets: range high (first) and swing high (stretch). Default <code>scale</code> takes half at range high, moves the stop to breakeven, and holds the rest for swing high.</li>
+  </ol>
+
+  <h2>Live artifacts</h2>
+  <ul>
+    <li><strong>Watchlist / Scanner</strong> — last bar closed in the demand zone; next session is the breakout day.</li>
+    <li><strong>Open</strong> — live position with frozen setup levels (range/swing from the watch week).</li>
+    <li><strong>Closed</strong> — completed trades with both targets on the row (<code>TARGET_PRICE</code> / <code>TARGET2_PRICE</code>).</li>
+  </ul>
+
+  <h2>Do not</h2>
+  <ul>
+    <li>Treat this as a DailyRun gold sleeve until it has a freeze and a promotion bar.</li>
+    <li>Use the in-progress week's high/low as the range — only completed Friday weeks.</li>
+  </ul>
+  <footer>Research candidate · engine <span class="path">stock_analysis/wrl_zones.py</span></footer>
+</div>
+</body>
+</html>

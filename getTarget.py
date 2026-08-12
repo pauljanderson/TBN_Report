@@ -5,12 +5,14 @@ Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk
 BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
 WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
-MVCP (Minervini Volatility Contraction Pattern), or CS (CAN SLIM price-legs).
+MVCP (Minervini Volatility Contraction Pattern), CS (CAN SLIM price-legs),
+or WRL (Weekly Range / Swing structural targets).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, or CS (case-insensitive).
-  Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS.
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, or WRL (case-insensitive).
+  Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
+  RANGE/SWING/WEEKLY_RANGE→WRL.
 
 Qull / Kell use EMA trails (not fixed target_pct); they are not mapped here yet.
 
@@ -48,6 +50,9 @@ _SYSTEM_ALIASES = {
     "CAN_SLIM": "CS",
     "CAN-SLIM": "CS",
     "ONEIL": "CS",
+    "RANGE": "WRL",
+    "SWING": "WRL",
+    "WEEKLY_RANGE": "WRL",
 }
 
 # Percent/ATR live systems (RL is separate). Order matches help text.
@@ -64,7 +69,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL
 
 
 @dataclass
@@ -711,6 +716,8 @@ def compute_price_only_payload(
             "SMA20": None,
             "SMA50": None,
         }
+    if system == "WRL":
+        return {"error": "WRL needs OHLC history to compute weekly range/swing levels"}
     cfg = exit_configs.get(system)
     if cfg is None:
         return {"error": f"unknown system {system!r}"}
@@ -759,6 +766,59 @@ def compute_price_only_payload(
     }
 
 
+def compute_wrl_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """Structural WRL targets frozen from the completed-week structure as of entry."""
+    try:
+        from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
+    except ImportError:
+        from wrl_zones import attach_daily_levels, levels_for_bar  # type: ignore
+
+    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[:entry_ts]
+    if hist is None or len(hist) < 15:
+        return {"error": f"{sym}: insufficient history for WRL levels"}
+    _weekly, swings, week_idx = attach_daily_levels(hist)
+    bar = len(hist) - 1
+    lv = levels_for_bar(swings, week_idx, bar)
+    if lv is None:
+        return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
+    target_price = float(lv.range_high)
+    target2 = float(lv.swing_high)
+    stop_initial = float(lv.swing_low)
+    return {
+        "System": "WRL",
+        "EntrySource": entry_src,
+        "EntryInData": entry_in_data,
+        "ATR": None,
+        "ATRPct": None,
+        "TargetPrice": target_price,
+        "Target2Price": target2,
+        "StopInitial": stop_initial,
+        "StopTrailing": stop_initial,
+        "RangeHigh": float(lv.range_high),
+        "RangeLow": float(lv.range_low),
+        "SwingHigh": float(lv.swing_high),
+        "SwingLow": float(lv.swing_low),
+        "atr_target": None,
+        "atr_stop": None,
+        "atr_increment": 0.0,
+        "atr_progress": None,
+        "atr_days": None,
+        "atr_progress_incremental_stop": False,
+        "use_sma50": False,
+        "SMA50": None,
+        "AsOfDate": str(as_of_effective.date()) if as_of_effective is not None else None,
+    }
+
+
 def compute_position_payload(
     system: str,
     sym: str,
@@ -779,6 +839,10 @@ def compute_position_payload(
     if system == "RL":
         return compute_rl_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, rl_profile, entry_in_data=entry_in_data
+        )
+    if system == "WRL":
+        return compute_wrl_system(
+            sym, df, entry_ts, entry_price, entry_src, as_of_effective, entry_in_data=entry_in_data
         )
     cfg = exit_configs.get(system)
     if cfg is None:
@@ -828,7 +892,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS; "
+            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL; "
             "deprecated IND remains available manually)."
         )
     )
@@ -1000,7 +1064,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.list_systems:
-        print("Supported systems:", ", ".join(("RL",) + PERCENT_ATR_SYSTEMS))
+        print("Supported systems:", ", ".join(("RL", "WRL") + PERCENT_ATR_SYSTEMS))
         print("Aliases:", ", ".join(f"{k}->{v}" for k, v in sorted(_SYSTEM_ALIASES.items())))
         print("Not mapped (EMA trail): QULL, KELL")
         return
@@ -1364,7 +1428,7 @@ def main() -> None:
             "RsMode": mode_col if system == "RS" else None,
             "SbMode": mode_col if system == "SB" else None,
             "MvcpMode": mode_col if system == "MVCP" else None,
-            "CsMode": mode_col if system == "CS" else None,
+            "WrlMode": "structural" if system == "WRL" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,

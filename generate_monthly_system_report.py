@@ -27,7 +27,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ")
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL")
 
 try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
@@ -41,7 +41,7 @@ except Exception:
 
         def _normalize_exit_type(exit_type: str | None) -> str:
             return (exit_type or "").strip().upper()
-SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "MVCP": "MVCP", "VZ": "VZ"}
+SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "MVCP": "MVCP", "VZ": "VZ", "WRL": "WRL"}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -179,7 +179,7 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ"):
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL"):
         closed = drive / f"{sys}_LatestRun_Closed.csv"
         open_p = drive / f"{sys}_LatestRun_Open.csv"
         if sys == "WPBR" and not closed.is_file():

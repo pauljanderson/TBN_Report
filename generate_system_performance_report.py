@@ -26,6 +26,7 @@ LABELS: dict[str, str] = {
     "SB": "SB (StockBee)",
     "MVCP": "MVCP (Minervini VCP)",
     "VZ": "VZ (Volume Zone)",
+    "WRL": "WRL (Weekly Range / Swing)",
 }
 COLORS = {
     "BRT": "#2563eb",
@@ -37,6 +38,7 @@ COLORS = {
     "SB": "#0d9488",
     "MVCP": "#b45309",
     "VZ": "#64748b",
+    "WRL": "#0f766e",
     "Equal capital": "#2563eb",
     "Risk-balanced": "#d97706",
     "Recommended": "#0f766e",
@@ -110,7 +112,7 @@ def _date(raw: object) -> Optional[date]:
 def resolve_sources(drive: Path) -> dict[str, Optional[Path]]:
     """Select one closed file per logical system, avoiding PBR/WPBR alias duplication."""
     out: dict[str, Optional[Path]] = {}
-    for system in ("BRT", "MTS", "YH", "RS", "SB", "MVCP", "VZ"):
+    for system in ("BRT", "MTS", "YH", "RS", "SB", "MVCP", "VZ", "WRL"):
         path = drive / f"{system}_LatestRun_Closed.csv"
         out[system] = path if path.is_file() else None
 
@@ -236,12 +238,12 @@ def _equity_candidates(drive: Path, system: str) -> list[Path]:
     for prefix in prefixes:
         candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve_Regular.csv"))
         candidates.extend(drive.glob(f"{prefix}_EquityCurve_Regular_*.csv"))
-        if system in ("SB", "MVCP", "VZ"):
+        if system in ("SB", "MVCP", "VZ", "WRL"):
             # Copy-latest uses {SYS}_LatestRun_EquityCurve.csv; stamp also has EquityCurve_Regular_*.
             candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve.csv"))
             candidates.extend(drive.glob(f"{prefix}_EquityCurve_*.csv"))
     unique = {p.resolve(): p for p in candidates if p.is_file()}
-    if system in ("SB", "MVCP", "VZ"):
+    if system in ("SB", "MVCP", "VZ", "WRL"):
         return sorted(
             unique.values(),
             key=lambda p: (

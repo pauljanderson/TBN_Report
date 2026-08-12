@@ -331,6 +331,12 @@ class BRTConfig:
     vz_target_r: float = 2.0
     vz_stop_atr_buffer: float = 0.5
     vz_sheet_notional: float = 45_000.0
+    # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
+    wrl_mode: bool = False
+    wrl_target_mode: str = "scale"  # range | swing | scale
+    wrl_scale_frac: float = 0.50
+    wrl_min_zone_pct: float = 0.0
+    wrl_time_stop_bars: int = 0
     # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
     sb_mode: bool = False
     burst_min_pct: float = 0.04
@@ -1217,6 +1223,8 @@ def _output_file_prefix(cfg: "BRTConfig") -> str:
         return "MTS"
     if bool(getattr(cfg, "vz_mode", False)):
         return "VZ"
+    if bool(getattr(cfg, "wrl_mode", False)):
+        return "WRL"
     if bool(getattr(cfg, "sb_mode", False)):
         return "SB"
     if bool(getattr(cfg, "qull_mode", False)):
@@ -4122,6 +4130,8 @@ def _min_bars_required_for_cfg(cfg: Any) -> int:
         p = max(1, int(getattr(cfg, "adx_period", 15) or 15))
         channel = max(1, int(getattr(cfg, "channel_length", 10) or 10))
         return max(2 * p + 2, channel + 2, 20)
+    if bool(getattr(cfg, "wrl_mode", False)):
+        return 40
     if bool(getattr(cfg, "mvcp_mode", False)):
         return max(260, int(getattr(cfg, "mvcp_rs_lookback", 252) or 252) + 10)
     if bool(getattr(cfg, "qull_mode", False)):
@@ -16141,6 +16151,7 @@ def write_brt_report(
     _fill_qull_mode_audit(row, cfg)
     _fill_sb_mode_audit(row, cfg)
     _fill_vz_mode_audit(row, cfg)
+    _fill_wrl_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
@@ -16425,6 +16436,12 @@ _AUDIT_CFG_COLS = [
     "vz_target_r",
     "vz_stop_atr_buffer",
     "vz_sheet_notional",
+    # Weekly Range / Swing (appended; blanked on non-WRL via _fill_wrl_mode_audit)
+    "wrl_mode",
+    "wrl_target_mode",
+    "wrl_scale_frac",
+    "wrl_min_zone_pct",
+    "wrl_time_stop_bars",
 ]
 
 _AGGRESSIVE_METRIC_COLS = [
@@ -17013,6 +17030,32 @@ def _fill_vz_mode_audit(row: dict, cfg: Any) -> None:
         row[k] = ""
 
 
+def _wrl_audit_lever_cols() -> tuple[str, ...]:
+    try:
+        from brt_audit_columns import get_wrl_audit_lever_cols
+
+        return get_wrl_audit_lever_cols()
+    except ImportError:
+        try:
+            from stock_analysis.brt_audit_columns import get_wrl_audit_lever_cols  # type: ignore
+
+            return get_wrl_audit_lever_cols()
+        except ImportError:
+            return ("wrl_mode",)
+
+
+def _fill_wrl_mode_audit(row: dict, cfg: Any) -> None:
+    """Emit wrl_mode; blank Weekly-Range-only levers when not in wrl_mode."""
+    wrl = bool(getattr(cfg, "wrl_mode", False))
+    row["wrl_mode"] = "true" if wrl else "false"
+    if wrl:
+        return
+    for k in _wrl_audit_lever_cols():
+        if k == "wrl_mode":
+            continue
+        row[k] = ""
+
+
 def _fill_rl_awk_subsystem_audit_defaults(row: dict, cfg: Any) -> None:
     """Fill RL100 / Dive Bomber audit columns (AWK-only) from BEGIN defaults when unset on cfg."""
     try:
@@ -17160,6 +17203,7 @@ def write_brt_audit_report(
     _fill_qull_mode_audit(row, cfg)
     _fill_sb_mode_audit(row, cfg)
     _fill_vz_mode_audit(row, cfg)
+    _fill_wrl_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
@@ -19288,6 +19332,13 @@ def main() -> int:
             "by default; never signal-bar open). Engine tools/vol_zone_break_retest.py via "
             "rocket_vz.py; outputs VZ_* prefix. Isolate peers (see run_vz.bat)."
         )
+    elif bool(getattr(cfg, "wrl_mode", False)):
+        print(
+            "[TBN] Weekly Range / Swing (wrl_mode=true): previous-week range + walk-back swing "
+            "high/low; watch close in [swing_low, range_low], buy next day on upside break - "
+            "Python engine (stock_analysis/rocket_wrl.py); outputs WRL_* prefix. "
+            "Isolate peers (see run_wrl.bat)."
+        )
     elif _rl_mode_active(getattr(cfg, "rl_mode", "false")):
         print(
             "[TBN] Rocket Launcher mode (rl_mode=true): 50-SMA dip-buy - "
@@ -19684,6 +19735,29 @@ def main() -> int:
         )
         _maybe_play_completion_sound(args.play_sound)
         return _vz_rc
+
+    if not skip_backtest and bool(getattr(cfg, "wrl_mode", False)):
+        try:
+            from rocket_wrl import run_wrl_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_wrl import run_wrl_from_brt_main  # type: ignore
+
+        _wrl_rc = run_wrl_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _wrl_rc
 
     if not skip_backtest and bool(getattr(cfg, "qull_mode", False)):
         try:

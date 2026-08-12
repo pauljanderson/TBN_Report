@@ -39,7 +39,7 @@ ET = ZoneInfo("America/New_York")
 SYSTEMS = ("IND", "BRT", "RL", "YH")
 LIST_KINDS = ("Watchlist", "Scanner")
 # Engine Open books used for multi-system open positions (matches investment systems + IND).
-OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ")
+OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL")
 
 _ENTRY_DATE_COLS = ["DATE_OPENED", "DATE OPENED", "ENTRY_DATE", "DATE"]
 _ENTRY_PRICE_COLS = ["ENTRY_PRICE", "ENTRY PRICE", "BUY_PRICE", "OPEN_PRICE"]
