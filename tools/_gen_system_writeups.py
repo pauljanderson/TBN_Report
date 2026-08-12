@@ -475,8 +475,9 @@ def rl() -> str:
 <h2>1. What it is</h2>
 <p>
   RL waits for a stacked SMA tape (20&gt;50&gt;100&gt;200) with a rising 50-SMA, then buys a
-  controlled dip into a ±4.1% band around yesterday’s 50-SMA, provided expansion, acceptance,
-  ATR%, peak, and fill gates pass. It is <em>not</em> a zone-retest system.
+  controlled dip into a ±4.1% band around yesterday’s 50-SMA, provided expansion, acceptance
+  (8 of 10 closes above the prior 50-SMA), peak, and fill gates pass. It is <em>not</em> a zone-retest system.
+  Sizing is fixed <code>rl_cash</code> (default $47,500 per name), not the host 500k×2×0.6 deployable path.
 </p>
 <p>
   Seed / gold list: <span class="path">data/rl_gold_universe.txt</span> (keep in sync with
@@ -492,7 +493,8 @@ def rl() -> str:
   <li><strong>In the 50-zone:</strong> Low_T is inside yesterday’s 50-SMA × <code>rl_dip_pct</code> band. Prod <code>rl_dip_pct=1.041</code> → band is SMA50 × 0.959 … SMA50 × 1.041 (±4.1%).</li>
   <li><strong>Uptick + close above 50-SMA:</strong> Close_T &gt; Open_T and Close_T &gt; yesterday’s SMA50.</li>
   <li><strong>Expansion:</strong> some close in the last <code>expansion_lookback_days</code> (10) ≥ prior-bar SMA50 × <code>rl_expansion</code> (prod <strong>1.163</strong>).</li>
-  <li><strong>Acceptance / cut-the-losers / ATR% / peak / slope / shock / volume</strong> as configured. Prod <code>run_rl.bat</code> sets <code>ATR_LOW=off</code>, <code>ATR_HIGH=off</code>, <code>rl_slope_threshold=0</code> (those filters off).</li>
+  <li><strong>Acceptance:</strong> at least <code>rl_acc_min</code> of the last <code>rl_acc_count</code> bars close above prior SMA50 (defaults <strong>8 / 10</strong>).</li>
+  <li><strong>Cut-the-losers / ATR% / peak / slope / shock / volume</strong> as configured. Prod <code>run_rl.bat</code> sets <code>ATR_LOW=off</code>, <code>ATR_HIGH=off</code>, <code>rl_slope_threshold=0</code> (those filters off).</li>
   <li><strong>Too-low reject:</strong> next open &lt; signal Low × <code>rl_stop_pct</code> (0.934) → no fill.</li>
   <li><strong>Too-high fill gate:</strong> prod <code>rl_too_high=0</code> (off). When on: next open must be ≤ signal Low × too_high × stop_pct. Historical production used 1.14.</li>
   <li><strong>Fill:</strong> T+1 open. Do not re-check dip/stack on the entry bar.</li>
@@ -501,7 +503,7 @@ def rl() -> str:
 <h2>3. Exit logic</h2>
 <ul>
   <li><strong>Stop:</strong> signal-bar Low × <code>rl_stop_pct</code> → prod / AWK default <strong>0.934</strong> (−6.6% vs signal low).</li>
-  <li><strong>Target:</strong> yesterday’s SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong> (+20% vs the 50-SMA reference, not vs entry).</li>
+  <li><strong>Target:</strong> SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong>. Anchored to the 50-SMA (not entry) and <em>updated while the trade is open</em>.</li>
   <li>Shared gap-down / gap-up / intraday stop / target schedule (first match wins), matching AWK bar order.</li>
   <li>Trail / partial / flush / time-exit levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
   <li>Post-TARGET re-entry window: prod <code>rl_post_target_reentry_bars=0</code> (off).</li>
@@ -519,6 +521,8 @@ def rl() -> str:
             ("<code>rl_target_pct</code>", "Target = prior SMA50 × multiplier", "<strong>1.20</strong> (config default)", "Higher → fewer TARGET hits, longer holds"),
             ("<code>rl_too_high</code>", "Fill ceiling vs signal Low × stop", "<strong>0</strong> (off)", "On (hist 1.14) rejects opens that gap too far above the stop line"),
             ("<code>rl_expansion</code>", "Min close vs SMA50 for expansion", "<strong>1.163</strong> (config default)", "Higher → require a stronger prior thrust"),
+            ("<code>rl_acc_min</code> / <code>rl_acc_count</code>", "Acceptance: closes above SMA50 in window", "<strong>8 / 10</strong>", "Higher min → fewer accepted dips"),
+            ("<code>rl_cash</code>", "Fixed notional per name", "<strong>$47,500</strong>", "RL does not use host 600k deployable / max_positions"),
             ("<code>ATR_LOW</code> / <code>ATR_HIGH</code>", "ATR% band at signal", "<strong>off / off</strong> in prod bat", "Config defaults 2.44% / 8.48% if not overridden"),
             ("<code>rl_slope_threshold</code>", "Min 30-bar slope", "<strong>0</strong> (off in prod bat)", "Config default 0.0643 if not overridden"),
             ("<code>rl_cut_the_losers</code>", "Prior-bar high vs SMA50 cap", "<strong>0.25</strong> (config default)", "Blocks entries already extended above the 50"),
@@ -869,10 +873,10 @@ def wpbr() -> str:
 
 def mts() -> str:
     return page(
-        title="MTS — STONK_DATA sheet-parity sleeve",
-        eyebrow="Production · MTS (STONK_DATA MTS tab)",
+        title="MTS — Magic Touch",
+        eyebrow="Production · Magic Touch (MTS)",
         lede=(
-            "<strong>MTS</strong> is the sheet-parity path against the STONK_DATA <em>MTS</em> tab "
+            "<strong>MTS</strong> (Magic Touch) is the sheet-parity path against the STONK_DATA <em>MTS</em> tab "
             "(columns D:DP). It is not the Break and ReTest (BRT) retest pipeline: the buy gate is "
             "sheet <strong>BI</strong> on first touch after zone availability (DP), fill at next open."
         ),
@@ -958,7 +962,7 @@ def mts() -> str:
         + """
 <h2>6. Caveats</h2>
 <ul>
-  <li>Do not describe MTS as “BRT with different numbers.” BI / DP first-touch is a different entry identity.</li>
+  <li>Do not describe MTS as “BRT with different numbers.” Magic Touch BI / DP first-touch is a different entry identity.</li>
   <li>Preset disables many BRT gates (red-to-green, magic touch, spy-compare, too-high, …). Bat-level wick/52w gates are extra on top.</li>
   <li><code>band_pct=0.018</code> is an explicit manual override — putting 0.016 back is a one-knob AB, not a silent restore.</li>
 </ul>
