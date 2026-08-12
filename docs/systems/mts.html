@@ -165,7 +165,7 @@
 <div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun</td></tr><tr><td>Runners</td><td><code>run_mts.bat</code> (then <code>run_copy_latest.bat</code>) · <code>run_mts_sheet.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/MTS_universe.csv</code></td></tr><tr><td>Preset</td><td><code>--mts-sheet-parity</code> → <code>mts_sheet_parity_overrides()</code></td></tr><tr><td>Workers</td><td><code>-w 22</code> · <code>--aggressive</code></td></tr><tr><td>Outputs</td><td><code>drive/MTS_*_&lt;ts&gt;.*</code></td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
-  <li>Do not describe MTS as “BRT with different numbers.” BI / DP first-touch is a different entry identity.</li>
+  <li>Do not describe MTS as “BRT with different numbers.” Magic Touch BI / DP first-touch is a different entry identity.</li>
   <li>Preset disables many BRT gates (red-to-green, magic touch, spy-compare, too-high, …). Bat-level wick/52w gates are extra on top.</li>
   <li><code>band_pct=0.018</code> is an explicit manual override — putting 0.016 back is a one-knob AB, not a silent restore.</li>
 </ul>

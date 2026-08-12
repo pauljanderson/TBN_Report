@@ -1,6 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TBN system write-ups</title>
