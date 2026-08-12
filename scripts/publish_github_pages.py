@@ -365,6 +365,48 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _git_out(args: list[str], cwd: Path) -> str:
+    proc = _git(args, cwd)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout).strip() or f"git {' '.join(args)} failed")
+    return (proc.stdout or "").strip()
+
+
+def push_origin_main(repo_root: Path, branch: str) -> None:
+    """Pages workflow (.github/workflows/publish-pages.yml) runs only on push to main.
+
+    `git push` of a feature branch does not update the live site. Always push HEAD to
+    origin/main when --push is used.
+    """
+    sha = _git_out(["rev-parse", "--short", "HEAD"], repo_root)
+    origin_main = ""
+    rev = _git(["rev-parse", "--short", "origin/main"], repo_root)
+    if rev.returncode == 0:
+        origin_main = (rev.stdout or "").strip()
+    print(f"[pages] HEAD {sha} on {branch}" + (f" (origin/main {origin_main})" if origin_main else ""))
+    if branch == "main":
+        proc = _git(["push", "origin", "main"], repo_root)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).strip()
+            raise RuntimeError(f"git push origin main failed: {err}")
+        print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
+        return
+
+    print(
+        f"[pages] Current branch is {branch}. GitHub Pages deploys only from main — "
+        "pushing HEAD to origin/main so the live site updates."
+    )
+    proc = _git(["push", "origin", "HEAD:main"], repo_root)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).strip()
+        raise RuntimeError(
+            f"git push origin HEAD:main failed: {err}\n"
+            f"HEAD is on {branch} ({sha}); origin/main was not updated.\n"
+            f"To go live from Windows: git push origin {branch}:main"
+        )
+    print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
+
+
 def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
     if not (repo_root / ".git").is_dir():
         raise RuntimeError(f"Not a git repo: {repo_root}. Run git init and add a remote first.")
@@ -381,18 +423,11 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
     status = _git(["status", "--porcelain", "--", *paths_to_add], repo_root)
     if status.returncode != 0:
         raise RuntimeError(status.stderr.strip() or "git status failed")
-    branch_proc = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root)
-    branch = (branch_proc.stdout or "").strip() or "HEAD"
+    branch = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "HEAD"
 
     if not status.stdout.strip():
         print("[pages] No changes under docs/ or closed_positions_log.csv — skip commit.")
-        if branch != "main":
-            print(
-                f"[pages] NOTE: current branch is {branch}. GitHub Pages deploys only from main.\n"
-                f"        Live site will not update until main is pushed, e.g.:\n"
-                f"        git push origin {branch}:main",
-                file=sys.stderr,
-            )
+        push_origin_main(repo_root, branch)
         return
 
     for step in (
@@ -405,19 +440,7 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
             err = (proc.stderr or proc.stdout).strip()
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
 
-    if branch != "main":
-        print(
-            f"[pages] Current branch is {branch}. GitHub Pages deploys only from main — "
-            "also pushing HEAD to origin/main."
-        )
-        proc = _git(["push", "origin", "HEAD:main"], repo_root)
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout).strip()
-            raise RuntimeError(
-                f"git push origin HEAD:main failed: {err}\n"
-                f"The commit is on {branch}. To go live: git push origin {branch}:main"
-            )
-    print("[pages] Pushed to GitHub. Pages may take 1-2 minutes to update.")
+    push_origin_main(repo_root, branch)
 
 
 def main() -> int:
@@ -567,7 +590,7 @@ def main() -> int:
     print("[pages]   Systems:      https://pauljanderson.github.io/TBN_Report/systems/")
     if args.push:
         print(
-            "[pages] After push, check Actions > Publish reports to Pages (deploy ~1-2 min)."
+            "[pages] After origin/main updates, check Actions > Publish reports to Pages (~1-2 min)."
         )
     else:
         # Local docs/ alone does not update GitHub Pages — must commit + push (or use --push).
