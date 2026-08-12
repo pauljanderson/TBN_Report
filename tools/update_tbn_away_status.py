@@ -631,6 +631,7 @@ def _render_html(
         ("run_sb.bat", "StockBee gold universe (56) — production / DailyRun default"),
         ("run_stockbee_burst.bat", "Same as run_sb.bat (long name)"),
         ("run_mvcp.bat", "Minervini VCP ALL universe — production / DailyRun step [11/14]"),
+        ("run_wrl.bat", "WRL weekly range/swing — research; repo root next to DailyRun.bat"),
         ("run_qull.bat", "Qull HTF / EP proxy seed run (DailyRun HOLD)"),
         ("run_qull_ab_prior_run.bat", "Qull A/B: prior-run floor sweep"),
         ("run_kell.bat", "Kell PAC Wedge Pop research run (standalone)"),

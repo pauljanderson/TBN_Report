@@ -94,7 +94,8 @@
 
   <h2>How to run</h2>
   <div class="card">
-    <p>Runner: <code>run_wrl.bat</code> → <code>rocket_tbn.py -v wrl_mode=true</code> → <code>stock_analysis/rocket_wrl.py</code> + <code>stock_analysis/wrl_zones.py</code>.</p>
+    <p>Runner lives at the development root (same folder as <code>DailyRun.bat</code>): <span class="path">C:\Users\songg\Downloads\stockresearch\run_wrl.bat</span>.</p>
+    <p>From that folder: <code>run_wrl.bat</code> → <code>rocket_tbn.py -v wrl_mode=true</code> → <code>stock_analysis/rocket_wrl.py</code> + <code>stock_analysis/wrl_zones.py</code>.</p>
     <p>Default universe: Mag10 (<code>AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA,TSLA</code>) when <span class="path">drive/universes/WRL_universe.csv</span> is missing. Override with <code>run_wrl.bat ALL</code> or <code>set WRL_SYMBOLS=...</code>.</p>
     <p>Target mode: <code>set WRL_TARGET_MODE=scale</code> (default, 50% at range high then remainder at swing high), <code>range</code>, or <code>swing</code>. Also <code>-v wrl_target_mode=...</code>.</p>
     <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> (Closed / Open / Watchlist / Scanner / Summary / Audit / Equity) plus <code>WRL_LatestRun_*</code>.</p>

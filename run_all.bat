@@ -6,6 +6,7 @@ call run_wpbr
 call run_rs
 call run_sb
 call run_mvcp
+call run_wrl
 call run_copy_latest
 call run_gettarget
 call publish_github_pages --push
