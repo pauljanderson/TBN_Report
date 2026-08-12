@@ -1,40 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>IND (deprecated)</title>
+<title>IND — Indicator / Trend Condition</title>
 <style>
   :root {
     --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,17 +74,122 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
-    <p class="eyebrow">Deprecated · IND</p>
-    <h1>IND (deprecated)</h1>
-    <p class="lede">IND is a legacy indicator / Trend Condition (TC) path retained in some monthly/report columns. It is not an active gold allocation sleeve.</p>
+  <header class="doc-head">
+    <p class="eyebrow">Deprecated · Indicator (IND) / Trend Condition (TC)</p>
+    <h1>IND — Indicator / Trend Condition</h1>
+    <p class="lede"><strong>IND</strong> is the legacy indicator-buy path: entries fire from Trend Condition (TC) / indicator score rules rather than zones. It remains in some monthly/report columns but is not an active gold allocation sleeve.</p>
     <div class="badge badge-muted">Deprecated — report legacy only</div>
+    <div class="meta-row"><span>Mode <code>indicator_buy=only</code></span><span>Runner <code>run_ind.bat</code> (DailyRun skipped)</span><span>Prefix <code>IND_*</code></span></div>
   </header>
-<h2>Status</h2>
-<div class='card'><p>Deprecated. Prefer RS / BRT / RL / YH / SB production sleeves. Historical Closed/Open may still appear as IND in monthly backtest tables.</p></div>
-<h2>Related</h2>
-<ul><li>TC Strong outlooks are still used by <a href='rs.html'>RS</a> as gates.</li><li>Do not wire new DailyRun allocation to IND.</li></ul>
-  <footer>Canonical stub for Pages</footer>
+
+<div class="callout">
+  <strong>Status:</strong> Deprecated. DailyRun step [5/14] is skipped.
+  Prefer RS / BRT / RL / YH / SB / WPBR / MTS production sleeves.
+  Historical Closed/Open may still appear as IND in monthly backtest tables.
 </div>
+<div class="callout ok">
+  TC Strong outlooks are still used as <em>gates</em> by <a href="rs.html">RS</a>
+  (<code>rs_require_tc_strong</code>). That is not the IND sleeve.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Full DuckDB-universe indicator-only backtest on the TBN host with year-high zones off.
+  Buy when indicator-buy mode is <code>only</code> (no zone identity). Long-only in the bat
+  (<code>indicator_sides=long</code>, <code>transaction_type=long</code>).
+</p>
+
+<h2>2. Entry logic (last bat freeze — not live allocation)</h2>
+<ol class="steps">
+  <li><code>use_indicators=true</code>, <code>indicator_buy=only</code>, <code>indicator_diff=7</code>.</li>
+  <li><code>min_ind_score=-2</code>, <code>max_ind_entry_neutral_n=30</code>.</li>
+  <li>ATR% floor at trigger: <code>min_atr_pct_at_trigger=8.1</code> (max unbound).</li>
+  <li>ATR stop/target overlays: <code>atr_stop=1.4</code>, <code>atr_target=2.2</code> (plus <code>target_pct=1.24</code>).</li>
+  <li><code>yh_zones=false</code>. <code>aggressive_avg_positions=20</code>.</li>
+</ol>
+<p>Do not treat this list as a production freeze — the sleeve is deprecated. The bat is a historical runner.</p>
+
+<h2>3. Exit logic</h2>
+<ul>
+  <li>Multiplier target <code>target_pct=1.24</code>; trailing increment 0 (off) in the bat.</li>
+  <li>ATR stop 1.4 / ATR target 2.2 as configured.</li>
+  <li>Host gap / stop / target schedule otherwise.</li>
+</ul>
+
+<h2>4. Levers (historical bat)</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>indicator_buy</code></td><td>How indicators create entries</td><td><strong>only</strong></td><td>off = no IND identity (RS uses this)</td></tr><tr><td><code>indicator_diff</code></td><td>TC/indicator diff threshold</td><td><strong>7</strong></td><td>Higher → fewer signals</td></tr><tr><td><code>min_ind_score</code></td><td>Score floor</td><td><strong>−2</strong></td><td>Higher floor → fewer entries</td></tr><tr><td><code>min_atr_pct_at_trigger</code></td><td>Min ATR% at signal</td><td><strong>8.1</strong></td><td>Cuts quiet names</td></tr><tr><td><code>atr_stop</code> / <code>atr_target</code></td><td>ATR-multiple stop/target</td><td><strong>1.4 / 2.2</strong></td><td>Wider stop / farther target</td></tr><tr><td><code>target_pct</code></td><td>Price multiplier target</td><td><strong>1.24</strong></td><td>Alongside ATR target</td></tr><tr><td><code>max_ind_entry_neutral_n</code></td><td>Neutral-outlook cap</td><td><strong>30</strong></td><td>Limits entries while TC is mixed</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Deprecated</strong> — DailyRun skipped; not gold allocation</td></tr><tr><td>Runner</td><td><code>run_ind.bat</code> (standalone / research only)</td></tr><tr><td>Universe</td><td><code>drive/universes/IND_universe.csv</code> (default * = full scan)</td></tr><tr><td>Do not</td><td>Wire new DailyRun allocation to IND</td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li>RS is the production consumer of Strong TC outlooks — do not revive IND to “keep TC in the book.”</li>
+  <li>Monthly HTML still labels an IND column for legacy Closed/Open files.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_ind.bat</code> · <code>DailyRun.bat</code> step [5/14] SKIPPED</li>
+  <li><a href="rs.html">RS — Relative Strength</a> (TC Strong gates)</li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical IND write-up · Twin Beacon Networks (TBN) · deprecated sleeve</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>

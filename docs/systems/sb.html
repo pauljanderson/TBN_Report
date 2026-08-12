@@ -1,87 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
-<meta charset="utf-8"/>
-<title>SB System Guide — StockBee Momentum Burst</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SB — StockBee Momentum Burst</title>
 <style>
-body{font-family:Segoe UI,system-ui,sans-serif;margin:24px;max-width:980px;color:#1a1a1a;line-height:1.45}
-h1{font-size:1.55rem;margin:0 0 .35em}
-h2{font-size:1.2rem;margin-top:1.6em;border-bottom:1px solid #e2e8f0;padding-bottom:.25em}
-p,li{font-size:14px}
-code{background:#f4f4f5;padding:1px 5px;border-radius:3px;font-size:12.5px}
-table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0 18px}
-th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top}
-thead{background:#f1f5f9}
-.meta{color:#64748b;font-size:12.5px;margin-bottom:1.2em}
-.callout{background:#eff6ff;border-left:4px solid #3b82f6;padding:10px 14px;margin:14px 0}
-.ok{background:#f0fdf4;border-left:4px solid #22c55e;padding:10px 14px;margin:14px 0}
-.note{background:#fff7ed;border-left:4px solid #f97316;padding:10px 14px;margin:14px 0}
-ol.steps{padding-left:1.3em}
-ol.steps li{margin:.35em 0}
-a{color:#1d4ed8}
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
 </style>
 </head>
 <body>
-<p style="font-size:0.9rem;margin:0 0 12px;"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Production · StockBee Momentum Burst (SB)</p>
+    <h1>SB — StockBee Momentum Burst</h1>
+    <p class="lede"><strong>SB</strong> (StockBee Momentum Burst) captures the <em>start</em> of a 3–5 session impulse: a +4%+ expansion day after a tight coil, with volume up, Day's Close Range (DCR) strong, and not already day-2+ of a run. Risk is the signal-bar Low of Day (LOD).</p>
+    <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Module <code>rocket_stockbee_burst.py</code> via <code>sb_mode=true</code></span><span>Runner <code>run_sb.bat</code> → <code>run_stockbee_burst.bat</code></span><span>Prefix <code>SB_*</code></span><span>Freeze <code>sb_baseline_260803184014</code></span></div>
+  </header>
 
-
-<h1>SB — StockBee Momentum Burst</h1>
-<p class="meta">
-  Production gold · Module <code>rocket_stockbee_burst.py</code> via <code>rocket_tbn -v sb_mode=true</code> ·
-  Runner <code>run_sb.bat</code> → <code>run_stockbee_burst.bat</code> · Prefix <code>SB_*</code> ·
-  Freeze <code>sb_baseline_260803184014</code>
-</p>
-
-<div class="ok">
-  <strong>Status:</strong> Production / DailyRun (reconcile-gated), gold-56 universe.
+<div class="callout ok">
+  <strong>Status:</strong> Production / DailyRun step [10/14] (reconcile-gated), gold-56 universe.
   Playbook: Pradeep Bonde (StockBee) — short impulse burst after compression → day-1 range expansion.
+  Skip with <code>SKIP_SB=1</code>.
 </div>
-
 <div class="callout">
-  Deeper theory / how-to already exist — this guide is the scannable system summary.
-  Canonical: <a href="tbn_new_systems/stockbee_momentum_burst/10_theory.md">10_theory.md</a>,
-  <a href="tbn_new_systems/stockbee_momentum_burst/HOW_TO_RUN.html">HOW_TO_RUN.html</a>,
-  <a href="sb_baseline_260803184014/README.md">sb_baseline_260803184014/README.md</a>,
-  <code>stock_analysis/SB_Burst_DNA_Columns.md</code>.
+  Deeper theory already exists. Canonical:
+  <span class="path">drive/paul_experiments/tbn_new_systems/stockbee_momentum_burst/10_theory.md</span>,
+  <span class="path">HOW_TO_RUN.html</span>,
+  <span class="path">sb_baseline_260803184014/README.md</span>,
+  <span class="path">stock_analysis/SB_Burst_DNA_Columns.md</span>.
 </div>
 
 <h2>1. What it is</h2>
 <p>
-  SB captures the <strong>start</strong> of a 3–5 session momentum burst: a +4%+ expansion day
-  after a tight coil, with volume up, Day's Close Range (DCR) strong, and not already day-2+ of a run.
-  Risk is the signal-bar Low of Day (LOD); exits are a modest % target, no-follow-through, and a short time stop.
-  No earnings catalyst required. Role: short-hold diversity sleeve vs multi-week systems (Minervini Volatility Contraction Pattern / Relative Strength).
+  No earnings catalyst required. Role: short-hold diversity sleeve vs multi-week systems
+  (Minervini Volatility Contraction Pattern / Relative Strength / zone retests).
 </p>
 
 <h2>2. Entry logic</h2>
@@ -105,122 +122,20 @@ a{color:#1d4ed8}
   <li><strong>NO_FT:</strong> if held ≥ <code>burst_no_ft_days</code> (prod <strong>3</strong>) and never <code>Close &gt; entry</code> → exit @ close.</li>
   <li><strong>TIME:</strong> if held ≥ <code>burst_time_stop_days</code> (prod <strong>5</strong>) → exit @ close.</li>
 </ol>
-
-<div class="note">
-  <strong>Fidelity: stop/target vs time exits.</strong>
-  Enter the LOD stop and target in Fidelity as usual. <strong>NO_FT (3d)</strong> and
-  <strong>time stop (5d)</strong> are <em>not</em> broker orders — they only fire if you sell manually.
-  After each DailyRun / investment-report refresh, watch
-  <strong>Pending sells</strong> for reasons like <code>SB no follow-through (3d)</code> /
-  <code>SB time stop (5d)</code> (CSV twin: <code>Sell_Report_Latest.csv</code>).
+<div class="callout warn">
+  <strong>Fidelity:</strong> enter the LOD stop and target as usual. <strong>NO_FT (3d)</strong> and
+  <strong>time stop (5d)</strong> are not broker orders — sell manually. After DailyRun, watch
+  Pending sells for <code>SB no follow-through (3d)</code> / <code>SB time stop (5d)</code>.
 </div>
 
 <h2>4. Levers</h2>
-<p class="meta">Production values from <code>run_stockbee_burst.bat</code> / freeze <code>sb_baseline_260803184014</code>. Theory doc historically listed max_risk=0.03 / target 1.10 — superseded by working defaults below.</p>
-<table>
-  <thead>
-    <tr><th>Lever</th><th>What it does</th><th>Freeze / prod</th><th>Count vs quality (tendency)</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>burst_min_pct</code></td>
-      <td>Min day % move for signal</td>
-      <td><strong>0.04</strong></td>
-      <td>Higher → fewer, stronger bursts; lower → more signals, weaker days</td>
-    </tr>
-    <tr>
-      <td><code>burst_dcr_min</code></td>
-      <td>Min day's close range (close strength)</td>
-      <td><strong>0.70</strong></td>
-      <td>Higher → fewer weak-close expansions; lower → more fills, messier closes</td>
-    </tr>
-    <tr>
-      <td><code>burst_range_lookback</code></td>
-      <td>Prior days each must have smaller range</td>
-      <td><strong>5</strong></td>
-      <td>Longer lookback → stricter compression→expansion; fewer trades</td>
-    </tr>
-    <tr>
-      <td><code>burst_vol_gt_prior</code></td>
-      <td>Require V_T &gt; V_{T−1}</td>
-      <td><strong>true</strong></td>
-      <td>Off → more signals without participation confirmation</td>
-    </tr>
-    <tr>
-      <td><code>burst_max_prior_up_days</code></td>
-      <td>Max consecutive +min_pct days before T</td>
-      <td><strong>1</strong></td>
-      <td>0 = only true day-1 starts; higher → allows chase further into the run</td>
-    </tr>
-    <tr>
-      <td><code>burst_min_price</code></td>
-      <td>Min Close_T</td>
-      <td><strong>5</strong></td>
-      <td>Higher floor → fewer penny/low-priced bursts</td>
-    </tr>
-    <tr>
-      <td><code>burst_max_risk_pct</code> (<code>SB_MAX_RISK</code>)</td>
-      <td>Reject fill if (open−LOD)/open &gt; R; sets open band ceiling</td>
-      <td><strong>0.078</strong></td>
-      <td>Lower → fewer fills (more TOO_HIGH), tighter risk; higher → more fills, wider LOD stops. Theory freeze 0.03 is research/restore only</td>
-    </tr>
-    <tr>
-      <td><code>target_pct</code> (<code>SB_TARGET</code>)</td>
-      <td>Profit target multiplier</td>
-      <td><strong>1.097</strong></td>
-      <td>Higher → fewer TARGET hits, more TIME/NO_FT; lower → more quick targets, smaller wins. Prior Seed-opt 1.10 obsolete</td>
-    </tr>
-    <tr>
-      <td><code>burst_time_stop_days</code> (<code>SB_TIME_STOP</code>)</td>
-      <td>Hard flat by day N</td>
-      <td><strong>5</strong></td>
-      <td>Shorter → faster recycling, more TIME exits; longer → lets bursts run, larger DD risk</td>
-    </tr>
-    <tr>
-      <td><code>burst_no_ft_days</code> (<code>SB_NO_FT</code>)</td>
-      <td>Exit if never green by day N</td>
-      <td><strong>3</strong></td>
-      <td>Shorter → cuts dead trades faster; can miss delayed follow-through</td>
-    </tr>
-    <tr>
-      <td><code>burst_mm_gate</code> + <code>burst_mm_min_ratio</code></td>
-      <td>Market Monitor breadth gate</td>
-      <td><strong>false</strong> (off)</td>
-      <td>On → idle/filter in weak breadth; fewer longs</td>
-    </tr>
-    <tr>
-      <td><code>burst_size_from_stop</code></td>
-      <td>Risk-frac share sizing vs host dollar scale</td>
-      <td><strong>false</strong> (host parity)</td>
-      <td>true = Seed-opt research $R path; changes PnL scale, not signal count</td>
-    </tr>
-    <tr>
-      <td>Universe</td>
-      <td>Gold whitelist</td>
-      <td><strong>56</strong> names</td>
-      <td>Expand dilutes edge (see 90_universe_expand); ALL = full CSV scan</td>
-    </tr>
-  </tbody>
-</table>
-
+<p>Production values from <code>run_stockbee_burst.bat</code> / freeze <code>sb_baseline_260803184014</code>. Theory doc historically listed max_risk=0.03 / target 1.10 — superseded.</p>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>burst_min_pct</code></td><td>Min day % move for signal</td><td><strong>0.04</strong></td><td>Higher → fewer, stronger bursts</td></tr><tr><td><code>burst_dcr_min</code></td><td>Min day's close range</td><td><strong>0.70</strong></td><td>Higher → fewer weak-close expansions</td></tr><tr><td><code>burst_range_lookback</code></td><td>Prior days each must have smaller range</td><td><strong>5</strong></td><td>Longer lookback → stricter compression→expansion</td></tr><tr><td><code>burst_vol_gt_prior</code></td><td>Require V_T &gt; V_{T−1}</td><td><strong>true</strong></td><td>Off → more signals without participation</td></tr><tr><td><code>burst_max_prior_up_days</code></td><td>Max consecutive +min_pct days before T</td><td><strong>1</strong></td><td>0 = only true day-1 starts; higher → chase further into the run</td></tr><tr><td><code>burst_min_price</code></td><td>Min Close_T</td><td><strong>5</strong></td><td>Higher floor → fewer low-priced bursts</td></tr><tr><td><code>burst_max_risk_pct</code> (<code>SB_MAX_RISK</code>)</td><td>Reject fill if (open−LOD)/open &gt; R</td><td><strong>0.078</strong></td><td>Lower → more TOO_HIGH rejects, tighter risk. Theory 0.03 is research/restore only</td></tr><tr><td><code>target_pct</code> (<code>SB_TARGET</code>)</td><td>Profit target multiplier</td><td><strong>1.097</strong></td><td>Higher → fewer TARGET hits, more TIME/NO_FT. Prior Seed-opt 1.10 obsolete</td></tr><tr><td><code>burst_time_stop_days</code> (<code>SB_TIME_STOP</code>)</td><td>Hard flat by day N</td><td><strong>5</strong></td><td>Shorter → faster recycling, more TIME exits</td></tr><tr><td><code>burst_no_ft_days</code> (<code>SB_NO_FT</code>)</td><td>Exit if never green by day N</td><td><strong>3</strong></td><td>Shorter → cuts dead trades faster</td></tr><tr><td><code>burst_mm_gate</code></td><td>Market Monitor breadth gate</td><td><strong>false</strong> (off)</td><td>On → idle/filter in weak breadth</td></tr><tr><td><code>burst_size_from_stop</code></td><td>Risk-frac share sizing vs host dollar scale</td><td><strong>false</strong> (host parity)</td><td>true = Seed-opt research $R path; changes PnL scale, not signal count</td></tr><tr><td>Universe</td><td>Gold whitelist</td><td><strong>56</strong> names</td><td>Expand dilutes edge (see 90_universe_expand); ALL = full CSV scan</td></tr></tbody></table></div>
 <h2>5. Universe / status</h2>
-<table>
-  <thead><tr><th>Item</th><th>Value</th></tr></thead>
-  <tbody>
-    <tr><td>Status</td><td><strong>Production gold</strong> — DailyRun + reconcile gate</td></tr>
-    <tr><td>Runner</td><td><code>run_sb.bat</code> → <code>run_stockbee_burst.bat</code></td></tr>
-    <tr><td>Universe</td><td><code>drive/universes/SB_universe.csv</code> (56; also <code>tbn_new_systems/stockbee_momentum_burst/GOLD_UNIVERSE.*</code>)</td></tr>
-    <tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/sb_baseline_260803184014/</code> (1.097 / 0.078)</td></tr>
-    <tr><td>Obsolete freeze</td><td><code>sb_baseline_260803121109</code> (1.10 / 0.08) — do not use</td></tr>
-    <tr><td>Sizing</td><td>Host parity: 500k × 2 × 0.6 = 600k deployable / max_positions; <code>--aggressive</code> default</td></tr>
-    <tr><td>Outputs</td><td><code>drive/SB_*_&lt;ts&gt;.*</code> incl. RejectedFills, burst DNA columns</td></tr>
-  </tbody>
-</table>
-
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun + reconcile gate</td></tr><tr><td>Runner</td><td><code>run_sb.bat</code> → <code>run_stockbee_burst.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/SB_universe.csv</code> (56)</td></tr><tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/sb_baseline_260803184014/</code> (1.097 / 0.078)</td></tr><tr><td>Obsolete freeze</td><td><code>sb_baseline_260803121109</code> (1.10 / 0.08) — do not use</td></tr><tr><td>Sizing</td><td>Host parity: 500k × 2 × 0.6 = 600k deployable / max_positions; <code>--aggressive</code> default</td></tr><tr><td>Outputs</td><td><code>drive/SB_*_&lt;ts&gt;.*</code> incl. RejectedFills, burst DNA columns</td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
   <li>Theory <code>10_theory.md</code> still mentions max_risk 0.03 / target ~+10% — production is <strong>0.078 / 1.097</strong>.</li>
-  <li>Folder README finalize text said HOLD historically; current bats + reconcile treat gold-56 as production. Prefer freeze README + <code>run_sb.bat</code> as SSoT for status.</li>
   <li>Never pass <code>entry_start_date</code> / <code>start_date</code> on production runs (research AB only).</li>
   <li>LOD stop can be gapped through at open; RejectedFills are expected when open is outside the buy band.</li>
   <li>Optional gates (MM, T1, vol-vs-50) default off — DNA columns still recorded for correlation.</li>
@@ -228,12 +143,69 @@ a{color:#1d4ed8}
 
 <h2>Canonical links</h2>
 <ul>
-  <li><a href="tbn_new_systems/stockbee_momentum_burst/HOW_TO_RUN.html">HOW_TO_RUN.html</a> — run / env / artifacts</li>
-  <li><a href="tbn_new_systems/stockbee_momentum_burst/10_theory.md">10_theory.md</a> — edge + entry/exit theory</li>
-  <li><a href="sb_baseline_260803184014/README.md">sb_baseline_260803184014/README.md</a> — reconcile freeze</li>
-  <li><a href="tbn_new_systems/stockbee_momentum_burst/GOLD_UNIVERSE.md">GOLD_UNIVERSE.md</a></li>
-  <li><code>stock_analysis/rocket_stockbee_burst.py</code>, <code>stock_analysis/SB_Burst_DNA_Columns.md</code></li>
+  <li><span class="path">drive/paul_experiments/tbn_new_systems/stockbee_momentum_burst/HOW_TO_RUN.html</span></li>
+  <li><span class="path">drive/paul_experiments/tbn_new_systems/stockbee_momentum_burst/10_theory.md</span></li>
+  <li><span class="path">drive/paul_experiments/sb_baseline_260803184014/README.md</span></li>
+  <li><span class="path">stock_analysis/rocket_stockbee_burst.py</span>, <span class="path">stock_analysis/SB_Burst_DNA_Columns.md</span></li>
 </ul>
+
+  <footer>Canonical SB write-up · Twin Beacon Networks (TBN) · production knobs from run_stockbee_burst.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

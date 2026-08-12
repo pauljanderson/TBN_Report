@@ -1,37 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>YH — Year High</title>
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,19 +74,122 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
+  <header class="doc-head">
     <p class="eyebrow">Production · Year High (YH)</p>
     <h1>YH — Year High</h1>
-    <p class="lede">YH trades year-high / band setups on the TBN zone path with BRT zones off. Production universe is Mag9-style without TSLA.</p>
+    <p class="lede"><strong>YH</strong> (Year High) trades year-high / band setups on the Twin Beacon Networks (TBN) zone path with Break and ReTest (BRT) zones off. A new 52-week high becomes a candidate; the zone activates after a 3% move-away, then the book looks for breakout → support retest.</p>
     <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Mode <code>yh_zones=true</code> · <code>brt_zones=false</code></span><span>Runner <code>run_yh.bat</code></span><span>Prefix <code>YH_*</code></span></div>
   </header>
-<h2>What it is</h2>
-<p>Year-high zone sleeve (<code>yh_zones=true</code>). Production stop/target/band frozen after param-hint A/Bs — see deep analysis ledger in paul_experiments.</p>
-<h2>How to run</h2>
-<div class='card'><p>Runner: <code>run_yh.bat</code> · Universe: <span class='path'>drive/universes/YH_universe.csv</span></p><p>Engine: TBN host with YH zones enabled.</p></div>
-<h2>Repo docs</h2>
-<ul><li>A/B ledger (local): <span class='path'>drive/paul_experiments/YH_Deep_Analysis.html</span></li><li>Setup process: <a href='../system_setup_process.html'>system_setup_process.html</a></li></ul>
-  <footer>Canonical stub for Pages</footer>
+
+<div class="callout ok">
+  <strong>Status:</strong> Production gold · DailyRun step [6/14].
+  Production universe is Mag9-style without TSLA (<span class="path">drive/universes/YH_universe.csv</span>).
 </div>
+
+<h2>1. What it is</h2>
+<p>
+  YH is a <em>zone origin</em> swap on the shared TBN host: zones come from rolling year-highs
+  rather than BRT pivot-touch maturity. Once a YH zone is active, breakout / retest / fill /
+  stop / target still ride the host’s zone path (not the Relative Strength or Rocket Launcher engines).
+</p>
+
+<h2>2. Entry logic</h2>
+<ol class="steps">
+  <li><strong>New YH:</strong> High[t] &gt; MAX(High[t − <code>yh_lookback</code> : t−1]) after warmup. Prod lookback <strong>252</strong> trading days.</li>
+  <li><strong>Activation (sheet memory):</strong> rounded High ≥ YH × (1 + <code>yh_move_away_pct</code>). Prod <strong>0.03</strong> (3% move away). <code>yh_memory_mode=sheet</code> matches the YH-tab state machine (active level + next candidate), not a single persisted cell.</li>
+  <li><strong>Zone band:</strong> YH price × (1 ± <code>band_pct</code>). Prod <strong>0.015</strong> (±1.5%).</li>
+  <li><strong>Breakout → retest → green entry</strong> on the host zone path (same family as BRT once the zone exists).</li>
+  <li><strong>Growth filter:</strong> prod <code>growth_filter_enabled=true</code>, <code>growth_bars=756</code> (close ≥ close 3 years ago).</li>
+  <li><strong>Fill:</strong> next open after the signal bar (host convention).</li>
+  <li>SPY-compare / ATR% / indicator-buy gates are neutralized in <code>run_yh.bat</code> (<code>use_indicators=false</code>, <code>indicator_buy=off</code>, spy/ATR bounds 0).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<ul>
+  <li><strong>Stop:</strong> multiplier <code>stop_pct=0.934</code> (<code>stop_pct_is_multiplier=true</code>).</li>
+  <li><strong>Target:</strong> <code>target_pct=1.21</code> (+21% vs entry).</li>
+  <li><strong>Stop compare:</strong> <code>stop_compare_round_decimals=-1</code> (full-float vs Low/High — YH-only; shared TBN default remains 2 decimals for BRT/WPBR/RL/RS). Fixes false STOPs such as AU 2025-02-28 (stop 28.44964 vs Low 28.45).</li>
+  <li><code>too_high_multiplier=0</code> (off). <code>strong_pivot_mode=off</code>.</li>
+  <li>Gap-down / gap-up / intraday stop / target — first match wins (host schedule).</li>
+</ul>
+
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>yh_lookback</code></td><td>Trading days for rolling 52w high</td><td><strong>252</strong></td><td>Shorter → more/fresh YH events</td></tr><tr><td><code>yh_move_away_pct</code></td><td>Rally above YH before zone activates</td><td><strong>0.03</strong></td><td>Higher → fewer activations, more confirmed thrust</td></tr><tr><td><code>yh_memory_mode</code></td><td>Candidate queue (sheet / fifo / parallel)</td><td><strong>sheet</strong></td><td>fifo/parallel are test variants — do not silently swap</td></tr><tr><td><code>band_pct</code></td><td>Zone half-width around YH price</td><td><strong>0.015</strong></td><td>Wider band → easier retests, noisier levels</td></tr><tr><td><code>target_pct</code></td><td>Take-profit vs entry</td><td><strong>1.21</strong></td><td>Higher → fewer TARGET hits</td></tr><tr><td><code>stop_pct</code></td><td>Stop multiplier</td><td><strong>0.934</strong></td><td>Lower multiplier = wider stop</td></tr><tr><td><code>stop_compare_round_decimals</code></td><td>Round stop vs Low/High</td><td><strong>−1</strong> (full float)</td><td>2-dec round can false-STOP (AU example)</td></tr><tr><td><code>growth_filter_enabled</code> / <code>growth_bars</code></td><td>3-year growth gate</td><td><strong>true / 756</strong></td><td>Off → more names without a 3Y advance</td></tr><tr><td><code>strong_pre/post_pivot_*</code></td><td>Strong-pivot geometry (unused when mode=off)</td><td>pre 7/0.12 · post 7/0.109 · mode <strong>off</strong></td><td>On would filter YH origins like BRT pivots</td></tr><tr><td><code>too_high_multiplier</code></td><td>Gap-up fill reject</td><td><strong>0</strong> (off)</td><td>On (e.g. 1.058) is a research override</td></tr><tr><td><code>max_market_cap</code></td><td>Post-enrich cap filter</td><td><strong>0</strong> (disabled)</td><td>Engine default bound can wipe names when Yahoo omits cap (AMD class of bug)</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun</td></tr><tr><td>Runner</td><td><code>run_yh.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/YH_universe.csv</code> (Mag9-style, no TSLA in prod list)</td></tr><tr><td>Engine</td><td>TBN host <code>yh_zones=true</code> — see <code>_compute_yh_zones</code> in <span class='path'>rocket_tbn.py</span></td></tr><tr><td>A/B ledger</td><td><span class='path'>drive/paul_experiments/YH_Deep_Analysis.html</span></td></tr><tr><td>Outputs</td><td><code>drive/YH_*_&lt;ts&gt;.*</code></td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li>Do not enable BRT or WPBR zones on the same run — YH owns zone origin.</li>
+  <li>Sheet-mode activation uses rounded High vs full-precision Active YH Touch Price (AAPL 2014-10-22 / NVDA examples in the engine docstring).</li>
+  <li>Param-hint A/Bs froze stop/target/band — do not retune on out-of-sample (OOS) to “fix” a soft year.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_yh.bat</code></li>
+  <li><span class="path">stock_analysis/rocket_tbn.py</span> — Year-High zone engine</li>
+  <li><span class="path">drive/paul_experiments/YH_Deep_Analysis.html</span></li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical YH write-up · Twin Beacon Networks (TBN) · production knobs from run_yh.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>

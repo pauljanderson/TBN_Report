@@ -1,220 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
-<meta charset="utf-8"/>
-<title>VZ System Guide — Volume Zone Break &amp; Retest</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VZ — Volume Zone</title>
 <style>
-body{font-family:Segoe UI,system-ui,sans-serif;margin:24px;max-width:980px;color:#1a1a1a;line-height:1.45}
-h1{font-size:1.55rem;margin:0 0 .35em}
-h2{font-size:1.2rem;margin-top:1.6em;border-bottom:1px solid #e2e8f0;padding-bottom:.25em}
-p,li{font-size:14px}
-code{background:#f4f4f5;padding:1px 5px;border-radius:3px;font-size:12.5px}
-table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0 18px}
-th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top}
-thead{background:#f1f5f9}
-.meta{color:#64748b;font-size:12.5px;margin-bottom:1.2em}
-.callout{background:#eff6ff;border-left:4px solid #3b82f6;padding:10px 14px;margin:14px 0}
-.note{background:#fff7ed;border-left:4px solid #f97316;padding:10px 14px;margin:14px 0}
-.ok{background:#ecfdf5;border-left:4px solid #10b981;padding:10px 14px;margin:14px 0}
-.bad{background:#fef2f2;border-left:4px solid #ef4444;padding:10px 14px;margin:14px 0}
-ol.steps{padding-left:1.3em}
-ol.steps li{margin:.35em 0}
-a{color:#1d4ed8}
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
 </style>
 </head>
 <body>
-<p style="font-size:0.9rem;margin:0 0 12px;"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Research · Volume Zone (VZ) Break and Retest</p>
+    <h1>VZ — Volume Zone</h1>
+    <p class="lede"><strong>VZ</strong> (Volume Zone) is a research prototype: rolling max-volume days become High–Low (HL) price zones; after an upside break, the system buys a support retest. It is not Break and ReTest (BRT) production and is not DailyRun-wired.</p>
+    <div class="badge badge-bad">Research candidate — not DailyRun</div>
+    <div class="meta-row"><span>Mode <code>vz_mode=true</code></span><span>Runner <code>run_vz.bat</code></span><span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span><span>Freeze <code>vol_zone_v2_rw63_20260810</code></span></div>
+  </header>
 
-
-<h1>VZ — Volume Zone (Break &amp; Retest)</h1>
-<p class="meta">
-  Research candidate only · Runner <code>run_vz.bat</code> → <code>rocket_tbn -v vz_mode=true</code> → <code>stock_analysis/rocket_vz.py</code> ·
-  Engine <code>tools/vol_zone_break_retest.py</code> ·
-  Adopted freeze <code>vol_zone_v2_rw63_20260810</code> ·
-  Entry gates <code>RESEARCH_CANDIDATE_V2_RW63</code> · Exit <code>zone_atr05_ts40</code> ·
-  House fill <code>entry_on=next_open</code>
-</p>
-
-<div class="bad">
+<div class="callout bad">
   <strong>Not production gold. Not DailyRun-wired.</strong>
-  Do not confuse with BRT (Break &amp; Retest) production systems. VZ is a research prototype
-  that builds zones from rolling max-volume days, then buys upside break → support retests.
-  House artifacts: <code>drive/VZ_*_&lt;ts&gt;.*</code> via the TBN host (Closed / wide Audit / Report / equity / post_run).
+  House artifacts: <code>drive/VZ_*_&lt;ts&gt;.*</code> via the TBN host.
+  Adopted freeze: entry gates <code>RESEARCH_CANDIDATE_V2_RW63</code> · exit <code>zone_atr05_ts40</code> ·
+  house fill <code>entry_on=next_open</code>.
 </div>
-
-<div class="ok">
+<div class="callout ok">
   <strong>Predictive timing:</strong> signal known at retest-bar <em>close</em> (uses that bar’s Low/High/Close).
   Default fill = <strong>next open</strong> (T+1). Never buys the open of the signal morning.
-  See <a href="VZ_TBN_Integration_And_Predictive_Timing.html">VZ_TBN_Integration_And_Predictive_Timing.html</a>.
-</div>
-
-<div class="callout">
-  <strong>How to run:</strong> double-click / call <code>run_vz.bat</code>
-  (default universe <code>drive/universes/VZ_universe.csv</code> = DualPaul78 research set).
-  Docs: <a href="tbn_new_systems/volume_zone/HOW_TO_RUN.md">HOW_TO_RUN.md</a>.
-  Smoke / override: <code>run_vz.bat drive\universes\PaulTwenty_universe.csv</code>.
-</div>
-
-<div class="callout">
-  Freeze docs: <a href="vol_zone_v2_rw63_20260810/BASELINE.md">BASELINE.md</a> ·
-  <a href="vol_zone_v2_rw63_20260810/VolZone_V2_RW63_Adoption.html">VolZone_V2_RW63_Adoption.html</a>.
-  Related stamps: <code>vol_zone_v2_exit_ab_20260810</code>, <code>vol_zone_hl_quality_20260810</code>,
-  <code>vol_zone_paultwenty_20260810</code>, <code>vol_zone_v2_rw63_fulluniv_20260810</code>.
 </div>
 
 <h2>1. What it is</h2>
 <p>
-  VZ treats each rolling <strong>max-volume day</strong> (lookback window) as a persistent price zone —
-  High–Low (HL) and/or Open–Close (OC). After price <strong>breaks up</strong> through the zone top,
-  the system looks for a <strong>retest from above</strong> (touch / near-miss of the zone) within a
-  retest window and buys that retest. Hypothesis: high-volume nodes act as support after acceptance above them.
+  Hypothesis: high-volume nodes act as support after acceptance above them.
+  Default research universe is DualPaul78 (<code>drive/universes/VZ_universe.csv</code>).
 </p>
 
-<h2>2. Entry logic (predictive bar rules)</h2>
+<h2>2. Entry logic</h2>
 <ol class="steps">
-  <li><strong>Zone creation:</strong> each day after <code>lookback_days</code>, find the max-volume bar in the trailing window; when a new winner appears, create zone(s) that persist. Adopted freeze uses <strong>HL-only</strong> (<code>zone_kinds=("HL",)</code>).</li>
-  <li><strong>Break-up:</strong> close &gt; zone.hi (with <code>break_pct=0</code>, <code>break_atr=0</code> = no extra distance required), having been at/below the top sometime prior.</li>
-  <li><strong>Retest clock:</strong> within <code>retest_window</code> bars after break (adopted <strong>63</strong>), scan for support retest from above.</li>
-  <li><strong>Signal bar T:</strong> bar intersects zone band (or near-miss within <code>retest_eps_pct</code> of zone.hi), approach <code>from_above</code>, close still ≥ zone.lo. Signal is known only at/after <strong>T’s close</strong> (needs T’s Low/High/Close).</li>
+  <li><strong>Zone creation:</strong> each day after <code>lookback_days</code>, find the max-volume bar in the trailing window; when a new winner appears, create zone(s) that persist. Adopted freeze uses <strong>HL-only</strong>.</li>
+  <li><strong>Break-up:</strong> close &gt; zone.hi (break_pct=0, break_atr=0 = no extra distance), having been at/below the top sometime prior.</li>
+  <li><strong>Retest clock:</strong> within <code>retest_window</code> bars after break (adopted <strong>63</strong>).</li>
+  <li><strong>Signal bar T:</strong> bar intersects the zone band (or near-miss within <code>retest_eps_pct</code> of zone.hi), approach from_above, close still ≥ zone.lo. Known only at/after T’s close.</li>
   <li><strong>Quality gates (v2):</strong> <code>first_retest_only=True</code>; <code>min_touches_before_entry ≥ 1</code>.</li>
-  <li><strong>Fill (house default):</strong> <code>entry_on=next_open</code> → buy <strong>Open of T+1</strong>. Alternate: <code>entry_on=close</code> → buy Close of T (prior research AB freeze; still predictive). <strong>Forbidden:</strong> Open of T using T’s range.</li>
+  <li><strong>Fill:</strong> <code>entry_on=next_open</code> → Open of T+1. Alternate research: close of T. Forbidden: Open of T using T’s range.</li>
 </ol>
 
-<h2>3. Exit logic (adopted primary)</h2>
-<p>Exit recipe name: <code>zone_atr05_ts40</code> (chosen in-sample on PaulTwenty exit compare — label selection bias).</p>
-<table>
-  <thead><tr><th>Piece</th><th>Formula / value</th></tr></thead>
-  <tbody>
-    <tr><td>Stop</td><td><code>zone.lo − 0.5 · ATR14[entry]</code></td></tr>
-    <tr><td>Target</td><td><strong>2.0R</strong> from entry vs stop distance</td></tr>
-    <tr><td>Time stop</td><td><strong>40</strong> trading bars (label <code>TIME</code> only when <code>bars_held ≥ 40</code>; end-of-data / as-of truncation → <code>VZ_Open_*</code> as <code>still_open</code>, not Closed TIME)</td></tr>
-  </tbody>
-</table>
-<p class="meta">Prior toy exit was zone.lo stop / 2R / 20d — superseded for research ABs by <code>zone_atr05_ts40</code>.</p>
-
-<div class="note">
-  <strong>Fidelity: stop/target vs time exits.</strong>
-  Zone stop and 2R target can sit in Fidelity. The <strong>40-day time stop</strong> is
-  <em>not</em> a broker order — sell manually when due.
+<h2>3. Exit logic</h2>
+<p>Exit recipe <code>zone_atr05_ts40</code> (chosen in-sample on PaulTwenty — label selection bias).</p>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Stop</td><td><code>zone.lo − 0.5 · ATR14[entry]</code></td></tr><tr><td>Target</td><td><strong>2.0R</strong> from entry vs stop distance</td></tr><tr><td>Time stop</td><td><strong>40</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)</td></tr></tbody></table></div>
+<div class="callout warn">
+  <strong>Fidelity:</strong> zone stop and 2R target can sit in the broker. The <strong>40-day time stop</strong>
+  is not a broker order.
 </div>
 
 <h2>4. Levers</h2>
-<p class="meta">Adopted research freeze = <code>RESEARCH_CANDIDATE_V2_RW63</code> + <code>PRIMARY_EXIT=zone_atr05_ts40</code>. House fill default is <code>next_open</code> (predictive); prior AB freeze used <code>close</code>.</p>
-<table>
-  <thead>
-    <tr><th>Lever</th><th>What it does</th><th>Adopted / house</th><th>Count vs quality (tendency)</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>lookback_days</code></td>
-      <td>Rolling window for max-vol winner</td>
-      <td><strong>126</strong></td>
-      <td>Shorter → more/fresh zones; longer → fewer, stickier nodes</td>
-    </tr>
-    <tr>
-      <td><code>zone_kinds</code></td>
-      <td>OC and/or HL zone geometry</td>
-      <td><strong>HL only</strong></td>
-      <td>OC+HL → more signals; HL-only lean-kept for quality on PaulTwenty</td>
-    </tr>
-    <tr>
-      <td><code>retest_eps_pct</code> (eps)</td>
-      <td>Near-miss tolerance around zone edge</td>
-      <td><strong>0.005</strong></td>
-      <td>Higher → more near-miss entries; eps=0 dismissed</td>
-    </tr>
-    <tr>
-      <td><code>retest_window</code> (rw)</td>
-      <td>Bars after breakout allowed for retest</td>
-      <td><strong>63</strong></td>
-      <td>Shorter → fewer late retests; lean-kept vs rw126</td>
-    </tr>
-    <tr>
-      <td><code>first_retest_only</code></td>
-      <td>One entry per zone after break</td>
-      <td><strong>True</strong></td>
-      <td>False → later visits / more signals</td>
-    </tr>
-    <tr>
-      <td><code>min_touches_before_entry</code> (mt)</td>
-      <td>Min prior intersections before entry</td>
-      <td><strong>1</strong></td>
-      <td>mt0 dismissed; higher mt → fewer, more “tested” zones</td>
-    </tr>
-    <tr>
-      <td><code>entry_on</code></td>
-      <td>Fill at retest close vs next open</td>
-      <td><strong>next_open</strong> (house); prior AB freeze used close</td>
-      <td>next_open = live-realistic; close = EOD same day (still not morning look-ahead)</td>
-    </tr>
-    <tr>
-      <td>Exit <code>zone_atr05_ts40</code></td>
-      <td>stop ATR buffer / 2R / 40d</td>
-      <td><strong>0.5 / 2.0 / 40</strong></td>
-      <td>In-sample exit compare winner — selection bias labeled</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2>5. Universe / status / TBN path</h2>
-<table>
-  <thead><tr><th>Item</th><th>Value</th></tr></thead>
-  <tbody>
-    <tr><td>Status</td><td><strong>Research candidate only</strong> — not gold, not DailyRun</td></tr>
-    <tr><td>TBN mode</td><td><code>vz_mode=true</code> (SB/QULL-style early dispatch in <code>rocket_tbn</code>)</td></tr>
-    <tr><td>Audit</td><td>Wide shared schema via <code>write_brt_audit_report</code> / <code>compute_metrics</code></td></tr>
-    <tr><td>Default run univ</td><td><code>drive/universes/VZ_universe.csv</code> (DualPaul78)</td></tr>
-    <tr><td>PaulTwenty</td><td><code>run_vz.bat drive\universes\PaulTwenty_universe.csv</code></td></tr>
-    <tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr>
-  </tbody>
-</table>
-
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>lookback_days</code></td><td>Rolling window for max-vol winner</td><td><strong>126</strong></td><td>Shorter → more/fresh zones</td></tr><tr><td><code>zone_kinds</code></td><td>OC and/or HL geometry</td><td><strong>HL only</strong></td><td>OC+HL → more signals; HL-only lean-kept on PaulTwenty</td></tr><tr><td><code>retest_eps_pct</code></td><td>Near-miss around zone edge</td><td><strong>0.005</strong></td><td>Higher → more near-miss entries; eps=0 dismissed</td></tr><tr><td><code>retest_window</code></td><td>Bars after breakout for retest</td><td><strong>63</strong></td><td>Shorter → fewer late retests; lean-kept vs rw126</td></tr><tr><td><code>first_retest_only</code></td><td>One entry per zone after break</td><td><strong>True</strong></td><td>False → later visits / more signals</td></tr><tr><td><code>min_touches_before_entry</code></td><td>Min prior intersections</td><td><strong>1</strong></td><td>mt0 dismissed</td></tr><tr><td><code>entry_on</code></td><td>Fill at retest close vs next open</td><td><strong>next_open</strong> (house)</td><td>Prior AB freeze used close</td></tr><tr><td>Exit <code>zone_atr05_ts40</code></td><td>ATR buffer / 2R / 40d</td><td><strong>0.5 / 2.0 / 40</strong></td><td>In-sample exit compare winner — selection bias labeled</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Research candidate only</strong> — not gold, not DailyRun</td></tr><tr><td>TBN mode</td><td><code>vz_mode=true</code> (early dispatch in rocket_tbn)</td></tr><tr><td>Default univ</td><td><code>drive/universes/VZ_universe.csv</code> (DualPaul78)</td></tr><tr><td>PaulTwenty</td><td><code>run_vz.bat drive\\universes\\PaulTwenty_universe.csv</code></td></tr><tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
-  <li><strong>Selection bias:</strong> HL / first_retest / mt≥1 / eps / rw63 / <code>zone_atr05_ts40</code> were chosen on overlapping PaulTwenty history. Stamp labels this.</li>
-  <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> for live predictive clarity — do not silently retune other freeze knobs on OOS.</li>
+  <li><strong>Selection bias:</strong> HL / first_retest / mt≥1 / eps / rw63 / <code>zone_atr05_ts40</code> were chosen on overlapping PaulTwenty history.</li>
+  <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> — do not silently retune other freeze knobs on OOS.</li>
   <li>Promotion bar: wider/walk-forward + process PO — research stamps alone do not wire DailyRun.</li>
+  <li>OOS softened under the toy exit on <code>vol_zone_hl_quality_20260810</code> — HOLD, not a retune trigger.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><a href="VZ_TBN_Integration_And_Predictive_Timing.html">VZ_TBN_Integration_And_Predictive_Timing.html</a></li>
-  <li><a href="vol_zone_v2_rw63_20260810/BASELINE.md">vol_zone_v2_rw63_20260810/BASELINE.md</a></li>
-  <li><code>run_vz.bat</code> / <code>rocket_tbn -v vz_mode=true</code> / <code>stock_analysis/rocket_vz.py</code></li>
-  <li><code>tools/vol_zone_break_retest.py</code> — <code>assert_predictive_entry</code>, <code>RESEARCH_CANDIDATE_V2_RW63</code>, <code>PRIMARY_EXIT</code></li>
-  <li><a href="tbn_new_systems/volume_zone/HOW_TO_RUN.md">tbn_new_systems/volume_zone/HOW_TO_RUN.md</a></li>
+  <li><span class="path">drive/paul_experiments/vol_zone_v2_rw63_20260810/BASELINE.md</span></li>
+  <li><span class="path">drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html</span></li>
+  <li><code>run_vz.bat</code> / <span class="path">stock_analysis/rocket_vz.py</span> / <span class="path">tools/vol_zone_break_retest.py</span></li>
+  <li><span class="path">drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md</span></li>
 </ul>
+
+  <footer>Canonical VZ write-up · Twin Beacon Networks (TBN) · research only</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

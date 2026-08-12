@@ -1,92 +1,109 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
-<meta charset="utf-8"/>
-<title>RS System Guide — Relative Strength</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RS — Relative Strength</title>
 <style>
-body{font-family:Segoe UI,system-ui,sans-serif;margin:24px;max-width:980px;color:#1a1a1a;line-height:1.45}
-h1{font-size:1.55rem;margin:0 0 .35em}
-h2{font-size:1.2rem;margin-top:1.6em;border-bottom:1px solid #e2e8f0;padding-bottom:.25em}
-h3{font-size:1.05rem;margin-top:1.2em}
-p,li{font-size:14px}
-code{background:#f4f4f5;padding:1px 5px;border-radius:3px;font-size:12.5px}
-table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0 18px}
-th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top}
-thead{background:#f1f5f9}
-.meta{color:#64748b;font-size:12.5px;margin-bottom:1.2em}
-.callout{background:#eff6ff;border-left:4px solid #3b82f6;padding:10px 14px;margin:14px 0}
-.ok{background:#f0fdf4;border-left:4px solid #22c55e;padding:10px 14px;margin:14px 0}
-.note{background:#fff7ed;border-left:4px solid #f97316;padding:10px 14px;margin:14px 0}
-ol.steps{padding-left:1.3em}
-ol.steps li{margin:.35em 0}
-a{color:#1d4ed8}
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
 </style>
 </head>
 <body>
-<p style="font-size:0.9rem;margin:0 0 12px;"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Production · Relative Strength (RS)</p>
+    <h1>RS — Relative Strength</h1>
+    <p class="lede"><strong>RS</strong> (Relative Strength) buys names beating SPY on 1Y/2Y/3Y excess returns that also show Strong Intermediate/Short/Long Trend Condition (TC) outlooks, while SPY’s intermediate TC is not Weak. It is a regime/strength sleeve — no Break and ReTest (BRT) zones — with a fixed multiplier stop/target and a long time stop.</p>
+    <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Engine <code>rocket_tbn.py</code> (<code>rs_mode</code> / <code>--relative-strength</code>)</span><span>Runner <code>run_rs.bat</code></span><span>Prefix <code>RS_*</code></span><span>Freeze <code>rs_baseline_260807141317</code></span></div>
+  </header>
 
-
-<h1>RS — Relative Strength</h1>
-<p class="meta">
-  Production gold · Engine <code>rocket_tbn.py</code> (<code>rs_mode</code> / <code>--relative-strength</code>) ·
-  Runner <code>run_rs.bat</code> · Prefix <code>RS_*</code> ·
-  Freeze <code>rs_baseline_260807141317</code>
-</p>
-
-<div class="ok">
-  <strong>Status:</strong> Production / DailyRun (reconcile-gated).
+<div class="callout ok">
+  <strong>Status:</strong> Production gold · DailyRun step [9/14] · reconcile-gated.
   Universe <code>drive/universes/RS_universe.csv</code> — <strong>64</strong> names
   (ATEYY dropped 2026-08-10; freeze Closed still has historical ATEYY trades, not gated).
 </div>
 
 <h2>1. What it is</h2>
 <p>
-  RS buys names that are beating SPY on 1Y/2Y/3Y excess returns <em>and</em> show Strong
-  Intermediate/Short/Long Trend Condition (TC) outlooks on the stock, while SPY’s intermediate
-  TC is not Weak. It is a regime/strength sleeve — no Break &amp; Retest (BRT) zones —
-  with fixed multiplier stop/target and a long time stop. Fill is always next open after the
-  trigger close; gates are never re-checked on the entry bar.
+  Fill is always the <strong>next open</strong> after the trigger close. Gates are never re-checked
+  on the entry bar. Role: multi-month leadership sleeve vs short-hold StockBee (SB) bursts and
+  zone retest books (BRT / Year High / Pivot Break and Retest).
 </p>
 
 <h2>2. Entry logic</h2>
+<p>Signal bar <strong>T</strong> close — then fill at T+1 open. One position at a time per symbol.</p>
 <ol class="steps">
-  <li>On trigger bar <strong>T</strong> close: require <code>SPY_COMPARE_1Y</code>, <code>2Y</code>, and <code>3Y</code> all <strong>&gt; 0</strong> (excess vs SPY). <code>SPY.csv</code> must be present.</li>
-  <li>If <code>rs_require_tc_strong=true</code> (prod): require stock <code>IND_TC_*_OUTLOOK</code> all <strong>Strong</strong> on T.</li>
-  <li>If <code>rs_spy_int_tc_not_weak=true</code> (prod): require lagged SPY TC (horizon <code>int</code>, lag 1) ≠ <strong>Weak</strong> (Strong or Neutral OK).</li>
-  <li>Optional O'Neil-style filters (prod <strong>off</strong>): near-52w-high, growth filter, ATR% caps, etc.</li>
+  <li>Require <code>SPY_COMPARE_1Y</code>, <code>2Y</code>, and <code>3Y</code> all <strong>&gt; 0</strong> (excess vs SPY). <code>SPY.csv</code> must be present.</li>
+  <li>If <code>rs_require_tc_strong=true</code> (prod): stock <code>IND_TC_*_OUTLOOK</code> all <strong>Strong</strong> on T.</li>
+  <li>If <code>rs_spy_int_tc_not_weak=true</code> (prod): lagged SPY TC (horizon <code>int</code>, lag 1) ≠ <strong>Weak</strong> (Strong or Neutral OK).</li>
+  <li>Optional O'Neil-style filters (prod <strong>off</strong>): near-52-week-high, growth filter, Average True Range (ATR)% caps.</li>
   <li>Respect <code>symbol_reentry_cooldown_days</code> (prod <strong>60</strong>) after a prior exit on that symbol.</li>
-  <li>Fill at <strong>T+1 open</strong>. Do not re-check SPY_COMPARE / TC on the entry bar. One position at a time per symbol.</li>
+  <li>Fill at <strong>T+1 open</strong>. Do not re-check SPY_COMPARE / TC on the entry bar.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
@@ -94,105 +111,25 @@ a{color:#1d4ed8}
   <li><strong>Stop:</strong> <code>entry × stop_pct</code> with <code>stop_pct_is_multiplier=true</code> → prod <strong>0.85</strong> (−15%).</li>
   <li><strong>Target:</strong> <code>entry × target_pct</code> → prod <strong>1.25</strong> (+25%).</li>
   <li><strong>Time stop:</strong> sell at close when bars held ≥ <code>time_stop_days</code> → prod <strong>252</strong> (set <code>RS_TIME_STOP=0</code> to disable).</li>
-  <li><strong>No-FT:</strong> <code>no_ft_days=0</code> (off) in production.</li>
-  <li><strong>sell_breakdown:</strong> <code>off</code> in production (research only: breakdown_plus / only / both).</li>
+  <li><strong>No-follow-through:</strong> <code>no_ft_days=0</code> (off) in production.</li>
+  <li><strong>sell_breakdown:</strong> <code>off</code> in production (research: breakdown_plus / only / both).</li>
   <li>Gap / shared host exit schedule otherwise matches BRT Closed writers (no zone pivots).</li>
 </ul>
+<div class="callout warn">
+  <strong>Fidelity:</strong> stop and target can sit as broker orders. The <strong>252-bar time stop</strong>
+  is not a broker order — sell manually when due (watch Pending sells after DailyRun).
+</div>
 
 <h2>4. Levers</h2>
-<p class="meta">Values from <code>run_rs.bat</code> + freeze <code>rs_baseline_260807141317/README.md</code>. Effects are directional tendencies from A/B history — not guarantees.</p>
-<table>
-  <thead>
-    <tr><th>Lever</th><th>What it does</th><th>Freeze / prod</th><th>Count vs quality (tendency)</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>target_pct</code></td>
-      <td>Take-profit as entry multiplier</td>
-      <td><strong>1.25</strong></td>
-      <td>Higher → fewer TARGET hits, longer holds, can cut winners late; lower → more TARGET exits, smaller avg win</td>
-    </tr>
-    <tr>
-      <td><code>stop_pct</code> (+ <code>stop_pct_is_multiplier</code>)</td>
-      <td>Stop as entry multiplier</td>
-      <td><strong>0.85</strong> / true (−15%; prior 0.88 = −12%)</td>
-      <td>Lower multiplier = wider stop → fewer STOPs, larger losers; higher multiplier = tighter stop → more STOPs. Prod adopted 0.85 from post-252 A/B</td>
-    </tr>
-    <tr>
-      <td><code>time_stop_days</code> (<code>RS_TIME_STOP</code>)</td>
-      <td>Hard exit after N bars held</td>
-      <td><strong>252</strong></td>
-      <td>Shorter → more TIME exits, trims stale holds; 0 = off (prior freeze). Adopted arm <code>15_time_252</code></td>
-    </tr>
-    <tr>
-      <td><code>symbol_reentry_cooldown_days</code></td>
-      <td>Min days before re-arming same symbol after exit</td>
-      <td><strong>60</strong></td>
-      <td>Higher → fewer re-entries (cuts post-TARGET quick STOP churn); lower → more trades, more churn</td>
-    </tr>
-    <tr>
-      <td><code>rs_require_tc_strong</code></td>
-      <td>Require stock IND_TC outlooks Strong on T</td>
-      <td><strong>true</strong></td>
-      <td>On → fewer, higher-quality regime entries; off → many more signals, weaker TC mix</td>
-    </tr>
-    <tr>
-      <td><code>rs_spy_int_tc_not_weak</code></td>
-      <td>Block when lagged SPY int TC is Weak</td>
-      <td><strong>true</strong></td>
-      <td>On → fewer entries in weak SPY regimes; off → more trades into soft market</td>
-    </tr>
-    <tr>
-      <td><code>rs_max_pct_below_52w_high</code></td>
-      <td>Close_T within X of 52w high (0=off)</td>
-      <td><strong>0</strong> (off)</td>
-      <td>Tighten X → fewer near-high leadership entries; research O'Neil filter</td>
-    </tr>
-    <tr>
-      <td><code>growth_filter_enabled</code></td>
-      <td>Close_T ≥ Close_{T−N}</td>
-      <td><strong>false</strong></td>
-      <td>On → fewer entries; quality mix depends on N</td>
-    </tr>
-    <tr>
-      <td><code>sell_breakdown</code></td>
-      <td>Exit on SPY_COMPARE / TC breakdown modes</td>
-      <td><strong>off</strong></td>
-      <td>On → earlier exits in regime breaks; changes exit mix vs fixed stop/target</td>
-    </tr>
-    <tr>
-      <td><code>no_ft_days</code></td>
-      <td>Exit if never Close &gt; entry within N bars</td>
-      <td><strong>0</strong> (off)</td>
-      <td>On → cuts dead trades faster; can exit before delayed follow-through</td>
-    </tr>
-    <tr>
-      <td>Universe CSV</td>
-      <td>Whitelist symbols</td>
-      <td><strong>64</strong> FIT names</td>
-      <td>Expand → more trades / capacity; shrink → fewer, higher concentration</td>
-    </tr>
-  </tbody>
-</table>
-
-<div class="note">
+<p class="lede" style="margin-bottom:10px">Values from <code>run_rs.bat</code> + freeze <code>rs_baseline_260807141317</code>. Effects are directional tendencies from A/B history — not guarantees.</p>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>target_pct</code></td><td>Take-profit as entry multiplier</td><td><strong>1.25</strong></td><td>Higher → fewer TARGET hits, longer holds; lower → more TARGET exits, smaller avg win</td></tr><tr><td><code>stop_pct</code> + multiplier</td><td>Stop as entry multiplier</td><td><strong>0.85</strong> / true (−15%; prior 0.88 = −12%)</td><td>Lower multiplier = wider stop → fewer STOPs, larger losers. Prod adopted 0.85 from post-252 A/B</td></tr><tr><td><code>time_stop_days</code> (<code>RS_TIME_STOP</code>)</td><td>Hard exit after N bars held</td><td><strong>252</strong></td><td>Shorter → more TIME exits; 0 = off. Adopted arm <code>15_time_252</code></td></tr><tr><td><code>symbol_reentry_cooldown_days</code></td><td>Min days before re-arming same symbol</td><td><strong>60</strong></td><td>Higher → fewer re-entries (cuts post-TARGET STOP churn)</td></tr><tr><td><code>rs_require_tc_strong</code></td><td>Require stock IND_TC outlooks Strong on T</td><td><strong>true</strong></td><td>On → fewer, higher-quality regime entries</td></tr><tr><td><code>rs_spy_int_tc_not_weak</code></td><td>Block when lagged SPY int TC is Weak</td><td><strong>true</strong></td><td>On → fewer entries in weak SPY regimes</td></tr><tr><td><code>rs_max_pct_below_52w_high</code></td><td>Close_T within X of 52w high (0=off)</td><td><strong>0</strong> (off)</td><td>Tighten X → fewer near-high leadership entries</td></tr><tr><td><code>growth_filter_enabled</code></td><td>Close_T ≥ Close_{T−N}</td><td><strong>false</strong></td><td>On → fewer entries; quality mix depends on N</td></tr><tr><td><code>sell_breakdown</code></td><td>Exit on SPY_COMPARE / TC breakdown</td><td><strong>off</strong></td><td>On → earlier exits in regime breaks</td></tr><tr><td>Universe CSV</td><td>Whitelist symbols</td><td><strong>64</strong> FIT names</td><td>Expand → more trades / capacity; shrink → concentration</td></tr></tbody></table></div>
+<div class="callout warn">
   <strong>Stop multiplier reminder:</strong> <code>stop_pct=0.85</code> means stop at 85% of entry (−15%).
-  Prior production used <code>0.88</code> (−12%). Raising the multiplier <em>tightens</em> the stop.
+  Raising the multiplier <em>tightens</em> the stop.
 </div>
 
 <h2>5. Universe / status</h2>
-<table>
-  <thead><tr><th>Item</th><th>Value</th></tr></thead>
-  <tbody>
-    <tr><td>Status</td><td><strong>Production gold</strong> — DailyRun + reconcile gate</td></tr>
-    <tr><td>Runner</td><td><code>run_rs.bat</code> (DailyRun step for RS)</td></tr>
-    <tr><td>Universe</td><td><code>drive/universes/RS_universe.csv</code> (64; twin <code>RS_universe_expand.csv</code>)</td></tr>
-    <tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/rs_baseline_260807141317/</code></td></tr>
-    <tr><td>Prior freezes</td><td><code>260807114545</code> (54 / stop 0.88 / ts 252); <code>260801111512</code> (54 / 0.88 / ts 0)</td></tr>
-    <tr><td>Outputs</td><td><code>drive/RS_*_&lt;ts&gt;.*</code>, LatestRun copies</td></tr>
-  </tbody>
-</table>
-
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun + reconcile gate</td></tr><tr><td>Runner</td><td><code>run_rs.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/RS_universe.csv</code> (64; twin <code>RS_universe_expand.csv</code>)</td></tr><tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/rs_baseline_260807141317/</code></td></tr><tr><td>Prior freezes</td><td><code>260807114545</code> (54 / stop 0.88 / ts 252); <code>260801111512</code> (54 / 0.88 / ts 0)</td></tr><tr><td>Outputs</td><td><code>drive/RS_*_&lt;ts&gt;.*</code>, LatestRun copies</td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
   <li>Gates use trigger bar T only — entry open can gap against you with no TC re-check.</li>
@@ -204,11 +141,70 @@ a{color:#1d4ed8}
 
 <h2>Canonical links</h2>
 <ul>
-  <li><a href="rs_baseline_260807141317/README.md">rs_baseline_260807141317/README.md</a> — freeze levers + metrics</li>
+  <li><span class="path">drive/paul_experiments/rs_baseline_260807141317/README.md</span> — freeze levers + metrics</li>
   <li><code>run_rs.bat</code> — production CLI</li>
-  <li><code>stock_analysis/rocket_tbn.py</code> — <code>relative_strength_enabled</code> / bar-scan entry</li>
-  <li><code>docs/TBN_VS_BRT.md</code> — DailyRun placement</li>
+  <li><span class="path">stock_analysis/rocket_tbn.py</span> — <code>relative_strength_enabled</code> / bar-scan entry</li>
+  <li><span class="path">docs/TBN_VS_BRT.md</span> — DailyRun placement</li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
 </ul>
+
+  <footer>Canonical RS write-up · Twin Beacon Networks (TBN) · production knobs from run_rs.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

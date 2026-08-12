@@ -1,40 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MTS</title>
+<title>MTS — STONK_DATA sheet-parity sleeve</title>
 <style>
   :root {
     --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,17 +74,136 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
-    <p class="eyebrow">Production · MTS</p>
-    <h1>MTS</h1>
-    <p class="lede">MTS is the sheet-parity / MTS-mode path on TBN for symbols maintained against the MTS sheet.</p>
+  <header class="doc-head">
+    <p class="eyebrow">Production · MTS (STONK_DATA MTS tab)</p>
+    <h1>MTS — STONK_DATA sheet-parity sleeve</h1>
+    <p class="lede"><strong>MTS</strong> is the sheet-parity path against the STONK_DATA <em>MTS</em> tab (columns D:DP). It is not the Break and ReTest (BRT) retest pipeline: the buy gate is sheet <strong>BI</strong> on first touch after zone availability (DP), fill at next open.</p>
     <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Flag <code>--mts-sheet-parity</code> / <code>mts_mode=true</code></span><span>Runners <code>run_mts.bat</code> · <code>run_mts_sheet.bat</code></span><span>Prefix <code>MTS_*</code></span></div>
   </header>
-<h2>What it is</h2>
-<p>Runs with <code>mts_mode=true</code>. Module path includes <span class='path'>rocket_MTS.py</span> / MTS branch in the TBN host.</p>
-<h2>How to run</h2>
-<div class='card'><p>Runners: <code>run_mts.bat</code> · <code>run_mts_sheet.bat</code></p></div>
-  <footer>Canonical stub for Pages</footer>
+
+<div class="callout ok">
+  <strong>Status:</strong> Production gold · DailyRun step [7/14].
+  Universe SSoT: <span class="path">drive/universes/MTS_universe.csv</span>
+  (also read by <span class="path">stock_analysis/mts_universe.py</span>).
 </div>
+<div class="callout">
+  Exact BI precompute in the TBN host is authoritative. Approximate BRT gates are bypassed
+  when <code>mts_mode</code> is on. See <code>mts_sheet_parity_overrides()</code> in
+  <span class="path">stock_analysis/rocket_tbn.py</span>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Zones come from the sheet AF Touch Price stream (pivot-high <em>and</em> pivot-low), matured
+  C14 = 7 bars later, then a 10-rung ladder overlap picks the active zone (DK:DN).
+  Each zone episode fires <strong>one</strong> entry candidate on first touch (or when the active zone changes).
+  There is <strong>no</strong> BY/DV retest-day COUNTIF (that is BRT/YH only).
+</p>
+
+<h2>2. Entry logic (sheet BI)</h2>
+<p>BI = AND of:</p>
+<ol class="steps">
+  <li><strong>BW Growth 3 Year:</strong> Close ≥ Close[756 bars ago].</li>
+  <li><strong>OR(BC, BC[-1]):</strong> Range Qualifier on this bar or prior (max high / min low over C24 − 1 &gt; C7).</li>
+  <li><strong>BE:</strong> Close &gt; Open.</li>
+  <li><strong>BG Level Acceptance:</strong> 7 closes above DK in the last 10 bars (needs AK).</li>
+  <li><strong>OR(AQ, AQ[-1]):</strong> Zone Eligible Long on this bar or prior.</li>
+</ol>
+<p>
+  <strong>When to evaluate:</strong> DP = first touch after availability (DO and (not DO[-1] or DN changed)).
+  AW (AR≥C6 crossing) still counts touches but does <em>not</em> gate BC or create entries.
+  Fill = next open after the first-touch bar.
+</p>
+<p>
+  Additional bat overlays on top of the preset: <code>min_upper_wick_atr_at_trigger=0.25</code>,
+  <code>min_dist_to_52w_high_pct_at_trigger=25</code>, <code>--symbol-reentry-cooldown-days 20</code>.
+  <code>band_pct=0.018</code> is a <strong>manual override</strong> of optimizer 0.016.
+</p>
+
+<h2>3. Exit logic</h2>
+<ul>
+  <li><strong>Target:</strong> entry × <code>target_pct</code> → prod / sheet C3 path <strong>1.22</strong> (+22%).</li>
+  <li><strong>Stop:</strong> signal-bar Low × <code>stop_pct</code> with <code>stop_loss_based=trigger_low</code> → <strong>0.934</strong> (sheet BJ / C4). Not entry-anchored.</li>
+  <li>Host gap / stop / target schedule.</li>
+</ul>
+
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>band_pct</code></td><td>Zone half-width (C5 analog; bat override)</td><td><strong>0.018</strong> (optimizer was 0.016)</td><td>Wider → more ladder overlaps / first touches</td></tr><tr><td><code>touch_threshold</code></td><td>Touches to mature (C6)</td><td><strong>2</strong></td><td>Higher → fewer matured zones</td></tr><tr><td><code>strong_pre_pivot_*</code></td><td>Pre-pivot thrust</td><td><strong>7 / 0.12</strong></td><td>Sheet C-cell analog</td></tr><tr><td><code>strong_post_pivot_*</code></td><td>Post-pivot follow-through</td><td><strong>7 / 0.06</strong></td><td>Looser post than BRT’s 0.108</td></tr><tr><td><code>target_pct</code></td><td>Take-profit vs entry</td><td><strong>1.22</strong></td><td>Sheet C3 / +22% cap language in overrides</td></tr><tr><td><code>stop_pct</code> + <code>stop_loss_based</code></td><td>Stop vs signal-bar low</td><td><strong>0.934 / trigger_low</strong></td><td>Do not switch to entry-anchored without a new freeze</td></tr><tr><td><code>symbol_reentry_cooldown_days</code></td><td>Re-arm delay after exit</td><td><strong>20</strong></td><td>Higher → fewer re-entries</td></tr><tr><td><code>min_upper_wick_atr_at_trigger</code></td><td>Upper-wick vs ATR gate</td><td><strong>0.25</strong></td><td>Higher → fewer first-touch fills</td></tr><tr><td><code>min_dist_to_52w_high_pct_at_trigger</code></td><td>Min % below 52w high</td><td><strong>25</strong></td><td>Blocks names already hugging the high</td></tr><tr><td><code>mts_first_touch_entry</code></td><td>One candidate per zone episode</td><td><strong>true</strong> (preset)</td><td>Off would re-fire on later touches</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun</td></tr><tr><td>Runners</td><td><code>run_mts.bat</code> (then <code>run_copy_latest.bat</code>) · <code>run_mts_sheet.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/MTS_universe.csv</code></td></tr><tr><td>Preset</td><td><code>--mts-sheet-parity</code> → <code>mts_sheet_parity_overrides()</code></td></tr><tr><td>Workers</td><td><code>-w 22</code> · <code>--aggressive</code></td></tr><tr><td>Outputs</td><td><code>drive/MTS_*_&lt;ts&gt;.*</code></td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li>Do not describe MTS as “BRT with different numbers.” BI / DP first-touch is a different entry identity.</li>
+  <li>Preset disables many BRT gates (red-to-green, magic touch, spy-compare, too-high, …). Bat-level wick/52w gates are extra on top.</li>
+  <li><code>band_pct=0.018</code> is an explicit manual override — putting 0.016 back is a one-knob AB, not a silent restore.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_mts.bat</code> · <code>run_mts_sheet.bat</code></li>
+  <li><span class="path">stock_analysis/rocket_tbn.py</span> — <code>mts_sheet_parity_overrides</code></li>
+  <li><span class="path">stock_analysis/mts_universe.py</span></li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical MTS write-up · Twin Beacon Networks (TBN) · production knobs from run_mts.bat + sheet preset</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>

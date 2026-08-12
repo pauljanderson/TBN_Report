@@ -1,37 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MVCP — Minervini VCP</title>
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,19 +74,127 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
+  <header class="doc-head">
     <p class="eyebrow">Parked · Minervini Volatility Contraction Pattern (VCP)</p>
     <h1>MVCP — Minervini VCP</h1>
-    <p class="lede">MVCP (Minervini Volatility Contraction Pattern) remains available for research but is out of DailyRun and active $500k allocation by default.</p>
+    <p class="lede"><strong>MVCP</strong> (Minervini Volatility Contraction Pattern) is a Specific Entry Point Analysis (SEPA) Stage-2 pivot-breakout sleeve. The engine is kept; the sleeve is parked from DailyRun and active $500k allocation as of 2026-08-12.</p>
     <div class="badge badge-warn">Parked from live sleeve (2026-08-12)</div>
+    <div class="meta-row"><span>Mode <code>mvcp_mode=true</code></span><span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></span><span>Prefix <code>MVCP_*</code></span><span>Module <span class='path'>stock_analysis/rocket_minervini_vcp.py</span></span></div>
   </header>
-<h2>What parked means</h2>
-<ul><li>Out of DailyRun by default (<code>SKIP_MVCP=1</code>; opt-in <code>SKIP_MVCP=0</code>).</li><li>Out of monthly / investment / system-performance active lists.</li><li>Reconcile gate: MVCP <code>enabled: false</code>.</li><li>Engine kept: <code>run_mvcp.bat</code> / <code>run_minervini_vcp.bat</code>.</li></ul>
-<h2>Evidence / how-to (repo-local)</h2>
-<ul><li>Park note: <span class='path'>drive/paul_experiments/PARK.md</span></li><li>Yearly compare: <span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span></li><li>How to run: <span class='path'>drive/paul_experiments/tbn_new_systems/minervini_vcp/HOW_TO_RUN.html</span></li></ul>
-<h2>Do not</h2>
-<ul><li>Retune on out-of-sample (OOS) to “fix” the park.</li><li>Re-wire DailyRun without a new failure-mode hypothesis and promotion bar.</li></ul>
-  <footer>Canonical park stub for Pages · PARK.md is source of truth</footer>
+
+<div class="callout warn">
+  <strong>What parked means:</strong> out of DailyRun by default (<code>SKIP_MVCP=1</code>; opt-in
+  <code>SKIP_MVCP=0</code>); out of monthly / investment / system-performance active lists;
+  reconcile gate MVCP <code>enabled: false</code>. Engine kept for research.
+  Source of truth: <span class="path">drive/paul_experiments/PARK.md</span>.
 </div>
+
+<h2>1. What it is</h2>
+<p>
+  Template (Relative Strength percentile, 200-SMA rising, position vs 52-week high/low) plus
+  Volatility Contraction Pattern geometry (2–6 contractions, shrinking depth, volume dry-up),
+  then a volume-confirmed Stage-2 break of the pivot with limited extension.
+  Not a BRT/YH/WPBR remap.
+</p>
+
+<h2>2. Entry logic</h2>
+<p>Defaults from <code>MvcpConfig</code> / <code>run_minervini_vcp.bat</code> (Theory + 40_engine_plan freeze):</p>
+<ol class="steps">
+  <li><strong>RS template:</strong> RS percentile ≥ <code>mvcp_rs_min_percentile</code> (prod/research default <strong>80</strong>) on a 252-bar lookback vs the RS universe (<code>mvcp_rs_universe=data_dir</code>).</li>
+  <li><strong>Trend template:</strong> 200-SMA rising over 21 bars; close ≥ 30% above 52w low; close within 25% of 52w high.</li>
+  <li><strong>VCP geometry:</strong> 2–6 contractions, depth shrink ≤ 0.65, first depth ≤ 40%, final depth ≥ 2%, base 15–120 bars, optional volume dry-up (0.85) with soft confirm.</li>
+  <li><strong>Prior advance:</strong> +20% in 63 bars (required by default).</li>
+  <li><strong>Stage-2 break:</strong> volume ≥ 1.5×, extension above pivot ≤ 5%.</li>
+  <li><strong>Fill:</strong> host next-open path. Reentry cooldown 20 days. Peer systems neutralized (<code>brt/yh/wpbr/rl/rs</code> off, <code>indicator_buy=off</code>).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<ul>
+  <li><strong>Stop:</strong> <code>stop_pct=0.92</code> multiplier (env <code>MVCP_STOP</code>).</li>
+  <li><strong>Target:</strong> <code>target_pct=1.25</code> (env <code>MVCP_TARGET</code>).</li>
+  <li><strong>Time stop:</strong> 10 bars (<code>mvcp_time_stop_bars</code>), with a min-gain qualifier in config (5%).</li>
+  <li><strong>Trail:</strong> arm at +10% (<code>mvcp_trail_arm_pct</code>), 20-SMA trail.</li>
+</ul>
+<div class="callout warn">
+  Time stop and SMA trail are not broker resting orders — handle manually if you ever re-enable the sleeve.
+</div>
+
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>mvcp_rs_min_percentile</code></td><td>Min RS percentile vs universe</td><td><strong>80</strong></td><td>Higher → fewer, stronger RS names</td></tr><tr><td><code>mvcp_depth_shrink</code></td><td>Each contraction vs prior depth</td><td><strong>0.65</strong></td><td>Lower → stricter coil</td></tr><tr><td><code>mvcp_vol_breakout_mult</code></td><td>Breakout volume vs average</td><td><strong>1.5</strong></td><td>Higher → fewer Stage-2 fills</td></tr><tr><td><code>mvcp_max_extension_above_pivot</code></td><td>Max chase above pivot</td><td><strong>0.05</strong></td><td>Lower → reject extended breaks</td></tr><tr><td><code>stop_pct</code> (<code>MVCP_STOP</code>)</td><td>Stop multiplier</td><td><strong>0.92</strong></td><td>Lower multiplier = wider stop</td></tr><tr><td><code>target_pct</code> (<code>MVCP_TARGET</code>)</td><td>Take-profit vs entry</td><td><strong>1.25</strong></td><td>Higher → fewer TARGET hits</td></tr><tr><td><code>mvcp_time_stop_bars</code></td><td>Hard/time exit</td><td><strong>10</strong></td><td>Shorter → faster recycle</td></tr><tr><td><code>mvcp_trail_arm_pct</code></td><td>Gain before SMA trail arms</td><td><strong>0.10</strong></td><td>Higher → trail starts later</td></tr><tr><td><code>symbol_reentry_cooldown_days</code></td><td>Re-arm delay</td><td><strong>20</strong></td><td>Higher → fewer re-entries</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Parked</strong> — research only; DailyRun skip unless SKIP_MVCP=0</td></tr><tr><td>Runner</td><td><code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/MVCP_universe.csv</code> (default * = full scan)</td></tr><tr><td>Sizing</td><td>Host: 500k × 2 × 0.6 = 600k deployable; <code>MVCP_MAX_POSITIONS=0</code> auto peak concurrent</td></tr><tr><td>Park evidence</td><td><span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span></td></tr></tbody></table></div>
+<h2>6. Caveats / do not</h2>
+<ul>
+  <li>Do not retune on out-of-sample (OOS) to “fix” the park.</li>
+  <li>Do not re-wire DailyRun without a new failure-mode hypothesis and promotion bar.</li>
+  <li>Park is process, not a silent deletion of the engine.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><span class="path">drive/paul_experiments/PARK.md</span></li>
+  <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/HOW_TO_RUN.html</span></li>
+  <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/10_theory.md</span></li>
+  <li><span class="path">stock_analysis/rocket_minervini_vcp.py</span></li>
+</ul>
+
+  <footer>Canonical MVCP write-up · Twin Beacon Networks (TBN) · PARK.md is status SSoT</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>

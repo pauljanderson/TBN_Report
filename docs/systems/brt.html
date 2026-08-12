@@ -1,37 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>BRT — Break and ReTest</title>
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,19 +74,134 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
+  <header class="doc-head">
     <p class="eyebrow">Production · Break and ReTest (BRT)</p>
     <h1>BRT — Break and ReTest</h1>
-    <p class="lede">BRT is the core break-and-retest zone sleeve hosted by TBN. TBN is the engine; BRT is one system prefix (<code>BRT_*</code>).</p>
+    <p class="lede"><strong>BRT</strong> (Break and ReTest) is the core daily pivot-zone sleeve hosted by Twin Beacon Networks (TBN). TBN is the engine; BRT is one system prefix (<code>BRT_*</code>). It buys acceptance above a matured pivot band on a support retest.</p>
     <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Mode <code>brt_zones=true</code> · <code>yh_zones=false</code></span><span>Runner <code>run_brt.bat</code></span><span>Prefix <code>BRT_*</code></span><span>Spec <span class='path'>stock_analysis/BRT_LOGIC_SPEC.md</span></span></div>
   </header>
-<h2>What it is</h2>
-<p>Buys acceptance above a breakout zone on a support retest. Default TBN zone path via <code>brt_zones=true</code>.</p>
-<h2>How to run</h2>
-<div class='card'><p>Runner: <code>run_brt.bat</code> → <span class='path'>stock_analysis/rocket_tbn.py</span></p><p>Outputs: <code>BRT_Closed_*</code>, <code>BRT_Open_*</code>, Report / Summary under <span class='path'>drive/</span>.</p></div>
-<h2>Related</h2>
-<ul><li><a href='ind.html'>IND</a> (deprecated)</li><li><a href='wpbr.html'>WPBR</a> / <a href='yh.html'>YH</a> alternate zone modes</li><li><a href='../system_setup_process.html'>System setup process</a></li></ul>
-  <footer>Canonical stub for Pages · see docs/TBN_VS_BRT.md in repo</footer>
+
+<div class="callout">
+  <strong>TBN vs BRT:</strong> do not rename engine docs as “BRT engine.”
+  See <span class="path">docs/TBN_VS_BRT.md</span>.
 </div>
+<div class="callout ok">
+  <strong>Status:</strong> Production gold · DailyRun step [4/14].
+  Optional research flag <code>brt_like_wpbr=true</code> is <strong>off</strong> in production
+  (WPBR-like daily package on BRT zones — see spec § BRT_Like_WPBR).
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Pivots create touches; overlapping touches inside a <code>band_pct</code> envelope mature a zone
+  (default 2 touches). After maturity, a bullish candle (same day or next) arms a next-open entry,
+  subject to tight-range, level-acceptance, growth, and sheet red-to-green gates.
+</p>
+
+<h2>2. Entry logic</h2>
+<p>Condensed from <span class="path">BRT_LOGIC_SPEC.md</span> + <code>run_brt.bat</code> freeze:</p>
+<ol class="steps">
+  <li><strong>Pivots:</strong> local high/low in a ±k window with future confirmation (drop/rally). Sheet-touch Final Pivot High also requires post-drop and not-also-pivot-low. Consecutive same-price Final PHs are allowed (PO 2026-07-20).</li>
+  <li><strong>Zone band:</strong> touch price × (1 ± <code>band_pct</code>). Prod <strong>0.0154</strong>. Overlapping bands are <em>not</em> merged.</li>
+  <li><strong>Maturity:</strong> touch count in <code>lookback_long</code> reaches <code>touch_threshold</code> (sheet <strong>2</strong>).</li>
+  <li><strong>Strong-pivot filter:</strong> prod pre 7 bars / 8.1%, post 7 / 10.8% (bat sets the percents; spec default mode is pre).</li>
+  <li><strong>Tight range:</strong> (max high / min low − 1) over 105 bars must be &gt; 35% or the level is blocked (dead-range qualifier).</li>
+  <li><strong>Level acceptance (7/10):</strong> at least 7 of the last 10 bars close above the anchored zone lower, tied to Support Test when enabled.</li>
+  <li><strong>Bullish candle window:</strong> Close &gt; Open on the maturity bar <em>or</em> the next bar only. Fill = next session open after that candle.</li>
+  <li><strong>Sheet red-to-green:</strong> prod <code>sheet_red_to_green_entry_enabled=true</code>.</li>
+  <li><strong>Growth filter:</strong> prod on. <code>brt_sheet_touch=true</code>. <code>min_spy_compare_1y_at_trigger=-1000</code> (neutralized). Cap filters 0 (disabled).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<ol class="steps">
+  <li>Gap down: Open ≤ stop → <code>GAP_DOWN</code> @ open</li>
+  <li>Gap up through target: Open ≥ target → <code>GAP_UP</code> @ open</li>
+  <li>Intraday stop: Low ≤ stop → <code>STOP_LOSS</code> @ stop</li>
+  <li>Intraday target: High ≥ target → <code>TARGET</code> @ target</li>
+</ol>
+<ul>
+  <li>Prod stop <code>stop_pct=0.934</code> (multiplier vs trigger/entry-bar low per spec/host).</li>
+  <li>Prod target <code>target_pct=1.21</code> (entry × 1.21). Always multiplier form — do not mix with percent-add form.</li>
+  <li><code>too_high_multiplier=0</code> (off).</li>
+</ul>
+
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>band_pct</code></td><td>Zone half-width around touch price</td><td><strong>0.0154</strong></td><td>Wider → more overlapping/mature zones</td></tr><tr><td><code>stop_pct</code></td><td>Stop multiplier</td><td><strong>0.934</strong></td><td>Lower multiplier = wider stop</td></tr><tr><td><code>target_pct</code></td><td>Take-profit vs entry</td><td><strong>1.21</strong></td><td>Higher → fewer TARGET hits</td></tr><tr><td><code>strong_pre_pivot_pct</code> / bars</td><td>Pre-pivot thrust</td><td><strong>0.081 / 7</strong></td><td>Higher % → fewer “strong” pivots</td></tr><tr><td><code>strong_post_pivot_pct</code> / bars</td><td>Post-pivot follow-through</td><td><strong>0.108 / 7</strong></td><td>Higher % → stricter confirmation</td></tr><tr><td><code>breakout_bars</code></td><td>Breakout lookback</td><td><strong>100</strong></td><td>Sheet C-cell analog</td></tr><tr><td><code>tight_range_threshold_pct</code> / lookback</td><td>Dead-range block</td><td><strong>0.35 / 105</strong></td><td>Higher threshold → more blocks</td></tr><tr><td><code>brt_sheet_touch</code></td><td>Sheet Final-PH touch stream</td><td><strong>true</strong></td><td>Off → engine pivot-only stream</td></tr><tr><td><code>sheet_red_to_green_entry_enabled</code></td><td>Red-to-green entry gate</td><td><strong>true</strong></td><td>Off → more fills without that sheet rule</td></tr><tr><td><code>growth_filter_enabled</code></td><td>Growth gate</td><td><strong>true</strong></td><td>Off → more names without the advance</td></tr><tr><td><code>too_high_multiplier</code></td><td>Gap-up fill reject</td><td><strong>0</strong> (off)</td><td>On is research</td></tr><tr><td><code>brt_like_wpbr</code></td><td>Daily WPBR-like break/confirm/retest package</td><td><strong>false</strong> (prod)</td><td>Research only — leaves stops/targets/zones classic BRT</td></tr><tr><td><code>max_market_cap</code></td><td>Post-enrich cap filter</td><td><strong>0</strong> (disabled)</td><td>Default bound can wipe AMD-class names</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun</td></tr><tr><td>Runner</td><td><code>run_brt.bat</code> → <span class='path'>stock_analysis/rocket_tbn.py</span></td></tr><tr><td>Universe</td><td><code>drive/universes/BRT_universe.csv</code></td></tr><tr><td>Per-symbol overlay</td><td><span class='path'>stock_analysis/Per_Symbol_Optimized_Settings_Approved_Latest.json</span> when present</td></tr><tr><td>Outputs</td><td><code>BRT_Closed_*</code>, <code>BRT_Open_*</code>, Scanner / Watchlist / Report / Summary</td></tr><tr><td>Workers</td><td><code>-w 32</code> · <code>--aggressive</code> · <code>--print-zones</code></td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li>Spec stop-reference language (trigger-bar low vs entry-bar low) is in <span class="path">BRT_LOGIC_SPEC.md</span> — production uses the host’s current <code>stop_loss_based</code> / multiplier path; do not mix percent-form <code>stop_pct</code>.</li>
+  <li>Sheet ladder (DE/DF/DG) is optional parity — see spec §3.5 and <span class="path">SHEET_PARITY_DIFF.md</span>.</li>
+  <li>Related sleeves: <a href="wpbr.html">WPBR</a> (weekly pivots), <a href="yh.html">YH</a> (year-high origin), <a href="mts.html">MTS</a> (sheet BI first-touch, not BRT retest), <a href="ind.html">IND</a> (deprecated).</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><span class="path">stock_analysis/BRT_LOGIC_SPEC.md</span></li>
+  <li><span class="path">docs/TBN_VS_BRT.md</span></li>
+  <li><code>run_brt.bat</code></li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical BRT write-up · Twin Beacon Networks (TBN) · production knobs from run_brt.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>

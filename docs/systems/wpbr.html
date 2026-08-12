@@ -1,40 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
-<script>
-(function () {
-  "use strict";
-  function cacheBustUrl() {
-    var u = new URL(window.location.href);
-    u.searchParams.set("_", String(Date.now()));
-    return u.toString();
-  }
-  function forceHardReload(ev) {
-    var k = ev.key;
-    if (
-      k === "F5" ||
-      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
-    ) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      window.location.replace(cacheBustUrl());
-    }
-  }
-  window.addEventListener("keydown", forceHardReload, true);
-  window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) {
-      window.location.replace(cacheBustUrl());
-    }
-  });
-})();
-</script>
-
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WPBR</title>
+<title>WPBR — Pivot Break and Retest</title>
 <style>
   :root {
     --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
@@ -52,34 +21,52 @@
       radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 36px 24px 64px; }
-  header { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
   .eyebrow {
     font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--accent); font-weight: 650; margin: 0 0 6px;
   }
-  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.02em; }
-  h2 { font-size: 1.1rem; margin: 24px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
-  .lede { margin: 0; color: var(--muted); max-width: 68ch; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
   .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
   .badge {
     display: inline-block; font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.04em; padding: 2px 8px; margin: 8px 0 0;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
   }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
   p, li { margin: 0 0 10px; }
-  ul { padding-left: 1.2rem; margin: 0 0 12px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
   a { color: var(--accent); }
   code, .path {
     font-family: Consolas, "Cascadia Mono", monospace;
     font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
   }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
   .card {
     background: var(--card); border: 1px solid var(--line);
     padding: 12px 14px; margin: 0 0 14px;
   }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
   footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 
 </style>
@@ -87,17 +74,131 @@
 <body>
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
-  <header>
-    <p class="eyebrow">Production · WPBR</p>
-    <h1>WPBR</h1>
-    <p class="lede">WPBR is a zone-math sleeve on TBN with other zone modes off. Typical seed is the MarkTen mega-cap set.</p>
+  <header class="doc-head">
+    <p class="eyebrow">Production · Pivot Break and Retest (WPBR)</p>
+    <h1>WPBR — Pivot Break and Retest</h1>
+    <p class="lede"><strong>WPBR</strong> (Pivot Break and Retest) builds <em>weekly</em> pivot zones, requires a weekly breakout plus confirmation, then buys a <em>daily</em> hold-above retest. It is not daily BRT and not the optional <code>brt_like_wpbr</code> research package.</p>
     <div class="badge badge-ok">Production / DailyRun</div>
+    <div class="meta-row"><span>Mode <code>wpbr_zones=true</code> (BRT/YH/VEC off)</span><span>Runner <code>run_wpbr.bat</code></span><span>Prefix <code>WPBR_*</code></span><span>Module <span class='path'>stock_analysis/wpbr_zones.py</span></span></div>
   </header>
-<h2>What it is</h2>
-<p>Enabled with <code>wpbr_zones=true</code> (BRT/YH zones off). Same TBN host; distinct zone math.</p>
-<h2>How to run</h2>
-<div class='card'><p>Runner: <code>run_wpbr.bat</code></p><p>Seed (MarkTen): AAPL AMZN GOOGL META MSFT NVDA TSLA AU AMD NFLX</p></div>
-  <footer>Canonical stub for Pages</footer>
+
+<div class="callout ok">
+  <strong>Status:</strong> Production gold · DailyRun step [8/14].
+  Mag9 production universe (<span class="path">drive/universes/WPBR_universe.csv</span>).
+  Comment in the bat: AMD is out of WPBR. Seed historically used the MarkTen mega-cap set
+  (AAPL AMZN GOOGL META MSFT NVDA TSLA AU AMD NFLX) — production CSV is source of truth.
 </div>
+<div class="callout">
+  Product decision (2026-07-22): <strong>the sheet wins</strong> on daily-retest scan.
+  Default <code>retest_mode=stop_looking</code> (abandon-kill). Do not add
+  <code>-v start_date=2016</code> on DailyRun — earlier pre-2016 trades are intentional in the current golden.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Weekly pivot → zone band → Stage 1 weekly close above the upper band → Stage 2 weekly high
+  confirmation (+3%) → daily retest from the Monday after the confirmation week → green daily
+  close in a short window → next-open fill.
+</p>
+
+<h2>2. Entry logic</h2>
+<ol class="steps">
+  <li><strong>Weekly pivot zones</strong> with strong-pivot either-mode: pre/post 3 bars / 10% (prod).</li>
+  <li><strong>Stage 1 breakout:</strong> first weekly close &gt; zone_upper.</li>
+  <li><strong>Stage 2 confirm:</strong> first weekly high &gt; zone_upper × (1 + <code>wpbr_breakout_confirmation</code>). Prod <strong>0.03</strong>. Same week allowed.</li>
+  <li><strong>Daily retest</strong> starting the Monday after confirm week:
+    <code>stop_looking</code> = first bar with Low ≤ upper AND Close &gt; upper, but <em>only before</em>
+    the first Close &lt; zone_lower (sheet abandon-kill). No prior Close[r−1] ≥ lower gate.
+    <code>keep_looking</code> is the legacy unbounded scan (A/B only).</li>
+  <li><strong>Entry window:</strong> <code>wpbr_max_days_after_retest=2</code> (inclusive) for a green daily close above the upper band; fill = next open.</li>
+  <li><strong>Second chance after win:</strong> prod <code>wpbr_second_chance_after_win=true</code>.</li>
+  <li><code>sheet_no_entry_same_bar_after_exit=false</code> is forced (WPBR nosamebarexit off vs some sheet defaults).</li>
+  <li>Growth filter <strong>off</strong>. SPY-compare floor neutralized (−1000). Indicators on for report columns, not as buy gates.</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<ul>
+  <li><strong>Stop:</strong> <code>stop_pct=0.91</code> (wider than BRT’s 0.934).</li>
+  <li><strong>Target:</strong> <code>target_pct=1.22</code> (+22%).</li>
+  <li>Host gap / stop / target schedule. HALF_UP retest compares + variant C pivot rounding live in <code>wpbr_zones.py</code>.</li>
+</ul>
+
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>band_pct</code></td><td>Weekly zone half-width</td><td><strong>0.015</strong></td><td>Wider → easier weekly BO/retest</td></tr><tr><td><code>wpbr_breakout_confirmation</code></td><td>Stage 2 high vs upper band</td><td><strong>0.03</strong></td><td>Higher → stricter weekly confirm</td></tr><tr><td><code>wpbr_max_days_after_retest</code></td><td>Green-entry window after retest</td><td><strong>2</strong></td><td>Longer → more late greens</td></tr><tr><td><code>retest_mode</code></td><td>Daily scan terminate rule</td><td><strong>stop_looking</strong> (sheet)</td><td><code>keep_looking</code> is legacy A/B only</td></tr><tr><td><code>wpbr_second_chance_after_win</code></td><td>Re-arm after a winning exit</td><td><strong>true</strong></td><td>Off → one-and-done per zone episode</td></tr><tr><td><code>strong_pivot_mode</code></td><td>Pre/post/either/both</td><td><strong>either</strong> · 3 bars / 10%</td><td>Stricter modes cut pivot inventory</td></tr><tr><td><code>target_pct</code></td><td>Take-profit vs entry</td><td><strong>1.22</strong></td><td>Higher → fewer TARGET hits; longer holds (WPBR avg hold is multi-month)</td></tr><tr><td><code>stop_pct</code></td><td>Stop multiplier</td><td><strong>0.91</strong></td><td>Wider than BRT 0.934</td></tr><tr><td><code>wpbr_merge_overlapping_zones</code></td><td>Merge overlapping weekly bands</td><td><strong>false</strong> (optional on)</td><td>On → ZONE_STRENGTH = member count</td></tr><tr><td><code>growth_filter_enabled</code></td><td>3-year growth gate</td><td><strong>false</strong></td><td>On would cut Mag9 history</td></tr><tr><td><code>start_date</code></td><td>Entry/pivot window</td><td><strong>unset</strong> (full history)</td><td>Do not add 2016 on DailyRun / reconcile freeze</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Production gold</strong> — DailyRun Mag9</td></tr><tr><td>Runner</td><td><code>run_wpbr.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/WPBR_universe.csv</code></td></tr><tr><td>Engine</td><td><span class='path'>stock_analysis/wpbr_zones.py</span> via TBN host</td></tr><tr><td>Parity tools</td><td><span class='path'>tools/run_wpbr_*_markten.py</span></td></tr><tr><td>Outputs</td><td><code>drive/WPBR_*_&lt;ts&gt;.*</code></td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li>Do not confuse with <code>brt_like_wpbr</code> (daily package on BRT zones) or with BRT itself.</li>
+  <li>Sheet <code>Daily Retest Row</code> abandon-kill is the production retest; META 48/48 is the parity story in the module docstring.</li>
+  <li>Strength fields (POC, pre/post rise, …) are audit-only unless later promoted to gates.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><span class="path">stock_analysis/wpbr_zones.py</span></li>
+  <li><span class="path">stock_analysis/BRT_LOGIC_SPEC.md</span> § WPBR standalone retest scan</li>
+  <li><code>run_wpbr.bat</code></li>
+  <li><a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical WPBR write-up · Twin Beacon Networks (TBN) · production knobs from run_wpbr.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
 </body>
 </html>
