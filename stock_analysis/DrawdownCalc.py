@@ -159,12 +159,23 @@ def _resolve_ticker_dir(ticker_dir):
 
 
 # Engines searched when resolving a bare 12-digit timestamp (order only affects listing, not selection).
-_CLOSED_ORDER = (
-    ("BRT", "BRT_Closed_"),
-    ("IND", "IND_Closed_"),
-    ("MTS", "MTS_Closed_"),
-    ("RL", "RL_Closed_"),
+# All PREFIX_Closed systems chart via BRT_DrawdownCalc (saved EquityCurve / aggressive overlay).
+_KNOWN_DRAWDOWN_PREFIXES = (
+    "BRT",
+    "IND",
+    "MTS",
+    "SB",
+    "RL",
+    "RS",
+    "YH",
+    "WPBR",
+    "MVCP",
+    "QULL",
+    "KELL",
+    "CS",
+    "PBR",
 )
+_CLOSED_ORDER = tuple((p, f"{p}_Closed_") for p in _KNOWN_DRAWDOWN_PREFIXES)
 
 
 def _closed_search_roots() -> list[str]:
@@ -191,7 +202,7 @@ def _closed_search_roots() -> list[str]:
 def _find_all_closed_by_timestamp(timestamp: str) -> list[tuple[str, str]]:
     """
     Locate every *Closed_<timestamp>.csv (12-digit yyMMddHHmmss) under Drive/drive roots.
-    Returns [(absolute_path, engine), ...] with engine in BRT | IND | MTS | RL.
+    Returns [(absolute_path, engine), ...] with engine in BRT | IND | MTS | SB | RL.
     """
     ts = re.sub(r"\D", "", str(timestamp).strip())
     if len(ts) != 12:
@@ -236,20 +247,88 @@ def _find_closed_by_timestamp(
         f"[WARN] Multiple Closed CSVs for timestamp {timestamp}:\n"
         + "\n".join(lines)
         + f"\n[OK] Using newest: {matches[0][1]} -> {matches[0][0]} "
-        "(pass --engine IND|BRT|MTS|RL to force a specific run)",
+        "(pass --engine IND|BRT|MTS|SB|RL to force a specific run)",
     )
     return matches[0]
 
 
 def _engine_from_closed_basename(path: str) -> str:
     bn = os.path.basename(path)
-    if bn.startswith("BRT_Closed_"):
-        return "BRT"
-    if bn.startswith("MTS_Closed_"):
-        return "MTS"
-    if bn.startswith("IND_Closed_"):
-        return "IND"
+    m = re.match(r"^([A-Za-z][A-Za-z0-9]*)_(?:LatestRun_)?Closed", bn, re.I)
+    if m:
+        return m.group(1).upper()
     return "RL"
+
+
+def _uses_brt_drawdown_path(engine: str) -> bool:
+    """True for every PREFIX_Closed system (including RL); false only for unrecognized paths."""
+    eng = (engine or "").strip().upper()
+    return bool(eng) and eng != "LEGACY"
+
+
+def _match_latestrun_closed_by_size(base_dir: str, prefix: str, latestrun_path: str) -> Optional[str]:
+    """
+    When {prefix}_last_run_ts.txt is missing, pick {prefix}_Closed_<12digit>.csv with the same
+    file size as LatestRun (prefer closest mtime, then newest).
+    """
+    try:
+        lr_size = os.path.getsize(latestrun_path)
+        lr_mtime = os.path.getmtime(latestrun_path)
+    except OSError:
+        return None
+    pat = re.compile(rf"^{re.escape(prefix)}_Closed_(\d{{12}})\.csv$", re.I)
+    ranked: list[tuple[float, float, str]] = []
+    try:
+        names = os.listdir(base_dir)
+    except OSError:
+        return None
+    for name in names:
+        m = pat.match(name)
+        if not m:
+            continue
+        p = os.path.join(base_dir, name)
+        try:
+            if os.path.getsize(p) != lr_size:
+                continue
+            mt = os.path.getmtime(p)
+        except OSError:
+            continue
+        ranked.append((abs(mt - lr_mtime), -mt, os.path.normpath(p)))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[0][2]
+
+
+def _resolve_latestrun_to_stamped(path: str) -> str:
+    """
+    If path is {PREFIX}_LatestRun_Closed.csv, return the stamped Closed so Open/EquityCurve/Audit
+    companions resolve by timestamp. Prefer {PREFIX}_last_run_ts.txt; else match Closed by size/mtime.
+    """
+    ap = os.path.abspath(path)
+    bn = os.path.basename(ap)
+    m = re.match(r"^([A-Za-z][A-Za-z0-9]*)_LatestRun_Closed\.csv$", bn, re.I)
+    if not m:
+        return ap
+    prefix = m.group(1).upper()
+    base_dir = os.path.dirname(ap)
+    ts_file = os.path.join(base_dir, f"{prefix}_last_run_ts.txt")
+    if os.path.isfile(ts_file):
+        try:
+            raw = open(ts_file, encoding="utf-8", errors="ignore").read().strip()
+        except OSError:
+            raw = ""
+        ts = re.sub(r"\D", "", raw)[:12]
+        if len(ts) == 12:
+            stamped = os.path.normpath(os.path.join(base_dir, f"{prefix}_Closed_{ts}.csv"))
+            if os.path.isfile(stamped):
+                print(f"[OK] LatestRun -> {stamped} (from {prefix}_last_run_ts.txt)")
+                return stamped
+    matched = _match_latestrun_closed_by_size(base_dir, prefix, ap)
+    if matched:
+        print(f"[OK] LatestRun -> {matched} (matched Closed by size/mtime)")
+        return matched
+    return ap
 
 
 def _resolve_closed_csv_argument(
@@ -257,13 +336,13 @@ def _resolve_closed_csv_argument(
     engine_preference: Optional[str] = None,
 ) -> Tuple[str, bool, str]:
     """
-    Returns (path, used_timestamp_only_arg, engine) where engine is RL | BRT | IND | MTS.
+    Returns (path, used_timestamp_only_arg, engine) where engine is RL | BRT | IND | MTS | SB.
     """
     s = (closed_arg or "").strip()
     if not s:
         return s, False, "RL"
     if os.path.isfile(s):
-        ap = os.path.abspath(s)
+        ap = _resolve_latestrun_to_stamped(os.path.abspath(s))
         return ap, False, _engine_from_closed_basename(ap)
     if re.fullmatch(r"\d{12}", s):
         found, eng = _find_closed_by_timestamp(s, engine_preference=engine_preference)
@@ -273,7 +352,7 @@ def _resolve_closed_csv_argument(
     return s, False, "RL"
 
 
-def run_audit(closed_path, ticker_dir, cash=47500, output_dir=None, diagnose=False):
+def run_audit(closed_path, ticker_dir, cash=47500, output_dir=None, diagnose=False, aggressive=False):
     """
     Reconstruct portfolio equity from Closed (and optional Open) CSVs and ticker data.
     closed_path: path to RL_Closed_<timestamp>.csv
@@ -281,6 +360,7 @@ def run_audit(closed_path, ticker_dir, cash=47500, output_dir=None, diagnose=Fal
     cash: position size per trade (default 47500)
     output_dir: where to write chart and daily_equity_debug.csv (default: same dir as closed_path)
     diagnose: if True, print column diagnostics after loading CSVs
+    aggressive: legacy unused here — RL/PREFIX systems with --aggressive are routed to BRT_DrawdownCalc
     """
     base_dir = os.path.dirname(os.path.abspath(closed_path))
     out_dir = output_dir if output_dir is not None else base_dir
@@ -595,19 +675,21 @@ def run_audit(closed_path, ticker_dir, cash=47500, output_dir=None, diagnose=Fal
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     plt.xticks(rotation=45)
     
-    save_name = f"Portfolio_Performance_{timestamp if timestamp else 'Report'}.png"
+    ts_label = timestamp if timestamp else "Report"
+    agg_suffix = "_aggressive" if aggressive else ""
+    save_name = f"RL_Portfolio_Performance_{ts_label}{agg_suffix}.png"
     save_path = os.path.join(out_dir, save_name)
     plt.tight_layout()
     plt.savefig(save_path)
     print(f"[FILE] Chart: {save_path}")
     # Also write to stable name so the same file updates every run (open this one to always see latest)
-    latest_path = os.path.join(out_dir, "Portfolio_Performance_latest.png")
+    latest_path = os.path.join(out_dir, f"RL_Portfolio_Performance_latest{agg_suffix}.png")
     try:
         import shutil
         shutil.copy2(save_path, latest_path)
         print(f"[FILE] Chart (latest): {latest_path}")
     except Exception as e:
-        print(f"[WARN] Could not write Portfolio_Performance_latest.png: {e}")
+        print(f"[WARN] Could not write {os.path.basename(latest_path)}: {e}")
     plt.close()
 
     print("\n" + "="*50)
@@ -621,21 +703,27 @@ def run_audit(closed_path, ticker_dir, cash=47500, output_dir=None, diagnose=Fal
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(
-        description="Portfolio drawdown: RL (this file) or BRT/MTS via BRT_DrawdownCalc; Closed/Open CSVs + tickers",
+        description=(
+            "Portfolio drawdown for PREFIX_Closed systems via BRT_DrawdownCalc "
+            "(BRT/IND/MTS/SB/RL/RS/YH/WPBR/MVCP/QULL/KELL/CS/PBR); legacy OHLC reconstruct fallback"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python DrawdownCalc.py Drive/RL_Closed_260419073004.csv data/newdata/data\n"
             "  python DrawdownCalc.py 260419073636\n"
             "  python DrawdownCalc.py 260602180527 --engine IND\n"
-            "    (bare timestamp: newest Closed wins; use --engine when BRT and IND share a ts)\n"
+            "  python DrawdownCalc.py drive/SB_LatestRun_Closed.csv --aggressive\n"
+            "  python DrawdownCalc.py drive/RL_LatestRun_Closed.csv --aggressive\n"
+            "  python DrawdownCalc.py 260807184031 --engine SB\n"
+            "    (bare timestamp: newest Closed wins; use --engine when multiple engines share a ts)\n"
         ),
     )
     p.add_argument(
         "closed_csv",
         help=(
-            "Path to RL_Closed_ / BRT_Closed_ / MTS_Closed_<timestamp>.csv, OR a 12-digit yyMMddHHmmss only "
-            "(searches Drive/, drive/, cwd)."
+            "Path to {PREFIX}_Closed_<timestamp>.csv (or *_LatestRun_Closed.csv), "
+            "OR a 12-digit yyMMddHHmmss only (searches Drive/, drive/, cwd)."
         ),
     )
     p.add_argument(
@@ -644,48 +732,53 @@ if __name__ == "__main__":
         default="data/",
         help="Directory with per-symbol CSVs (default: data/; auto-upgraded if SPY.csv missing)",
     )
-    p.add_argument("--cash", type=float, default=47500, help="Position size per trade (default: 47500; BRT/IND/MTS: read from audit unless --no-audit)")
+    p.add_argument("--cash", type=float, default=47500, help="Position size per trade (default: 47500; BRT/IND/MTS/SB: read from audit unless --no-audit)")
     p.add_argument("--output-dir", default=None, help="Directory for chart and debug CSV (default: same as closed file)")
     p.add_argument("--diagnose", action="store_true", help="Print column diagnostics after loading CSVs")
     p.add_argument(
         "--no-saved-equity",
         action="store_true",
-        help="BRT/IND/MTS only: rebuild equity from OHLC; ignore saved EquityCurve CSV",
+        help="Rebuild equity from OHLC; ignore saved EquityCurve CSV",
     )
     p.add_argument(
         "--force-reconstruct",
         action="store_true",
-        help="BRT/IND/MTS only: same as --no-saved-equity (always OHLC rebuild)",
+        help="Same as --no-saved-equity (always OHLC rebuild)",
     )
     p.add_argument(
         "--engine",
-        choices=("BRT", "IND", "MTS", "RL"),
+        choices=tuple(_KNOWN_DRAWDOWN_PREFIXES),
         default=None,
-        help="When closed_csv is a 12-digit timestamp and multiple *Closed_<ts>.csv exist, force BRT/IND/MTS/RL",
+        help="When closed_csv is a 12-digit timestamp and multiple *Closed_<ts>.csv exist, force a PREFIX",
     )
     p.add_argument(
         "--aggressive",
         action="store_true",
-        help="BRT/IND/MTS only: chart aggressive Equity + passive overlay; default is passive-only when Equity_Regular exists",
+        help=(
+            "Chart aggressive Equity + passive overlay when aggressive artifacts exist "
+            "({PREFIX}_EquityCurve with Equity_Regular / Aggressive=True, or "
+            "{PREFIX}_EquityCurve_Aggressive_<ts>.csv); append _aggressive to PNG names. "
+            "Fails clearly if --aggressive is set but no aggressive equity is available."
+        ),
     )
     p.add_argument(
         "--initial-capital",
         type=float,
         default=None,
         metavar="USD",
-        help="BRT/IND/MTS only: starting equity for chart & Max DD (default 500000)",
+        help="Starting equity for chart & Max DD via BRT_DrawdownCalc (default 500000)",
     )
     p.add_argument(
         "--no-audit",
         action="store_true",
-        help="BRT/IND/MTS only: do not read brt_cash from audit CSV",
+        help="Do not read per-trade cash from audit CSV (BRT_DrawdownCalc path)",
     )
     args = p.parse_args()
     closed_path, ts_mode, engine = _resolve_closed_csv_argument(
         args.closed_csv,
         engine_preference=getattr(args, "engine", None),
     )
-    if args.ticker_dir == "data/" and (ts_mode or engine in ("BRT", "MTS")):
+    if args.ticker_dir == "data/" and (ts_mode or _uses_brt_drawdown_path(engine)):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         preferred = os.path.normpath(os.path.join(script_dir, "..", "data", "newdata", "data"))
         if os.path.isdir(preferred):
@@ -695,11 +788,11 @@ if __name__ == "__main__":
         print(
             f"[ERR] No Closed CSV for {args.closed_csv!r}. "
             "Pass *Closed_<ts>.csv, or a 12-digit timestamp (searches Drive/ and drive/). "
-            "Use --engine IND when BRT and IND share the same timestamp.",
+            "Use --engine PREFIX when multiple engines share the same timestamp.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if engine in ("BRT", "IND", "MTS"):
+    if _uses_brt_drawdown_path(engine):
         try:
             from BRT_DrawdownCalc import run_audit as brt_drawdown_run
         except ImportError as exc:
@@ -718,10 +811,18 @@ if __name__ == "__main__":
             aggressive=bool(getattr(args, "aggressive", False)),
         )
     else:
+        if getattr(args, "aggressive", False):
+            print(
+                "[ERR] --aggressive requires a {PREFIX}_Closed_*.csv routed through BRT_DrawdownCalc; "
+                "refusing to write a misleading *_aggressive.png from the legacy reconstruct path.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         run_audit(
             closed_path,
             args.ticker_dir,
             cash=args.cash,
             output_dir=args.output_dir or None,
             diagnose=args.diagnose,
+            aggressive=False,
         )

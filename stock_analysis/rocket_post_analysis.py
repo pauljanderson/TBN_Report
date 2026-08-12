@@ -71,9 +71,10 @@ KNOWN_SYSTEM_PREFIXES: tuple[str, ...] = (
     "RL",
     "DB",
     "SB",
+    "VZ",
 )
 
-ZONE_SYSTEMS = frozenset({"BRT", "WPBR", "YH", "VEC", "PBR"})
+ZONE_SYSTEMS = frozenset({"BRT", "WPBR", "YH", "VEC", "PBR", "VZ"})
 RL_SYSTEMS = frozenset({"RL", "DB"})
 
 # Match BRT/YH/RS Summary schema (write_brt_summary): after PCT_OF_TOTAL_PNL.
@@ -198,9 +199,89 @@ def closed_summary_open_paths(
     *,
     closed_path: Optional[Path] = None,
 ) -> tuple[Path, Path, Path]:
+    """Return Closed / Summary / Open paths for a stamp.
+
+    Prefer ``{prefix}_Summary_Symbols_{stamp}.csv`` when present (per-symbol ledger
+    with ``TRADES``/``WINS``/``PCT_WINS``/Paul scores — e.g. VZ). The thin
+    ``{prefix}_Summary_{stamp}.csv`` often uses ``N_TRADES``/``WIN_RATE_PCT`` only
+    and must not be treated as the assessment source of truth when Symbols exists.
+    """
     out = Path(output_dir)
     closed = Path(closed_path) if closed_path else out / f"{prefix}_Closed_{stamp}.csv"
-    return closed, out / f"{prefix}_Summary_{stamp}.csv", out / f"{prefix}_Open_{stamp}.csv"
+    symbols_summary = out / f"{prefix}_Summary_Symbols_{stamp}.csv"
+    summary = symbols_summary if symbols_summary.is_file() else out / f"{prefix}_Summary_{stamp}.csv"
+    return closed, summary, out / f"{prefix}_Open_{stamp}.csv"
+
+
+def resolve_symbol_ledger_stats(
+    summary_row: dict[str, Any],
+    closed_rows: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Normalize per-symbol trade stats from Summary (+ Closed fallback).
+
+    Accepts both full ledger columns (``TRADES``/``WINS``/``PCT_WINS``/``SHEET_PNL``)
+    and thin VZ-style Summary (``N_TRADES``/``WIN_RATE_PCT``/``TOTAL_PNL``). When
+    win columns are missing, derive W/L and win% from Closed ``PNL_PCT``.
+    """
+    closed_rows = closed_rows or []
+    pnls = [
+        _fnum(_col(r, "PNL %", "PNL_PCT", "PNL"))
+        for r in closed_rows
+    ]
+    closed_wins = sum(1 for p in pnls if p > 0)
+    closed_losses = sum(1 for p in pnls if p < 0)
+
+    trades = int(
+        _fnum(
+            _col(summary_row, "TRADES", "N_TRADES", default=""),
+            float(len(closed_rows)) if closed_rows else 0.0,
+        )
+    )
+    if trades <= 0 and closed_rows:
+        trades = len(closed_rows)
+
+    wins = int(_fnum(_col(summary_row, "WINS", default=""), 0))
+    losses = int(_fnum(_col(summary_row, "LOSSES", default=""), 0))
+    pct_raw = _col(summary_row, "PCT_WINS", "WIN_RATE_PCT", "WIN_RATE", default="")
+    pct_wins = _fnum(str(pct_raw).replace("%", "")) if pct_raw != "" else 0.0
+
+    # Thin Summary has WIN_RATE_PCT but no WINS/LOSSES — fill from Closed.
+    if closed_rows and wins <= 0 and losses <= 0:
+        wins, losses = closed_wins, closed_losses
+    if trades and not pct_wins and wins:
+        pct_wins = wins / trades * 100.0
+    elif trades and not pct_wins and closed_rows:
+        pct_wins = closed_wins / trades * 100.0
+
+    avg_pnl = _fnum(str(_col(summary_row, "AVG_PNL_PCT", default="") or "").replace("%", ""))
+    if not avg_pnl and pnls:
+        avg_pnl = sum(pnls) / len(pnls)
+
+    sheet_pnl = _fnum(_col(summary_row, "SHEET_PNL", "TOTAL_PNL", default=""))
+    if not sheet_pnl and closed_rows:
+        sheet_pnl = sum(_fnum(_col(r, "PNL $", "PNL_DOLLARS", "PNL_DOLLAR")) for r in closed_rows)
+
+    avg_tpy = _fnum(_col(summary_row, "AVG_TRADES_PER_YEAR", default=""))
+    if not avg_tpy and closed_rows and trades > 0:
+        years: list[int] = []
+        for r in closed_rows:
+            ymd = _ymd8(_col(r, "DATE OPENED", "DATE_OPENED"))
+            if len(ymd) >= 4 and ymd[:4].isdigit():
+                years.append(int(ymd[:4]))
+        if years:
+            span = max(years) - min(years) + 1
+            if span > 0:
+                avg_tpy = trades / float(span)
+
+    return {
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "pct_wins": pct_wins,
+        "avg_pnl_pct": avg_pnl,
+        "sheet_pnl": sheet_pnl,
+        "avg_tpy": avg_tpy,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1009,21 +1090,17 @@ def enrich_summary_csv_with_fit(
 
     for row in rows:
         sym = str(row.get("SYMBOL", "")).strip().upper()
-        trades = int(_fnum(row.get("TRADES"), 0))
-        wins = int(_fnum(row.get("WINS"), 0))
-        losses = int(_fnum(row.get("LOSSES"), 0))
-        pct_wins = _fnum(str(row.get("PCT_WINS", "")).replace("%", ""))
-        avg_pnl = _fnum(str(row.get("AVG_PNL_PCT", "")).replace("%", ""))
-        sheet_pnl = _fnum(row.get("SHEET_PNL"))
-        avg_tpy = _fnum(row.get("AVG_TRADES_PER_YEAR"))
+        if sym in ("", "ALL"):
+            continue
+        stats = resolve_symbol_ledger_stats(row, by_sym.get(sym, []))
         fr = assess_symbol_fit(
-            trades=trades,
-            wins=wins,
-            losses=losses,
-            pct_wins=pct_wins,
-            avg_pnl_pct=avg_pnl,
-            sheet_pnl=sheet_pnl,
-            avg_tpy=avg_tpy,
+            trades=int(stats["trades"]),
+            wins=int(stats["wins"]),
+            losses=int(stats["losses"]),
+            pct_wins=float(stats["pct_wins"]),
+            avg_pnl_pct=float(stats["avg_pnl_pct"]),
+            sheet_pnl=float(stats["sheet_pnl"]),
+            avg_tpy=float(stats["avg_tpy"]),
             closed_rows=by_sym.get(sym, []),
         )
         row["FIT"] = fr.fit
@@ -1804,15 +1881,23 @@ def _trade_date_window(
     pad_days: int,
 ) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
     dates_in: list[pd.Timestamp] = []
-    for r in closed_rows:
-        for key in ("DATE OPENED", "DATE_OPENED", "DATE CLOSED", "DATE_CLOSED"):
+    for r in list(closed_rows) + list(open_rows or []):
+        for key in (
+            "DATE OPENED",
+            "DATE_OPENED",
+            "DATE CLOSED",
+            "DATE_CLOSED",
+            "BREAK_DATE",
+            "BREAKOUT_DATE",
+            "DATE BREAKOUT",
+            "BREAK DATE",
+        ):
             y = _ymd8(_col(r, key))
             if len(y) == 8:
                 dates_in.append(pd.Timestamp(f"{y[:4]}-{y[4:6]}-{y[6:8]}"))
-    for r in open_rows or []:
-        y = _ymd8(_col(r, "DATE OPENED", "DATE_OPENED"))
-        if len(y) == 8:
-            dates_in.append(pd.Timestamp(f"{y[:4]}-{y[4:6]}-{y[6:8]}"))
+        mv = _parse_zone_id_date(_col(r, "ZONE_ID", "ZONE ID", default=""))
+        if mv is not None:
+            dates_in.append(mv)
     if not dates_in:
         return None, None
     lo = min(dates_in) - pd.Timedelta(days=pad_days)
@@ -1820,6 +1905,307 @@ def _trade_date_window(
     lo = max(lo, ohlc.index[0])
     hi = min(hi, ohlc.index[-1])
     return lo, hi
+
+
+def _parse_zone_id_date(zone_id: Any) -> Optional[pd.Timestamp]:
+    """Parse ``HL_2010-05-11`` / ``OC_2010-05-11`` → max-vol bar date."""
+    s = str(zone_id or "").strip()
+    if "_" not in s:
+        return None
+    tail = s.split("_", 1)[1].strip()
+    if not tail:
+        return None
+    try:
+        ts = pd.Timestamp(tail)
+    except Exception:
+        return None
+    if pd.isna(ts):
+        return None
+    return ts.normalize()
+
+
+def _ohlc_bar_on_or_near(ohlc: pd.DataFrame, when: pd.Timestamp, *, tol_days: int = 3) -> Optional[pd.Series]:
+    if ohlc is None or ohlc.empty or when is None:
+        return None
+    idx = ohlc.index
+    w = pd.Timestamp(when).normalize()
+    if w in idx:
+        return ohlc.loc[w]
+    # Nearest prior bar within tol, else nearest within tol.
+    try:
+        pos = int(idx.searchsorted(w, side="right") - 1)
+    except Exception:
+        return None
+    best: Optional[pd.Series] = None
+    best_abs = None
+    for p in (pos, pos + 1):
+        if p < 0 or p >= len(idx):
+            continue
+        d = abs((pd.Timestamp(idx[p]).normalize() - w).days)
+        if d > int(tol_days):
+            continue
+        if best_abs is None or d < best_abs:
+            best_abs = d
+            best = ohlc.iloc[p]
+    return best
+
+
+def _rolling_max_vol_active_spans(
+    ohlc: pd.DataFrame,
+    lookback_days: int = 126,
+) -> dict[pd.Timestamp, tuple[pd.Timestamp, pd.Timestamp]]:
+    """Map max-vol bar date → (first_active, last_active) as rolling lookback winner.
+
+    Mirrors ``tools/vol_zone_break_retest.build_zones`` / plot_max_vol_day_zone rolling
+    identity walk: each bar that is the trailing ``lookback_days`` volume argmax gets
+    first/last dates it held that crown. Break/retest keeps zones in memory forever for
+    signals; this span is for **chart shading only**.
+    """
+    if ohlc is None or ohlc.empty or "Volume" not in ohlc.columns:
+        return {}
+    n = len(ohlc)
+    if n <= int(lookback_days):
+        return {}
+    lb = int(lookback_days)
+    vol = ohlc["Volume"].astype(float).to_numpy()
+    idx = ohlc.index
+    first_active: dict[int, int] = {}
+    last_active: dict[int, int] = {}
+    for t in range(lb - 1, n):
+        w0 = t - lb + 1
+        # argmax on ties takes the earliest bar (left-stable), matching VZ research.
+        winner = w0 + int(vol[w0 : t + 1].argmax())
+        if winner not in first_active:
+            first_active[winner] = t
+        last_active[winner] = t
+    out: dict[pd.Timestamp, tuple[pd.Timestamp, pd.Timestamp]] = {}
+    for w, t0 in first_active.items():
+        t1 = last_active[w]
+        mv = pd.Timestamp(idx[w]).normalize()
+        out[mv] = (
+            pd.Timestamp(idx[t0]).normalize(),
+            pd.Timestamp(idx[t1]).normalize(),
+        )
+    return out
+
+
+def _parse_optional_ymd(row: dict[str, Any], *keys: str) -> Optional[pd.Timestamp]:
+    raw = _ymd8(_col(row, *keys, default=""))
+    if len(raw) != 8:
+        return None
+    return pd.Timestamp(f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+
+
+def _zone_date_span(
+    row: dict[str, Any],
+    ohlc: pd.DataFrame,
+    *,
+    max_vol_dt: Optional[pd.Timestamp],
+    active_spans: dict[pd.Timestamp, tuple[pd.Timestamp, pd.Timestamp]],
+) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Resolve visual begin/end for one zone band (not infinite full-chart bands).
+
+    Semantics (documented for chart UX; signals are unchanged):
+      Begin: ``ZONE_START`` if present; else **max_vol_date** from ``ZONE_ID``
+        (zone formation day); else rolling first_active; else trade ``DATE_OPENED``.
+      End: ``ZONE_END`` if present; else **last date the zone was the rolling 126-bar
+        max-vol winner** (regime end from ``active_spans``); else trade ``DATE_CLOSED``;
+        else as-of chart end for still-open / still-active zones.
+
+    Prefer reconstructing active intervals in the plot path (avoids re-running VZ /
+    adding Closed columns). Optional ``ZONE_START``/``ZONE_END`` override when present.
+    """
+    z_start = _parse_optional_ymd(row, "ZONE_START", "ZONE START", "ZONE_BEGIN", "ZONE BEGIN")
+    z_end = _parse_optional_ymd(row, "ZONE_END", "ZONE END")
+    opened = _parse_optional_ymd(row, "DATE OPENED", "DATE_OPENED")
+    closed = _parse_optional_ymd(row, "DATE CLOSED", "DATE_CLOSED")
+    chart_end = pd.Timestamp(ohlc.index[-1]).normalize() if len(ohlc) else None
+
+    first_act: Optional[pd.Timestamp] = None
+    last_act: Optional[pd.Timestamp] = None
+    if max_vol_dt is not None:
+        span = active_spans.get(pd.Timestamp(max_vol_dt).normalize())
+        if span is not None:
+            first_act, last_act = span
+
+    # Begin: formation day (max-vol) preferred over first_active (crown start).
+    begin = z_start or max_vol_dt or first_act or opened
+    end = z_end or last_act or closed or chart_end
+    if begin is None or end is None:
+        return None, None
+    begin = pd.Timestamp(begin).normalize()
+    end = pd.Timestamp(end).normalize()
+    if end < begin:
+        end = begin
+    # Single-day regimes still need a visible width for fill_between.
+    if end == begin and chart_end is not None and begin < chart_end:
+        # nudge to next bar if available
+        try:
+            pos = int(ohlc.index.searchsorted(begin, side="right"))
+            if 0 <= pos < len(ohlc.index):
+                end = pd.Timestamp(ohlc.index[pos]).normalize()
+            else:
+                end = begin + pd.Timedelta(days=1)
+        except Exception:
+            end = begin + pd.Timedelta(days=1)
+    return begin, end
+
+
+def _zone_band_from_row(
+    row: dict[str, Any],
+    ohlc: Optional[pd.DataFrame],
+    *,
+    band_pct: float = 0.02,
+) -> Optional[tuple[float, float, str, Optional[pd.Timestamp], Optional[pd.Timestamp]]]:
+    """Return (lo, hi, label, max_vol_date, break_date) for one Closed/Open row.
+
+    Preference:
+      1) explicit ZONE_LO + ZONE_HI
+      2) reconstruct HL/OC band from OHLC at ZONE_ID max-vol date (VZ)
+      3) ZONE_CENTER ± band_pct (BRT-style)
+    No-op when none of the above are available.
+    """
+    zid = str(_col(row, "ZONE_ID", "ZONE ID", default="") or "").strip()
+    zkind = str(_col(row, "ZONE_KIND", "ZONE KIND", default="") or "").strip().upper()
+    if not zkind and zid:
+        zkind = zid.split("_", 1)[0].upper()
+    zlo = _fnum(_col(row, "ZONE_LO", "ZONE LO", "ZONE_LOWER", "ZONE LOWER"))
+    zhi = _fnum(_col(row, "ZONE_HI", "ZONE HI", "ZONE_UPPER", "ZONE UPPER", "ZONE_HIGH", "ZONE HIGH"))
+    zc = _fnum(_col(row, "ZONE_CENTER", "ZONE CENTER"))
+    break_raw = _ymd8(_col(row, "BREAK_DATE", "BREAKOUT_DATE", "DATE BREAKOUT", "BREAK DATE"))
+    break_dt: Optional[pd.Timestamp] = None
+    if len(break_raw) == 8:
+        break_dt = pd.Timestamp(f"{break_raw[:4]}-{break_raw[4:6]}-{break_raw[6:8]}")
+    max_vol_dt = _parse_zone_id_date(zid)
+
+    if zlo > 0 and zhi > 0 and zhi >= zlo:
+        label = zid or f"zone {zlo:.2f}-{zhi:.2f}"
+        return zlo, zhi, label, max_vol_dt, break_dt
+
+    if ohlc is not None and max_vol_dt is not None:
+        bar = _ohlc_bar_on_or_near(ohlc, max_vol_dt)
+        if bar is not None:
+            try:
+                o = float(bar.get("Open", bar.get("open", float("nan"))))
+                h = float(bar.get("High", bar.get("high", float("nan"))))
+                l = float(bar.get("Low", bar.get("low", float("nan"))))
+                c = float(bar.get("Close", bar.get("close", float("nan"))))
+            except Exception:
+                o = h = l = c = float("nan")
+            if zkind.startswith("OC") and o == o and c == c:
+                lo_r, hi_r = (min(o, c), max(o, c))
+            elif h == h and l == l:
+                lo_r, hi_r = (l, h)
+            else:
+                lo_r = hi_r = float("nan")
+            if lo_r == lo_r and hi_r == hi_r and hi_r >= lo_r and hi_r > 0:
+                # Prefer CSV ZONE_LO when present (rounded freeze value).
+                lo_use = zlo if zlo > 0 else float(lo_r)
+                hi_use = float(hi_r)
+                if zlo > 0 and abs(zlo - lo_r) > max(0.05, 0.02 * abs(lo_r)):
+                    # ZONE_LO disagrees with reconstructed low — keep both CSV lo and OHLC hi
+                    # only when hi still above lo; else trust OHLC pair.
+                    if hi_use < lo_use:
+                        lo_use, hi_use = float(lo_r), float(hi_r)
+                label = zid or f"{zkind or 'zone'} {lo_use:.2f}-{hi_use:.2f}"
+                return lo_use, hi_use, label, max_vol_dt, break_dt
+
+    if zc > 0:
+        half = abs(float(band_pct))
+        zl = zc * (1.0 - half)
+        zh = zc * (1.0 + half)
+        label = zid or f"center {zc:.2f}"
+        return zl, zh, label, max_vol_dt, break_dt
+
+    return None
+
+
+def _plot_zone_bands(
+    ax: Any,
+    closed_rows: list[dict[str, Any]],
+    open_rows: Optional[list[dict[str, Any]]],
+    ohlc: pd.DataFrame,
+    *,
+    band_pct: float = 0.02,
+    lookback_days: int = 126,
+) -> int:
+    """Shade trade zones only between begin/end dates; mark max-vol + breakout.
+
+    Visual span (see ``_zone_date_span``): begin at max_vol_date (ZONE_ID), end at last
+    rolling-126 max-vol-winner day when reconstructable — not infinite ``axhspan`` bands.
+    Returns #bands drawn.
+    """
+    active_spans = _rolling_max_vol_active_spans(ohlc, lookback_days=int(lookback_days))
+    seen: set[tuple[float, float, str, str]] = set()
+    seen_break: set[pd.Timestamp] = set()
+    seen_maxvol: set[pd.Timestamp] = set()
+    n_bands = 0
+    for r in list(closed_rows) + list(open_rows or []):
+        band = _zone_band_from_row(r, ohlc, band_pct=band_pct)
+        if band is None:
+            continue
+        zl, zh, _label, max_vol_dt, break_dt = band
+        d0, d1 = _zone_date_span(
+            r, ohlc, max_vol_dt=max_vol_dt, active_spans=active_spans
+        )
+        if d0 is None or d1 is None:
+            continue
+        key = (
+            round(float(zl), 4),
+            round(float(zh), 4),
+            d0.strftime("%Y%m%d"),
+            d1.strftime("%Y%m%d"),
+        )
+        if key not in seen:
+            seen.add(key)
+            mask = (ohlc.index >= d0) & (ohlc.index <= d1)
+            xs = ohlc.index[mask]
+            if len(xs) == 0:
+                # Dates may fall in a pad gap — still draw a rectangle via fill endpoints.
+                xs = pd.DatetimeIndex([d0, d1])
+            ax.fill_between(
+                xs,
+                float(zl),
+                float(zh),
+                alpha=0.22,
+                color="#3b82f6",
+                zorder=0,
+                linewidth=0,
+            )
+            ax.plot([d0, d1], [zl, zl], color="#60a5fa", alpha=0.55, lw=0.8, zorder=1)
+            ax.plot([d0, d1], [zh, zh], color="#60a5fa", alpha=0.55, lw=0.8, zorder=1)
+            # Light date label at mid-span / mid-band (skip when many zones).
+            if n_bands < 8:
+                mid_t = d0 + (d1 - d0) / 2
+                mid_y = (float(zl) + float(zh)) / 2.0
+                ax.annotate(
+                    f"{d0.strftime('%Y-%m-%d')}→{d1.strftime('%Y-%m-%d')}",
+                    xy=(mid_t, mid_y),
+                    fontsize=6.5,
+                    color="#93c5fd",
+                    alpha=0.85,
+                    ha="center",
+                    va="center",
+                    zorder=2,
+                )
+            n_bands += 1
+        if max_vol_dt is not None:
+            mv = pd.Timestamp(max_vol_dt).normalize()
+            if mv not in seen_maxvol:
+                seen_maxvol.add(mv)
+                ax.axvline(mv, color="#f59e0b", ls="--", lw=1.0, alpha=0.75, zorder=2)
+        if break_dt is not None:
+            bd = pd.Timestamp(break_dt).normalize()
+            if bd not in seen_break:
+                seen_break.add(bd)
+                ax.axvline(bd, color="#a78bfa", ls=":", lw=1.1, alpha=0.85, zorder=2)
+    if n_bands:
+        ax.plot([], [], color="#3b82f6", lw=8, alpha=0.35, label="Volume zone (active span)")
+    if seen_maxvol:
+        ax.plot([], [], color="#f59e0b", ls="--", lw=1.2, label="Max-vol day")
+    if seen_break:
+        ax.plot([], [], color="#a78bfa", ls=":", lw=1.2, label="Breakout")
+    return n_bands
 
 
 def _plot_trade_markers(
@@ -1975,7 +2361,16 @@ def plot_common_trade_chart(
     band_pct: float = 0.02,
     draw_zones: bool = False,
 ) -> bool:
-    """OHLC Close + SMA50 + IN/OUT/stop; optional ZONE_CENTER bands from Closed rows."""
+    """OHLC Close + SMA50 + IN/OUT/stop; optional zone bands from Closed rows.
+
+    Zone sources (no-op when absent — safe for RS/SB):
+      - ``ZONE_LO`` / ``ZONE_HI`` (explicit)
+      - VZ ``ZONE_ID`` + OHLC reconstruct of HL/OC max-vol bar
+      - ``ZONE_CENTER`` ± ``band_pct`` (BRT-style)
+    Zone shading is **date-bounded** (max_vol_date → last rolling-126 winner day when
+    reconstructable; see ``_zone_date_span``), not full-chart horizontal bands.
+    Also marks max-vol day and ``BREAK_DATE`` when present. Entry/exit/stop via markers.
+    """
     if not HAS_MATPLOTLIB:
         return False
     try:
@@ -1990,26 +2385,17 @@ def plot_common_trade_chart(
         ax.plot(ohlc.index, close, color="#d0d0d0", lw=1.0, label="Close", zorder=3)
         ax.plot(ohlc.index, sma50, color="#ffffff", lw=1.1, label="SMA50", zorder=2)
 
+        n_zones = 0
         if draw_zones:
-            seen_zc: set[float] = set()
-            for r in list(closed_rows) + list(open_rows or []):
-                zc = _fnum(_col(r, "ZONE_CENTER", "ZONE CENTER"))
-                if zc <= 0:
-                    continue
-                key = round(zc, 4)
-                if key in seen_zc:
-                    continue
-                seen_zc.add(key)
-                zl = zc * (1.0 - band_pct)
-                zh = zc * (1.0 + band_pct)
-                ax.axhline(y=zc, color="#3b82f6", alpha=0.45, lw=0.9, zorder=1)
-                ax.axhspan(zl, zh, alpha=0.12, color="#3b82f6", zorder=0)
-            if seen_zc:
-                ax.plot([], [], color="#3b82f6", lw=2, label="Zone (from Closed)")
+            n_zones = _plot_zone_bands(
+                ax, closed_rows, open_rows, ohlc, band_pct=float(band_pct)
+            )
 
         _plot_trade_markers(ax, closed_rows, open_rows, ohlc)
 
-        style = "zones + trades" if draw_zones else "trades"
+        style = "zones + trades" if n_zones else ("zones attempted" if draw_zones else "trades")
+        if n_zones:
+            style = f"{n_zones} zone(s) + trades"
         ax.set_title(
             f"{prefix} {symbol} — Close/SMA50 + {style} | green IN / OUT | red stop",
             color="white",
@@ -2031,6 +2417,14 @@ def plot_common_trade_chart(
             if mask.any():
                 y_lo = float(close[mask].min())
                 y_hi = float(close[mask].max())
+                # Include zone edges in y-limits so bands stay visible.
+                if n_zones:
+                    for r in list(closed_rows) + list(open_rows or []):
+                        band = _zone_band_from_row(r, ohlc, band_pct=float(band_pct))
+                        if band is None:
+                            continue
+                        y_lo = min(y_lo, float(band[0]))
+                        y_hi = max(y_hi, float(band[1]))
                 pad = (y_hi - y_lo) * 0.08 or 1.0
                 ax.set_ylim(y_lo - pad, y_hi + pad)
 
@@ -2056,6 +2450,17 @@ def chart_style_for_system(prefix: str) -> str:
     if p in ZONE_SYSTEMS:
         return "zones"
     return "common"
+
+
+def _closed_rows_have_zone_cols(by_sym: dict[str, list[dict[str, Any]]]) -> bool:
+    """True when Closed/Open rows carry zone levels (VZ / BRT-style) — enables overlays."""
+    for rows in by_sym.values():
+        for r in rows[:3]:
+            if _fnum(_col(r, "ZONE_LO", "ZONE LO", "ZONE_HI", "ZONE HI", "ZONE_CENTER", "ZONE CENTER")) > 0:
+                return True
+            if str(_col(r, "ZONE_ID", "ZONE ID", default="") or "").strip():
+                return True
+    return False
 
 
 def _chart_one_task(task: tuple[Any, ...]) -> tuple[str, bool]:
@@ -2154,6 +2559,10 @@ def write_system_charts(
         sym_list = sorted(set(by_sym) | set(open_by_sym))
 
     style = chart_style_for_system(pref)
+    if style == "common" and (
+        _closed_rows_have_zone_cols(by_sym) or _closed_rows_have_zone_cols(open_by_sym)
+    ):
+        style = "zones"
     data_dir_p = Path(data_dir) if data_dir else None
     tasks: list[tuple[Any, ...]] = []
     n_mem = 0

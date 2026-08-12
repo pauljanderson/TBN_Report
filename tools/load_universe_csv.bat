@@ -4,7 +4,7 @@ rem Shared universe loader for run_*.bat
 rem Usage (from repo root):
 rem   call "%~dp0tools\load_universe_csv.bat" SYS [optional_override_csv|ALL|*|--all]
 rem
-rem SYS = BRT | YH | WPBR | RS | RL | MTS | IND | SB | MVCP | QULL | KELL | CS | VEC
+rem SYS = BRT | YH | WPBR | RS | RL | MTS | IND | SB | MVCP | QULL | KELL | CS | VEC | VZ
 rem
 rem Load order:
 rem   0. If arg2 is * / ALL / --all → full scan (CLI; beats ambient %%SYS%%_SYMBOLS)

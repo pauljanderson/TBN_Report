@@ -13,7 +13,8 @@ rem   run_kell.bat ALL
 rem   run_kell.bat --all
 rem   run_kell.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env: set KELL_SYMBOLS=* / ALL / set KELL_ALL_CSV=1
-rem Extra CLI: trailing %* forwarded to rocket_kell_pac.py (except leading .csv / ALL override).
+rem Extra CLI: trailing %* forwarded to rocket_kell_pac.py (leading .csv / ALL stripped; flags kept).
+rem   run_kell.bat --kell-trail-ema 15
 
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
@@ -33,8 +34,7 @@ if /i "%KELL_AGGRESSIVE%"=="1" set "KELL_AGG_FLAG=--aggressive"
 if /i "%KELL_AGGRESSIVE%"=="yes" set "KELL_AGG_FLAG=--aggressive"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" KELL_UNIV_ARG %1 %2
-set "KELL_FORWARD=%*"
-if not "%KELL_UNIV_ARG%"=="" set "KELL_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" KELL_FORWARD "%KELL_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" KELL "%KELL_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [KELL] Universe src=%KELL_UNIVERSE_SRC% pass_s=%KELL_PASS_SYMBOLS%

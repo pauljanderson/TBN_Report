@@ -86,10 +86,14 @@ def _trade_val(t, attr: str, key: str, default=None):
 def load_audit_row(base_dir: str, timestamp: str, file_prefix: str = "BRT") -> Optional[dict]:
     """
     Read first data row from {prefix}_Audit_Report_<ts>.csv or {prefix}_Report_<ts>.csv (same dir as Closed).
-    ``file_prefix`` is ``BRT`` or ``MTS`` (matches rocket_brt / rocket_MTS output names).
+    ``file_prefix`` is engine output prefix (BRT, IND, MTS, SB, …).
     Returns dict with ``audit_cash`` (per-trade report notional) and ``source`` filename, or None.
     """
-    cash_key = f"{file_prefix.lower()}_cash"  # brt_cash, mts_cash
+    primary_cash = f"{file_prefix.lower()}_cash"  # brt_cash, mts_cash, sb_cash, …
+    # Host engines (SB/IND/…) often keep shared sizing under brt_cash even when file prefix differs.
+    cash_keys = [primary_cash]
+    if primary_cash != "brt_cash":
+        cash_keys.append("brt_cash")
     for name in (f"{file_prefix}_Audit_Report_{timestamp}.csv", f"{file_prefix}_Report_{timestamp}.csv"):
         path = os.path.join(base_dir, name)
         if not os.path.isfile(path):
@@ -99,7 +103,11 @@ def load_audit_row(base_dir: str, timestamp: str, file_prefix: str = "BRT") -> O
             if df.empty:
                 continue
             df.columns = [str(c).strip() for c in df.columns]
-            bc_col = next((c for c in df.columns if c.lower() == cash_key), None)
+            bc_col = None
+            for key in cash_keys:
+                bc_col = next((c for c in df.columns if c.lower() == key), None)
+                if bc_col is not None:
+                    break
             if bc_col is None:
                 continue
             bc = clean_numeric(df.iloc[0][bc_col])
@@ -110,6 +118,17 @@ def load_audit_row(base_dir: str, timestamp: str, file_prefix: str = "BRT") -> O
             out: dict = {"audit_cash": float(bc), "source": name}
             if total_pnl is not None:
                 out["Total_PNL"] = float(total_pnl)
+            row0 = df.iloc[0]
+            for col in df.columns:
+                cl = str(col).strip().lower()
+                if cl in (
+                    "aggressive_max_dd",
+                    "aggressive_max_drawdown",
+                    "max_dd",
+                    "max_drawdown",
+                    "aggressive_total_pnl",
+                ):
+                    out[str(col).strip()] = row0[col]
             return out
         except Exception:
             continue
@@ -1152,6 +1171,45 @@ def _canonical_equity_paths(base_dir: str, timestamp: str, file_prefix: str = "B
     return curve, meta
 
 
+def _aggressive_equity_paths(base_dir: str, timestamp: str, file_prefix: str = "BRT") -> tuple[str, str]:
+    agg = os.path.join(base_dir, f"{file_prefix}_EquityCurve_Aggressive_{timestamp}.csv")
+    reg = os.path.join(base_dir, f"{file_prefix}_EquityCurve_Regular_{timestamp}.csv")
+    return agg, reg
+
+
+def _detect_file_prefix(filename: str) -> str:
+    """Extract system PREFIX from {PREFIX}_Closed_* or {PREFIX}_LatestRun_Closed*."""
+    bn = os.path.basename(filename)
+    m = re.match(r"^([A-Za-z][A-Za-z0-9]*)_(?:LatestRun_)?Closed", bn, re.I)
+    if m:
+        return m.group(1).upper()
+    return "BRT"
+
+
+def _read_equity_curve_csv(path: str) -> Optional[tuple[list, list, list]]:
+    """Load Date/Equity/(Positions) from an equity curve CSV. Returns (dates, values, positions) or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        df_c = pd.read_csv(path, index_col=False)
+        df_c.columns = [str(c).strip() for c in df_c.columns]
+        dcol = next((c for c in df_c.columns if c.lower() == "date"), None)
+        ecol = next((c for c in df_c.columns if c.lower() == "equity"), None)
+        if dcol is None or ecol is None:
+            return None
+        dates = pd.to_datetime(df_c[dcol]).tolist()
+        values = [float(x) for x in df_c[ecol].tolist()]
+        pos_col = next((c for c in df_c.columns if c.lower() == "positions"), None)
+        positions = (
+            [int(x) for x in df_c[pos_col].tolist()]
+            if pos_col is not None and len(df_c[pos_col]) == len(values)
+            else []
+        )
+        return dates, values, positions
+    except Exception:
+        return None
+
+
 def load_canonical_equity_bundle(
     base_dir: str, timestamp: str, file_prefix: str = "BRT"
 ) -> Optional[tuple[list, list, list, dict, Optional[list[float]]]]:
@@ -1161,19 +1219,13 @@ def load_canonical_equity_bundle(
     Optional column ``Equity_Regular`` is the passive OHLC curve when the primary ``Equity`` column is aggressive.
     """
     curve_path, meta_path = _canonical_equity_paths(base_dir, timestamp, file_prefix)
-    if not os.path.isfile(curve_path):
+    loaded = _read_equity_curve_csv(curve_path)
+    if loaded is None:
         return None
+    dates, values, positions = loaded
     try:
         df_c = pd.read_csv(curve_path, index_col=False)
         df_c.columns = [str(c).strip() for c in df_c.columns]
-        dcol = next((c for c in df_c.columns if c.lower() == "date"), None)
-        ecol = next((c for c in df_c.columns if c.lower() == "equity"), None)
-        if dcol is None or ecol is None:
-            return None
-        dates = pd.to_datetime(df_c[dcol]).tolist()
-        values = [float(x) for x in df_c[ecol].tolist()]
-        pos_col = next((c for c in df_c.columns if c.lower() == "positions"), None)
-        positions = [int(x) for x in df_c[pos_col].tolist()] if pos_col and len(df_c[pos_col]) == len(values) else []
         eq_reg_col = next((c for c in df_c.columns if c.lower() == "equity_regular"), None)
         regular_vals: Optional[list[float]] = None
         if eq_reg_col is not None and len(df_c[eq_reg_col]) == len(values):
@@ -1189,6 +1241,94 @@ def load_canonical_equity_bundle(
         return (dates, values, positions, meta, regular_vals)
     except Exception:
         return None
+
+
+def _apply_aggressive_sidecars(
+    metrics: dict,
+    base_dir: str,
+    timestamp: str,
+    file_prefix: str,
+    *,
+    aggressive_chart: bool,
+) -> None:
+    """
+    Prefer dedicated {prefix}_EquityCurve_Aggressive_<ts>.csv (+ Regular sidecar) when present.
+
+    When the main EquityCurve is passive-only but an Aggressive sidecar exists, promote aggressive
+    to primary (and keep the loaded curve as Equity_Regular) so --aggressive charts are real.
+    """
+    agg_path, reg_path = _aggressive_equity_paths(base_dir, timestamp, file_prefix)
+    agg_loaded = _read_equity_curve_csv(agg_path)
+    reg_loaded = _read_equity_curve_csv(reg_path)
+    dates = metrics.get("equity_dates") or []
+
+    if agg_loaded is not None:
+        agg_dates, agg_vals, agg_pos = agg_loaded
+        aligned_agg: Optional[list[float]] = None
+        aligned_pos: Optional[list[int]] = None
+        if dates and len(agg_vals) == len(dates):
+            aligned_agg = list(agg_vals)
+            aligned_pos = list(agg_pos) if agg_pos and len(agg_pos) == len(dates) else None
+        elif agg_dates and agg_vals and dates:
+            amap = {pd.Timestamp(d).normalize(): float(v) for d, v in zip(agg_dates, agg_vals)}
+            raw = [amap.get(pd.Timestamp(d).normalize()) for d in dates]
+            if raw and all(x is not None for x in raw):
+                aligned_agg = [float(x) for x in raw]  # type: ignore[misc]
+            if agg_pos and len(agg_pos) == len(agg_dates):
+                pmap = {pd.Timestamp(d).normalize(): int(p) for d, p in zip(agg_dates, agg_pos)}
+                praw = [pmap.get(pd.Timestamp(d).normalize()) for d in dates]
+                if praw and all(x is not None for x in praw):
+                    aligned_pos = [int(x) for x in praw]  # type: ignore[misc]
+
+        if aligned_agg is not None:
+            has_reg_col = metrics.get("equity_values_regular") is not None
+            already_agg = bool(metrics.get("_aggressive"))
+            if aggressive_chart:
+                if not has_reg_col and metrics.get("equity_values") and not already_agg:
+                    metrics["equity_values_regular"] = list(metrics["equity_values"])
+                metrics["equity_values"] = list(aligned_agg)
+                if aligned_pos is not None:
+                    metrics["equity_positions"] = list(aligned_pos)
+                metrics["_aggressive"] = True
+                print(
+                    f"[OK] Using aggressive equity sidecar as primary: {os.path.basename(agg_path)} "
+                    f"({len(aligned_agg)} days)"
+                )
+            elif not already_agg and not has_reg_col and metrics.get("equity_values"):
+                # Main Equity was passive; stash aggressive as primary + Regular so default
+                # charts can swap back via _apply_passive_equity_primary.
+                metrics["equity_values_regular"] = list(metrics["equity_values"])
+                metrics["equity_values"] = list(aligned_agg)
+                if aligned_pos is not None:
+                    metrics["equity_positions"] = list(aligned_pos)
+                metrics["_aggressive"] = True
+                print(
+                    f"[OK] Aggressive equity sidecar available: {os.path.basename(agg_path)} "
+                    "(pass --aggressive to chart it)"
+                )
+
+    if metrics.get("equity_values_regular") is None and reg_loaded is not None:
+        reg_dates, reg_vals, _reg_pos = reg_loaded
+        if dates and len(reg_vals) == len(dates):
+            metrics["equity_values_regular"] = list(reg_vals)
+            print(f"[OK] Passive equity sidecar: {os.path.basename(reg_path)}")
+        elif dates and reg_dates and reg_vals:
+            rmap = {pd.Timestamp(d).normalize(): float(v) for d, v in zip(reg_dates, reg_vals)}
+            aligned = [rmap.get(pd.Timestamp(d).normalize()) for d in dates]
+            if aligned and all(x is not None for x in aligned):
+                metrics["equity_values_regular"] = [float(x) for x in aligned]  # type: ignore[misc]
+                print(f"[OK] Passive equity sidecar (date-aligned): {os.path.basename(reg_path)}")
+
+
+def _has_aggressive_equity_series(metrics: dict) -> bool:
+    """True when metrics carry a real aggressive ledger (not passive + OHLC overlay)."""
+    if metrics.get("_aggressive"):
+        return True
+    if metrics.get("equity_values_aggressive_saved"):
+        return True
+    if metrics.get("_aggressive_max_dd_raw") is not None:
+        return True
+    return False
 
 
 def _resolve_ticker_dir(ticker_dir):
@@ -1400,6 +1540,54 @@ def _draw_trade_bands_chart(symbol, df_ticker, closed_trades, open_trades, out_p
     plt.close()
 
 
+def _normalize_closed_open_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Map RL-style spaced headers (DATE OPENED, ENTRY PRICE, …) to BRT underscore names.
+    Also collapses whitespace and uppercases for stable matching.
+    """
+    if df is None or df.empty:
+        return df
+    rename: dict[str, str] = {}
+    aliases = {
+        "DATE OPENED": "DATE_OPENED",
+        "DATE CLOSED": "DATE_CLOSED",
+        "ENTRY PRICE": "ENTRY_PRICE",
+        "EXIT PRICE": "EXIT_PRICE",
+        "PNL %": "PNL_PCT",
+        "PNL PCT": "PNL_PCT",
+        "PNL DOLLARS": "PNL_DOLLARS",
+        "PNL$": "PNL_DOLLARS",
+        "AVG EXIT PRICE": "AVG_EXIT_PRICE",
+        "EXIT TYPE": "EXIT_TYPE",
+        "DAYS HELD": "DAYS_HELD",
+        "ZONE CENTER": "ZONE_CENTER",
+        "ZONE ABOVE CENTER": "ZONE_ABOVE_CENTER",
+        "ZONE BELOW CENTER": "ZONE_BELOW_CENTER",
+    }
+    for c in df.columns:
+        raw = str(c).strip()
+        key = " ".join(raw.upper().split())
+        if key in aliases:
+            rename[c] = aliases[key]
+        elif " " in raw or raw != raw.upper():
+            # Generic: spaces -> underscores, upper
+            cand = key.replace(" ", "_")
+            if cand in (
+                "DATE_OPENED",
+                "DATE_CLOSED",
+                "ENTRY_PRICE",
+                "EXIT_PRICE",
+                "PNL_DOLLARS",
+                "PNL_PCT",
+                "SYMBOL",
+            ):
+                rename[c] = cand
+    if rename:
+        df = df.rename(columns=rename)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
 def run_audit(
     closed_path,
     ticker_dir,
@@ -1458,15 +1646,23 @@ def run_audit(
     filename = os.path.basename(closed_path)
     ts_match = re.search(r"(\d{12})", filename, re.IGNORECASE)
     timestamp = ts_match.group(1) if ts_match else "Report"
-    if filename.startswith("MTS_Closed_"):
-        file_prefix = "MTS"
-    elif filename.startswith("IND_Closed_"):
-        file_prefix = "IND"
-    elif filename.startswith("BRT_Closed_"):
-        file_prefix = "BRT"
-    else:
-        file_prefix = "BRT"
-    _launcher = "rocket_brt" if file_prefix in ("BRT", "IND") else "rocket_MTS"
+    file_prefix = _detect_file_prefix(filename)
+    _launcher = {
+        "BRT": "rocket_brt / rocket_tbn",
+        "IND": "rocket_brt / rocket_tbn",
+        "MTS": "rocket_MTS",
+        "SB": "rocket_stockbee_burst",
+        "RL": "rocket_rl",
+        "RS": "rocket_tbn (RS)",
+        "YH": "rocket_tbn (YH)",
+        "WPBR": "rocket_tbn (WPBR)",
+        "MVCP": "rocket_minervini_vcp",
+        "QULL": "rocket_qull",
+        "VZ": "rocket_vz / rocket_tbn (vz_mode)",
+        "KELL": "rocket_tbn (KELL)",
+        "CS": "rocket_tbn (CS)",
+        "PBR": "rocket_tbn (PBR)",
+    }.get(file_prefix, f"rocket ({file_prefix})")
     audit_row = load_audit_row(base_dir, timestamp, file_prefix=file_prefix) if use_audit else None
 
     init_explicit: bool = initial_capital is not None
@@ -1509,7 +1705,7 @@ def run_audit(
     required_closed = ["SYMBOL", "DATE_OPENED", "ENTRY_PRICE", "DATE_CLOSED", "EXIT_PRICE"]
     try:
         df_closed = pd.read_csv(closed_path, index_col=False)
-        df_closed.columns = [c.strip() for c in df_closed.columns]
+        df_closed = _normalize_closed_open_columns(df_closed)
         missing = [c for c in required_closed if c not in df_closed.columns]
         if missing:
             print(f"[ERR] Closed CSV missing columns: {missing}. Found: {list(df_closed.columns)[:15]}")
@@ -1528,7 +1724,7 @@ def run_audit(
     df_open = pd.DataFrame()
     if os.path.exists(open_path):
         df_open = pd.read_csv(open_path, index_col=False)
-        df_open.columns = [c.strip() for c in df_open.columns]
+        df_open = _normalize_closed_open_columns(df_open)
         if not all(c in df_open.columns for c in ["SYMBOL", "DATE_OPENED", "ENTRY_PRICE"]):
             df_open = pd.DataFrame()
         elif symbol:
@@ -1659,13 +1855,19 @@ def run_audit(
                 except (KeyError, TypeError, ValueError):
                     pass
             max_port_dd = max_drawdown_from_equity_path(eq_vals, initial_seed)
+            # Meta Max_Drawdown_fraction is usually the passive / audit-aligned DD when Equity_Regular exists.
+            max_port_dd_for_meta = (
+                max_drawdown_from_equity_path(eq_regular_csv, initial_seed)
+                if eq_regular_csv is not None and len(eq_regular_csv) == len(eq_vals)
+                else max_port_dd
+            )
             frac_meta = meta.get("Max_Drawdown_fraction")
             if frac_meta is not None and str(frac_meta).strip() != "":
                 try:
                     fm = float(frac_meta)
-                    if abs(fm - max_port_dd) > 0.0005:
+                    if abs(fm - max_port_dd_for_meta) > 0.0005:
                         print(
-                            f"[WARN] Max_DD replay {max_port_dd:.4f} vs meta {fm:.4f}; using replay from curve."
+                            f"[WARN] Max_DD replay {max_port_dd_for_meta:.4f} vs meta {fm:.4f}; using replay from curve."
                         )
                 except (TypeError, ValueError):
                     pass
@@ -1694,18 +1896,62 @@ def run_audit(
                 "_missing_ticker_trades": 0,
                 "_aggressive": False,
             }
+            if initial_seed is not None:
+                metrics["_initial_account_size"] = float(initial_seed)
             ag_meta = meta.get("Aggressive") if meta else None
             if ag_meta is not None and str(ag_meta).strip() != "":
                 metrics["_aggressive"] = str(ag_meta).strip().lower() in ("true", "1", "yes", "1.0")
             if eq_regular_csv is not None and len(eq_regular_csv) == len(eq_vals):
                 metrics["equity_values_regular"] = eq_regular_csv
                 metrics["_aggressive"] = True
+            agg_dd_meta = None
+            if meta:
+                agg_dd_meta = meta.get("Aggressive_Max_Drawdown_fraction")
+                if agg_dd_meta is None or str(agg_dd_meta).strip() == "":
+                    agg_dd_meta = meta.get("Aggressive_Max_Drawdown_pct")
+            if agg_dd_meta is not None and str(agg_dd_meta).strip() != "":
+                try:
+                    s = str(agg_dd_meta).strip()
+                    if s.endswith("%"):
+                        metrics["_aggressive_max_dd_raw"] = float(s[:-1]) / 100.0
+                    else:
+                        metrics["_aggressive_max_dd_raw"] = float(s)
+                except (TypeError, ValueError):
+                    pass
             used_canonical = True
             cp, mp = _canonical_equity_paths(base_dir, timestamp, file_prefix)
             print(
                 f"[OK] Canonical equity (matches {file_prefix}_Audit / {_launcher}): "
                 f"{os.path.basename(cp)} / {os.path.basename(mp)}"
             )
+
+    # If no main EquityCurve but Aggressive sidecar exists, use it before OHLC rebuild.
+    if not used_canonical and not no_saved_equity and not force_reconstruct and not symbol:
+        agg_only_path, _reg_only = _aggressive_equity_paths(base_dir, timestamp, file_prefix)
+        agg_only = _read_equity_curve_csv(agg_only_path)
+        if agg_only is not None:
+            eq_dates, eq_vals, eq_pos = agg_only
+            if eq_dates and eq_vals and len(eq_dates) == len(eq_vals):
+                init_seed = float(_baseline)
+                max_port_dd = max_drawdown_from_equity_path(eq_vals, init_seed)
+                metrics = {
+                    "Max_Drawdown": f"{max_port_dd:.2%}" if max_port_dd > 0 else "N/A",
+                    "Max_Days_Underwater": 0,
+                    "Pct_Days_Underwater": "0.0%",
+                    "equity_dates": eq_dates,
+                    "equity_values": eq_vals,
+                    "equity_positions": eq_pos if eq_pos and len(eq_pos) == len(eq_vals) else [0] * len(eq_vals),
+                    "_max_port_dd_raw": max_port_dd,
+                    "_missing_ticker_trades": 0,
+                    "_aggressive": True,
+                    "_initial_account_size": init_seed,
+                    "_aggressive_max_dd_raw": max_port_dd,
+                }
+                used_canonical = True
+                print(
+                    f"[OK] Loaded aggressive-only equity curve: {os.path.basename(agg_only_path)} "
+                    f"(no {file_prefix}_EquityCurve_{timestamp}.csv)"
+                )
 
     if not used_canonical:
         if missing_symbols:
@@ -1749,13 +1995,23 @@ def run_audit(
             + (", aggressive sizing on)." if aggressive else ").")
         )
 
-    # Passive OHLC curve for dual-line chart when primary equity is aggressive (saved or recomputed).
+    # Dedicated Aggressive / Regular sidecars (promote aggressive when --aggressive).
+    if used_canonical and metrics.get("equity_dates"):
+        _apply_aggressive_sidecars(
+            metrics,
+            base_dir,
+            timestamp,
+            file_prefix,
+            aggressive_chart=bool(aggressive),
+        )
+
+    # Passive OHLC curve for dual-line chart when primary equity is already aggressive.
     if (
         used_canonical
         and not symbol
         and tickers
         and metrics.get("equity_values_regular") is None
-        and (metrics.get("_aggressive") or aggressive)
+        and metrics.get("_aggressive")
     ):
         try:
             passive_m = compute_equity_metrics(
@@ -1781,10 +2037,44 @@ def run_audit(
 
     _apply_passive_equity_primary(metrics, aggressive_chart=bool(aggressive))
 
+    if aggressive and not _has_aggressive_equity_series(metrics):
+        agg_p, _ = _aggressive_equity_paths(base_dir, timestamp, file_prefix)
+        print(
+            f"[ERR] --aggressive requested but no aggressive equity found for {file_prefix} ts={timestamp}.\n"
+            f"      Need {file_prefix}_EquityCurve_{timestamp}.csv with Equity_Regular / Aggressive=True,\n"
+            f"      or {os.path.basename(agg_p)}.\n"
+            f"      Refusing to write a misleading {file_prefix}_Portfolio_Performance_*_aggressive.png "
+            "(passive chart omitted).",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     history_dates = metrics["equity_dates"]
     history_equity = metrics["equity_values"]
     history_positions = metrics["equity_positions"]
     max_port_dd = metrics["_max_port_dd_raw"]
+    eq_reg = metrics.get("equity_values_regular")
+    init_for_dd = metrics.get("_initial_account_size")
+    try:
+        init_for_dd_f = float(init_for_dd) if init_for_dd is not None and str(init_for_dd).strip() != "" else float(_baseline)
+    except (TypeError, ValueError):
+        init_for_dd_f = float(_baseline)
+    # compute_equity_metrics keeps Max_Drawdown on the passive curve for rocket audit alignment,
+    # while equity_values become the aggressive ledger. For --aggressive charts, Max DD must
+    # follow the primary (aggressive) series; keep passive DD only for overlay comparison.
+    passive_max_dd: Optional[float] = None
+    if aggressive:
+        if metrics.get("_aggressive_max_dd_raw") is not None:
+            try:
+                max_port_dd = float(metrics["_aggressive_max_dd_raw"])
+            except (TypeError, ValueError):
+                max_port_dd = max_drawdown_from_equity_path(history_equity, init_for_dd_f)
+        else:
+            max_port_dd = max_drawdown_from_equity_path(history_equity, init_for_dd_f)
+        metrics["_max_port_dd_raw"] = max_port_dd
+        metrics["Max_Drawdown"] = f"{max_port_dd:.2%}" if max_port_dd > 0 else "N/A"
+        if eq_reg is not None and len(eq_reg) == len(history_dates):
+            passive_max_dd = max_drawdown_from_equity_path(eq_reg, init_for_dd_f)
 
     # Trough/peak for annotation (recompute from curve)
     trough_date = None
@@ -1804,13 +2094,17 @@ def run_audit(
     print(f"[OK] Charting from {history_dates[0].date()} to {history_dates[-1].date()}{scope_label}")
 
     debug_df = pd.DataFrame({"Date": history_dates, "Equity": history_equity})
-    eq_reg = metrics.get("equity_values_regular")
     if eq_reg is not None and len(eq_reg) == len(history_dates):
         debug_df["Equity_Regular"] = eq_reg
     if metrics.get("_chart_primary") == "regular":
         print("[OK] Chart: passive (Equity_Regular / audit-aligned)")
     elif eq_reg is not None and len(eq_reg) == len(history_dates) and aggressive:
         print("[OK] Chart: aggressive (primary) + regular (OHLC) overlay")
+        print(f"[OK] Max DD (aggressive primary): {max_port_dd:.2%}")
+        if passive_max_dd is not None:
+            print(f"[OK] Max DD (passive overlay):   {passive_max_dd:.2%}")
+    elif aggressive:
+        print(f"[OK] Chart: aggressive primary; Max DD: {max_port_dd:.2%}")
     debug_path = os.path.join(out_dir, f"{file_prefix}_daily_equity_debug.csv")
     debug_df.to_csv(debug_path, index=False)
     print(f"[FILE] Daily equity log: {debug_path}")
@@ -1891,8 +2185,13 @@ def run_audit(
 
     if trough_date:
         trough_val = history_equity[history_dates.index(trough_date)]
+        dd_label = (
+            f"Aggressive Max DD: {max_port_dd:.1%}"
+            if aggressive
+            else f"Max DD: {max_port_dd:.1%}"
+        )
         ax1.annotate(
-            f"Max DD: {max_port_dd:.1%}",
+            dd_label,
             xy=(trough_date, trough_val),
             xytext=(trough_date, trough_val * 0.9),
             arrowprops=dict(facecolor="black", shrink=0.05, width=1, headwidth=5),
@@ -1900,6 +2199,16 @@ def run_audit(
             fontweight="bold",
             color="darkred",
             ha="center",
+        )
+    if aggressive and passive_max_dd is not None:
+        ax1.text(
+            0.02,
+            0.02,
+            f"Aggressive Max DD: {max_port_dd:.2%}\nPassive Max DD: {passive_max_dd:.2%}",
+            transform=ax1.transAxes,
+            fontsize=9,
+            verticalalignment="bottom",
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.85, edgecolor="gray"),
         )
 
     ax1.set_ylabel("Total Value ($)", fontweight="bold")
@@ -1915,16 +2224,19 @@ def run_audit(
     ax2.legend(loc="upper right")
 
     chart_title = f"{file_prefix} Portfolio{scope_label}: Equity, Growth & Positions (Drawdown)"
+    if aggressive:
+        chart_title += " [aggressive]"
     plt.title(chart_title, fontsize=14, fontweight="bold")
     ax1.grid(True, linestyle="--", alpha=0.5)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     plt.xticks(rotation=45)
     plt.tight_layout()
 
+    agg_suffix = "_aggressive" if aggressive else ""
     save_name = (
-        f"{file_prefix}_Portfolio_Performance_{symbol or 'All'}_{timestamp}.png"
+        f"{file_prefix}_Portfolio_Performance_{symbol or 'All'}_{timestamp}{agg_suffix}.png"
         if symbol
-        else f"{file_prefix}_Portfolio_Performance_{timestamp}.png"
+        else f"{file_prefix}_Portfolio_Performance_{timestamp}{agg_suffix}.png"
     )
     save_path = os.path.join(out_dir, save_name)
     plt.savefig(save_path)
@@ -1932,10 +2244,15 @@ def run_audit(
     import shutil
     try:
         # Only overwrite "latest" for full-portfolio runs; single-symbol runs use latest_<SYMBOL>.png so they don't replace the main latest
+        # --aggressive writes *_latest_aggressive.png (or *_latest_<SYMBOL>_aggressive.png) so passive latest is preserved
         if symbol:
-            latest_path = os.path.join(out_dir, f"{file_prefix}_Portfolio_Performance_latest_{symbol}.png")
+            latest_path = os.path.join(
+                out_dir, f"{file_prefix}_Portfolio_Performance_latest_{symbol}{agg_suffix}.png"
+            )
         else:
-            latest_path = os.path.join(out_dir, f"{file_prefix}_Portfolio_Performance_latest.png")
+            latest_path = os.path.join(
+                out_dir, f"{file_prefix}_Portfolio_Performance_latest{agg_suffix}.png"
+            )
         shutil.copy2(save_path, latest_path)
         print(f"[FILE] Chart (latest): {latest_path}")
     except Exception as e:
@@ -1993,7 +2310,14 @@ def run_audit(
     print("\n" + "=" * 50)
     print(f"{file_prefix} PORTFOLIO PERFORMANCE SUMMARY{scope_label.upper()}")
     print("=" * 50)
-    print(f"Max DD:        {max_port_dd:.2%}")
+    print(f"Max DD:        {max_port_dd:.2%}" + (" (aggressive primary)" if aggressive else ""))
+    if aggressive and passive_max_dd is not None:
+        print(f"Max DD (passive overlay): {passive_max_dd:.2%}")
+    if aggressive and audit_row:
+        for key in ("Aggressive_Max_DD", "Aggressive_Max_Drawdown"):
+            if key in audit_row and audit_row.get(key) not in (None, ""):
+                print(f"Audit {key}: {audit_row.get(key)}")
+                break
     print(f"Peak Date:     {peak_date_for_max_dd.date()}")
     print(f"Trough Date:   {trough_date.date() if trough_date else 'N/A'}")
     print(f"Max Positions: {max(history_positions) if history_positions else 0}")
@@ -2035,24 +2359,25 @@ if __name__ == "__main__":
         _resolve_closed_csv_argument = None  # type: ignore[misc, assignment]
 
     p = argparse.ArgumentParser(
-        description="Portfolio drawdown from BRT/IND/MTS Closed + Open CSVs",
+        description="Portfolio drawdown from PREFIX_Closed + Open CSVs (BRT/IND/MTS/SB/RL/RS/YH/...)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python BRT_DrawdownCalc.py Drive/IND_Closed_260602180527.csv\n"
             "  python BRT_DrawdownCalc.py 260602180527 --engine IND\n"
-            "    (bare timestamp: use --engine when BRT and IND share the same ts)\n"
+            "  python BRT_DrawdownCalc.py drive/SB_LatestRun_Closed.csv --aggressive\n"
+            "  python BRT_DrawdownCalc.py drive/RL_LatestRun_Closed.csv --aggressive\n"
+            "    (bare timestamp: use --engine when multiple engines share the same ts)\n"
         ),
     )
     p.add_argument(
         "closed_csv",
-        help="Path to *Closed_<timestamp>.csv, or 12-digit yyMMddHHmmss (searches Drive/, drive/, cwd)",
+        help="Path to *Closed_<timestamp>.csv (or *_LatestRun_Closed.csv), or 12-digit yyMMddHHmmss (searches Drive/, drive/, cwd)",
     )
     p.add_argument(
         "--engine",
-        choices=("BRT", "IND", "MTS", "RL"),
         default=None,
-        help="When closed_csv is a bare timestamp and multiple *Closed_<ts>.csv exist, force BRT/IND/MTS/RL",
+        help="When closed_csv is a bare timestamp and multiple *Closed_<ts>.csv exist, force a PREFIX (BRT/IND/MTS/SB/RL/RS/...)",
     )
     p.add_argument("ticker_dir", nargs="?", default="data/newdata/data",
                    help="Directory with per-symbol CSVs (default: data/newdata/data, same as rocket_brt)")
@@ -2100,7 +2425,8 @@ if __name__ == "__main__":
     p.add_argument(
         "--aggressive",
         action="store_true",
-        help="Chart aggressive Equity plus passive overlay; OHLC rebuild uses aggressive sizing. "
+        help="Chart aggressive Equity plus passive overlay; OHLC rebuild uses aggressive sizing; "
+        "PNG names get _aggressive suffix (preserves passive stamp). "
         "Default (omit flag): passive Equity_Regular only when present in saved curve; passive OHLC rebuild.",
     )
     args = p.parse_args()
@@ -2115,7 +2441,7 @@ if __name__ == "__main__":
         elif re.fullmatch(r"\d{12}", (args.closed_csv or "").strip()):
             print(
                 f"[ERR] No Closed CSV for timestamp {args.closed_csv!r}. "
-                "Pass *Closed_<ts>.csv or use --engine IND|BRT|MTS|RL.",
+                "Pass *Closed_<ts>.csv or use --engine IND|BRT|MTS|SB|RL.",
                 file=sys.stderr,
             )
             sys.exit(1)

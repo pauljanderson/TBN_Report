@@ -39,7 +39,7 @@ ET = ZoneInfo("America/New_York")
 SYSTEMS = ("IND", "BRT", "RL", "YH")
 LIST_KINDS = ("Watchlist", "Scanner")
 # Engine Open books used for multi-system open positions (matches investment systems + IND).
-OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB")
+OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ")
 
 _ENTRY_DATE_COLS = ["DATE_OPENED", "DATE OPENED", "ENTRY_DATE", "DATE"]
 _ENTRY_PRICE_COLS = ["ENTRY_PRICE", "ENTRY PRICE", "BUY_PRICE", "OPEN_PRICE"]
@@ -212,7 +212,7 @@ def _load_list_csv(drive: Path, system: str, kind: str) -> tuple[Optional[Path],
 
 
 def _stamp_from_open_name(name: str) -> Optional[str]:
-    m = re.match(r"^(?:BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB)_Open_(\d{12})\.csv$", name, re.I)
+    m = re.match(r"^(?:BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_Open_(\d{12})\.csv$", name, re.I)
     return m.group(1) if m else None
 
 

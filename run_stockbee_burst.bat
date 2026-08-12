@@ -39,7 +39,13 @@ rem Working defaults: target=1.097, max_risk=0.078 (was Seed-opt 1.10 / 0.08).
 rem Theory v1 freeze remains 0.03 historically; override SB_MAX_RISK to restore.
 rem Reconcile baseline: sb_baseline_260803184014 (gold-56 @ 1.097/0.078).
 rem Prior sb_baseline_260803121109 (1.10/0.08) is obsolete.
-rem Extra CLI: trailing %* forwarded to rocket_tbn (except leading .csv / ALL universe override).
+rem Production MUST NOT pass -v entry_start_date= / start_date= (research AB only).
+rem Copy-LatestRunOutputs prefers stamps with blank Audit entry_start_date.
+rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped; -v kept).
+rem   run_sb.bat -v burst_min_pct=0.05
+rem   run_sb.bat -v "burst_min_pct=0.05"
+rem   run_sb.bat ALL -v burst_min_pct=0.05
+rem (CMD splits on '='; build_cli_forward rejoins -v KEY VALUE → KEY=VALUE.)
 
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
@@ -61,10 +67,9 @@ if /i "%SB_AGGRESSIVE%"=="true" set "SB_AGG_FLAG=--aggressive"
 if /i "%SB_AGGRESSIVE%"=="1" set "SB_AGG_FLAG=--aggressive"
 if /i "%SB_AGGRESSIVE%"=="yes" set "SB_AGG_FLAG=--aggressive"
 
-rem Optional leading universe override (do not forward that arg to rocket_tbn)
+rem Optional leading universe override (stripped from forward; trailing -v kept)
 call "%~dp0tools\apply_universe_cli_arg.bat" SB_UNIV_ARG %1 %2
-set "SB_FORWARD=%*"
-if not "%SB_UNIV_ARG%"=="" set "SB_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" SB_FORWARD "%SB_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" SB "%SB_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [SB] Universe src=%SB_UNIVERSE_SRC% pass_s=%SB_PASS_SYMBOLS%

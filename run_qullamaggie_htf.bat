@@ -18,7 +18,8 @@ rem   run_qullamaggie_htf.bat ALL
 rem   run_qullamaggie_htf.bat --all
 rem   run_qullamaggie_htf.bat "*"   (quote * in PowerShell; bare * often expands)
 rem Legacy env: set QULL_SYMBOLS=* / ALL / set QULL_ALL_CSV=1
-rem Extra CLI: trailing %* forwarded to rocket_tbn (except leading .csv / ALL universe override).
+rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped; -v kept).
+rem   run_qull.bat -v qull_trail_ema=8
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"
@@ -42,8 +43,7 @@ if /i "%QULL_AGGRESSIVE%"=="1" set "QULL_AGG_FLAG=--aggressive"
 if /i "%QULL_AGGRESSIVE%"=="yes" set "QULL_AGG_FLAG=--aggressive"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" QULL_UNIV_ARG %1 %2
-set "QULL_FORWARD=%*"
-if not "%QULL_UNIV_ARG%"=="" set "QULL_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" QULL_FORWARD "%QULL_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" QULL "%QULL_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [QULL] Universe src=%QULL_UNIVERSE_SRC% pass_s=%QULL_PASS_SYMBOLS%

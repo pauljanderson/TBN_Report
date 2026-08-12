@@ -707,6 +707,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--host-dollar-scale", type=_as_bool, default=True)
     p.add_argument("--entry-start-date", default="")
     p.add_argument("--entry-end-date", default="")
+    p.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel workers (accepted for run_*.bat parity; 0=sequential)",
+    )
     return p
 
 

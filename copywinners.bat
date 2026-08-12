@@ -24,7 +24,6 @@ copy data\newdata\OCANF.csv winners\.
 copy data\newdata\AEHR.csv winners\.
 copy data\newdata\TBBK.csv winners\.
 copy data\newdata\TOELY.csv winners\.
-copy data\newdata\ATEYY.csv winners\.
 copy data\newdata\BBW.csv winners\.
 copy data\newdata\PSIX.csv winners\.
 copy data\newdata\CFG.csv winners\.

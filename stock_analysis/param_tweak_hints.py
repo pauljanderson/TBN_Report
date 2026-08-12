@@ -882,7 +882,7 @@ def _collect_stop_hints(
 # ---------------------------------------------------------------------------
 
 _PREFERRED_PEERS = (
-    "BRT", "YH", "RS", "WPBR", "RL", "MTS", "MVCP", "SB", "IND", "QULL", "KELL", "CS",
+    "BRT", "YH", "RS", "WPBR", "RL", "MTS", "MVCP", "SB", "VZ", "IND", "QULL", "KELL", "CS",
 )
 
 

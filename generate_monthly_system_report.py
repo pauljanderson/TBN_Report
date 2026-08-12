@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / MVCP / VZ).
 
 Uses paper-trading outputs from the latest engine runs:
-  Drive/{BRT,IND,YH,MTS,WPBR,RS,SB}_LatestRun_Closed.csv / _Open.csv
+  Drive/{BRT,IND,YH,MTS,WPBR,RS,SB,MVCP,VZ}_LatestRun_Closed.csv / _Open.csv
   Drive/BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv (newest RL mirror)
 
 Writes:
@@ -27,7 +27,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB")
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ")
 
 try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
@@ -41,7 +41,7 @@ except Exception:
 
         def _normalize_exit_type(exit_type: str | None) -> str:
             return (exit_type or "").strip().upper()
-SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB"}
+SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "MVCP": "MVCP", "VZ": "VZ"}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -179,7 +179,7 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB"):
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ"):
         closed = drive / f"{sys}_LatestRun_Closed.csv"
         open_p = drive / f"{sys}_LatestRun_Open.csv"
         if sys == "WPBR" and not closed.is_file():

@@ -3,22 +3,50 @@
 
 Used by CAN SLIM soft-fill (C/A/I/S float) and Qull EP catalyst proximity.
 Does **not** call Financial Modeling Prep (FMP) — yfinance first.
+Also called from ``pygetallMore.py`` after successful OHLC updates (default ON).
 
-Also caches Yahoo short-interest snapshot fields from the same ``Ticker.info``
-fetch (shares short, days-to-cover, % of float, settlement date). Yahoo short
-data typically lags the FINRA mid-month settlement by ~1–2 weeks; treat
-``date_short_interest`` as the settlement date, not “as of today.”
+Historical vs point-in-time
+---------------------------
+**Historical (time series)** — safe for as-of backtests when filtered correctly:
+
+- ``yf_earnings_quarterly`` — quarterly Diluted/Basic EPS by fiscal ``period_end``
+  (from income statement + earnings history). Upserted on refresh; prior periods are
+  retained even if Yahoo’s latest pull returns a shorter window.
+- ``yf_earnings_annual`` — annual EPS by fiscal year-end (from annual income statement).
+- ``yf_earnings_dates`` — earnings *report* calendar (estimate / reported / surprise).
+  Yahoo often returns decades of rows via ``get_earnings_dates``; this is the longest
+  EPS-related series Yahoo exposes for free.
+
+**Point-in-time / snapshot** — Yahoo does **not** publish a historical short-interest
+API through yfinance. ``Ticker.info`` only has the latest FINRA-lagged short fields
+(``sharesShort``, ``shortRatio``, ``shortPercentOfFloat``, ``dateShortInterest``, …).
+
+- ``yf_symbol_info`` — **current** dual-write snapshot (latest refresh). Mag10 /
+  earnings-snapshot scripts keep reading this.
+- ``yf_short_interest_history`` — **dated snapshots**: each successful refresh
+  ``INSERT OR REPLACE`` one row keyed by ``(symbol, as_of)`` so a local history
+  accumulates for backtests. Use the latest row with ``as_of <= trade_date``
+  (see ``short_interest_as_of``). Settlement date ``date_short_interest`` is FINRA’s
+  mid-month date (Yahoo lags ~1–2 weeks) — not “as of today.”
 
 Env / flags
 -----------
 FUNDAMENTALS_DB       Path to DuckDB file (default: ``drive/fundamentals_cache.duckdb``).
 YF_FUND_TTL_DAYS      Info + earnings refresh TTL in days (default: 7).
-YF_FUND_FORCE_REFRESH If 1/true — ignore TTL and re-fetch.
+YF_FUND_FORCE_REFRESH If 1/true — ignore TTL and re-fetch (also appends a short snapshot).
+YF_FUND_REFRESH_MISSING_SHORT
+                      If 1/true — re-fetch when short fields are null even on TTL hit
+                      (ADRs/OTCs that Yahoo leaves empty will re-hit network each call).
 NO_YFINANCE           If 1/true — never hit Yahoo; cache-only (may return empty).
+
+CLI: ``--force-refresh`` / ``--refresh-missing-short``. Short interest comes from the
+same ``Ticker.info`` fetch — no separate command. Legacy cache rows (pre-short columns,
+``raw_json`` lacking ``sharesShort``) soft-miss and re-fetch even within TTL.
 
 Tables
 ------
-yf_symbol_info, yf_earnings_quarterly, yf_earnings_dates
+yf_symbol_info, yf_earnings_quarterly, yf_earnings_annual, yf_earnings_dates,
+yf_short_interest_history
 """
 from __future__ import annotations
 
@@ -67,6 +95,16 @@ CREATE TABLE IF NOT EXISTS yf_earnings_quarterly (
     fetched_at TIMESTAMP NOT NULL,
     PRIMARY KEY (symbol, period_end)
 );
+CREATE TABLE IF NOT EXISTS yf_earnings_annual (
+    symbol VARCHAR NOT NULL,
+    period_end DATE NOT NULL,
+    eps_actual DOUBLE,
+    eps_estimate DOUBLE,
+    surprise_pct DOUBLE,
+    reported_date DATE,
+    fetched_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (symbol, period_end)
+);
 CREATE TABLE IF NOT EXISTS yf_earnings_dates (
     symbol VARCHAR NOT NULL,
     earnings_date DATE NOT NULL,
@@ -76,7 +114,23 @@ CREATE TABLE IF NOT EXISTS yf_earnings_dates (
     fetched_at TIMESTAMP NOT NULL,
     PRIMARY KEY (symbol, earnings_date)
 );
+CREATE TABLE IF NOT EXISTS yf_short_interest_history (
+    symbol VARCHAR NOT NULL,
+    as_of DATE NOT NULL,
+    shares_short DOUBLE,
+    shares_short_prior_month DOUBLE,
+    date_short_interest DATE,
+    shares_short_previous_month_date DATE,
+    short_ratio DOUBLE,
+    short_percent_of_float DOUBLE,
+    shares_percent_shares_out DOUBLE,
+    fetched_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (symbol, as_of)
+);
 """
+
+# Yahoo caps get_earnings_dates(limit=...) at 100 (higher raises ValueError).
+_EARNINGS_DATES_LIMIT = 100
 
 # Columns added after initial deploy — ALTER IF NOT EXISTS keeps old DBs usable.
 _YF_SYMBOL_INFO_EXTRA_COLS: tuple[tuple[str, str], ...] = (
@@ -124,6 +178,10 @@ def force_refresh_requested() -> bool:
     return _env_truthy("YF_FUND_FORCE_REFRESH")
 
 
+def refresh_missing_short_requested() -> bool:
+    return _env_truthy("YF_FUND_REFRESH_MISSING_SHORT")
+
+
 def ttl_days(default: int = 7) -> int:
     raw = str(os.environ.get("YF_FUND_TTL_DAYS", "") or "").strip()
     if not raw:
@@ -156,6 +214,7 @@ def ensure_schema(db_path: str | Path | None = None) -> Path:
     try:
         con.execute(_SCHEMA_SQL)
         _migrate_yf_symbol_info(con)
+        _backfill_short_history_from_info(con)
     finally:
         con.close()
     return p
@@ -172,6 +231,42 @@ def _migrate_yf_symbol_info(con) -> None:
                 con.execute(f"ALTER TABLE yf_symbol_info ADD COLUMN {col} {typ}")
             except Exception:
                 pass
+
+
+def _backfill_short_history_from_info(con) -> None:
+    """Seed history from current ``yf_symbol_info`` when history is empty for a symbol."""
+    try:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO yf_short_interest_history
+            (symbol, as_of, shares_short, shares_short_prior_month, date_short_interest,
+             shares_short_previous_month_date, short_ratio, short_percent_of_float,
+             shares_percent_shares_out, fetched_at)
+            SELECT
+                i.symbol,
+                COALESCE(i.as_of, CAST(i.fetched_at AS DATE)),
+                i.shares_short,
+                i.shares_short_prior_month,
+                i.date_short_interest,
+                i.shares_short_previous_month_date,
+                i.short_ratio,
+                i.short_percent_of_float,
+                i.shares_percent_shares_out,
+                i.fetched_at
+            FROM yf_symbol_info i
+            WHERE COALESCE(i.as_of, CAST(i.fetched_at AS DATE)) IS NOT NULL
+              AND (
+                i.shares_short IS NOT NULL
+                OR i.short_ratio IS NOT NULL
+                OR i.short_percent_of_float IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM yf_short_interest_history h WHERE h.symbol = i.symbol
+              )
+            """
+        )
+    except Exception:
+        pass
 
 
 def _parse_ts(v: Any) -> Optional[datetime]:
@@ -273,6 +368,52 @@ def _sleep_backoff(attempt: int = 0, base: float = 0.35) -> None:
     """Polite Yahoo pacing + light jitter."""
     delay = base * (1.0 + 0.5 * attempt) + random.uniform(0.05, 0.25)
     time.sleep(min(delay, 4.0))
+
+
+def _parse_info_raw(info: dict[str, Any]) -> dict[str, Any]:
+    raw_json = info.get("raw_json")
+    if not raw_json:
+        return {}
+    try:
+        if isinstance(raw_json, str):
+            raw = json.loads(raw_json)
+        else:
+            raw = raw_json
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _short_typed_present(info: dict[str, Any]) -> bool:
+    return (
+        _safe_float(info.get("shares_short")) is not None
+        or _safe_float(info.get("short_ratio")) is not None
+        or _safe_float(info.get("short_percent_of_float")) is not None
+    )
+
+
+def _short_interest_never_fetched(info: dict[str, Any]) -> bool:
+    """True for legacy rows that predate short extraction (not Yahoo-empty).
+
+    Modern fetches always write ``sharesShort`` / ``shortRatio`` / ``shortPercentOfFloat``
+    into ``raw_json`` (even when null). Pre-short cache rows omit those keys entirely,
+    so a TTL hit would otherwise lock null shorts forever.
+    """
+    if not info:
+        return False
+    if _short_typed_present(info):
+        return False
+    raw = _parse_info_raw(info)
+    if not raw:
+        # No raw_json and null typed shorts — treat as never extracted.
+        return True
+    return not any(
+        k in raw for k in ("sharesShort", "shortRatio", "shortPercentOfFloat")
+    )
+
+
+def _short_fields_null(info: dict[str, Any]) -> bool:
+    return bool(info) and not _short_typed_present(info)
 
 
 # ---------------------------------------------------------------------------
@@ -543,10 +684,10 @@ def _load_info_row(con, symbol: str) -> Optional[dict[str, Any]]:
     return dict(zip(_INFO_SELECT_COLS, row))
 
 
-def _load_quarterly(con, symbol: str) -> list[dict[str, Any]]:
+def _load_eps_period_table(con, table: str, symbol: str) -> list[dict[str, Any]]:
     rows = con.execute(
-        "SELECT period_end, eps_actual, eps_estimate, surprise_pct, reported_date, fetched_at "
-        "FROM yf_earnings_quarterly WHERE symbol = ? ORDER BY period_end",
+        f"SELECT period_end, eps_actual, eps_estimate, surprise_pct, reported_date, fetched_at "
+        f"FROM {table} WHERE symbol = ? ORDER BY period_end",
         [symbol],
     ).fetchall()
     out = []
@@ -562,6 +703,40 @@ def _load_quarterly(con, symbol: str) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _load_quarterly(con, symbol: str) -> list[dict[str, Any]]:
+    return _load_eps_period_table(con, "yf_earnings_quarterly", symbol)
+
+
+def _load_annual(con, symbol: str) -> list[dict[str, Any]]:
+    return _load_eps_period_table(con, "yf_earnings_annual", symbol)
+
+
+def _load_short_history(con, symbol: str) -> list[dict[str, Any]]:
+    rows = con.execute(
+        """
+        SELECT as_of, shares_short, shares_short_prior_month, date_short_interest,
+               shares_short_previous_month_date, short_ratio, short_percent_of_float,
+               shares_percent_shares_out, fetched_at
+        FROM yf_short_interest_history
+        WHERE symbol = ?
+        ORDER BY as_of
+        """,
+        [symbol],
+    ).fetchall()
+    keys = (
+        "as_of",
+        "shares_short",
+        "shares_short_prior_month",
+        "date_short_interest",
+        "shares_short_previous_month_date",
+        "short_ratio",
+        "short_percent_of_float",
+        "shares_percent_shares_out",
+        "fetched_at",
+    )
+    return [dict(zip(keys, r)) for r in rows]
 
 
 def _load_earnings_dates(con, symbol: str) -> list[dict[str, Any]]:
@@ -729,7 +904,7 @@ def _fetch_yahoo_payload(symbol: str) -> dict[str, Any]:
     # Earnings dates (needs lxml for HTML scrape on many yfinance builds)
     earnings_dates: list[dict[str, Any]] = []
     try:
-        ed = t.get_earnings_dates(limit=28)
+        ed = t.get_earnings_dates(limit=_EARNINGS_DATES_LIMIT)
         if ed is not None and not getattr(ed, "empty", True):
             # columns vary: EPS Estimate, Reported EPS, Surprise(%)
             colmap = {str(c).lower(): c for c in ed.columns}
@@ -848,6 +1023,69 @@ def _fetch_yahoo_payload(symbol: str) -> dict[str, Any]:
     }
 
 
+def _upsert_eps_rows(
+    con,
+    table: str,
+    symbol: str,
+    rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> None:
+    """INSERT OR REPLACE by (symbol, period_end) — never wipe older periods."""
+    for r in rows or []:
+        pe = _to_date(r.get("period_end"))
+        if pe is None:
+            continue
+        con.execute(
+            f"""
+            INSERT OR REPLACE INTO {table}
+            (symbol, period_end, eps_actual, eps_estimate, surprise_pct, reported_date, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                symbol,
+                pe,
+                _safe_float(r.get("eps_actual")),
+                _safe_float(r.get("eps_estimate")),
+                _safe_float(r.get("surprise_pct")),
+                _to_date(r.get("reported_date")),
+                now,
+            ],
+        )
+
+
+def _upsert_short_history_row(con, symbol: str, payload: dict[str, Any], *, as_of: date, now: datetime) -> None:
+    """Append/replace today's short snapshot. Yahoo has no historical short series."""
+    # Skip empty snapshots (Yahoo often null for ADRs/OTCs) so history stays useful.
+    if (
+        _safe_float(payload.get("shares_short")) is None
+        and _safe_float(payload.get("short_ratio")) is None
+        and _safe_float(payload.get("short_percent_of_float")) is None
+    ):
+        return
+    con.execute(
+        """
+        INSERT OR REPLACE INTO yf_short_interest_history
+        (symbol, as_of, shares_short, shares_short_prior_month, date_short_interest,
+         shares_short_previous_month_date, short_ratio, short_percent_of_float,
+         shares_percent_shares_out, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            symbol,
+            as_of,
+            payload.get("shares_short"),
+            payload.get("shares_short_prior_month"),
+            payload.get("date_short_interest"),
+            payload.get("shares_short_previous_month_date"),
+            payload.get("short_ratio"),
+            payload.get("short_percent_of_float"),
+            payload.get("shares_percent_shares_out"),
+            now,
+        ],
+    )
+
+
 def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime) -> None:
     as_of = now.date()
     con.execute(
@@ -877,29 +1115,13 @@ def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime)
             now,
         ],
     )
-    # Replace earnings history for symbol (avoid stale duplicates across refreshes)
-    con.execute("DELETE FROM yf_earnings_quarterly WHERE symbol = ?", [symbol])
-    for r in payload.get("quarterly") or []:
-        pe = _to_date(r.get("period_end"))
-        if pe is None:
-            continue
-        con.execute(
-            """
-            INSERT OR REPLACE INTO yf_earnings_quarterly
-            (symbol, period_end, eps_actual, eps_estimate, surprise_pct, reported_date, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                symbol,
-                pe,
-                _safe_float(r.get("eps_actual")),
-                _safe_float(r.get("eps_estimate")),
-                _safe_float(r.get("surprise_pct")),
-                _to_date(r.get("reported_date")),
-                now,
-            ],
-        )
-    con.execute("DELETE FROM yf_earnings_dates WHERE symbol = ?", [symbol])
+    # Dual-write: current snapshot + dated history (for backtests).
+    _upsert_short_history_row(con, symbol, payload, as_of=as_of, now=now)
+
+    # Merge EPS series (do not DELETE — Yahoo windows shrink; keep accumulated history).
+    _upsert_eps_rows(con, "yf_earnings_quarterly", symbol, payload.get("quarterly") or [], now=now)
+    _upsert_eps_rows(con, "yf_earnings_annual", symbol, payload.get("annual") or [], now=now)
+
     for r in payload.get("earnings_dates") or []:
         ed = _to_date(r.get("earnings_date"))
         if ed is None:
@@ -919,6 +1141,56 @@ def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime)
                 now,
             ],
         )
+
+
+def short_interest_as_of(
+    symbol: str,
+    as_of: date | str | datetime,
+    *,
+    db_path: str | Path | None = None,
+) -> Optional[dict[str, Any]]:
+    """Latest short-interest snapshot with ``as_of <=`` the given date (backtest helper).
+
+    Returns None if no history row exists on or before ``as_of``. Yahoo never supplies
+    a true historical short series — this only reflects local refresh snapshots.
+    """
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return None
+    target = _to_date(as_of)
+    if target is None:
+        return None
+    p = ensure_schema(db_path)
+    con = _connect(p, read_only=True)
+    try:
+        row = con.execute(
+            """
+            SELECT as_of, shares_short, shares_short_prior_month, date_short_interest,
+                   shares_short_previous_month_date, short_ratio, short_percent_of_float,
+                   shares_percent_shares_out, fetched_at
+            FROM yf_short_interest_history
+            WHERE symbol = ? AND as_of <= ?
+            ORDER BY as_of DESC
+            LIMIT 1
+            """,
+            [sym, target],
+        ).fetchone()
+        if not row:
+            return None
+        keys = (
+            "as_of",
+            "shares_short",
+            "shares_short_prior_month",
+            "date_short_interest",
+            "shares_short_previous_month_date",
+            "short_ratio",
+            "short_percent_of_float",
+            "shares_percent_shares_out",
+            "fetched_at",
+        )
+        return dict(zip(keys, row))
+    finally:
+        con.close()
 
 
 def _bundle_from_cache(
@@ -1008,6 +1280,7 @@ def get_symbol_fundamentals(
     *,
     db_path: str | Path | None = None,
     force_refresh: bool | None = None,
+    refresh_missing_short: bool | None = None,
     lookback_years: float = 4.0,
     ttl: int | None = None,
     quiet: bool = False,
@@ -1020,6 +1293,11 @@ def get_symbol_fundamentals(
     p = ensure_schema(db_path)
     ttl_n = int(ttl if ttl is not None else ttl_days())
     force = bool(force_refresh) if force_refresh is not None else force_refresh_requested()
+    want_short = (
+        bool(refresh_missing_short)
+        if refresh_missing_short is not None
+        else refresh_missing_short_requested()
+    )
     disabled = yfinance_disabled()
 
     con = _connect(p, read_only=False)
@@ -1035,14 +1313,25 @@ def get_symbol_fundamentals(
         ) or (
             bool(quarterly or dates) and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n)
         )
+        # Soft-miss: legacy rows never extracted short interest, or explicit
+        # refresh-missing-short when typed short fields are still null.
+        short_gap = bool(info) and (
+            _short_interest_never_fetched(info)
+            or (want_short and _short_fields_null(info))
+        )
         # If we have any rows and fetch is fresh, treat as hit even if lookback short
         # (Yahoo often returns ≤5 annual / ≤5 quarterly columns).
-        if not force and info_ok and (earn_ok or (bool(info) and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n))):
+        if (
+            not force
+            and not short_gap
+            and info_ok
+            and (earn_ok or (bool(info) and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n)))
+        ):
             if not quiet:
                 print(f"[YF_FUND] CACHE HIT {sym}", flush=True)
             return _bundle_from_cache(sym, info, quarterly, dates, cache_hit=True, source="CACHE")
 
-        if not force and info_ok and quarterly and not dates:
+        if not force and not short_gap and info_ok and quarterly and not dates:
             # Partial: enough for C/A soft-fill; still a cache hit for DNA
             if not quiet:
                 print(f"[YF_FUND] CACHE HIT {sym} (info+eps; no earnings_dates)", flush=True)
@@ -1054,6 +1343,9 @@ def get_symbol_fundamentals(
             if info or quarterly or dates:
                 return _bundle_from_cache(sym, info or {"fetched_at": None}, quarterly, dates, cache_hit=True, source="DISABLED")
             return SymbolFundamentals(symbol=sym, source="DISABLED")
+
+        if short_gap and not force and not quiet:
+            print(f"[YF_FUND] SHORT GAP {sym} — re-fetch (legacy/null short)", flush=True)
 
         # Need network
         last_err: Optional[BaseException] = None
@@ -1080,10 +1372,15 @@ def get_symbol_fundamentals(
 
         now = datetime.now()
         _upsert_payload(con, sym, payload, now=now)
+        # Re-read merged history (Yahoo window may be shorter than accumulated cache).
+        quarterly2 = _load_quarterly(con, sym)
+        dates2 = _load_earnings_dates(con, sym)
+        annual_n = len(_load_annual(con, sym))
+        short_n = len(_load_short_history(con, sym))
         if not quiet:
             print(
-                f"[YF_FUND] FETCH {sym} q={len(payload.get('quarterly') or [])} "
-                f"dates={len(payload.get('earnings_dates') or [])}",
+                f"[YF_FUND] FETCH {sym} q={len(quarterly2)} annual={annual_n} "
+                f"dates={len(dates2)} short_hist={short_n}",
                 flush=True,
             )
         info2 = {
@@ -1104,8 +1401,8 @@ def get_symbol_fundamentals(
         return _bundle_from_cache(
             sym,
             info2,
-            payload.get("quarterly") or [],
-            payload.get("earnings_dates") or [],
+            quarterly2,
+            dates2,
             cache_hit=False,
             source="FETCH",
         )
@@ -1118,6 +1415,7 @@ def ensure_symbols(
     *,
     db_path: str | Path | None = None,
     force_refresh: bool | None = None,
+    refresh_missing_short: bool | None = None,
     lookback_years: float = 4.0,
     ttl: int | None = None,
     quiet: bool = False,
@@ -1134,6 +1432,7 @@ def ensure_symbols(
             sym,
             db_path=db_path,
             force_refresh=force_refresh,
+            refresh_missing_short=refresh_missing_short,
             lookback_years=lookback_years,
             ttl=ttl,
             quiet=quiet,
@@ -1213,25 +1512,82 @@ def _cli(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="yfinance fundamentals → DuckDB cache")
     ap.add_argument("symbols", nargs="*", default=["NVDA", "AAPL", "TSLA"])
     ap.add_argument("--db", default="", help="DuckDB path (else FUNDAMENTALS_DB / default)")
-    ap.add_argument("--force-refresh", action="store_true")
+    ap.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Ignore TTL and re-fetch info + earnings + short interest from Yahoo",
+    )
+    ap.add_argument(
+        "--refresh-missing-short",
+        action="store_true",
+        help="Re-fetch when short fields are null even if TTL is still valid",
+    )
     ap.add_argument("--ttl-days", type=int, default=-1)
     args = ap.parse_args(argv)
     db = args.db or None
     ttl = None if int(args.ttl_days) < 0 else int(args.ttl_days)
     p = resolve_fundamentals_db(db)
     print(f"[YF_FUND] db={p}", flush=True)
+    ensure_schema(db)
+    import duckdb as _duckdb
+
     for sym in args.symbols:
         b = get_symbol_fundamentals(
-            sym, db_path=db, force_refresh=bool(args.force_refresh), ttl=ttl
+            sym,
+            db_path=db,
+            force_refresh=bool(args.force_refresh),
+            refresh_missing_short=bool(args.refresh_missing_short),
+            ttl=ttl,
         )
         dna = canslim_dna_from_fundamentals(b)
+        con = _duckdb.connect(str(p), read_only=True)
+        try:
+            q_n = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM yf_earnings_quarterly WHERE symbol = ?", [b.symbol]
+                ).fetchone()[0]
+            )
+            a_n = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM yf_earnings_annual WHERE symbol = ?", [b.symbol]
+                ).fetchone()[0]
+            )
+            d_n = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM yf_earnings_dates WHERE symbol = ?", [b.symbol]
+                ).fetchone()[0]
+            )
+            sh = con.execute(
+                """
+                SELECT as_of, shares_short, short_percent_of_float, short_ratio, date_short_interest
+                FROM yf_short_interest_history
+                WHERE symbol = ?
+                ORDER BY as_of DESC
+                LIMIT 1
+                """,
+                [b.symbol],
+            ).fetchone()
+            sh_n = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM yf_short_interest_history WHERE symbol = ?",
+                    [b.symbol],
+                ).fetchone()[0]
+            )
+        finally:
+            con.close()
+        sh_s = (
+            f"as_of={sh[0]} shares_short={sh[1]} short%float={sh[2]} "
+            f"daysToCover={sh[3]} settle={sh[4]}"
+            if sh
+            else "none"
+        )
         print(
             f"  {b.symbol}: source={b.source} cache_hit={b.cache_hit} "
             f"C_EPS_YOY={dna['c_eps_yoy']} A_EPS_CAGR={dna['a_eps_cagr']} "
             f"A_ROE={dna['a_roe']} S_FLOAT={dna['s_float']} I_SPONSOR={dna['i_sponsor']} "
             f"short={b.shares_short} short%float={b.short_percent_of_float} "
             f"daysToCover={b.short_ratio} shortSettle={b.date_short_interest} "
-            f"q={len(b.earnings_quarterly)} dates={len(b.earnings_dates)}",
+            f"q={q_n} annual={a_n} dates={d_n} short_hist={sh_n} [{sh_s}]",
             flush=True,
         )
     return 0

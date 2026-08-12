@@ -12,7 +12,7 @@ _CSV_PATH = _REPO_ROOT / "drive" / "universes" / "MTS_universe.csv"
 
 _FALLBACK = [
     "AAON", "ABCB", "ABG", "ACA", "ACU", "ALG", "AMD", "AMN", "APP", "ARES",
-    "ATEYY", "AU", "BBW", "BELFA", "BWLP", "CF", "CHCI", "CIEN", "CLS", "CMC",
+    "AU", "BBW", "BELFA", "BWLP", "CF", "CHCI", "CIEN", "CLS", "CMC",
     "COHR", "COKE", "CRS", "CRWD", "CSTM", "CVCO", "DDS", "DECK", "DKL", "DKS",
     "DXCM", "DY", "ENVA", "ESP", "EVR", "FEIM", "FN", "FRD", "FTAI", "HWKN",
     "IBP", "IESC", "IR", "JOE", "LMAT", "LOGI", "LRCX", "LUGDF", "LULU", "MATX",

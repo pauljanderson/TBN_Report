@@ -1,9 +1,14 @@
 """
-Pending exit alerts for BRT/IND open positions (next session at open).
+Pending exit alerts for open positions (investment report → Pending sells).
 
-Primary rule: sell_on_low_vol — exit at the first bar after entry when
-REL_VOL_AT_ENTRY (entry-day volume / 10d avg) is below the audit threshold.
-At EOD on the entry date, flag positions that will trigger on the next open.
+Rules:
+  1) BRT/IND sell_on_low_vol — exit next session open when entry-day REL_VOL
+     is below the audit threshold.
+  2) SB time-based — gold freeze no-FT (3d) / time stop (5d); exit at close
+     (or next open if overdue). Fidelity stop/target does not cover these.
+  3) VZ time stop — research freeze zone_atr05_ts40 (40 bars); flag when
+     approaching (within warn window) or hit. Works when VZ opens exist
+     (gettarget / VZ_Open) even before DailyRun wire.
 """
 from __future__ import annotations
 
@@ -17,29 +22,36 @@ import pandas as pd
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data" / "newdata" / "data"
 
-_AUDIT_TS_RE = re.compile(r"^(?P<prefix>BRT|IND)_Audit_Report_(?P<ts>\d{12})\.csv$", re.I)
-_OPEN_TS_RE = re.compile(r"^(?P<prefix>BRT|IND)_Open_(?P<ts>\d{12})\.csv$", re.I)
+# Any system prefix with stamped Open/Audit (skip RL twin names in callers).
+_AUDIT_TS_RE = re.compile(r"^(?P<prefix>[A-Za-z]+)_Audit_Report_(?P<ts>\d{12})\.csv$", re.I)
+_OPEN_TS_RE = re.compile(r"^(?P<prefix>[A-Za-z]+)_Open_(?P<ts>\d{12})\.csv$", re.I)
+
+# SB gold freeze defaults (run_stockbee_burst.bat / sb_baseline).
+DEFAULT_SB_TIME_STOP_DAYS = 5
+DEFAULT_SB_NO_FT_DAYS = 3
+# VZ research freeze zone_atr05_ts40.
+DEFAULT_VZ_TIME_STOP_DAYS = 40
+DEFAULT_VZ_APPROACH_BARS = 3
 
 
 @dataclass
-class PendingLowVolSell:
+class PendingSell:
     symbol: str
     system: str
     entry_date: date
     as_of_date: date
-    rel_vol_at_entry: float
-    sell_on_low_vol: float
+    exit_reason: str
+    sell_when: str = "Next session open"
     entry_price: Optional[float] = None
     current_price: Optional[float] = None
+    days_held: Optional[int] = None
+    rel_vol_at_entry: Optional[float] = None
+    sell_on_low_vol: Optional[float] = None
     rel_vol_source: str = ""
 
-    @property
-    def exit_reason(self) -> str:
-        return "LOW_REL_VOL_EXIT"
 
-    @property
-    def sell_when(self) -> str:
-        return "Next session open"
+# Backward-compatible name used by older callers / tests.
+PendingLowVolSell = PendingSell
 
 
 def _parse_trade_date(raw) -> Optional[date]:
@@ -96,10 +108,51 @@ def load_sell_on_low_vol_thresholds(
     return out
 
 
+def load_sb_time_exit_params(drive_dir: Path) -> tuple[int, int]:
+    """(burst_time_stop_days, burst_no_ft_days) from latest SB audit, else gold defaults."""
+    time_stop = DEFAULT_SB_TIME_STOP_DAYS
+    no_ft = DEFAULT_SB_NO_FT_DAYS
+    path = _latest_audit_path(drive_dir, "SB")
+    if not path:
+        return time_stop, no_ft
+    try:
+        df = pd.read_csv(path, nrows=1)
+        if "burst_time_stop_days" in df.columns:
+            v = df["burst_time_stop_days"].iloc[0]
+            if pd.notna(v):
+                time_stop = int(float(v))
+        if "burst_no_ft_days" in df.columns:
+            v = df["burst_no_ft_days"].iloc[0]
+            if pd.notna(v):
+                no_ft = int(float(v))
+    except (OSError, ValueError, TypeError):
+        pass
+    return time_stop, no_ft
+
+
+def load_vz_time_exit_params(drive_dir: Path) -> tuple[int, int]:
+    """(time_stop_days, approach_warn_bars). Audit override when present; else research freeze."""
+    time_stop = DEFAULT_VZ_TIME_STOP_DAYS
+    approach = DEFAULT_VZ_APPROACH_BARS
+    path = _latest_audit_path(drive_dir, "VZ")
+    if path:
+        try:
+            df = pd.read_csv(path, nrows=1)
+            for col in ("vz_time_stop_days", "exit_bars", "time_stop_days"):
+                if col in df.columns and pd.notna(df[col].iloc[0]):
+                    time_stop = int(float(df[col].iloc[0]))
+                    break
+        except (OSError, ValueError, TypeError):
+            pass
+    return time_stop, approach
+
+
 def _latest_open_path(drive_dir: Path, prefix: str) -> Optional[Path]:
     pfx = prefix.upper()
     best: Optional[tuple[str, Path]] = None
     for path in drive_dir.glob(f"{pfx}_Open_*.csv"):
+        if "_RL_" in path.name.upper():
+            continue
         m = _OPEN_TS_RE.match(path.name)
         if m and m.group("prefix").upper() == pfx:
             ts = m.group("ts")
@@ -227,28 +280,24 @@ def _load_open_csv_positions(
     return out
 
 
-def find_pending_low_vol_sells(
+def _collect_open_candidates(
     *,
     positions_path: Path,
     gettarget_path: Path,
     drive_dir: Path,
-    as_of_date: Optional[date] = None,
-    data_dir: Path = DEFAULT_DATA_DIR,
-    thresholds: Optional[dict[str, float]] = None,
-) -> tuple[list[PendingLowVolSell], dict[str, float], date]:
+    open_prefixes: tuple[str, ...] = (),
+) -> tuple[
+    list[tuple[str, str, date, Optional[float], Optional[float]]],
+    dict[tuple[str, str], dict],
+]:
     """
-    Open positions (any entry date) whose stored entry-day rel vol is below threshold.
-    Matches rocket_brt LOW_REL_VOL_EXIT: sell at next session open after entry when
-    REL_VOL_AT_ENTRY < sell_on_low_vol. While still holding, flag for the upcoming open.
+    Open lots from gettarget_positions + getTarget + optional *Open* CSVs.
+    Returns (candidates, gt_rows keyed by (symbol, entry_iso)).
     """
-    as_of = _resolve_as_of_date(gettarget_path, as_of_date)
-    thresh = load_sell_on_low_vol_thresholds(drive_dir, overrides=thresholds)
-    rel_lookups = {pfx: load_open_rel_vol_lookup(drive_dir, pfx) for pfx in ("IND", "BRT")}
-
     gt_rows: dict[tuple[str, str], dict] = {}
     if gettarget_path.is_file():
         gt = pd.read_csv(gettarget_path)
-        if not gt.empty:
+        if not gt.empty and "Symbol" in gt.columns:
             gt["Symbol"] = gt["Symbol"].astype(str).str.upper()
             for _, r in gt.iterrows():
                 sym = str(r["Symbol"]).strip().upper()
@@ -256,7 +305,7 @@ def find_pending_low_vol_sells(
                 pd_raw = r.get("PurchaseDate", r.get("EntryDateUsed"))
                 pd_d = _parse_trade_date(pd_raw)
                 if sym and sys_ and pd_d:
-                    gt_rows[(sym, pd_d.isoformat())] = r
+                    gt_rows[(sym, pd_d.isoformat())] = r.to_dict()
 
     candidates: list[tuple[str, str, date, Optional[float], Optional[float]]] = []
     seen_keys: set[tuple[str, str, date]] = set()
@@ -268,7 +317,7 @@ def find_pending_low_vol_sells(
         if key in seen_keys:
             return
         seen_keys.add(key)
-        candidates.append(key + (ep, cp))
+        candidates.append((sym, sys_, ed, ep, cp))
 
     if positions_path.is_file():
         pos = pd.read_csv(positions_path, dtype=str, keep_default_na=False)
@@ -295,18 +344,114 @@ def find_pending_low_vol_sells(
         if ed is None:
             continue
         sys_ = str(r.get("System", "")).strip().upper()
-        ep = float(r["EntryPrice"]) if pd.notna(r.get("EntryPrice")) else None
-        cp = float(r["CurrentPrice"]) if pd.notna(r.get("CurrentPrice")) else None
+        ep = None
+        cp = None
+        try:
+            if r.get("EntryPrice") is not None and not pd.isna(r.get("EntryPrice")):
+                ep = float(r["EntryPrice"])
+        except (TypeError, ValueError):
+            ep = None
+        try:
+            if r.get("CurrentPrice") is not None and not pd.isna(r.get("CurrentPrice")):
+                cp = float(r["CurrentPrice"])
+        except (TypeError, ValueError):
+            cp = None
         _add(sym, sys_, ed, ep, cp)
 
-    # Strategy open files: all symbols still open in the latest backtest run.
-    for prefix in ("IND", "BRT"):
-        if float(thresh.get(prefix, 0.0) or 0.0) <= 0:
-            continue
+    for prefix in open_prefixes:
         for sym, ed, _rv, ep, cp in _load_open_csv_positions(drive_dir, prefix):
-            _add(sym, prefix, ed, ep, cp)
+            _add(sym, prefix.upper(), ed, ep, cp)
 
-    pending: list[PendingLowVolSell] = []
+    return candidates, gt_rows
+
+
+def _load_ohlcv(data_dir: Path, symbol: str) -> Optional[pd.DataFrame]:
+    path = data_dir / f"{symbol.upper()}.csv"
+    if not path.is_file():
+        return None
+    try:
+        df = pd.read_csv(path)
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+        df = df.dropna(subset=["Date", "Close"]).sort_values("Date").reset_index(drop=True)
+    except OSError:
+        return None
+    return df if not df.empty else None
+
+
+def bars_held_and_follow_through(
+    data_dir: Path,
+    symbol: str,
+    entry_date: date,
+    entry_price: Optional[float],
+    as_of: date,
+) -> tuple[Optional[int], bool, Optional[float]]:
+    """
+    Trading-bar held count matching SB engine (i - entry_idx), whether any close
+    since entry exceeded entry_price, and last close <= as_of.
+    """
+    df = _load_ohlcv(data_dir, symbol)
+    if df is None:
+        return None, False, None
+    entry_rows = df.index[df["Date"] == entry_date].tolist()
+    if not entry_rows:
+        # Broker fill date may miss a session — nearest on/after.
+        after = df.index[df["Date"] >= entry_date].tolist()
+        if not after:
+            return None, False, None
+        entry_i = int(after[0])
+    else:
+        entry_i = int(entry_rows[-1])
+    asof_rows = df.index[df["Date"] <= as_of].tolist()
+    if not asof_rows:
+        return None, False, None
+    last_i = int(asof_rows[-1])
+    if last_i < entry_i:
+        return None, False, None
+    held = last_i - entry_i
+    last_close = float(df["Close"].iloc[last_i])
+    saw_ft = False
+    if entry_price is not None and entry_price > 0:
+        closes = df["Close"].iloc[entry_i : last_i + 1]
+        saw_ft = bool((closes > float(entry_price)).any())
+    return held, saw_ft, last_close
+
+
+def _sell_when_for_bar_exit(held: int, trigger_days: int) -> str:
+    if held > trigger_days:
+        return "Next session open (overdue)"
+    return "At close"
+
+
+def find_pending_low_vol_sells(
+    *,
+    positions_path: Path,
+    gettarget_path: Path,
+    drive_dir: Path,
+    as_of_date: Optional[date] = None,
+    data_dir: Path = DEFAULT_DATA_DIR,
+    thresholds: Optional[dict[str, float]] = None,
+) -> tuple[list[PendingSell], dict[str, float], date]:
+    """
+    Open positions (any entry date) whose stored entry-day rel vol is below threshold.
+    Matches rocket_brt LOW_REL_VOL_EXIT: sell at next session open after entry when
+    REL_VOL_AT_ENTRY < sell_on_low_vol. While still holding, flag for the upcoming open.
+    """
+    as_of = _resolve_as_of_date(gettarget_path, as_of_date)
+    thresh = load_sell_on_low_vol_thresholds(drive_dir, overrides=thresholds)
+    rel_lookups = {pfx: load_open_rel_vol_lookup(drive_dir, pfx) for pfx in ("IND", "BRT")}
+
+    open_prefixes = tuple(
+        pfx for pfx in ("IND", "BRT") if float(thresh.get(pfx, 0.0) or 0.0) > 0
+    )
+    candidates, gt_rows = _collect_open_candidates(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        open_prefixes=open_prefixes,
+    )
+
+    pending: list[PendingSell] = []
     seen: set[tuple[str, str, date]] = set()
     for sym, sys_, ed, ep, cp in candidates:
         if (sym, sys_, ed) in seen:
@@ -326,18 +471,25 @@ def find_pending_low_vol_sells(
             continue
         if cp is None:
             gt_r = gt_rows.get((sym, ed.isoformat()))
-            if gt_r is not None and pd.notna(gt_r.get("CurrentPrice")):
-                cp = float(gt_r["CurrentPrice"])
+            if gt_r is not None:
+                try:
+                    raw_cp = gt_r.get("CurrentPrice")
+                    if raw_cp is not None and not pd.isna(raw_cp):
+                        cp = float(raw_cp)
+                except (TypeError, ValueError):
+                    pass
         pending.append(
-            PendingLowVolSell(
+            PendingSell(
                 symbol=sym,
                 system=sys_,
                 entry_date=ed,
                 as_of_date=as_of,
-                rel_vol_at_entry=round(float(rv), 4),
-                sell_on_low_vol=thr,
+                exit_reason="LOW_REL_VOL_EXIT",
+                sell_when="Next session open",
                 entry_price=ep,
                 current_price=cp,
+                rel_vol_at_entry=round(float(rv), 4),
+                sell_on_low_vol=thr,
                 rel_vol_source=src,
             )
         )
@@ -346,35 +498,186 @@ def find_pending_low_vol_sells(
     return pending, thresh, as_of
 
 
-def pending_sells_to_dataframe(pending: list[PendingLowVolSell]) -> pd.DataFrame:
-    if not pending:
-        return pd.DataFrame(
-            columns=[
-                "Symbol",
-                "System",
-                "EntryDate",
-                "AsOfDate",
-                "REL_VOL_AT_ENTRY",
-                "sell_on_low_vol",
-                "ExitReason",
-                "SellWhen",
-                "EntryPrice",
-                "CurrentPrice",
-                "RelVolSource",
-            ]
+def find_pending_time_based_sells(
+    *,
+    positions_path: Path,
+    gettarget_path: Path,
+    drive_dir: Path,
+    as_of_date: Optional[date] = None,
+    data_dir: Path = DEFAULT_DATA_DIR,
+    sb_time_stop_days: Optional[int] = None,
+    sb_no_ft_days: Optional[int] = None,
+    vz_time_stop_days: Optional[int] = None,
+    vz_approach_bars: Optional[int] = None,
+) -> tuple[list[PendingSell], dict[str, int], date]:
+    """
+    SB: flag when no-FT or time-stop bar count is reached (engine close exits).
+    VZ: flag when within approach window of 40d time stop, or hit/overdue.
+    """
+    as_of = _resolve_as_of_date(gettarget_path, as_of_date)
+    audit_ts, audit_nft = load_sb_time_exit_params(drive_dir)
+    time_stop = int(sb_time_stop_days if sb_time_stop_days is not None else audit_ts)
+    no_ft = int(sb_no_ft_days if sb_no_ft_days is not None else audit_nft)
+    vz_ts_audit, vz_ap_audit = load_vz_time_exit_params(drive_dir)
+    vz_ts = int(vz_time_stop_days if vz_time_stop_days is not None else vz_ts_audit)
+    vz_ap = int(vz_approach_bars if vz_approach_bars is not None else vz_ap_audit)
+
+    params = {
+        "sb_time_stop_days": time_stop,
+        "sb_no_ft_days": no_ft,
+        "vz_time_stop_days": vz_ts,
+        "vz_approach_bars": vz_ap,
+    }
+
+    candidates, gt_rows = _collect_open_candidates(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        open_prefixes=("SB", "VZ"),
+    )
+
+    pending: list[PendingSell] = []
+    seen: set[tuple[str, str, date, str]] = set()
+
+    for sym, sys_, ed, ep, cp in candidates:
+        if sys_ not in ("SB", "VZ"):
+            continue
+        if ep is None:
+            gt_r = gt_rows.get((sym, ed.isoformat()))
+            if gt_r is not None:
+                try:
+                    raw_ep = gt_r.get("EntryPrice")
+                    if raw_ep is not None and not pd.isna(raw_ep):
+                        ep = float(raw_ep)
+                except (TypeError, ValueError):
+                    pass
+        held, saw_ft, last_close = bars_held_and_follow_through(
+            data_dir, sym, ed, ep, as_of
         )
+        if held is None:
+            continue
+        if cp is None:
+            cp = last_close
+            gt_r = gt_rows.get((sym, ed.isoformat()))
+            if gt_r is not None:
+                try:
+                    raw_cp = gt_r.get("CurrentPrice")
+                    if raw_cp is not None and not pd.isna(raw_cp):
+                        cp = float(raw_cp)
+                except (TypeError, ValueError):
+                    pass
+
+        reason = ""
+        sell_when = ""
+        if sys_ == "SB":
+            # Match engine priority: NO_FT before TIME.
+            if no_ft > 0 and held >= no_ft and not saw_ft:
+                reason = f"SB no follow-through ({no_ft}d)"
+                sell_when = _sell_when_for_bar_exit(held, no_ft)
+            elif time_stop > 0 and held >= time_stop:
+                reason = f"SB time stop ({time_stop}d)"
+                sell_when = _sell_when_for_bar_exit(held, time_stop)
+        elif sys_ == "VZ" and vz_ts > 0:
+            if held >= vz_ts:
+                reason = f"VZ time stop ({vz_ts}d)"
+                sell_when = _sell_when_for_bar_exit(held, vz_ts)
+            elif vz_ap > 0 and held >= max(0, vz_ts - vz_ap):
+                left = vz_ts - held
+                reason = f"VZ time stop approaching ({held}/{vz_ts}d)"
+                sell_when = f"Plan exit by day {vz_ts} close ({left}d left)"
+
+        if not reason:
+            continue
+        dedupe = (sym, sys_, ed, reason)
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        pending.append(
+            PendingSell(
+                symbol=sym,
+                system=sys_,
+                entry_date=ed,
+                as_of_date=as_of,
+                exit_reason=reason,
+                sell_when=sell_when,
+                entry_price=ep,
+                current_price=cp,
+                days_held=held,
+            )
+        )
+
+    pending.sort(key=lambda x: (x.system, x.symbol, x.exit_reason))
+    return pending, params, as_of
+
+
+def find_all_pending_sells(
+    *,
+    positions_path: Path,
+    gettarget_path: Path,
+    drive_dir: Path,
+    as_of_date: Optional[date] = None,
+    data_dir: Path = DEFAULT_DATA_DIR,
+    thresholds: Optional[dict[str, float]] = None,
+) -> tuple[list[PendingSell], dict[str, float], dict[str, int], date]:
+    """Merge low-vol + time-based pending sells (dedupe by symbol/system/entry/reason)."""
+    low_vol, thresh, as_of = find_pending_low_vol_sells(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        as_of_date=as_of_date,
+        data_dir=data_dir,
+        thresholds=thresholds,
+    )
+    timed, time_params, as_of2 = find_pending_time_based_sells(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        as_of_date=as_of_date or as_of,
+        data_dir=data_dir,
+    )
+    as_of = as_of_date or as_of2 or as_of
+    pending = list(low_vol)
+    seen = {(p.symbol, p.system, p.entry_date, p.exit_reason) for p in pending}
+    for p in timed:
+        key = (p.symbol, p.system, p.entry_date, p.exit_reason)
+        if key in seen:
+            continue
+        seen.add(key)
+        pending.append(p)
+    pending.sort(key=lambda x: (x.system, x.symbol, x.exit_reason))
+    return pending, thresh, time_params, as_of
+
+
+def pending_sells_to_dataframe(pending: list[PendingSell]) -> pd.DataFrame:
+    cols = [
+        "Symbol",
+        "System",
+        "EntryDate",
+        "AsOfDate",
+        "DaysHeld",
+        "ExitReason",
+        "SellWhen",
+        "EntryPrice",
+        "CurrentPrice",
+        "REL_VOL_AT_ENTRY",
+        "sell_on_low_vol",
+        "RelVolSource",
+    ]
+    if not pending:
+        return pd.DataFrame(columns=cols)
     rows = [
         {
             "Symbol": p.symbol,
             "System": p.system,
             "EntryDate": p.entry_date.isoformat(),
             "AsOfDate": p.as_of_date.isoformat(),
-            "REL_VOL_AT_ENTRY": p.rel_vol_at_entry,
-            "sell_on_low_vol": p.sell_on_low_vol,
+            "DaysHeld": p.days_held,
             "ExitReason": p.exit_reason,
             "SellWhen": p.sell_when,
             "EntryPrice": p.entry_price,
             "CurrentPrice": p.current_price,
+            "REL_VOL_AT_ENTRY": p.rel_vol_at_entry,
+            "sell_on_low_vol": p.sell_on_low_vol,
             "RelVolSource": p.rel_vol_source,
         }
         for p in pending
@@ -383,7 +686,7 @@ def pending_sells_to_dataframe(pending: list[PendingLowVolSell]) -> pd.DataFrame
 
 
 def write_sell_report_csv(
-    pending: list[PendingLowVolSell],
+    pending: list[PendingSell],
     output_path: Path,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -392,18 +695,18 @@ def write_sell_report_csv(
 
 
 def format_sell_report_html_rows(
-    pending: list[PendingLowVolSell],
+    pending: list[PendingSell],
 ) -> tuple[list[list[str]], list[str], list[str]]:
     headers = [
         "Symbol",
         "System",
         "Entry",
-        "REL_VOL",
-        "Threshold",
-        "Exit",
+        "Days held",
+        "Exit reason",
         "When",
         "Entry $",
         "Current $",
+        "REL_VOL",
     ]
     rows: list[list[str]] = []
     for p in pending:
@@ -412,39 +715,51 @@ def format_sell_report_html_rows(
                 p.symbol,
                 p.system,
                 p.entry_date.strftime("%m/%d/%Y"),
-                f"{p.rel_vol_at_entry:.4f}",
-                f"{p.sell_on_low_vol:.4f}",
+                str(p.days_held) if p.days_held is not None else "—",
                 p.exit_reason,
                 p.sell_when,
                 f"${p.entry_price:.2f}" if p.entry_price is not None else "—",
                 f"${p.current_price:.2f}" if p.current_price is not None else "—",
+                f"{p.rel_vol_at_entry:.4f}" if p.rel_vol_at_entry is not None else "—",
             ]
         )
-    sort_types = ["text", "text", "date", "num", "num", "text", "text", "num", "num"]
+    sort_types = ["text", "text", "date", "num", "text", "text", "num", "num", "num"]
     return rows, headers, sort_types
 
 
 def sell_report_html_section(
-    pending: list[PendingLowVolSell],
+    pending: list[PendingSell],
     thresholds: dict[str, float],
     as_of: date,
     *,
     html_table_fn,
+    time_params: Optional[dict[str, int]] = None,
 ) -> str:
     """HTML fragment for investment report (html_table_fn = _html_table)."""
     ind_thr = thresholds.get("IND", 0.0)
     brt_thr = thresholds.get("BRT", 0.0)
+    tp = time_params or {}
+    sb_ts = tp.get("sb_time_stop_days", DEFAULT_SB_TIME_STOP_DAYS)
+    sb_nft = tp.get("sb_no_ft_days", DEFAULT_SB_NO_FT_DAYS)
+    vz_ts = tp.get("vz_time_stop_days", DEFAULT_VZ_TIME_STOP_DAYS)
     thr_note = (
-        f"IND sell_on_low_vol={ind_thr:g} · BRT sell_on_low_vol={brt_thr:g} · "
+        f"IND/BRT sell_on_low_vol={ind_thr:g}/{brt_thr:g} · "
+        f"SB no-FT={sb_nft}d / time={sb_ts}d · VZ time={vz_ts}d · "
         f"As-of {as_of:%Y-%m-%d}"
+    )
+    rule_note = (
+        "Fidelity stop/target covers price exits. Time-based exits "
+        "(SB no-FT / SB time stop / VZ 40d) are <strong>not</strong> in the broker ticket — "
+        "watch this section after each DailyRun / investment report refresh. "
+        "Low-vol BRT/IND exits: next session open when REL_VOL_AT_ENTRY &lt; threshold."
     )
     if not pending:
         return f"""
 <section>
-<h2>Pending sells (next open)</h2>
+<h2>Pending sells</h2>
 <p class="small">{thr_note}</p>
-<p>No open positions with entry-day relative volume below the low-volume exit threshold.</p>
-<p class="small">Rule: exit at the <strong>next session open</strong> when REL_VOL_AT_ENTRY (entry-day volume ÷ 10-day avg) is below sell_on_low_vol. All current holdings are checked, regardless of entry date.</p>
+<p>No open positions currently flagged for low-vol or time-based exits.</p>
+<p class="small">{rule_note}</p>
 </section>
 """
     rows, headers, sort_types = format_sell_report_html_rows(pending)
@@ -454,12 +769,13 @@ def sell_report_html_section(
         sort_types,
         table_id="pending-sells-table",
     )
+    n = len(pending)
     return f"""
 <section class="pagebreak" id="pending-sells-section">
-<h2>Pending sells (next open)</h2>
-<p id="pending-sells-warn" class="small warn">⚠ {len(pending)} open position(s) with low entry-day volume — plan to sell at the <strong>next session open</strong> per backtest rules.</p>
+<h2>Pending sells</h2>
+<p id="pending-sells-warn" class="small warn">⚠ {n} open position(s) need a manual sell action — see Exit reason / When (Fidelity stop/target alone is not enough for time exits).</p>
 <p class="small">{thr_note}</p>
 <div class="table-wrap">{table}</div>
-<p class="small">REL_VOL_AT_ENTRY is from the latest Open run or OHLCV when missing. Matches rocket_brt LOW_REL_VOL_EXIT.</p>
+<p class="small">{rule_note} Click column headers to sort.</p>
 </section>
 """

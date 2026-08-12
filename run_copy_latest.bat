@@ -1,5 +1,5 @@
 @echo off
-rem Copy latest BRT/IND/YH/MTS/WPBR/RS/SB/RL timestamped CSVs (including Summary) to *_LatestRun_* stable names
+rem Copy latest BRT/IND/YH/MTS/WPBR/RS/SB/MVCP/VZ/RL timestamped CSVs (including Summary) to *_LatestRun_* stable names
 setlocal EnableExtensions
 cd /d "%~dp0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Copy-LatestRunOutputs.ps1" %*

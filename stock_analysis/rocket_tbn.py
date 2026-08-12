@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TBN engine (Twin Beacon Networks) — shared multi-system backtest host.
+TBN engine (Twin Beacon Networks) - shared multi-system backtest host.
 
 Hosts strategy *systems* selected by flags (output prefix from ``_output_file_prefix``):
 **BRT** (Break and ReTest), **WPBR**, **YH**, **MTS**, **RL**, **RS**, **IND**, **VEC**, …
@@ -13,7 +13,7 @@ Hosts strategy *systems* selected by flags (output prefix from ``_output_file_pr
 Zone creation for BRT matches the original engine (see ``rocket_brt_og.py``). Entry is intentionally
 minimal: bullish signal bar (close > open) plus optional 3-year growth filter
 (``growth_filter_enabled``, ``growth_bars`` default 756). **BH:BI** matured bounds feed **BM/DI** for
-breakout/retest (**BY** / DW) simulation only — buys are on **retest**, not on DI as an entry gate.
+breakout/retest (**BY** / DW) simulation only - buys are on **retest**, not on DI as an entry gate.
 See ``sheet_column_reference.py``.
 
 **Sheet column names vs Excel:** see ``stock_analysis/sheet_column_reference.py``. Internal
@@ -138,14 +138,14 @@ class BRTConfig:
     """Shared TBN engine configuration (historical name; alias ``TBNConfig``).
 
     Field names that say ``brt_*`` (e.g. ``brt_zones``, ``brt_cash``) refer to the Break-and-ReTest
-    *system* or legacy sizing — not the engine brand. Prefer speaking of this object as TBN config
+    *system* or legacy sizing - not the engine brand. Prefer speaking of this object as TBN config
     in docs/CLI; keep ``BRTConfig`` for code/MarkTen parity.
 
     Google Sheet cell mapping (workbook BRT tab), when aligning to spreadsheet:
     - C7  → tight_range_threshold_pct (program-only compression gate; **AI** = Range Qualifier on sheet is **not** in **AL** buy)
     - C10 → strong post-pivot bars (``strong_post_pivot_bars``): Post Pivot Pullback (K) window,
       AB Touch Price forward pullback window, AND AZ:BB = INDEX(AB/AC/AD, ROW()-C10) matured lag
-    - C14 → "periods to check" — unused on the live sheet for AB; do not map to a separate engine field
+    - C14 → "periods to check" - unused on the live sheet for AB; do not map to a separate engine field
     - sheet_maturity_lag_bars: 0 = use strong_post_pivot_bars (same as C10 on sheet)
     - C24 → tight_range_lookback (lookback bar count; **not** sheet **BC** = ATH filter)
     - C27 → entry_close_min_range_position (BE: close >= low + (high-low)*C27)
@@ -168,7 +168,7 @@ class BRTConfig:
     touch_threshold: int = 2  # Used when zone_maturity_model == "touch_count"; also exported for audit / TKL math
     # Strong Pivot Qualification (STONK_DATA 3.0): pre = lookback-only (realtime-safe); post = follow-through ahead
     strong_pivots_enabled: bool = True  # When True, only strong pivots create zones/touches
-    strong_pre_pivot_bars: int = 7  # Sheet "strong Pre-Pivot bars" (C17) — lookback window ending before pivot bar
+    strong_pre_pivot_bars: int = 7  # Sheet "strong Pre-Pivot bars" (C17) - lookback window ending before pivot bar
     strong_pre_pivot_pct: float = 0.081  # Sheet C13 strong Pre-Pivot move % (8.1%)
     # When > 0: pre threshold = (strong_pre_pivot_pct_atr * ATR14) / pivot_price at the pivot bar (else strong_pre_pivot_pct).
     strong_pre_pivot_pct_atr: float = 0.0
@@ -202,14 +202,14 @@ class BRTConfig:
     brt_zones: bool = False
     yh_zones: bool = True
     vec_zones: bool = False
-    # WPBR — Pivot Break and Retest (weekly pivot zones, weekly BO, daily retest entry).
+    # WPBR - Pivot Break and Retest (weekly pivot zones, weekly BO, daily retest entry).
     wpbr_zones: bool = False
     wpbr_breakout_confirmation: float = 0.03  # Weekly high > zone_upper * (1 + this)
     wpbr_max_days_after_retest: int = 2  # Entry window after retest bar (inclusive)
     # Daily-retest forward scan mode (matches sheet Daily Retest Row by default):
-    #   stop_looking (DEFAULT) — first Low<=upper & Close>upper, but only before the first
+    #   stop_looking (DEFAULT) - first Low<=upper & Close>upper, but only before the first
     #     bar with Close < zone_lower (sheet abandon-kill window); no prior-close gate.
-    #   keep_looking — legacy engine: unbounded scan + prior Close[r-1] >= lower gate.
+    #   keep_looking - legacy engine: unbounded scan + prior Close[r-1] >= lower gate.
     wpbr_retest_mode: str = "stop_looking"
     # When True: after a profitable first purchase from a zone, allow exactly one more purchase
     # then retire. When False (default): retire the zone after the first purchase (win or loss).
@@ -247,7 +247,7 @@ class BRTConfig:
     vec_vp_lookback: int = 60  # Trading days for volume-profile POC window.
     vec_vp_bin_pct: float = 0.005  # Histogram bin width as fraction of median price (~0.5%).
     vec_prior_bars: int = 5  # Prior-period length in sessions (5 ≈ prior week on daily bars).
-    vec_prior_side: str = "high"  # high | low — extreme to compare against POC (high = resistance retest).
+    vec_prior_side: str = "high"  # high | low - extreme to compare against POC (high = resistance retest).
     vec_confluence_pct: float = 0.0075  # Max |POC - extreme| / extreme for confluence (0.75%).
     vec_move_away_pct: float = 0.02  # Min rally above zone center before activation (0 = same bar).
     vec_min_bars_between: int = 20  # Dedup: min bars between activations at similar center.
@@ -310,6 +310,27 @@ class BRTConfig:
     qull_partial_days: int = 0
     qull_partial_frac: float = 0.33
     qull_fill: str = "next_open"
+    # SMA entry filters (QULL; default OFF)
+    qull_require_above_sma50: bool = False
+    qull_require_sma50_rising: bool = False
+    qull_sma50_slope_bars: int = 10
+    qull_require_above_sma20: bool = False
+    qull_require_above_sma10: bool = False
+    # Volume Zone break->retest (rocket_vz.py / tools/vol_zone_break_retest.py). true → VZ_ prefix.
+    vz_mode: bool = False
+    vz_lookback_days: int = 126
+    vz_retest_window: int = 63
+    vz_retest_eps_pct: float = 0.005
+    vz_first_retest_only: bool = True
+    vz_min_touches_before_entry: int = 1
+    # Default next_open = predictive (signal at T close → buy T+1 open). close = EOD fill on signal bar.
+    vz_entry_on: str = "next_open"
+    vz_zone_kinds: str = "HL"  # comma list; freeze is HL-only
+    vz_exit_name: str = "zone_atr05_ts40"
+    vz_exit_bars: int = 40
+    vz_target_r: float = 2.0
+    vz_stop_atr_buffer: float = 0.5
+    vz_sheet_notional: float = 45_000.0
     # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
     sb_mode: bool = False
     burst_min_pct: float = 0.04
@@ -426,7 +447,7 @@ class BRTConfig:
     row_local_eval_touch_same_bar: bool = False
     # Row-local: how many extra bars (after the first post-touch eval day) a pending maturity
     # may stay alive for entry gates. Default 0 = strict sheet-style (one eval day only: i-M<=1);
-    # DI/DW often need several bars — use 60–252 for MSFT-style parity with a multi-day sheet queue.
+    # DI/DW often need several bars - use 60–252 for MSFT-style parity with a multi-day sheet queue.
     row_local_eval_ttl_bars_after_first_eval: int = 60
     # Row-local active-zone context filter:
     # When True, require pending maturity_bar to match the row's active DN context.
@@ -505,8 +526,21 @@ class BRTConfig:
     # (PCT_ENTRY_TO_BOTTOM_ZONE_ABOVE empty / zone_above_center == 0). Default False.
     # Related but different from min_zone_above_pct (which rejects too-close overhead and keeps empty).
     require_no_zone_above: bool = False
+    # Research overlay (off by default): set long target = bottom of nearest matured zone above
+    # and long stop = top of nearest matured zone below (same inventory as zone_above/below_center).
+    # Missing/invalid side keeps the static target_pct / stop_pct (or trigger_low / ATR) price.
+    # Shorts mirror: target = top of zone below; stop = bottom of zone above.
+    zone_exits: bool = False
+    # Research overlay: same exit rules as zone_exits, but nearest above/below from the *union*
+    # of BRT+YH+WPBR+VEC matured zone DNA (computed without flipping entry-system toggles).
+    # Pass -v zone_exits_union=true or -v zone_exits=union. Implies exit overlay on.
+    zone_exits_union: bool = False
+    # Entry gate (0 = off): require (reward_dist / risk_dist) > this, where reward/risk are the
+    # absolute distances to the zone target/stop levels above. Missing either side → skip trade.
+    # Typically paired with zone_exits=true; gate alone does not change exits.
+    zone_rr_min: float = 0.0
     pivot_switch_h_to_l_filter: int = -1  # -1 = no op, 0 = require pivot_switch==False, 1 = require True. Audit: PIVOT_SWITCH_H_TO_L
-    # Tri-state (string): true | false | both — matches BRT_Closed ENTRY_MAJOR_PIVOT / IS_20BAR_HIGH_AT_TRIGGER (1/0).
+    # Tri-state (string): true | false | both - matches BRT_Closed ENTRY_MAJOR_PIVOT / IS_20BAR_HIGH_AT_TRIGGER (1/0).
     # ``both`` = no filter. Pass via -v entry_filter_major_pivot=both (or true / false).
     entry_filter_major_pivot: str = "True"  # true => require ENTRY_MAJOR_PIVOT==1; false => ==0
     entry_filter_is_20bar_high_at_trigger: str = "False"  # true => require flag==1; false => ==0 (not at 20-bar high)
@@ -570,9 +604,9 @@ class BRTConfig:
     # the initial stop, where gain_from_entry uses peak high since entry (fractional steps, not floored).
     trailing_stop_increment: float = 0.0
     # ATR schedule exits (need atr_days>0): calendar-day deadline from entry date.
-    # (1) atr_progress>0 — at first open after (entry_date + atr_days), exit unless High reached
+    # (1) atr_progress>0 - at first open after (entry_date + atr_days), exit unless High reached
     # entry*(1+atr_progress*ATR_PCT_AT_ENTRY/100) on bars from entry through prior bar.
-    # (2) atr_progress==0 — timed flat at that same first open after the deadline.
+    # (2) atr_progress==0 - timed flat at that same first open after the deadline.
     atr_progress: float = 0.0
     atr_days: int = 0
     # Portable SB-style exits for BRT/RS/YH host path (0 = off). Same semantics as
@@ -614,10 +648,10 @@ class BRTConfig:
     exit_at_close_when_stopped: bool = False
 
     # Growth filter: require full lookback and Close[eval] >= Close[eval - growth_bars] (sheet: 3Y).
-    # Sheet anchors 756 rows from 2016-01-01; CSVs may start a few sessions later — see growth_history_slack_bars.
+    # Sheet anchors 756 rows from 2016-01-01; CSVs may start a few sessions later - see growth_history_slack_bars.
     # Pre-IPO / short history: sheet daily grids often have $0 OHLC before first real bar, so
     # Close >= Close_{1Y/2Y/3Y} PASSes when the lookback lands on $0. Engine must PASS (not block)
-    # when eval_bar < growth_min — otherwise IPO names (META 2012) drop early sheet Closed trades.
+    # when eval_bar < growth_min - otherwise IPO names (META 2012) drop early sheet Closed trades.
     # RS mode: when enabled, evaluated on trigger bar T (same timing as SPY_COMPARE / IND_TC), not entry open.
     growth_filter_enabled: bool = True
     growth_bars: int = 756  # e.g. 756 = 3 years; require Close[eval] >= Close[eval - growth_bars]
@@ -657,10 +691,10 @@ class BRTConfig:
     dp_good_for_bars: int = 2
     # --- Sheet BH:BI "all zones" DI / BY retest (see sheet_column_reference) ---
     # BM/DI: prior price < BI[j] and current price >= BI[j]; sheet rows use **Close** (not High) for this test.
-    # BM/DI breakout detection (Close vs BI or High vs BI): feeds BY/DW retest simulation only — **not** a buy gate.
+    # BM/DI breakout detection (Close vs BI or High vs BI): feeds BY/DW retest simulation only - **not** a buy gate.
     sheet_di_breakout_price: str = "close"  # "close" = sheet BM parity; "high" = legacy intraday highs
     # Require the **eval row** date (same bar as close>open / _eval_bar) in the set of **first BY retest**
-    # overlap days (same as column **Retest Date** in BRT_breakout_and_retest CSV — not **Breakout Date**).
+    # overlap days (same as column **Retest Date** in BRT_breakout_and_retest CSV - not **Breakout Date**).
     # COUNTIF($BY:$BY, $D_eval) > 0; no multi-bar window.
     sheet_dw_countif_entry_enabled: bool = True
     # Sheet BY parity (optional): when True with ``sheet_dw_countif_entry_enabled``, expand the simulated BY
@@ -751,7 +785,7 @@ class BRTConfig:
 
     # Metrics: when True, compute Max_Drawdown etc. via equity reconstruction (BRT_DrawdownCalc)
     compute_equity_metrics: bool = True
-    # Relative strength (RS) entry — production DailyRun path via run_rs.bat / --relative-strength / -v rs_mode=true.
+    # Relative strength (RS) entry - production DailyRun path via run_rs.bat / --relative-strength / -v rs_mode=true.
     # Timing (locked): evaluate gates on trigger bar T close; fill at bar T+1 open. Never gate on entry bar.
     #   T close: SPY_COMPARE 1Y/2Y/3Y all > 0 AND (if rs_require_tc_strong) IND_TC_*_OUTLOOK all Strong
     #   T+1 open: buy (same stop/target/exit + Closed writers as BRT)
@@ -786,13 +820,13 @@ class BRTConfig:
     exit_when_spy_int_turns_weak: bool = False
     # RS-only sell mode (ignored unless relative_strength_enabled). Default "off" = normal
     # target/stop/gap/ATR exits only (also unset/empty/none). See _cfg_sell_breakdown_mode.
-    #   off             — current RS exits (no breakdown logic)
-    #   breakdown_only  — exit only on RS breakdown OR (SPY OR TC); no stop/target/gap/trailing/ATR
+    #   off             - current RS exits (no breakdown logic)
+    #   breakdown_only  - exit only on RS breakdown OR (SPY OR TC); no stop/target/gap/trailing/ATR
     #                     schedule; END_OF_DATA / liquidate_at_end still apply. Signal at bar close
     #                     (same-bar SPY_COMPARE + stock IND_TC as entry); fill next open.
-    #   breakdown_both  — exit only when SPY AND TC breakdown on the same signal bar; same
+    #   breakdown_both  - exit only when SPY AND TC breakdown on the same signal bar; same
     #                     schedule restrictions as breakdown_only (no stop/target/gap/trailing/ATR).
-    #   breakdown_plus  — normal exits OR breakdown (SPY OR TC), whichever first.
+    #   breakdown_plus  - normal exits OR breakdown (SPY OR TC), whichever first.
     sell_breakdown: str = "off"
     aggressive: bool = False
     aggressive_margin_interest: float = 0.10
@@ -959,7 +993,7 @@ TBNConfig = BRTConfig
 def mts_sheet_parity_overrides() -> dict[str, Any]:
     """Config overrides for MTS sheet parity (STONK_DATA MTS tab, columns D:DP).
 
-    **MTS buy (BI)** — NOT the BRT retest pipeline::
+    **MTS buy (BI)** - NOT the BRT retest pipeline::
 
         BI = AND(
             BW Growth 3 Year,              # Close >= Close[756 bars ago]
@@ -969,7 +1003,7 @@ def mts_sheet_parity_overrides() -> dict[str, Any]:
             OR(AQ, AQ[-1]),                # Zone Eligible Long (eval or prior bar)
         )
 
-    **When to evaluate** — DP first touch after availability (not AW magic touch)::
+    **When to evaluate** - DP first touch after availability (not AW magic touch)::
 
         DO = active zone exists AND row > maturity row
         DP = DO AND (NOT DO[-1] OR DN <> DN[-1])
@@ -1071,7 +1105,7 @@ def mts_sheet_parity_overrides() -> dict[str, Any]:
         "pivot_m": 4,
         "strong_pre_pivot_bars": 7,      # C17
         "strong_pre_pivot_pct": 0.12,    # C18
-        "strong_post_pivot_bars": 7,     # C10 — post-drop + AB pullback + maturity lag
+        "strong_post_pivot_bars": 7,     # C10 - post-drop + AB pullback + maturity lag
         "strong_post_pivot_pct": 0.09,   # C15 AF touch pullback / forward-rise threshold (9%)
         "ath_filter_c25": 0.3,     # C25 knockout_low_mult
         "ath_filter_c26": 0.6,     # C26 knockout_high_mult
@@ -1163,7 +1197,7 @@ def _snapshot_entry_indicators_for_trade(
 ) -> dict[str, str]:
     """Point-in-time IND_* / IND_TC_* snapshot at ``entry_bar_index``.
 
-    Callers pass the **trigger / signal bar** (not the fill bar) — same convention as
+    Callers pass the **trigger / signal bar** (not the fill bar) - same convention as
     SMA*_AT_TRIGGER. For RS: bar T (gate + snapshot); entry fill is T+1 open.
     """
     if pre is None or entry_bar_index < 0:
@@ -1181,6 +1215,8 @@ def _output_file_prefix(cfg: "BRTConfig") -> str:
         return "ADX"
     if bool(getattr(cfg, "mts_mode", False)):
         return "MTS"
+    if bool(getattr(cfg, "vz_mode", False)):
+        return "VZ"
     if bool(getattr(cfg, "sb_mode", False)):
         return "SB"
     if bool(getattr(cfg, "qull_mode", False)):
@@ -1433,7 +1469,7 @@ def _apply_indicator_sides_to_cfg(cfg: "BRTConfig", indicator_buy: str) -> "BRTC
         if tt != "both":
             cfg = replace(cfg, transaction_type="both", indicator_sides=sides)
             print(
-                "[TBN] indicator_sides=both: transaction_type=both — LONG when trade-aligned "
+                "[TBN] indicator_sides=both: transaction_type=both - LONG when trade-aligned "
                 f"IND diff >= {int(getattr(cfg, 'indicator_diff', 10) or 10)} (bullish); SHORT when diff >= "
                 "threshold (bearish-aligned); indicator_buy=only uses IND-only bar scan (no zone/retest).",
                 flush=True,
@@ -2166,7 +2202,7 @@ def _sheet_tp_band_bounds(tp: float, band_pct: float, decimals: int) -> tuple[fl
 
 
 def _round_ohlc_arr(arr: np.ndarray, decimals: int) -> np.ndarray:
-    """Sheets ROUND(x, decimals) on OHLC arrays — half away from zero, not numpy banker's round."""
+    """Sheets ROUND(x, decimals) on OHLC arrays - half away from zero, not numpy banker's round."""
     if decimals < 0:
         return np.asarray(arr, dtype=np.float64)
     dec = int(decimals)
@@ -2239,8 +2275,8 @@ def _strong_pivot_bar_ok(
 ) -> bool:
     """
     Strong pivot at bar t for kind 'PH' or 'PL'.
-    Pre (lookback): PL — (1 - Low[t]/max(High[t-pre_bars:t])) >= pre_pct; PH — High[t]/min(Low[...]) - 1 >= pre_pct.
-    Post (lookahead): same as legacy — follow-through over next post_bars bars.
+    Pre (lookback): PL - (1 - Low[t]/max(High[t-pre_bars:t])) >= pre_pct; PH - High[t]/min(Low[...]) - 1 >= pre_pct.
+    Post (lookahead): same as legacy - follow-through over next post_bars bars.
     """
     mode_l = (mode or "pre").strip().lower()
     pre_ok = False
@@ -2313,7 +2349,7 @@ def compute_sheet_brt_touch_stream(
 
     Mirrors row-8 formulas the user provided (BRT tab, not YH):
     - Final Pivot High = Local High Test AND Post Pivot Pullback AND not-also-pivot-low
-      (PO 2026-07-20: consecutive same-price Final PHs are allowed — column L / no-dup
+      (PO 2026-07-20: consecutive same-price Final PHs are allowed - column L / no-dup
       vs prior Final PH within ±1% is intentionally disabled; AMZN 2011-10-14/17 twin.)
     - Touch Price when Final PH + Pre-strong pivot High (Z) + forward min-low pullback >= C15
       over **C10** Strong post-pivot bars (same window as Post Pivot Pullback / maturity lag).
@@ -2816,7 +2852,7 @@ def compute_yh_touch_stream(
     Year-High (YH) zone engine.
 
   ``yh_memory_mode`` (default ``sheet``):
-    - **sheet**: YH-tab state machine — **0.03 move away next**, **Active YH Level**,
+    - **sheet**: YH-tab state machine - **0.03 move away next**, **Active YH Level**,
       **Next YH candidate** (promote CE → BZ; queue BY when CD active). Matches the live
       spreadsheet columns, not a single persisted ``YH Level`` cell.
     - **fifo**: one working + one queued; new 52w highs replace the queue; promote queued on activation.
@@ -2827,7 +2863,7 @@ def compute_yh_touch_stream(
     All modes:
     - New YH: High[t] > MAX(High[t-yh_lookback : t-1]) after warmup.
     - Activation (sheet mode): ROUND(High, zone_price_round_decimals) >= YH×(1+yh_move_away_pct)
-      (unrounded threshold — matches sheet High column vs full-precision Active YH Touch Price;
+      (unrounded threshold - matches sheet High column vs full-precision Active YH Touch Price;
       e.g. AAPL 2014-10-22 High 26.0275→26.03 clears 25.27×1.03=26.0281; NVDA High 32.31
       fails 31.37×1.03=32.3111). Fifo/parallel still use rounded act_price vs hi_arr.
     - Zone bands via ``band_pct`` (not hardcoded 0.98/1.02).
@@ -2902,7 +2938,7 @@ def compute_yh_touch_stream(
             )
 
     def _yh_move_away_threshold(bz: float) -> float:
-        """Unrounded BZ*(1+pct) — sheet Active YH Touch Price before display rounding."""
+        """Unrounded BZ*(1+pct) - sheet Active YH Touch Price before display rounding."""
         return float(bz) * (1.0 + move_pct)
 
     def _crossed_yh_move_away(hi_cmp: float, bz: float) -> bool:
@@ -3255,7 +3291,141 @@ def build_level3_for_cfg(
     out = streams[0]
     for s in streams[1:]:
         out = _merge_level3_streams(out, s)
+    if bool(getattr(cfg, "zone_exits_union", False)):
+        out["_union_zone_streams"] = _compute_union_zone_streams(
+            df,
+            cfg,
+            pivot_high,
+            pivot_low,
+            ph_price,
+            pl_price,
+            debug_symbol=debug_symbol,
+        )
     return out
+
+
+# Production-typical DNA knobs for union inventory (independent of host entry system).
+_UNION_BRT_DNA: dict[str, Any] = {
+    "brt_zones": True,
+    "yh_zones": False,
+    "wpbr_zones": False,
+    "vec_zones": False,
+    "brt_sheet_touch": True,
+    "band_pct": 0.0154,
+    "strong_pre_pivot_bars": 7,
+    "strong_pre_pivot_pct": 0.081,
+    "strong_post_pivot_bars": 7,
+    "strong_post_pivot_pct": 0.108,
+    "strong_pivot_mode": "either",
+    "breakout_bars": 100,
+    "tight_range_threshold_pct": 0.35,
+    "tight_range_lookback": 105,
+}
+_UNION_YH_DNA: dict[str, Any] = {
+    "brt_zones": False,
+    "yh_zones": True,
+    "wpbr_zones": False,
+    "vec_zones": False,
+    "brt_sheet_touch": False,
+    "band_pct": 0.015,
+    "yh_move_away_pct": 0.03,
+    "yh_lookback": 252,
+    "yh_memory_mode": "sheet",
+}
+_UNION_WPBR_DNA: dict[str, Any] = {
+    "brt_zones": False,
+    "yh_zones": False,
+    "wpbr_zones": True,
+    "vec_zones": False,
+    "brt_sheet_touch": False,
+    "band_pct": 0.015,
+    "strong_pre_pivot_bars": 3,
+    "strong_pre_pivot_pct": 0.10,
+    "strong_post_pivot_bars": 3,
+    "strong_post_pivot_pct": 0.10,
+    "strong_pivot_mode": "either",
+    "wpbr_breakout_confirmation": 0.03,
+    "wpbr_max_days_after_retest": 2,
+}
+_UNION_VEC_DNA: dict[str, Any] = {
+    "brt_zones": False,
+    "yh_zones": False,
+    "wpbr_zones": False,
+    "vec_zones": True,
+    "brt_sheet_touch": False,
+    "band_pct": 0.015,
+}
+
+
+def _compute_union_zone_streams(
+    df: pd.DataFrame,
+    cfg: Any,
+    pivot_high: pd.Series,
+    pivot_low: pd.Series,
+    ph_price: pd.Series,
+    pl_price: pd.Series,
+    *,
+    debug_symbol: Optional[str] = None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Matured zone (center, matured_now) arrays for BRT+YH+WPBR+VEC DNA (exit inventory only).
+
+    Each stream uses that DNA's production-typical band/pivot knobs so the union pool is
+    stable across host systems. Failures for an optional DNA (e.g. VEC import) are skipped.
+    """
+    out: list[tuple[np.ndarray, np.ndarray]] = []
+    for label, overrides in (
+        ("brt", _UNION_BRT_DNA),
+        ("yh", _UNION_YH_DNA),
+        ("wpbr", _UNION_WPBR_DNA),
+        ("vec", _UNION_VEC_DNA),
+    ):
+        try:
+            dna_cfg = replace(cfg, **overrides)
+            # Avoid recursive union attach when building each DNA via build_level3_for_cfg.
+            dna_cfg = replace(dna_cfg, zone_exits_union=False, zone_exits=False, zone_rr_min=0.0)
+            lvl = build_level3_for_cfg(
+                df, dna_cfg, pivot_high, pivot_low, ph_price, pl_price, debug_symbol=debug_symbol
+            )
+            zc = np.asarray(lvl["zone_center"].to_numpy(dtype=np.float64), dtype=np.float64)
+            mat = np.asarray(lvl["matured_now"].to_numpy(dtype=bool), dtype=bool)
+            out.append((zc, mat))
+        except Exception as exc:
+            print(
+                f"[TBN] union zone DNA '{label}' skipped for {debug_symbol or '?'}: {exc}",
+                file=sys.stderr,
+            )
+    return out
+
+
+def _matured_zone_centers_in_window(
+    zone_center_arr: np.ndarray,
+    matured_now_arr: np.ndarray,
+    start_idx: int,
+    end_idx: int,
+    union_streams: Optional[list[tuple[np.ndarray, np.ndarray]]] = None,
+) -> np.ndarray:
+    """Matured zone centers in [start_idx, end_idx). Union = unique concat across DNA streams."""
+    if union_streams:
+        parts: list[np.ndarray] = []
+        for zc_a, mat_a in union_streams:
+            end_u = min(int(end_idx), len(zc_a))
+            start_u = max(0, min(int(start_idx), end_u))
+            w = np.asarray(zc_a[start_u:end_u], dtype=float)
+            m = np.asarray(mat_a[start_u:end_u], dtype=bool)
+            if w.size == 0:
+                continue
+            valid = ~np.isnan(w) & (w > 0) & m
+            if np.any(valid):
+                parts.append(w[valid])
+        if not parts:
+            return np.asarray([], dtype=float)
+        return np.unique(np.concatenate(parts))
+    window = np.asarray(zone_center_arr[start_idx:end_idx], dtype=float)
+    matured_slice = np.asarray(matured_now_arr[start_idx:end_idx], dtype=bool)
+    if window.size == 0:
+        return np.asarray([], dtype=float)
+    valid = ~np.isnan(window) & (window > 0) & matured_slice
+    return window[valid]
 
 
 def _pivot_sequence_in_zone(
@@ -4070,7 +4240,7 @@ def _rs_pass_all_horizons_vs_spy(st: np.ndarray, sp: np.ndarray, t: int) -> bool
 def _rs_tc_outlook_all_strong(pre: Any, t: int) -> bool:
     """True when IND_TC SHORT/INT/LONG outlooks are all Strong (horizon sums > 0) at trigger bar ``t``.
 
-    RS evaluates this on the signal/trigger bar only — never on the entry (T+1) open bar.
+    RS evaluates this on the signal/trigger bar only - never on the entry (T+1) open bar.
     """
     if pre is None or t < 0:
         return False
@@ -4159,7 +4329,7 @@ def _rs_breakdown_signal_at_bar(
       - ``require_both=True`` (breakdown_both): SPY **AND** TC on the same bar
 
     Timing: same-bar as RS entry gates on trigger T (``_rs_excess_pct_points`` /
-    ``_rs_tc_outlook_all_strong``) — **not** ``spy_int_tc_lag``. Known at close of ``t``;
+    ``_rs_tc_outlook_all_strong``) - **not** ``spy_int_tc_lag``. Known at close of ``t``;
     caller arms pending and exits at next session open (entry symmetry: signal close → act next open).
     """
     if t < 0:
@@ -4253,7 +4423,7 @@ def _sma_at_bar(sma_arr: Optional[np.ndarray], bar_i: int) -> Optional[float]:
     if sma_arr is None or bar_i < 0 or bar_i >= len(sma_arr):
         return None
     v = float(sma_arr[bar_i])
-    # precompute_csv_smas fills short history with 0.0 — treat as unavailable for reports.
+    # precompute_csv_smas fills short history with 0.0 - treat as unavailable for reports.
     if not np.isfinite(v) or v <= 0.0:
         return None
     return v
@@ -4290,7 +4460,7 @@ def _precompute_meteoric_cumulative_flags(
     Fall day j: over the prior ``fall_y`` bars ending at j, let H = max(High).
     Trigger if Close[j] <= H * (1 - fall_pct/100). Default fall_pct=50 => close is at or below half the Y-day high.
 
-    Returns int8 arrays length n (0/1), cumulative "ever so far" — once 1, stays 1 (no need to re-check past).
+    Returns int8 arrays length n (0/1), cumulative "ever so far" - once 1, stays 1 (no need to re-check past).
     """
     n = len(close_arr)
     rise_ever = np.zeros(n, dtype=np.int8)
@@ -4514,7 +4684,7 @@ def _precompute_mts_bi_gates(
         BE Close above open  = Close[i] > Open[i]
         BI MTS buy = AND(BW, OR(BC[i],BC[i-1]), BE, BG, OR(AQ[i],AQ[i-1]))
 
-    Live MTS tab (TSLA 2021-12-21): BI may be TRUE while AW is FALSE — OR(BC,BC[-1]) can pass from a
+    Live MTS tab (TSLA 2021-12-21): BI may be TRUE while AW is FALSE - OR(BC,BC[-1]) can pass from a
     prior AW bar's BC. Ledger entries: DP first-touch creates pending; BI on eval bar; fill next open.
     """
     c5 = float(getattr(cfg, "band_pct", 0.02))
@@ -4920,7 +5090,7 @@ def _count_rejection_episodes_prior(
     ``k = max(1e-12*zl, _RESIST_CLEAR_BELOW_FRAC * (zu-zl))`` (not merely hovering on ``zl``).
 
     Episode **aborts without a count** if price **accepts above** the zone (``close > zu``) before a
-    rejection — treated as breakout, not a failed resistance touch.
+    rejection - treated as breakout, not a failed resistance touch.
     """
     if maturity_bar < 2 or not (np.isfinite(zl_e) and np.isfinite(zu_e) and zl_e > 0 and zu_e > zl_e):
         return 0
@@ -4972,7 +5142,7 @@ def _count_rejection_episodes_prior(
             cnt += 1
             in_ep = False
             continue
-        # Still inside / hovering / partial dip above reject line — same interaction.
+        # Still inside / hovering / partial dip above reject line - same interaction.
     return cnt
 
 
@@ -6167,9 +6337,9 @@ def _atr_schedule_exit_now(
     first trading bar open after (entry_date + atr_days calendar days).
 
     - atr_days<=0: disabled.
-    - atr_progress<=0: timed exit (``ATR_timed``) — always exit at first open strictly after the
+    - atr_progress<=0: timed exit (``ATR_timed``) - always exit at first open strictly after the
       calendar deadline.
-    - atr_progress>0: inaction exit (``ATR_inaction``) — same open unless max High from entry bar
+    - atr_progress>0: inaction exit (``ATR_inaction``) - same open unless max High from entry bar
       through the prior bar reached entry*(1+atr_progress*atr_pct_at_entry/100).
     """
     ad = int(getattr(cfg, "atr_days", 0) or 0)
@@ -6885,7 +7055,7 @@ def _brt_attempt_exit_at_bar(
             pending_ind_diff_exit = True
         return None, max_high_since_entry, pending_ind_diff_exit, True
     elif _rs_bd_active and _sb_mode in ("breakdown_only", "breakdown_both"):
-        # breakdown_only / breakdown_both: no stop/target/gap/trailing/ATR — breakdown is the
+        # breakdown_only / breakdown_both: no stop/target/gap/trailing/ATR - breakdown is the
         # sole schedule exit. (END_OF_DATA / liquidate_at_end still apply outside this helper.)
         # only = SPY OR TC; both = SPY AND TC (see _rs_breakdown_signal_at_bar).
         _arm_rs_breakdown_if_signal()
@@ -6918,7 +7088,7 @@ def _brt_attempt_exit_at_bar(
         )
     elif (not _trade_is_long) and gap_down:
         exit_price = op
-        # Short favorable gap through target — keep GAP_DOWN (price-direction).
+        # Short favorable gap through target - keep GAP_DOWN (price-direction).
         exit_type = "GAP_DOWN"
     elif stop_hit:
         exit_price = cl if cfg.exit_at_close_when_stopped else sp
@@ -7097,6 +7267,9 @@ def run_brt_backtest(
     short_candidate_arr = level3["short_candidate"].to_numpy()
     matured_now_arr = level3["matured_now"].to_numpy()
     zone_center_arr = level3["zone_center"].to_numpy()
+    _union_zone_streams: Optional[list[tuple[np.ndarray, np.ndarray]]] = (
+        level3.get("_union_zone_streams") if _cfg_zone_exits_union(cfg) else None
+    )
     zl_full_arr = level3["zone_low"].to_numpy(dtype=np.float64)
     zh_full_arr = level3["zone_high"].to_numpy(dtype=np.float64)
     touch_count_long_arr = level3["touch_count_long"].to_numpy()
@@ -7400,7 +7573,7 @@ def run_brt_backtest(
     last_pivot_high: Optional[float] = None
     last_pivot_low: Optional[float] = None
 
-    # Sheet magic touch (AR/AW): hoist bounds helper + window once — was ~90% of bt_loop_bar_total (per-bar def + Python AR loops).
+    # Sheet magic touch (AR/AW): hoist bounds helper + window once - was ~90% of bt_loop_bar_total (per-bar def + Python AR loops).
     # _smt_prev_bar carries f(i-1); each bar calls _smt_bounds_fn(i) at most once (magic block or finally on early continue).
     zone_cmp_round_bt = int(getattr(cfg, "zone_compare_round_decimals", -1))
     _smt_bounds_fn: Optional[Callable[[int], tuple[bool, float, float, int]]] = None
@@ -8255,7 +8428,7 @@ def run_brt_backtest(
 
         # Retest-date entry source: add synthetic pending candidates on retest bars so
         # entry gates run even when no touch-event pending exists.
-        # MTS (mts_first_touch_entry) has NO retest pipeline — DP first-touch is authoritative.
+        # MTS (mts_first_touch_entry) has NO retest pipeline - DP first-touch is authoritative.
         _rt_rows = [] if (_cfg_mts_first_touch or _cfg_wpbr_zones or _cfg_brt_like_wpbr) else retest_rows_by_iso.get(iso, [])
         _rt_rows = _filter_retest_rows_for_zone_pick(_rt_rows, _cfg_retest_pick)
         if _rt_rows and not (_cfg_no_entry_same_bar_exit and _exited_this_bar):
@@ -8338,7 +8511,7 @@ def run_brt_backtest(
                         f"{_do[:4]}-{_do[4:6]}-{_do[6:8]}" if len(_do) >= 8 and _do[:8].isdigit() else _do
                     )
                     print(
-                        f"[DEBUG-ENTRY] {sym} bar {i} ({index_iso[i][:10]}): skip all new-entry gate checks — "
+                        f"[DEBUG-ENTRY] {sym} bar {i} ({index_iso[i][:10]}): skip all new-entry gate checks - "
                         f"already in open trade (opened {_do_fmt} @ {getattr(open_trade, 'entry_price', '')})"
                     )
                 if not bool(p.get("from_retest_row", False)):
@@ -8452,7 +8625,7 @@ def run_brt_backtest(
                 # - drop anything older
                 if maturity_bar == i:
                     if not _cfg_row_local_same_bar and not _from_retest_row:
-                        # Defer to next bar — but the main loop only runs i in 0..n-2, so when the next bar is the
+                        # Defer to next bar - but the main loop only runs i in 0..n-2, so when the next bar is the
                         # last bar of data (i+1 == n-1) there is no following iteration; evaluate below using _eval_bar.
                         if i + 1 < n - 1:
                             _debug_gate_fail("skip: row_local keep today's touch event for next bar")
@@ -8521,7 +8694,7 @@ def run_brt_backtest(
             lo_ent = float(low_ent_arr[_eval_bar])
             _is_long_side = _cfg_entry_side == "long"
             _wpbr_prequalified = bool(p.get("wpbr_retest_entry", False))
-            # BRT_Like_WPBR: entry window verified at emit — bypass close>open / red-to-green / BY here.
+            # BRT_Like_WPBR: entry window verified at emit - bypass close>open / red-to-green / BY here.
             # Standalone WPBR (wpbr_retest_entry): skip the entire BRT entry-filter / sheet-gate stack;
             # WPBR qualification is zones/retest/rocket (+ ownership) only.
             _blw_prequalified = bool(p.get("brt_like_wpbr_entry", False))
@@ -8887,7 +9060,7 @@ def run_brt_backtest(
                         f"pass min_ind_score={_ind_score_val:.2f} (>= {_min_ind_score_thr:.2f})"
                     )
 
-                # ATR% at trigger (signal bar close) — check early to skip expensive pivot/zone work on rejects.
+                # ATR% at trigger (signal bar close) - check early to skip expensive pivot/zone work on rejects.
                 if _cfg_min_atr_trig > 0.0 or _cfg_max_atr_trig > 0.0:
                     _atr_pct_gate = None
                     _trig_a14, _atr_pct_gate = _atr_14_and_pct_at_bar(atr_14_arr, close_arr, int(_eval_bar))
@@ -8991,7 +9164,7 @@ def run_brt_backtest(
 
                 # Growth filter: programmatic gate (not skipped when indicator_buy=only).
                 # BRT_Like_WPBR keeps this gate when growth_filter_enabled=true (WPBR window replaces
-                # red-to-green / COUNTIF / close>open only — not growth).
+                # red-to-green / COUNTIF / close>open only - not growth).
                 if bool(getattr(cfg, "sheet_growth_ok_mode", False)) and growth_ok_arr is not None:
                     if not bool(growth_ok_arr[_eval_bar]):
                         _count_block("sheet_growth_ok_fail")
@@ -9080,7 +9253,7 @@ def run_brt_backtest(
                 if _perf:
                     _t_mid = time.perf_counter()
                 use_bh_bi = True
-                # DI / all-zones breakout is precomputed for BY/DW (retest) only — not a long entry gate; we buy on retest.
+                # DI / all-zones breakout is precomputed for BY/DW (retest) only - not a long entry gate; we buy on retest.
                 st_on = _cfg_st_on
                 _bp_z = _band_pct_at(i, float(zc)) if pd.notna(zc) else float(cfg.band_pct)
                 zone_upper = float(zc) * (1.0 + _bp_z) if pd.notna(zc) else float("nan")
@@ -9435,7 +9608,7 @@ def run_brt_backtest(
             prior_close = float(close_arr[_eval_bar - 1]) if _eval_bar >= 1 else float("nan")
             too_high_mult = float(getattr(cfg, "too_high_multiplier", 0.0) or 0.0)
             too_low_mult = float(getattr(cfg, "too_low_multiplier", 0.0) or 0.0)
-            # BRT knife-edge / too-far final gates — not applied on WPBR path.
+            # BRT knife-edge / too-far final gates - not applied on WPBR path.
             if not _wpbr_prequalified:
                 _too_far = False
                 _too_far_msg = ""
@@ -9484,7 +9657,7 @@ def run_brt_backtest(
                     _keep_pending()
                     _pg()
                     continue
-            # SPY INT Weak block: trigger bar _eval_bar (T), lag-1 outlook[T-1] — not entry next_iso.
+            # SPY INT Weak block: trigger bar _eval_bar (T), lag-1 outlook[T-1] - not entry next_iso.
             _trigger_ymd_spy = (
                 index_iso[_eval_bar] if 0 <= int(_eval_bar) < len(index_iso) else iso
             )
@@ -9665,7 +9838,7 @@ def run_brt_backtest(
             if _perf:
                 _acc_bt("bt_pending_pivot_sequence", time.perf_counter() - _t_ps)
 
-            # BRT pivot-sequence / hist-ROR entry filters — skipped for WPBR.
+            # BRT pivot-sequence / hist-ROR entry filters - skipped for WPBR.
             if not _wpbr_prequalified:
                 if getattr(cfg, "min_pivot_run_l_before_entry", 0) > 0 and pivot_low_run < cfg.min_pivot_run_l_before_entry:
                     _count_block("min_pivot_run_low")
@@ -9803,10 +9976,25 @@ def run_brt_backtest(
             if pd.notna(zc) and zc_f > 0:
                 try:
                     start_idx = max(0, maturity_bar - cfg.lookback_long + 1)
-                    window = zone_center_arr[start_idx : maturity_bar + 1]
-                    matured_slice = matured_now_arr[start_idx : maturity_bar + 1]
-                    valid = ~np.isnan(window) & (window > 0) & matured_slice
-                    window = window[valid]
+                    end_idx = maturity_bar + 1
+                    # Own-system inventory by default; union DNA when zone_exits_union
+                    # (covers zone_exits overlay + zone_rr_min gate + Closed audit fields).
+                    if _cfg_zone_exits_union(cfg) and _union_zone_streams:
+                        window = _matured_zone_centers_in_window(
+                            zone_center_arr,
+                            matured_now_arr,
+                            start_idx,
+                            end_idx,
+                            union_streams=_union_zone_streams,
+                        )
+                    else:
+                        window = _matured_zone_centers_in_window(
+                            zone_center_arr,
+                            matured_now_arr,
+                            start_idx,
+                            end_idx,
+                            union_streams=None,
+                        )
                     min_zone_above_center = current_zone_top / (1 - _bp_ent)
                     above_vals = window[window >= min_zone_above_center]
                     below_vals = window[window < trigger_bottom]
@@ -9842,9 +10030,44 @@ def run_brt_backtest(
                             "BOTTOM_ZONE_ABOVE": round(bottom_above_val, 4) if zone_above_center else "",
                             "PCT_ENTRY_TO_BOTTOM_ZONE_ABOVE": round(pct_entry_to_bottom_zone_above, 2),
                             "ALL_ZONE_CENTERS_IN_WINDOW": all_zones_str,
+                            "ZONE_INVENTORY": "union" if (_cfg_zone_exits_union(cfg) and _union_zone_streams) else "own",
                         })
                 except Exception:
                     pass
+
+            # Research: zone_rr_min entry gate + zone_exits stop/target overlay (shared exit path).
+            if _cfg_zone_rr_min(cfg) > 0.0 or _cfg_zone_exits(cfg):
+                if _zone_rr_min_gate_blocks(
+                    cfg,
+                    entry_price=float(entry_price),
+                    zone_above_center=float(zone_above_center),
+                    zone_below_center=float(zone_below_center),
+                    band_pct=float(_bp_ent),
+                    is_long_side=bool(_is_long_side),
+                ):
+                    _count_block("zone_rr_min")
+                    _trace_gate(
+                        f"block: zone_rr_min "
+                        f"(need reward/risk > {_cfg_zone_rr_min(cfg):g} from nearest zones)"
+                    )
+                    if debug_entry and debug_date_prefix in _md_iso8:
+                        print(
+                            f"[DEBUG-ENTRY] {sym} bar {i}: zone ${zc:.2f} BLOCKED by zone_rr_min"
+                        )
+                    _keep_pending()
+                    _pg()
+                    continue
+                if _cfg_zone_exits(cfg):
+                    target_price, stop_price = _apply_zone_exits_overlay(
+                        cfg,
+                        entry_price=float(entry_price),
+                        target_price=float(target_price),
+                        stop_price=float(stop_price),
+                        zone_above_center=float(zone_above_center),
+                        zone_below_center=float(zone_below_center),
+                        band_pct=float(_bp_ent),
+                        is_long_side=bool(_is_long_side),
+                    )
 
             # Relative volume on signal bar (bullish eval day)
             rel_vol_trigger: Optional[float] = None
@@ -9875,7 +10098,7 @@ def run_brt_backtest(
                         if avg_10d and avg_10d > 0:
                             rel_vol = vol_entry / avg_10d
 
-            # BRT volume entry floors — skipped for WPBR.
+            # BRT volume entry floors - skipped for WPBR.
             if not _wpbr_prequalified:
                 if getattr(cfg, "min_rel_vol_at_entry", -2.0) > -2.0:
                     if rel_vol is None or rel_vol < cfg.min_rel_vol_at_entry:
@@ -9987,6 +10210,17 @@ def run_brt_backtest(
                     atr_14_arr=atr_14_arr,
                     sma50_arr=sma50_arr,
                 )
+                if _cfg_zone_exits(cfg):
+                    _sc_target, _sc_stop = _apply_zone_exits_overlay(
+                        cfg,
+                        entry_price=float(_sc_anchor),
+                        target_price=float(_sc_target),
+                        stop_price=float(_sc_stop),
+                        zone_above_center=float(zone_above_center),
+                        zone_below_center=float(zone_below_center),
+                        band_pct=float(_bp_ent),
+                        is_long_side=bool(_is_long_side),
+                    )
                 scanner.append({
                     "symbol": sym,
                     "date": next_iso,
@@ -10677,7 +10911,7 @@ def _run_scan_entry_backtest(
         if signal_t < 0:
             break
 
-        # Trigger-bar (signal_t) snapshots — SPY_COMPARE / IND_TC / SMA*_AT_TRIGGER; fill at entry_bar = T+1.
+        # Trigger-bar (signal_t) snapshots - SPY_COMPARE / IND_TC / SMA*_AT_TRIGGER; fill at entry_bar = T+1.
         if st is not None and sp is not None:
             sc1, sc2, sc3 = _rs_excess_pct_points(st, sp, signal_t)
         else:
@@ -11551,7 +11785,7 @@ def _load_symbol_data(
         df = _db_load_symbol_df(sym, db_path=db_file, table=db_table)
         if df is None or df.empty:
             return None
-        # DuckDB prices has no SMA cols — join precomputed SMAs from ticker CSV when present.
+        # DuckDB prices has no SMA cols - join precomputed SMAs from ticker CSV when present.
         return _merge_precomputed_sma_from_csv(df, csv_path)
     if not csv_path.exists():
         return None
@@ -11809,7 +12043,7 @@ def _yfinance_fetch_symbol_info(sym: str, today: str) -> tuple[str, dict]:
                     or out.get("current_price") is not None
                 )
                 if bundle.cache_hit or has_quote:
-                    # Rare: fresh DuckDB info row with no sector/price — one light .info fill.
+                    # Rare: fresh DuckDB info row with no sector/price - one light .info fill.
                     if (
                         bundle.cache_hit
                         and not out.get("sector")
@@ -11931,7 +12165,7 @@ def _enrich_trades_yfinance(
             cache[sym] = _yfinance_backfill_market_cap(dict(entry))
         else:
             symbols_to_fetch.append(sym)
-    # Same-day JSON hits often lack market_cap (Yahoo omit) but DuckDB has float_shares —
+    # Same-day JSON hits often lack market_cap (Yahoo omit) but DuckDB has float_shares -
     # upgrade cap via DuckDB only (no Yahoo) and persist so later runs stay at 0 fetched.
     duck_upgraded = False
     for sym, row in list(cache.items()):
@@ -12867,6 +13101,114 @@ def _cfg_require_no_zone_above(cfg: BRTConfig) -> bool:
     return bool(getattr(cfg, "require_no_zone_above", False))
 
 
+def _cfg_zone_exits(cfg: BRTConfig) -> bool:
+    """True when stop/target should prefer nearest zone below/above levels (own or union)."""
+    return bool(getattr(cfg, "zone_exits", False)) or bool(getattr(cfg, "zone_exits_union", False))
+
+
+def _cfg_zone_exits_union(cfg: BRTConfig) -> bool:
+    """True when nearest-zone exits use the BRT+YH+WPBR+VEC union inventory."""
+    return bool(getattr(cfg, "zone_exits_union", False))
+
+
+def _cfg_zone_rr_min(cfg: BRTConfig) -> float:
+    """Minimum reward/risk (zone-above dist / zone-below dist); 0 = gate off."""
+    return float(getattr(cfg, "zone_rr_min", 0.0) or 0.0)
+
+
+def _zone_exit_levels(
+    *,
+    entry_price: float,
+    zone_above_center: float,
+    zone_below_center: float,
+    band_pct: float,
+    is_long_side: bool,
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Nearest-zone target/stop candidates and reward/risk distances.
+
+    Returns ``(target_px, stop_px, reward_dist, risk_dist)``. Any element may be None when
+    the corresponding zone is missing or the level would be on the wrong side of entry.
+    Long: target = bottom of zone above; stop = top of zone below.
+    Short: target = top of zone below; stop = bottom of zone above.
+    """
+    ep = float(entry_price)
+    bp = float(band_pct)
+    if not (np.isfinite(ep) and ep > 0 and np.isfinite(bp) and 0.0 <= bp < 1.0):
+        return None, None, None, None
+    za = float(zone_above_center) if zone_above_center else 0.0
+    zb = float(zone_below_center) if zone_below_center else 0.0
+    bottom_above = za * (1.0 - bp) if za > 0 and np.isfinite(za) else None
+    top_below = zb * (1.0 + bp) if zb > 0 and np.isfinite(zb) else None
+    if is_long_side:
+        target_px = bottom_above if bottom_above is not None and bottom_above > ep else None
+        stop_px = top_below if top_below is not None and 0.0 < top_below < ep else None
+        reward = (float(bottom_above) - ep) if bottom_above is not None else None
+        risk = (ep - float(top_below)) if top_below is not None else None
+    else:
+        target_px = top_below if top_below is not None and 0.0 < top_below < ep else None
+        stop_px = bottom_above if bottom_above is not None and bottom_above > ep else None
+        reward = (ep - float(top_below)) if top_below is not None else None
+        risk = (float(bottom_above) - ep) if bottom_above is not None else None
+    if reward is not None and (not np.isfinite(reward) or reward <= 0):
+        reward = None
+        target_px = None
+    if risk is not None and (not np.isfinite(risk) or risk <= 0):
+        risk = None
+        stop_px = None
+    return target_px, stop_px, reward, risk
+
+
+def _zone_rr_min_gate_blocks(
+    cfg: BRTConfig,
+    *,
+    entry_price: float,
+    zone_above_center: float,
+    zone_below_center: float,
+    band_pct: float,
+    is_long_side: bool,
+) -> bool:
+    """True when zone_rr_min > 0 and reward/risk is missing or <= threshold."""
+    thr = _cfg_zone_rr_min(cfg)
+    if thr <= 0.0:
+        return False
+    _t, _s, reward, risk = _zone_exit_levels(
+        entry_price=entry_price,
+        zone_above_center=zone_above_center,
+        zone_below_center=zone_below_center,
+        band_pct=band_pct,
+        is_long_side=is_long_side,
+    )
+    if reward is None or risk is None or risk <= 0:
+        return True
+    return float(reward) / float(risk) <= float(thr)
+
+
+def _apply_zone_exits_overlay(
+    cfg: BRTConfig,
+    *,
+    entry_price: float,
+    target_price: float,
+    stop_price: float,
+    zone_above_center: float,
+    zone_below_center: float,
+    band_pct: float,
+    is_long_side: bool,
+) -> tuple[float, float]:
+    """Override target/stop from nearest zones when zone_exits or zone_exits_union; else pass through."""
+    if not _cfg_zone_exits(cfg):
+        return float(target_price), float(stop_price)
+    zt, zs, _r, _k = _zone_exit_levels(
+        entry_price=entry_price,
+        zone_above_center=zone_above_center,
+        zone_below_center=zone_below_center,
+        band_pct=band_pct,
+        is_long_side=is_long_side,
+    )
+    out_t = float(zt) if zt is not None else float(target_price)
+    out_s = float(zs) if zs is not None else float(stop_price)
+    return out_t, out_s
+
+
 def _nearest_zone_above_gap_pct(
     current_zone_center: float,
     band_pct: float,
@@ -13312,7 +13654,7 @@ def _block_entries_when_spy_int_weak_gate_blocks(
 ) -> bool:
     """True when block_entries_when_spy_int_weak rejects on trigger bar T (lagged outlook).
 
-    Pass trigger/signal date T — not entry date T+1. With default spy_int_tc_lag=1 this
+    Pass trigger/signal date T - not entry date T+1. With default spy_int_tc_lag=1 this
     reads IND_TC_{SHORT|INT|LONG}_OUTLOOK[T-1] for spy_tc_weak_horizon. Do not re-check
     on the entry open.
     """
@@ -15494,7 +15836,7 @@ def write_brt_summary(
       End = ``backtest_end_date`` if set, else last OHLC date, else max ``date_closed`` for the symbol.
     - ``AVG_DAYS_HELD``: mean calendar days held across this symbol's closed trades
       (same idea as Report/Audit ``Avg_Days_Held``, per symbol). Blank when no trades.
-    - ``SHEET_PNL``: engine ``TOTAL_PNL`` scaled to sheet size —
+    - ``SHEET_PNL``: engine ``TOTAL_PNL`` scaled to sheet size -
       ``SHEET_PNL = TOTAL_PNL × (SHEET_INVESTMENT / brt_cash)`` where ``SHEET_INVESTMENT`` is
       45,000 and ``brt_cash`` is the same per-trade notional used in Report/Audit (post
       dollar-scale). Blank when ``brt_cash`` is missing or ≤ 0.
@@ -15752,7 +16094,7 @@ def _apply_audit_display_and_triple_cash(row: dict[str, Any], cfg: BRTConfig) ->
     # Post-run capital scaling (same for aggressive and non-aggressive):
     # Trades and metrics["Total_PNL"] are already in dollars after _apply_report_dollar_scale_to_trades
     # (cfg.brt_cash = deployable/Max). Scale to report row only if cfg.brt_cash still differs from 1M/max_pos.
-    # Do NOT use initial_capital here — that incorrectly doubled Total_PNL when initial_capital=500k.
+    # Do NOT use initial_capital here - that incorrectly doubled Total_PNL when initial_capital=500k.
     max_pos = int(row.get("Max_Positions", 1) or 1)
     if max_pos > 0:
         adjusted_brt_cash = 1_000_000.0 / max_pos
@@ -15798,6 +16140,7 @@ def write_brt_report(
     _fill_mvcp_mode_audit(row, cfg)
     _fill_qull_mode_audit(row, cfg)
     _fill_sb_mode_audit(row, cfg)
+    _fill_vz_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
@@ -15958,6 +16301,9 @@ _AUDIT_CFG_COLS = [
     "min_upper_wick_atr_at_trigger",
     "min_zone_above_pct",
     "require_no_zone_above",
+    "zone_exits",
+    "zone_exits_union",
+    "zone_rr_min",
     "pivot_switch_h_to_l_filter",
     "entry_filter_major_pivot", "entry_filter_is_20bar_high_at_trigger",
     "entry_filter_meteoric_rise", "entry_filter_meteoric_fall",
@@ -16065,6 +16411,20 @@ _AUDIT_CFG_COLS = [
     "sb_rejected_mm",
     "sb_rejected_t1_n",
     "sb_rejected_vol_vs_avg",
+    # Volume Zone (appended; blanked on non-VZ via _fill_vz_mode_audit)
+    "vz_mode",
+    "vz_lookback_days",
+    "vz_retest_window",
+    "vz_retest_eps_pct",
+    "vz_first_retest_only",
+    "vz_min_touches_before_entry",
+    "vz_entry_on",
+    "vz_zone_kinds",
+    "vz_exit_name",
+    "vz_exit_bars",
+    "vz_target_r",
+    "vz_stop_atr_buffer",
+    "vz_sheet_notional",
 ]
 
 _AGGRESSIVE_METRIC_COLS = [
@@ -16136,7 +16496,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "transaction_type": "Strategy side mode: long | short | both.",
     "entry_type": "Active side for a single stream: long | short.",
     "zone_role_mode": "Zone role policy: dynamic (no filter) or by_origin (PH→resistance for longs, PL→support for shorts; filters DI + touch pending).",
-    "zone_role_override": "Optional: support | resistance | both — forces all zones to that role (both = no extra filter).",
+    "zone_role_override": "Optional: support | resistance | both - forces all zones to that role (both = no extra filter).",
     "row_local_eval_touch_same_bar": "In row_local mode, allow same-bar evaluation on maturity/touch bar when True.",
     "row_local_eval_ttl_bars_after_first_eval": "Row-local: extra bars a touch maturity stays pending after its first eval day (0 = one day only).",
     "row_local_require_active_context_match": "In row_local mode, require pending maturity to match active DN context.",
@@ -16151,14 +16511,14 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "vec_vp_lookback": "VEC: trading-day window for volume-profile POC (default 60).",
     "vec_vp_bin_pct": "VEC: histogram bin width as fraction of median price (default 0.005 = 0.5%).",
     "vec_prior_bars": "VEC: prior-period length in sessions (default 5 ≈ prior week on daily bars).",
-    "vec_prior_side": "VEC: prior extreme to compare to POC — high (resistance) or low (support).",
+    "vec_prior_side": "VEC: prior extreme to compare to POC - high (resistance) or low (support).",
     "vec_confluence_pct": "VEC: max |POC - extreme| / extreme for confluence (default 0.0075 = 0.75%).",
     "vec_move_away_pct": "VEC: min rally above zone center before activation (default 0.02; 0 = activate on confluence bar).",
     "vec_min_bars_between": "VEC: min bars between activations at a similar center (dedup, default 20).",
     "wpbr_zones": "When True, add Pivot Break and Retest zones (weekly pivot bands, two-stage weekly breakout, daily retest, next-open entry). WPBR-only: wpbr_zones=true, brt_zones=false, yh_zones=false, vec_zones=false.",
     "wpbr_breakout_confirmation": "WPBR stage-2 breakout: first weekly high > zone_upper * (1 + this) sets confirmation week (default 0.03 = 3%).",
     "wpbr_max_days_after_retest": "WPBR entry window: max trading days after retest bar (inclusive) to allow Rocket Buy signal (default 2).",
-    "wpbr_retest_mode": "WPBR daily-retest forward scan: stop_looking (DEFAULT, sheet parity — first Low<=upper & Close>upper only before the first Close<zone_lower abandon-kill bar; no prior-close gate) | keep_looking (legacy engine — unbounded scan + prior Close[r-1]>=lower gate). Alias -v retest_mode=...",
+    "wpbr_retest_mode": "WPBR daily-retest forward scan: stop_looking (DEFAULT, sheet parity - first Low<=upper & Close>upper only before the first Close<zone_lower abandon-kill bar; no prior-close gate) | keep_looking (legacy engine - unbounded scan + prior Close[r-1]>=lower gate). Alias -v retest_mode=...",
     "wpbr_second_chance_after_win": "WPBR zone lifecycle: when True, a profitable first purchase from a zone allows exactly one more purchase then retire; when False (default), retire the zone after the first purchase win or loss.",
     "wpbr_merge_overlapping_zones": "WPBR only: when True, merge overlapping pivot bands into one zone (lowest low / highest high; wpbr_merge_count = member count) before breakout/retest. Default False preserves sheet parity. Alias -v merge_overlapping_zones=...",
     "rs_mode": (
@@ -16166,9 +16526,9 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "Same meaning as -v rs_mode=true / --relative-strength; value is derived from "
         "BRTConfig.relative_strength_enabled (not a separate config field)."
     ),
-    "rl_mode": "true | false — Rocket Launcher 50-SMA dip buy (separate run from BRT zone/retest). true = RL_ prefix; AWK/portfolio_audit.awk math is authoritative; Python port in rocket_rl.py.",
+    "rl_mode": "true | false - Rocket Launcher 50-SMA dip buy (separate run from BRT zone/retest). true = RL_ prefix; AWK/portfolio_audit.awk math is authoritative; Python port in rocket_rl.py.",
     "rl_charts": "NOT used by DailyRun. Charts/deep HTML: python stock_analysis/rl_post_run_analysis.py --stamp <ts> --charts. If set during RL run, only prints a pointer. Cheap ONE_LINER / FIT / ImproveHints always emit from write_rl_post_reports.",
-    "rl_deep_analysis": "NOT used by DailyRun. Same as rl_charts — use rl_post_run_analysis.py for CRWD-style HTML assessments. Setting true mid-run only prints a pointer.",
+    "rl_deep_analysis": "NOT used by DailyRun. Same as rl_charts - use rl_post_run_analysis.py for CRWD-style HTML assessments. Setting true mid-run only prints a pointer.",
     "rl_sma_qual": "Master on/off for 50-SMA dip-buy (AWK SMA_QUAL; default true).",
     "rl_dip_pct": "Dip band multiplier around SMA50 (AWK RL_DIP_PCT, default 1.041 = ±4.1%).",
     "rl_50_sma_lookback": "SMA50 rising lookback bars (AWK RL_50_SMA_LOOKBACK, default 4).",
@@ -16187,7 +16547,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_shock_threshold": "Single-day drop fraction counting as shock (AWK RL_SHOCK_THRESHOLD; 0=off).",
     "rl_shock_rehab_days": "Shock lookback window (AWK RL_SHOCK_REHAB_DAYS, default 120).",
     "rl_shock_max_allowed": "Max shocks allowed in rehab window (AWK RL_SHOCK_MAX_ALLOWED, default 1).",
-    "rl_too_high": "Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (AWK RL_TOO_HIGH, default 0=off). When on (e.g. 1.14) with stop 0.934, allows open up to ~low*1.065; rl_too_high=1 requires open <= low*0.934 (below signal low — almost never fills). 0|off|none|false|empty disables.",
+    "rl_too_high": "Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (AWK RL_TOO_HIGH, default 0=off). When on (e.g. 1.14) with stop 0.934, allows open up to ~low*1.065; rl_too_high=1 requires open <= low*0.934 (below signal low - almost never fills). 0|off|none|false|empty disables.",
     "rl_spy_inclusion": "When true, only enter if SPY SMA50>100>200 (AWK SPY_INCLUSION).",
     "rl_avg_vol_days": "Rolling average volume window reported/used at entry (AWK AVG_VOL_DAYS; 0=off).",
     "rl_vol_pct_threshold": "Volume surge gate percent above avg (AWK VOL_PCT_THRESHOLD; 0=off).",
@@ -16265,6 +16625,26 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "min_upper_wick_atr_at_trigger": "Require UPPER_WICK_ATR_AT_TRIGGER ((High-max(Open,Close))/ATR14 at trigger) >= this (0 = off).",
     "min_zone_above_pct": "When >0, reject entry if nearest non-overlapping matured zone above has gap (above_low-current_high)/current_high <= this fraction; keep trade if no overhead zone (0=off).",
     "require_no_zone_above": "When True, only take entries with no matured non-overlapping zone above (PCT_ENTRY_TO_BOTTOM_ZONE_ABOVE empty). Default False. Distinct from min_zone_above_pct (clearance threshold).",
+    "zone_exits": (
+        "Research overlay (default False): long target = bottom of nearest matured non-overlapping "
+        "zone above; long stop = top of nearest matured zone below (same inventory as "
+        "ZONE_ABOVE_CENTER / ZONE_BELOW_CENTER). Shorts mirror. Missing/invalid side falls back to "
+        "static target_pct / stop_pct (or trigger_low / ATR / zone_low). Pass -v zone_exits=true "
+        "(own-system DNA) or -v zone_exits=union (alias for zone_exits_union=true)."
+    ),
+    "zone_exits_union": (
+        "Research overlay (default False): same target/stop rules as zone_exits, but nearest "
+        "above/below come from the union of BRT+YH+WPBR+VEC matured zone DNA (production-typical "
+        "DNA knobs; does not change entry-system toggles). Implies exit overlay on. "
+        "Missing/invalid side falls back to static target/stop. Pass -v zone_exits_union=true "
+        "or -v zone_exits=union. Pair with -v zone_rr_min=N for RR gates on the union inventory."
+    ),
+    "zone_rr_min": (
+        "Entry gate (0=off): require (reward_dist / risk_dist) > this using nearest-zone target/stop "
+        "distances; missing either side skips the trade. Typically paired with zone_exits=true "
+        "or zone_exits_union=true (e.g. -v zone_exits_union=true -v zone_rr_min=2). "
+        "Does not alone change exits."
+    ),
     "use_indicators": "When True, append IND_* / IND_ENTRY_* / IND_TC_* columns at entry (see brt_entry_indicators).",
     "use_ind_score": "When True, append IND_SCORE = sum of per-indicator weights for each IND_<id> that is BULL at entry (see ind_score_weights.json).",
     "ind_score_weights_path": "IND_SCORE weights JSON (explicit -v path as given; empty default → canonical ind_score_weights_<stamp>.json, reused until weights change).",
@@ -16272,7 +16652,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "mandatory_ind_states_path": "Mandatory IND state rules JSON filename (e.g. mandatory_ind_states.json). Empty = gate off. Resolves from cwd, stock_analysis/, or repo root.",
     "exclude_ind_states_path": "Exclude IND state rules JSON filename (e.g. exclude_ind_states_vol_surge_bull.json). Blocks entry when listed indicators match forbidden states at trigger. Empty = off.",
     "use_sma50": "When true and atr_target=0: long target = SMA(50)*target_pct at entry; short uses SMA(50)*short_target_pct formula.",
-    "indicator_buy": "off | only | both — only = IND-only entry (trade-aligned IND_DIFF >= indicator_diff at trigger close, no zone/retest/RS); both = zone/retest OR RS scan + diff gate (+ sheet gates on zone path); growth_filter still applies when enabled.",
+    "indicator_buy": "off | only | both - only = IND-only entry (trade-aligned IND_DIFF >= indicator_diff at trigger close, no zone/retest/RS); both = zone/retest OR RS scan + diff gate (+ sheet gates on zone path); growth_filter still applies when enabled.",
     "indicator_diff": "Minimum trade-aligned (bull−bear) IND count at trigger bar close when indicator_buy is only or both (default 10). Negative values allowed (e.g. -100). LONG: bullish-aligned; SHORT: bearish-aligned.",
     "max_ind_diff_at_trigger": "Upper-bound gate: require trade-aligned IND_DIFF <= N at trigger bar close (None = off). Independent of indicator_buy; enables low-DIFF overlays on YH/BRT/etc.",
     "entry_start_date": "Inclusive earliest strategy date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries before this date; for WPBR also excludes pivots/zones with pivot Monday before this date (no BO/retest/rocket from those pivots). OHLC warmup/history before this date still loads for weekly/indicator calc. Engine-wide alias: -v start_date= (also data_start / history_start) maps here across BRT/WPBR/PBR/RL/MTS/VEC.",
@@ -16286,12 +16666,12 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "entry_filter_meteoric_fall": "Tri-state: true=require HAD_METEORIC_FALL_BEFORE_ENTRY==1; false=require ==0; both=no filter.",
     "max_ind_entry_neutral_n": "Require IND_ENTRY_NEUTRAL_N <= N at trigger bar close (None = off; needs OHLCV precompute).",
     "min_ind_entry_bull_n": "Require IND_ENTRY_BULL_N >= N at trigger bar close (None = off; trade-aligned; needs OHLCV precompute).",
-    "indicator_sides": "long | short | both — which streams run the indicator gate (only/both modes). Default auto: only→both, both→long. both sets transaction_type=both for long+short indicator entries.",
+    "indicator_sides": "long | short | both - which streams run the indicator gate (only/both modes). Default auto: only→both, both→long. both sets transaction_type=both for long+short indicator entries.",
     "trace_indicator_buy": "When True, print [IND-GATE] lines for indicator_buy only/both (CLI: --trace-indicator-buy).",
     "indicator_cache": "When True, cache per-symbol indicator precompute on disk (reuse across runs; incremental on new bars).",
     "indicator_cache_dir": "Indicator cache folder (default <data-dir>/.brt_indicator_cache; CLI: --indicator-cache-dir).",
     "relative_strength_enabled": (
-        "When True (alias -v rs_mode=true / --relative-strength): RS engine mode — "
+        "When True (alias -v rs_mode=true / --relative-strength): RS engine mode - "
         "SPY_COMPARE 1Y/2Y/3Y all > 0; skips zone/retest; outputs RS_ prefix. "
         "With rs_require_tc_strong (default True) also requires IND_TC_* Strong. "
         "Inherits target_pct/stop_pct/use_indicators/start_date/max_positions/duckdb/workers/etc. "
@@ -16346,7 +16726,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "any not Strong. breakdown_both = exit only when SPY AND TC both broken on the same "
         "signal bar (same schedule restrictions as only); exit type RS_BREAKDOWN_BOTH_EXIT. "
         "breakdown_plus = normal exits OR breakdown (SPY OR TC), whichever first. "
-        "Timing matches RS entry gates (same-bar SPY_COMPARE + IND_TC at bar close — not "
+        "Timing matches RS entry gates (same-bar SPY_COMPARE + IND_TC at bar close - not "
         "spy_int_tc_lag); exit at next session open as RS_BREAKDOWN_EXIT (or BOTH). "
         "Aliases: only→breakdown_only, both→breakdown_both, plus→breakdown_plus."
     ),
@@ -16489,7 +16869,7 @@ def _apply_aggressive_avg_positions_actual_to_audit_row(row: dict, metrics: dict
 
 
 def _fill_rs_mode_audit(row: dict, cfg: Any) -> None:
-    """Emit rs_mode (CLI alias) from BRTConfig.relative_strength_enabled — not a real cfg field."""
+    """Emit rs_mode (CLI alias) from BRTConfig.relative_strength_enabled - not a real cfg field."""
     row["rs_mode"] = (
         "true" if bool(getattr(cfg, "relative_strength_enabled", False)) else "false"
     )
@@ -16603,6 +16983,32 @@ def _fill_qull_mode_audit(row: dict, cfg: Any) -> None:
         return
     for k in _qull_audit_lever_cols():
         if k == "qull_mode":
+            continue
+        row[k] = ""
+
+
+def _vz_audit_lever_cols() -> tuple[str, ...]:
+    try:
+        from brt_audit_columns import get_vz_audit_lever_cols
+
+        return get_vz_audit_lever_cols()
+    except ImportError:
+        try:
+            from stock_analysis.brt_audit_columns import get_vz_audit_lever_cols  # type: ignore
+
+            return get_vz_audit_lever_cols()
+        except ImportError:
+            return ("vz_mode",)
+
+
+def _fill_vz_mode_audit(row: dict, cfg: Any) -> None:
+    """Emit vz_mode; blank Volume-Zone-only levers when not in vz_mode."""
+    vz = bool(getattr(cfg, "vz_mode", False))
+    row["vz_mode"] = "true" if vz else "false"
+    if vz:
+        return
+    for k in _vz_audit_lever_cols():
+        if k == "vz_mode":
             continue
         row[k] = ""
 
@@ -16753,6 +17159,7 @@ def write_brt_audit_report(
     _fill_mvcp_mode_audit(row, cfg)
     _fill_qull_mode_audit(row, cfg)
     _fill_sb_mode_audit(row, cfg)
+    _fill_vz_mode_audit(row, cfg)
     _fill_rl_awk_subsystem_audit_defaults(row, cfg)
     row.update(_metrics_to_audit_row(metrics))
     _apply_aggressive_avg_positions_actual_to_audit_row(row, metrics, cfg)
@@ -17608,7 +18015,7 @@ def _process_symbol(args: tuple) -> tuple:
         if _db_load_symbol_df is None:
             raise RuntimeError("DuckDB mode requested but ohlcv_store is unavailable.")
         df = _db_load_symbol_df(sym, db_path=db_path, table=db_table)
-        # DuckDB prices has no SMA cols — join precomputed SMAs from ticker CSV (same as _load_symbol_data).
+        # DuckDB prices has no SMA cols - join precomputed SMAs from ticker CSV (same as _load_symbol_data).
         if df is not None and not df.empty:
             df = _merge_precomputed_sma_from_csv(df, Path(csv_path))
     else:
@@ -17963,7 +18370,7 @@ def run_brt_backtest_batch(
 def _maybe_play_completion_sound(enabled: bool) -> None:
     """Notify that a long run finished.
 
-    Windows: ``winsound.Beep`` (frequency Hz, duration ms) — longer and clearer than ``MessageBeep``.
+    Windows: ``winsound.Beep`` (frequency Hz, duration ms) - longer and clearer than ``MessageBeep``.
     Loudness follows the system output volume; raise Windows volume or use speakers for more impact.
     Other OS: several ASCII bells in a row.
     """
@@ -17998,7 +18405,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         prog="rocket_tbn.py",
         description=(
-            "TBN engine (Twin Beacon Networks) — shared backtest host for "
+            "TBN engine (Twin Beacon Networks) - shared backtest host for "
             "BRT / WPBR / YH / MTS / RL / RS / IND / … "
             "(BRT = Break and ReTest system; see docs/TBN_VS_BRT.md)"
         ),
@@ -18548,6 +18955,11 @@ def main() -> int:
             )
             key = "stop_loss_based"
             val_str = _normalize_stop_loss_based(val_str)
+        # zone_exits=union → own-zone flag off, union inventory on (implies exit overlay).
+        if key == "zone_exits" and val_str.strip().lower() == "union":
+            cfg_kw["zone_exits"] = False
+            cfg_kw["zone_exits_union"] = True
+            continue
         if key not in valid_fields:
             print(f"[TBN] Unknown config key in -v {key}=... (skipped)", file=sys.stderr)
             continue
@@ -18771,7 +19183,7 @@ def main() -> int:
         if not _mand_rules:
             print(
                 f"[TBN] mandatory_ind_states_path={_mand_raw!r} but no rules loaded "
-                f"(file not found or empty rules) — gate inactive",
+                f"(file not found or empty rules) - gate inactive",
                 file=sys.stderr,
             )
         else:
@@ -18797,7 +19209,7 @@ def main() -> int:
         if not _excl_rules:
             print(
                 f"[TBN] exclude_ind_states_path={_excl_raw!r} but no rules loaded "
-                f"(file not found or empty rules) — gate inactive",
+                f"(file not found or empty rules) - gate inactive",
                 file=sys.stderr,
             )
         else:
@@ -18869,16 +19281,23 @@ def main() -> int:
             "Python engine (stock_analysis/rocket_stockbee_burst.py); outputs SB_* prefix. "
             "Isolate with brt/yh/wpbr/rl/rs/mvcp flags false (see run_sb.bat)."
         )
+    elif bool(getattr(cfg, "vz_mode", False)):
+        print(
+            "[TBN] Volume Zone (vz_mode=true): max-vol HL zone break->retest - "
+            f"entry_on={getattr(cfg, 'vz_entry_on', 'next_open')} (signal bar close -> fill next open "
+            "by default; never signal-bar open). Engine tools/vol_zone_break_retest.py via "
+            "rocket_vz.py; outputs VZ_* prefix. Isolate peers (see run_vz.bat)."
+        )
     elif _rl_mode_active(getattr(cfg, "rl_mode", "false")):
         print(
-            "[TBN] Rocket Launcher mode (rl_mode=true): 50-SMA dip-buy — "
+            "[TBN] Rocket Launcher mode (rl_mode=true): 50-SMA dip-buy - "
             "Python engine (stock_analysis/rocket_rl.py); outputs RL_Closed_/RL_Open_. "
             "All portfolio_audit.awk RL_* params are -v overridable (see rocket_rl_config.py)."
         )
     elif _indicator_only_mode(cfg):
         print(
             f"[TBN] Indicator-only mode (indicator_buy=only): enter when trade-aligned IND_DIFF >= "
-            f"{int(getattr(cfg, 'indicator_diff', 10) or 10)} at trigger bar close — no zone maturity, retest, or relative strength."
+            f"{int(getattr(cfg, 'indicator_diff', 10) or 10)} at trigger bar close - no zone maturity, retest, or relative strength."
         )
     elif bool(getattr(cfg, "vec_zones", False)) and not bool(getattr(cfg, "brt_zones", False)) and not bool(getattr(cfg, "yh_zones", True)):
         print(
@@ -19243,6 +19662,29 @@ def main() -> int:
         _maybe_play_completion_sound(args.play_sound)
         return _sb_rc
 
+    if not skip_backtest and bool(getattr(cfg, "vz_mode", False)):
+        try:
+            from rocket_vz import run_vz_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_vz import run_vz_from_brt_main  # type: ignore
+
+        _vz_rc = run_vz_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _vz_rc
+
     if not skip_backtest and bool(getattr(cfg, "qull_mode", False)):
         try:
             from rocket_qull_htf import run_qull_from_brt_main
@@ -19450,7 +19892,7 @@ def main() -> int:
             done = 0
             progress_t0 = time.perf_counter()
             print(
-                f"[TBN] Spawning {n_workers} worker process(es) for {n_tasks} symbols — "
+                f"[TBN] Spawning {n_workers} worker process(es) for {n_tasks} symbols - "
                 "no progress line until the first symbol completes (often several minutes on a cold run).",
                 flush=True,
             )

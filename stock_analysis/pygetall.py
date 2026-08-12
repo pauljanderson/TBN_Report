@@ -23,7 +23,7 @@ TICKERS = [
 
     "ASM", "ASML", "ATEN", "ATLC", "AU", "AUGO", "AXP", "B", "BAC", 
 
-    "BANC", "BANF", "BFC", "BK", "BKTI", "BLBD", "BLK", "BLX", "BMRN", 
+    "BANC", "BANF", "BFC", "BNY", "BKTI", "BLBD", "BLK", "BLX", "BMRN", 
 
     "BN", "BPOP", "BSX", "BX", "BYD", "C", "CASH", "CASY", "CBRE", "CCBG", 
 

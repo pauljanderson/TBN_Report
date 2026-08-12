@@ -16,7 +16,6 @@ C:/Users/songg/Downloads/stockresearch/data/newdata/data/APP.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/TOELY.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/IBKR.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/CRWD.csv
-C:/Users/songg/Downloads/stockresearch/data/newdata/data/ATEYY.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/NEM.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/AEM.csv
 C:/Users/songg/Downloads/stockresearch/data/newdata/data/CNQ.csv

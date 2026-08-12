@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR / RS / SB systems.
+Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR / RS / SB / VZ systems.
 
 Data sources:
   - Accounts_History full exports in Downloads (numbered or timestamped; recent-history sells merged in)
@@ -8,9 +8,10 @@ Data sources:
   - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows)
   - closed_positions_log.csv — append-only permanent closed round-trips (survives rolling Fidelity export windows)
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
-  - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
+  - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
-  - Latest SB_Watchlist_*.csv when no Scanner (StockBee Momentum Burst / SB has watchlist only)
+  - Latest SB/VZ_Watchlist_*.csv when no Scanner (StockBee / Volume Zone watchlist fallback)
+  - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
 """
 from __future__ import annotations
 
@@ -36,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 from sell_report_lib import (
-    find_pending_low_vol_sells,
+    find_all_pending_sells,
     sell_report_html_section,
     write_sell_report_csv,
 )
@@ -83,9 +84,13 @@ CLOSED_SINCE = date(2026, 5, 25)
 MIN_POSITION_VALUE = 47_500.0
 # Still show smaller lots when (symbol, entry_date) is in the system map (registry/engine).
 MIN_REGISTRY_TRACKED_VALUE = 5_000.0
-REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB")
+REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ")
 REPORT_TITLE = f"{len(REPORT_SYSTEMS)}-System Investment Report"
-REPORT_SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB"}
+REPORT_SYSTEM_LABELS = {
+    "IND": "IND (deprecated)",
+    "SB": "SB",
+    "VZ": "VZ",
+}
 _SYSTEM_ALIASES = {"PBR": "WPBR"}
 
 
@@ -108,11 +113,11 @@ _BRT_SYMBOLS = {
     "CDNS", "CI", "CRM", "CRWD", "DIS", "GILD", "GOOG", "GOOGL", "HD", "JPM", "KO", "KR", "LOW", "LYV",
     "META", "MPC", "MS", "MSFT", "MU", "NEM", "NFLX", "NVDA", "OMER", "ORCL", "PFE", "PG", "PLTR", "PM",
     "PPTA", "SHOP", "TMUS", "TSLA", "TSM", "UNH", "V", "WFC", "WMT", "XOM", "ENPH", "TEAM", "BEP", "VLO",
-    "CRUS", "ATEYY", "LUMN",
+    "CRUS", "LUMN",
 }
 _RL_SYMBOLS = {
     "TSLA", "AMD", "INTC", "XOM", "LRCX", "NFLX", "PLTR", "KLAC", "WFC", "ADI", "STX", "WDC", "ANET", "APP",
-    "TOELY", "IBKR", "CRWD", "ATEYY", "NEM", "AEM", "CNQ", "FCX", "FTNT", "MPWR", "MELI", "B", "FIX", "RCL",
+    "TOELY", "IBKR", "CRWD", "NEM", "AEM", "CNQ", "FCX", "FTNT", "MPWR", "MELI", "B", "FIX", "RCL",
     "GM", "TER", "OKE", "OXY", "AU", "TRGP", "DVN", "FLEX", "CCJ", "ARGX", "CLS", "IDXX", "EME", "GFI",
     "ARES", "KGC", "ESLT", "STLD", "MTZ", "TECK", "WDAY", "TWLO", "NRG", "RMD", "FOXA", "FTAI", "NTRA", "FTI",
     "MTSI", "TPR", "STRL", "CFG", "FOX", "ALB", "FN", "KEY", "AKAM", "TEAM", "BEP", "LEN", "CRS", "RL",
@@ -122,7 +127,7 @@ _RL_SYMBOLS = {
 _MTS_SYMBOLS = set(_MTS_SYMBOLS_LIST)
 
 _ENGINE_CSV_RE = re.compile(
-    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 
@@ -193,7 +198,7 @@ def _latest_engine_csvs(drive_dir: Path) -> dict[tuple[str, str], Path]:
 
 def _load_engine_trades_from_drive(drive_dir: Path) -> dict[tuple[str, str], str]:
     """
-    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR/RS/SB Closed and Open CSVs.
+    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR/RS/SB/VZ Closed and Open CSVs.
     Same symbol may have different systems on different entry dates.
     """
     out: dict[tuple[str, str], str] = {}
@@ -873,20 +878,76 @@ def _registry_open_keys(positions_path: Path) -> set[tuple[str, str]]:
     return {(p["symbol"], p["buy_date"].isoformat()) for p in _load_tracked_position_rows(positions_path)}
 
 
+def _mobile_fidelity_supplement_path() -> Path:
+    """Phone-ingested Actual-shaped rows (tools/ingest_mobile_trades.py)."""
+    return ROOT / "drive" / "mobile_inbox" / "fidelity_mobile_supplement.csv"
+
+
+def _merge_mobile_fidelity_supplement(base: pd.DataFrame) -> tuple[pd.DataFrame, Optional[str]]:
+    """
+    Merge drive/mobile_inbox/fidelity_mobile_supplement.csv (Fidelity Accounts_History columns)
+    so phone fills appear in Actual before the next broker export catches up.
+    """
+    path = _mobile_fidelity_supplement_path()
+    if not path.is_file() or path.stat().st_size == 0:
+        return base, None
+    try:
+        supplement = _load_accounts(path)
+    except Exception:
+        return base, None
+    if supplement.empty:
+        return base, None
+    existing_buys = _buy_fingerprints(base)
+    existing_sells = _sell_fingerprints(base)
+    extra_rows: list[dict] = []
+    for _, r in supplement.iterrows():
+        action = str(r.get("Action", ""))
+        rd = r.get("Run Date")
+        if rd is None or (isinstance(rd, float) and pd.isna(rd)):
+            continue
+        try:
+            sym = str(r.get("Symbol", "")).upper()
+            qty = float(r.get("Quantity", 0))
+            price = float(r.get("Price", 0))
+        except (TypeError, ValueError):
+            continue
+        if "YOU BOUGHT" in action:
+            fp = _buy_row_fingerprint(rd, sym, qty, price)
+            if fp in existing_buys:
+                continue
+            existing_buys.add(fp)
+        elif "YOU SOLD" in action:
+            fp = _sell_row_fingerprint(rd, sym, qty, price)
+            if fp in existing_sells:
+                continue
+            existing_sells.add(fp)
+        else:
+            continue
+        extra_rows.append(r.to_dict())
+    if not extra_rows:
+        return base, None
+    merged = pd.concat([base, pd.DataFrame(extra_rows)], ignore_index=True)
+    merged = merged.sort_values(["Run Date", "Symbol"], ascending=[True, True]).reset_index(drop=True)
+    return _adjust_intraday_order(merged), path.name
+
+
 def _load_accounts_for_report(
     downloads: Path,
     positions_path: Path,
     accounts_path: Optional[Path] = None,
 ) -> tuple[pd.DataFrame, str]:
-    """Load primary Fidelity export, merge account/recent supplements, backfill registry buys."""
+    """Load primary Fidelity export, merge account/recent/mobile supplements, backfill registry buys."""
     primary = accounts_path or _latest_accounts_history(downloads)
     acct = _load_accounts(primary)
     acct, account_supp = _merge_account_history_trades(acct, downloads)
     acct = _merge_recent_history_sells(acct, downloads)
+    acct, mobile_supp = _merge_mobile_fidelity_supplement(acct)
     acct, buy_notes = _supplement_accounts_from_tracked_positions(acct, downloads, positions_path)
     source = primary.name
     if account_supp:
         source = f"{source} + {account_supp}"
+    if mobile_supp:
+        source = f"{source} + {mobile_supp}"
     if buy_notes:
         preview = ", ".join(buy_notes[:4])
         if len(buy_notes) > 4:
@@ -976,6 +1037,9 @@ def backfill_closed_positions_log(
     if account_supp:
         source = f"{source} + {account_supp}"
     acct = _merge_recent_history_sells(acct, downloads)
+    acct, mobile_supp = _merge_mobile_fidelity_supplement(acct)
+    if mobile_supp:
+        source = f"{source} + {mobile_supp}"
     acct, _buy_notes = _supplement_accounts_from_tracked_positions(acct, downloads, positions_path)
     sys_map, entry_prices = _build_full_system_map(
         drive_dir=drive_dir,
@@ -1702,7 +1766,8 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
 
 
 _RUN_TS_RE = re.compile(
-    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$", re.I
+    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$",
+    re.I,
 )
 _PIPELINE_TS_RE = re.compile(
     r"^(?P<prefix>BRT|IND)_Pipeline_Timings_(?P<ts>\d{12})_", re.I
@@ -1734,7 +1799,8 @@ def _scanner_for_latest_run(
     """
     Use scanner CSV only when the latest core run actually wrote one.
     Avoids stale scanner rows when the newest DailyRun had no candidates.
-    SB (StockBee) has no Scanner — falls back to Watchlist for the same run stamp.
+    SB (StockBee) and VZ (Volume Zone) have no Scanner — fall back to Watchlist
+    for the same run stamp.
     """
     run_ts = _latest_run_timestamp(prefix, drive)
     if not run_ts:
@@ -1744,10 +1810,52 @@ def _scanner_for_latest_run(
         candidates.append(drive / f"PBR_Scanner_{run_ts}.csv")
     if prefix.upper() == "SB":
         candidates.append(drive / f"SB_Watchlist_{run_ts}.csv")
+    if prefix.upper() == "VZ":
+        candidates.append(drive / f"VZ_Watchlist_{run_ts}.csv")
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
         return None, pd.DataFrame(), run_ts
     return path, pd.read_csv(path), run_ts
+
+
+def _closed_avg_days_held_map(
+    prefix: str, drive: Path, run_ts: Optional[str]
+) -> dict[str, float]:
+    """
+    Mean DAYS_HELD from the Closed CSV for the same LatestRun stamp as the scanner.
+    Keyed by uppercased SYMBOL. Empty when Closed is missing or has no usable days.
+    """
+    if not run_ts:
+        return {}
+    pfx = prefix.upper()
+    candidates = [drive / f"{pfx}_Closed_{run_ts}.csv"]
+    if pfx == "WPBR":
+        candidates.append(drive / f"PBR_Closed_{run_ts}.csv")
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        return {}
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return {}
+    cols = {str(c).upper(): c for c in df.columns}
+    sym_col = cols.get("SYMBOL")
+    days_col = cols.get("DAYS_HELD")
+    if sym_col is None or days_col is None or df.empty:
+        return {}
+    days = pd.to_numeric(df[days_col], errors="coerce")
+    syms = df[sym_col].astype(str).str.strip().str.upper()
+    tmp = pd.DataFrame({"symbol": syms, "days": days}).dropna(subset=["days"])
+    if tmp.empty:
+        return {}
+    means = tmp.groupby("symbol", sort=False)["days"].mean()
+    return {str(sym): float(val) for sym, val in means.items() if str(sym)}
+
+
+def _fmt_avg_days_held(avg: Optional[float]) -> str:
+    if avg is None:
+        return "—"
+    return f"{avg:.1f}"
 
 
 def _fmt_money(v: float) -> str:
@@ -2257,7 +2365,8 @@ _SYSTEM_FILTER_SCRIPT = """
     const key = subsetKey(sel);
     document.querySelectorAll("[data-system]").forEach((row) => {
       const sys = row.dataset.system;
-      row.style.display = !sys || sel.has(sys) ? "" : "none";
+      // Systems not on the chip list (e.g. research VZ) stay visible.
+      row.style.display = !sys || sel.has(sys) || systems.indexOf(sys) < 0 ? "" : "none";
     });
     document.querySelectorAll("[data-system-section]").forEach((sec) => {
       sec.style.display = sel.has(sec.dataset.systemSection) ? "" : "none";
@@ -2299,7 +2408,7 @@ _SYSTEM_FILTER_SCRIPT = """
       if (m.pending_sells_count > 0) {
         pendWarn.style.display = "";
         pendWarn.innerHTML =
-          "⚠ " + m.pending_sells_count + " open position(s) with low entry-day volume — plan to sell at the <strong>next session open</strong> per backtest rules.";
+          "⚠ " + m.pending_sells_count + " open position(s) need a manual sell action — see Exit reason / When (Fidelity stop/target alone is not enough for time exits).";
       } else {
         pendWarn.style.display = "none";
       }
@@ -2450,6 +2559,7 @@ def build_report(
     wpbr_scan_path, wpbr_scan, wpbr_run_ts = _scanner_for_latest_run("WPBR", drive_dir)
     rs_scan_path, rs_scan, rs_run_ts = _scanner_for_latest_run("RS", drive_dir)
     sb_scan_path, sb_scan, sb_run_ts = _scanner_for_latest_run("SB", drive_dir)
+    vz_scan_path, vz_scan, vz_run_ts = _scanner_for_latest_run("VZ", drive_dir)
 
     metrics_by_key, charts_by_key = _build_system_filter_bundles(
         closed,
@@ -2542,9 +2652,13 @@ def build_report(
         else None
     )
 
-    def _scan_rows(df: pd.DataFrame, limit: int = 50) -> tuple[list[list[str]], list[str]]:
+    def _scan_rows(
+        df: pd.DataFrame,
+        avg_days_by_symbol: Optional[dict[str, float]] = None,
+        limit: int = 50,
+    ) -> tuple[list[list[str]], list[str], list[str]]:
         if df.empty:
-            return [], []
+            return [], [], []
         cols = list(df.columns)
         pick = [
             c
@@ -2582,21 +2696,86 @@ def build_report(
         ]
         if not pick:
             pick = cols[:8]
-        out = []
+        sym_key = "SYMBOL" if "SYMBOL" in cols else ("Symbol" if "Symbol" in cols else None)
+        avg_map = avg_days_by_symbol or {}
+        out: list[list[str]] = []
         for _, r in df.head(limit).iterrows():
-            out.append([str(r.get(c, "")) for c in pick])
-        return out, pick
+            row = [str(r.get(c, "")) for c in pick]
+            sym = str(r.get(sym_key, "")).strip().upper() if sym_key else ""
+            row.append(_fmt_avg_days_held(avg_map.get(sym) if sym else None))
+            out.append(row)
+        headers = list(pick) + ["Prior avg days held"]
+        # Prefer num for known numeric scanner fields; keep SYMBOL/dates/notes as text.
+        num_like = {
+            "CLOSE",
+            "ENTRY_OPEN_BAND",
+            "MIN_ENTRY_OPEN",
+            "MAX_ENTRY_OPEN",
+            "PRIOR_DAY_CLOSE",
+            "TARGET",
+            "STOP_LOSS",
+            "IND_SCORE",
+            "IND_DIFF",
+            "TRIGGER_CLOSE",
+            "ENTRY_OPEN_REF",
+            "TOO_HIGH_LINE",
+            "PCT_DAY",
+            "DCR",
+            "RANGE_EXP",
+            "VOL_RATIO",
+            "SIGNAL_LOW",
+            "MUST_OPEN_ABOVE",
+            "MUST_OPEN_AT_OR_BELOW",
+            "MAX_RISK_PCT",
+        }
+        date_like = {
+            "DATE",
+            "TRIGGER_DATE",
+            "ENTRY_DATE",
+            "ASOF_DATE",
+            "SIGNAL_DATE",
+        }
+        sort_types: list[str] = []
+        for c in pick:
+            cu = str(c).upper()
+            if cu in num_like:
+                sort_types.append("num")
+            elif cu in date_like:
+                sort_types.append("date")
+            else:
+                sort_types.append("text")
+        sort_types.append("num")
+        return out, headers, sort_types
 
-    ind_rows, ind_cols = _scan_rows(ind_scan)
-    brt_rows, brt_cols = _scan_rows(brt_scan)
-    rl_rows, rl_cols = _scan_rows(rl_scan)
-    yh_rows, yh_cols = _scan_rows(yh_scan)
-    mts_rows, mts_cols = _scan_rows(mts_scan)
-    wpbr_rows, wpbr_cols = _scan_rows(wpbr_scan)
-    rs_rows, rs_cols = _scan_rows(rs_scan)
-    sb_rows, sb_cols = _scan_rows(sb_scan)
+    ind_rows, ind_cols, ind_sort = _scan_rows(
+        ind_scan, _closed_avg_days_held_map("IND", drive_dir, ind_run_ts)
+    )
+    brt_rows, brt_cols, brt_sort = _scan_rows(
+        brt_scan, _closed_avg_days_held_map("BRT", drive_dir, brt_run_ts)
+    )
+    rl_rows, rl_cols, rl_sort = _scan_rows(
+        rl_scan, _closed_avg_days_held_map("RL", drive_dir, rl_run_ts)
+    )
+    yh_rows, yh_cols, yh_sort = _scan_rows(
+        yh_scan, _closed_avg_days_held_map("YH", drive_dir, yh_run_ts)
+    )
+    mts_rows, mts_cols, mts_sort = _scan_rows(
+        mts_scan, _closed_avg_days_held_map("MTS", drive_dir, mts_run_ts)
+    )
+    wpbr_rows, wpbr_cols, wpbr_sort = _scan_rows(
+        wpbr_scan, _closed_avg_days_held_map("WPBR", drive_dir, wpbr_run_ts)
+    )
+    rs_rows, rs_cols, rs_sort = _scan_rows(
+        rs_scan, _closed_avg_days_held_map("RS", drive_dir, rs_run_ts)
+    )
+    sb_rows, sb_cols, sb_sort = _scan_rows(
+        sb_scan, _closed_avg_days_held_map("SB", drive_dir, sb_run_ts)
+    )
+    vz_rows, vz_cols, vz_sort = _scan_rows(
+        vz_scan, _closed_avg_days_held_map("VZ", drive_dir, vz_run_ts)
+    )
 
-    pending_sells, sell_thresholds, sell_as_of = find_pending_low_vol_sells(
+    pending_sells, sell_thresholds, sell_time_params, sell_as_of = find_all_pending_sells(
         positions_path=positions_path,
         gettarget_path=gettarget_path,
         drive_dir=drive_dir,
@@ -2608,12 +2787,17 @@ def build_report(
         html_table_fn=lambda h, r, st=None, **kw: _html_table(
             h, r, st, system_col=1, **kw
         ),
+        time_params=sell_time_params,
     )
 
+    report_sys_set = frozenset(REPORT_SYSTEMS)
     for subset in _nonempty_system_subsets():
         key = _system_subset_key(subset)
+        # Include research systems not on the chip list in every subset's sell count.
         metrics_by_key[key]["pending_sells_count"] = sum(
-            1 for p in pending_sells if p.system in subset
+            1
+            for p in pending_sells
+            if p.system in subset or p.system not in report_sys_set
         )
 
     def _scanner_subtitle(path: Optional[Path], run_ts: Optional[str], label: str) -> str:
@@ -2640,6 +2824,17 @@ def build_report(
         "No SB watchlist for the latest run."
         if sb_run_ts
         else "No SB run outputs found in Drive."
+    )
+    vz_scan_sub = _scanner_subtitle(vz_scan_path, vz_run_ts, "VZ")
+    vz_section_title = (
+        "Watchlist — VZ"
+        if vz_scan_path is not None and "Watchlist" in vz_scan_path.name
+        else "Scanner — VZ"
+    )
+    vz_empty_msg = (
+        "No VZ open/watchlist rows for the latest run (Open lists live still_open positions; Watchlist mirrors them)."
+        if vz_run_ts
+        else "No VZ run outputs found in Drive."
     )
 
     filter_buttons_html = "".join(
@@ -2812,49 +3007,55 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 <section class="pagebreak" data-system-section="IND">
 <h2>Scanner — IND (deprecated)</h2>
 <p class="small">{ind_scan_sub}</p>
-<div class="table-wrap">{_html_table(ind_cols, ind_rows, ["text"] * len(ind_cols) if ind_cols else None) if ind_rows else '<p>No IND scanner output available; IND is deprecated.</p>'}</div>
+<div class="table-wrap">{_html_table(ind_cols, ind_rows, ind_sort if ind_cols else None) if ind_rows else '<p>No IND scanner output available; IND is deprecated.</p>'}</div>
 </section>
 
 <section data-system-section="BRT">
 <h2>Scanner — BRT</h2>
 <p class="small">{brt_scan_sub}</p>
-<div class="table-wrap">{_html_table(brt_cols, brt_rows, ["text"] * len(brt_cols) if brt_cols else None) if brt_rows else '<p>No BRT scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(brt_cols, brt_rows, brt_sort if brt_cols else None) if brt_rows else '<p>No BRT scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="RL">
 <h2>Scanner — RL</h2>
 <p class="small">{rl_scan_sub}</p>
-<div class="table-wrap">{_html_table(rl_cols, rl_rows, ["text"] * len(rl_cols) if rl_cols else None) if rl_rows else '<p>No RL scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(rl_cols, rl_rows, rl_sort if rl_cols else None) if rl_rows else '<p>No RL scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="YH">
 <h2>Scanner — YH</h2>
 <p class="small">{yh_scan_sub}</p>
-<div class="table-wrap">{_html_table(yh_cols, yh_rows, ["text"] * len(yh_cols) if yh_cols else None) if yh_rows else '<p>No YH scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(yh_cols, yh_rows, yh_sort if yh_cols else None) if yh_rows else '<p>No YH scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="MTS">
 <h2>Scanner — MTS</h2>
 <p class="small">{mts_scan_sub}</p>
-<div class="table-wrap">{_html_table(mts_cols, mts_rows, ["text"] * len(mts_cols) if mts_cols else None) if mts_rows else '<p>No MTS scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(mts_cols, mts_rows, mts_sort if mts_cols else None) if mts_rows else '<p>No MTS scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="WPBR">
 <h2>Scanner — WPBR</h2>
 <p class="small">{wpbr_scan_sub}</p>
-<div class="table-wrap">{_html_table(wpbr_cols, wpbr_rows, ["text"] * len(wpbr_cols) if wpbr_cols else None) if wpbr_rows else '<p>No WPBR scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(wpbr_cols, wpbr_rows, wpbr_sort if wpbr_cols else None) if wpbr_rows else '<p>No WPBR scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="RS">
 <h2>Scanner — RS</h2>
 <p class="small">{rs_scan_sub}</p>
-<div class="table-wrap">{_html_table(rs_cols, rs_rows, ["text"] * len(rs_cols) if rs_cols else None) if rs_rows else '<p>No RS scanner for the latest run.</p>'}</div>
+<div class="table-wrap">{_html_table(rs_cols, rs_rows, rs_sort if rs_cols else None) if rs_rows else '<p>No RS scanner for the latest run.</p>'}</div>
 </section>
 
 <section data-system-section="SB">
 <h2>{sb_section_title}</h2>
 <p class="small">{sb_scan_sub}</p>
-<div class="table-wrap">{_html_table(sb_cols, sb_rows, ["text"] * len(sb_cols) if sb_cols else None) if sb_rows else f'<p>{sb_empty_msg}</p>'}</div>
+<div class="table-wrap">{_html_table(sb_cols, sb_rows, sb_sort if sb_cols else None) if sb_rows else f'<p>{sb_empty_msg}</p>'}</div>
+</section>
+
+<section data-system-section="VZ">
+<h2>{vz_section_title}</h2>
+<p class="small">{vz_scan_sub}</p>
+<div class="table-wrap">{_html_table(vz_cols, vz_rows, vz_sort if vz_cols else None) if vz_rows else f'<p>{vz_empty_msg}</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}

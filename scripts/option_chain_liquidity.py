@@ -218,7 +218,6 @@ DEFAULT_SYMBOLS = [
     "ASMIY",
     "ASML",
     "ATEN",
-    "ATEYY",
     "ATGE",
     "ATI",
     "ATLC",

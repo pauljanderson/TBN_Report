@@ -12,7 +12,8 @@ rem   run_sb.bat ALL
 rem   run_sb.bat --all
 rem   run_sb.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env still works: set SB_SYMBOLS=* / ALL / set SB_ALL_CSV=1
-rem Extra CLI args (%*) are forwarded (except leading .csv / ALL universe override).
+rem Extra CLI args (%*) are forwarded (leading .csv / ALL stripped; -v kept).
+rem   run_sb.bat -v burst_min_pct=0.05
 
 setlocal EnableExtensions
 cd /d "%~dp0"

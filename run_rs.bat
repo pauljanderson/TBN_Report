@@ -27,7 +27,7 @@ rem   Prior freeze 260801111512 had time_stop_days=0 (no TIME exit)
 rem   Adopted earlier: rs_noft_time_ab arm 15_time_252; post252 A/B stop widen 0.85
 rem   Prior research stamp 260801104344 used 0.934/1.21 — NOT production
 rem   NOT adopted: fat_stops arm 03_stop_091 (stop 0.91)
-rem   Universe: drive\universes\RS_universe.csv (65 names; synced from RS_universe_expand.csv)
+rem   Universe: drive\universes\RS_universe.csv (64 names; ATEYY removed 2026-08-10)
 rem
 rem Inherits (via rocket_tbn -v): target_pct, stop_pct, use_indicators, start_date/entry_start_date,
 rem   max_positions, duckdb, workers, stop_pct_is_multiplier, symbol_reentry_cooldown_days,
@@ -47,6 +47,9 @@ rem Optional RS sell_breakdown (default off = normal target/stop only):
 rem   -v sell_breakdown=breakdown_plus   normal exits OR breakdown (SPY_COMPARE any ^<0 OR TC not Strong)
 rem   -v sell_breakdown=breakdown_only   breakdown exits only, SPY OR TC (no stop/target schedule)
 rem   -v sell_breakdown=breakdown_both   breakdown exits only when SPY AND TC both broken same bar
+rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped; -v kept).
+rem   run_rs.bat -v sell_breakdown=breakdown_plus
+rem   run_rs.bat -v "sell_breakdown=breakdown_plus"
 
 rem Sweep/results: drive\paul_experiments\rs_oneil_filters\
 setlocal EnableExtensions EnableDelayedExpansion
@@ -59,6 +62,7 @@ if not defined RS_STOP set "RS_STOP=0.85"
 if not defined RS_TIME_STOP set "RS_TIME_STOP=252"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" RS_UNIV_ARG %1 %2
+call "%~dp0tools\build_cli_forward.bat" RS_FORWARD "%RS_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" RS "%RS_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [RS] Universe src=%RS_UNIVERSE_SRC% pass_s=%RS_PASS_SYMBOLS% time_stop_days=%RS_TIME_STOP%
@@ -67,8 +71,8 @@ rem Neutralize BRT zone defaults that are NOT RS rules (RS already requires SPY_
 rem   min_spy_compare_1y_at_trigger=50 would wrongly cut ~1001 curated trades down to ~369.
 rem   too_high_multiplier=1.058 is a BRT gap gate; experiment/RS baseline has it off.
 if "%RS_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 12 --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% -s "!RS_SYMBOLS!"
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 12 --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% -s "!RS_SYMBOLS!" !RS_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 12 --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP%
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 12 --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% !RS_FORWARD!
 )
 exit /b %errorlevel%

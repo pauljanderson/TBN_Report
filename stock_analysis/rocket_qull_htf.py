@@ -77,6 +77,14 @@ class QullConfig:
     qull_partial_days: int = 0  # 0 = off
     qull_partial_frac: float = 0.33
     qull_fill: str = "next_open"  # next_open | signal_close
+    # SMA entry filters (default OFF = production)
+    # above: fill/entry price >= SMAn on fill bar (also signal close >= SMAn)
+    # rising: SMA50[signal] > SMA50[signal - qull_sma50_slope_bars] (strict; flat/down fails)
+    qull_require_above_sma50: bool = False
+    qull_require_sma50_rising: bool = False
+    qull_sma50_slope_bars: int = 10
+    qull_require_above_sma20: bool = False
+    qull_require_above_sma10: bool = False
     symbol_reentry_cooldown_days: int = 5
     entry_start_date: str = ""
     entry_end_date: str = ""
@@ -280,6 +288,10 @@ def prepare_bars(df: pd.DataFrame) -> dict[str, Any]:
     vol = df["Volume"].astype(float).to_numpy() if "Volume" in df.columns else np.zeros(len(df))
     ema10 = _ema(c, 10)
     ema20 = _ema(c, 20)
+    close_s = pd.Series(c)
+    sma10 = close_s.rolling(10, min_periods=10).mean().to_numpy()
+    sma20 = close_s.rolling(20, min_periods=20).mean().to_numpy()
+    sma50 = close_s.rolling(50, min_periods=50).mean().to_numpy()
     vol_sma20 = pd.Series(vol).rolling(20, min_periods=20).mean().to_numpy()
     # ADR% = mean((H-L)/C) over lookback
     rng = np.where(c > 0, (h - l) / c, np.nan)
@@ -293,10 +305,78 @@ def prepare_bars(df: pd.DataFrame) -> dict[str, Any]:
         "vol": vol,
         "ema10": ema10,
         "ema20": ema20,
+        "sma10": sma10,
+        "sma20": sma20,
+        "sma50": sma50,
         "vol_sma20": vol_sma20,
         "adr20": adr20,
         "n": len(dates),
     }
+
+
+def _sma50_rising_ok(bars: dict[str, Any], i: int, cfg: QullConfig) -> bool:
+    """True when SMA50[i] > SMA50[i - slope_bars] (strict up; flat/down fail)."""
+    sma = bars.get("sma50")
+    if sma is None or i < 0 or i >= len(sma):
+        return False
+    n = max(1, int(getattr(cfg, "qull_sma50_slope_bars", 10) or 10))
+    j = i - n
+    if j < 0:
+        return False
+    s1 = float(sma[i])
+    s0 = float(sma[j])
+    if not (np.isfinite(s1) and np.isfinite(s0) and s0 > 0 and s1 > 0):
+        return False
+    return s1 > s0
+
+
+def _above_sma_ok(bars: dict[str, Any], i: int, key: str, price: float) -> bool:
+    """True when price >= bars[key][i] (finite positive SMA)."""
+    sma = bars.get(key)
+    if sma is None or i < 0 or i >= len(sma):
+        return False
+    s = float(sma[i])
+    if not (np.isfinite(s) and s > 0):
+        return False
+    return float(price) >= s
+
+
+def _sma_entry_signal_ok(bars: dict[str, Any], i: int, cfg: QullConfig) -> bool:
+    """Signal-bar SMA filters (rising checked here; above also checked at fill)."""
+    need_rising = bool(getattr(cfg, "qull_require_sma50_rising", False))
+    need50 = bool(getattr(cfg, "qull_require_above_sma50", False))
+    need20 = bool(getattr(cfg, "qull_require_above_sma20", False))
+    need10 = bool(getattr(cfg, "qull_require_above_sma10", False))
+    if not need_rising and not need50 and not need20 and not need10:
+        return True
+    close = float(bars["c"][i])
+    if need50 and not _above_sma_ok(bars, i, "sma50", close):
+        return False
+    if need20 and not _above_sma_ok(bars, i, "sma20", close):
+        return False
+    if need10 and not _above_sma_ok(bars, i, "sma10", close):
+        return False
+    if need_rising and not _sma50_rising_ok(bars, i, cfg):
+        return False
+    return True
+
+
+def _sma_entry_fill_ok(bars: dict[str, Any], i: int, cfg: QullConfig, fill_px: float) -> bool:
+    """Fill-bar above-SMA gates (mirrors signal gates for entry price)."""
+    if bool(getattr(cfg, "qull_require_above_sma50", False)):
+        if not _above_sma_ok(bars, i, "sma50", fill_px):
+            return False
+    if bool(getattr(cfg, "qull_require_above_sma20", False)):
+        if not _above_sma_ok(bars, i, "sma20", fill_px):
+            return False
+    if bool(getattr(cfg, "qull_require_above_sma10", False)):
+        if not _above_sma_ok(bars, i, "sma10", fill_px):
+            return False
+    return True
+
+
+# Back-compat alias used by older call sites / tests
+_sma50_signal_ok = _sma_entry_signal_ok
 
 
 def load_spy_market_ok(data_dir: Path, load_symbol_fn: Any = None) -> dict[str, bool]:
@@ -609,7 +689,12 @@ def _backtest_symbol_two_pass(
                     adr = float(pending["adr_pct"]) / 100.0 if pending["adr_pct"] else 0.0
                     stop_dist = (fill_px - stop_px) / fill_px
                     stop_adr_mult = (stop_dist / adr) if adr > 1e-9 else 99.0
+                    reject = False
                     if float(cfg.qull_max_stop_adr_mult) > 0 and stop_adr_mult > float(cfg.qull_max_stop_adr_mult):
+                        reject = True
+                    elif not _sma_entry_fill_ok(bars, i, cfg, fill_px):
+                        reject = True
+                    if reject:
                         pending = None
                     else:
                         open_pos = {
@@ -726,7 +811,7 @@ def _backtest_symbol_two_pass(
         sig_payload = None
         if do_htf:
             htf = detect_htf_signal(bars, i, cfg)
-            if htf is not None:
+            if htf is not None and _sma_entry_signal_ok(bars, i, cfg):
                 if str(cfg.qull_stop_under).lower() == "coil_low":
                     stop_px = float(htf.coil_low)
                 else:
@@ -753,7 +838,7 @@ def _backtest_symbol_two_pass(
                 }
         if sig_payload is None and do_ep:
             ep = detect_ep_signal(bars, i, cfg)
-            if ep is not None:
+            if ep is not None and _sma_entry_signal_ok(bars, i, cfg):
                 stop_px = float(bars["l"][i])
                 sig_payload = {
                     "setup": "EP",

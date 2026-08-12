@@ -18,6 +18,24 @@ except ImportError:
     except ImportError:
         _prune_orphan_symbols = None
 
+try:
+    from fundamentals_yfinance import (
+        ensure_symbols as _fund_ensure_symbols,
+        force_refresh_requested as _fund_force_refresh_requested,
+        yfinance_disabled as _fund_yfinance_disabled,
+    )
+except ImportError:
+    try:
+        from stock_analysis.fundamentals_yfinance import (
+            ensure_symbols as _fund_ensure_symbols,
+            force_refresh_requested as _fund_force_refresh_requested,
+            yfinance_disabled as _fund_yfinance_disabled,
+        )
+    except ImportError:
+        _fund_ensure_symbols = None
+        _fund_force_refresh_requested = None
+        _fund_yfinance_disabled = None
+
 # --- CONFIGURATION ---
 DATA_DIR = "C:\\Users\\songg\\Downloads\\stockresearch\\data\\newdata\\data"
 # Start date for full-history downloads and automatic backfill detection.
@@ -31,6 +49,32 @@ DEFAULT_MODE = "incremental"
 DEFAULT_INCREMENTAL_DAYS = 7
 # One-time safety backfill (kept explicit so symbol gets full history even if a short file exists).
 FORCE_FULL_BACKFILL_SYMBOLS = {"P"}
+
+# Local CSV/DuckDB symbol -> Yahoo Finance download symbol.
+# Keep local names stable; only the yfinance request/column key uses the Yahoo form.
+YAHOO_ALIAS = {
+    "BRK.B": "BRK-B",  # Berkshire Hathaway Class B
+    "BF.B": "BF-B",  # Brown-Forman Class B
+    "OCANF": "OGC",  # OceanaGold OTC Pink -> NYSE
+}
+
+# Truly unavailable on Yahoo (acquired / delisted / empty). Not in TICKERS.
+# BK: renamed to BNY on NYSE May 21, 2026 — use canonical "BNY" in TICKERS (already present).
+YAHOO_UNAVAILABLE = {
+    "AL": "Air Lease acquired / taken private Apr 2026",
+    "AMWD": "American Woodmark merged into MasterBrand (MBC) May 2026",
+    "BK": "Ticker renamed to BNY May 21, 2026 (see BNY in TICKERS)",
+    "HOLX": "Hologic acquired by Blackstone/TPG Apr 2026",
+    "LET": "No usable Yahoo equity series (empty stub; Lectra is LSS.PA, not this universe)",
+    "MODV": "ModivCare Chapter 11; Nasdaq delisted Aug 2025 (MODVQ has no history)",
+    "SEE": "Sealed Air acquired by CD&R Apr 2026",
+    "TPH": "Tri Pointe Homes acquired by Sumitomo Forestry May 2026",
+}
+
+
+def _to_yahoo(ticker: str) -> str:
+    return YAHOO_ALIAS.get(ticker, ticker)
+
 
 # Replace this list with your full set of tickers
 # Based on your directory, I've initialized the first few:
@@ -66,6 +110,7 @@ TICKERS = [
     "ADP",
     "ADPT",
     "ADSK",
+    "AEE",
     "AEG",
     "AEHR",
     "AEIS",
@@ -91,7 +136,6 @@ TICKERS = [
     "AKAM",
     "AKR",
     "AKTS",
-    "AL",
     "ALB",
     "ALBY",
     "ALDX",
@@ -119,7 +163,6 @@ TICKERS = [
     "AMRZ",
     "AMT",
     "AMTX",
-    "AMWD",
     "AMWL",
     "AMZN",
     "AN",
@@ -141,6 +184,7 @@ TICKERS = [
     "APG",
     "APH",
     "APLD",
+    "APO",
     "APPS",
     "APTV",
     "APYX",
@@ -153,7 +197,6 @@ TICKERS = [
     "ASMIY",
     "ASML",
     "ATEN",
-    "ATEYY",
     "ATI",
     "ATLC",
     "ATO",
@@ -192,10 +235,11 @@ TICKERS = [
     "BELFB",
     "BEN",
     "BEP",
+    "BF.B",  # Yahoo: BF-B (see YAHOO_ALIAS)
     "BFC",
+    "BG",
     "BIIB",
     "BIO",
-    "BK",
     "BKHYY",
     "BKNG",
     "BKR",
@@ -203,15 +247,17 @@ TICKERS = [
     "BKV",
     "BLBD",
     "BLD",
+    "BLDR",
     "BLHK",
     "BLK",
     "BLX",
     "BMRN",
     "BMY",
     "BN",
+    "BNY",
     "BPOP",
     "BR",
-    "BRK.B",
+    "BRK.B",  # Yahoo: BRK-B (see YAHOO_ALIAS)
     "BRO",
     "BSX",
     "BURL",
@@ -232,7 +278,9 @@ TICKERS = [
     "CBRE",
     "CBOE",
     "CCBG",
+    "CCI",
     "CCJ",
+    "CCL",
     "CDE",
     "CDNS",
     "CDW",
@@ -297,6 +345,8 @@ TICKERS = [
     "CTSH",
     "CTVA",
     "CVCO",
+    "CVNA",
+    "CVS",
     "CVX",
     "CW",
     "CWCO",
@@ -313,6 +363,7 @@ TICKERS = [
     "DDS",
     "DE",
     "DECK",
+    "DELL",
     "DG",
     "DGII",
     "DHI",
@@ -342,6 +393,7 @@ TICKERS = [
     "EBAY",
     "EBKDY",
     "EC",
+    "ECHO",
     "ECL",
     "ECVT",
     "ED",
@@ -362,6 +414,8 @@ TICKERS = [
     "EOG",
     "EQIX",
     "EQR",
+    "EQT",
+    "ERIE",
     "ES",
     "ESEA",
     "ESE",
@@ -375,6 +429,7 @@ TICKERS = [
     "EVRG",
     "EW",
     "EXC",
+    "EXE",
     "EXEL",
     "EXLS",
     "EXPD",
@@ -391,6 +446,8 @@ TICKERS = [
     "FCFS",
     "FCX",
     "FDS",
+    "FDX",
+    "FDXF",
     "FE",
     "FEDU",
     "FEIM",
@@ -462,10 +519,11 @@ TICKERS = [
     "HLI",
     "HLT",
     "HMY",
-    "HOLX",
+    "HONA",
     "HRL",
     "HROW",
     "HSBC",
+    "HSIC",
     "HST",
     "HSY",
     "HTHIY",
@@ -522,6 +580,7 @@ TICKERS = [
     "KGC",
     "KIM",
     "KINS",
+    "KKR",
     "KLAC",
     "KMB",
     "KMI",
@@ -536,7 +595,6 @@ TICKERS = [
     "LEA",
     "LECO",
     "LEN",
-    "LET",
     "LEU",
     "LH",
     "LHX",
@@ -572,6 +630,7 @@ TICKERS = [
     "MATX",
     "MC",
     "MCD",
+    "MCHP",
     "MCK",
     "MCO",
     "MCRI",
@@ -595,6 +654,7 @@ TICKERS = [
     "MPC",
     "MPWR",
     "MRK",
+    "MRSH",
     "MRVL",
     "MS",
     "MSFT",
@@ -609,6 +669,7 @@ TICKERS = [
     "MWA",
     "MYRG",
     "NBHC",
+    "NCLH",
     "NDAQ",
     "NEE",
     "NEM",
@@ -617,6 +678,7 @@ TICKERS = [
     "NGL",
     "NGVC",
     "NHC",
+    "NI",
     "NIC",
     "NKE",
     "NMIH",
@@ -633,7 +695,7 @@ TICKERS = [
     "NXPI",
     "NXST",
     "NXT",
-    "OCANF",
+    "OCANF",  # Yahoo: OGC (see YAHOO_ALIAS)
     "ODC",
     "ODFL",
     "OI",
@@ -671,14 +733,17 @@ TICKERS = [
     "PM",
     "PNFP",
     "PNRG",
+    "PODD",
     "POWL",
     "PPIH",
     "PPTA",
     "PRI",
     "PRIM",
     "PSIX",
+    "PSKY",
     "PWR",
     "PYPL",
+    "Q",
     "QCOM",
     "QQQ",
     "QXO",
@@ -734,6 +799,7 @@ TICKERS = [
     "SMID",
     "SMTOY",
     "SNA",
+    "SNDK",
     "SNDR",
     "SNDX",
     "SNEX",
@@ -759,6 +825,7 @@ TICKERS = [
     "SUBCY",
     "SUPN",
     "SVM",
+    "SW",
     "SWK",
     "SYF",
     "SYK",
@@ -790,7 +857,7 @@ TICKERS = [
     "TORXF",
     "TOWN",
     "TPC",
-    "TPH",
+    "TPL",
     "TPR",
     "TRT",
     "TRV",
@@ -817,6 +884,7 @@ TICKERS = [
     "UUUU",
     "V",
     "VECO",
+    "VEEV",
     "VIK",
     "VIRT",
     "VLO",
@@ -825,6 +893,8 @@ TICKERS = [
     "VMI",
     "VOYA",
     "VRDN",
+    "VRT",
+    "VST",
     "VSXY",
     "VSEC",
     "VZ",
@@ -845,12 +915,14 @@ TICKERS = [
     "WRB",
     "WRLD",
     "WSBC",
+    "WSM",
     "WTFC",
     "WTS",
     "WWD",
     "XOM",
     "XPEL",
     "XPO",
+    "XYZ",
     "YETI",
     "YUM",
     "ZETA",
@@ -939,7 +1011,6 @@ TICKERS = [
     "RL",
     "ROST",
     "SBUX",
-    "SEE",
     "SHW",
     "SYY",
     "TGT",
@@ -1074,7 +1145,6 @@ TICKERS = [
     "MKC",
     "MLM",
     "MMS",
-    "MODV",
     "MORN",
     "MTDR",
     "MTX",
@@ -1264,7 +1334,6 @@ TICKERS = [
     "WST",
     "WTW",
     "XEL",
-    # StockBee Momentum Burst seeds / alternates (tbn_new_systems/stockbee_momentum_burst)
     "AFRM",
     "COIN",
     "DKNG",
@@ -1275,7 +1344,6 @@ TICKERS = [
     "SMCI",
     "TXRH",
     "UPST",
-    # minervini_vcp expand enrichment (download before -s use; CSV may be absent until pygetallMore)
     "PATH",
     "RBLX",
     "SOFI",
@@ -1321,19 +1389,39 @@ def _should_backfill_full_history(output_file: str, start_date: str) -> bool:
 def _extract_symbol_frame(download_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if download_df is None or download_df.empty:
         return pd.DataFrame()
+    keys = [ticker]
+    yahoo = _to_yahoo(ticker)
+    if yahoo != ticker:
+        keys.insert(0, yahoo)
     try:
         if isinstance(download_df.columns, pd.MultiIndex):
-            if ticker in download_df.columns.get_level_values(0):
-                return download_df[ticker].copy()
+            level0 = download_df.columns.get_level_values(0)
+            for key in keys:
+                if key in level0:
+                    return download_df[key].copy()
             return pd.DataFrame()
         cols = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
         if len(cols.intersection(set(download_df.columns))) > 0:
             return download_df.copy()
-        if ticker in download_df.columns:
-            return download_df[ticker].copy()
+        for key in keys:
+            if key in download_df.columns:
+                return download_df[key].copy()
     except Exception:
         return pd.DataFrame()
     return pd.DataFrame()
+
+
+def _yahoo_symbols(local_symbols: list[str]) -> list[str]:
+    """Map local tickers to Yahoo symbols; preserve order, drop duplicates."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for sym in local_symbols:
+        y = _to_yahoo(sym)
+        if y in seen:
+            continue
+        seen.add(y)
+        out.append(y)
+    return out
 
 
 def _ensure_db_table(con: duckdb.DuckDBPyConnection, table: str) -> None:
@@ -1418,7 +1506,66 @@ def main():
         action="store_true",
         help="One-time: full re-download all symbols from START_DATE (default: auto-detect missing history only).",
     )
+    parser.add_argument(
+        "--symbols",
+        type=str,
+        default="",
+        help="Optional comma-separated subset of TICKERS (e.g. AMZN,NVDA). Default: all.",
+    )
+    parser.add_argument(
+        "--skip-fundamentals",
+        action="store_true",
+        help="Skip Yahoo EPS/short fundamentals refresh after OHLC (default: fundamentals ON).",
+    )
+    parser.add_argument(
+        "--fundamentals-only",
+        action="store_true",
+        help="Skip OHLC download; only refresh Yahoo EPS/short fundamentals for selected symbols.",
+    )
+    parser.add_argument(
+        "--force-fundamentals",
+        action="store_true",
+        help="Ignore fundamentals TTL and re-fetch (also honors YF_FUND_FORCE_REFRESH).",
+    )
     args = parser.parse_args()
+
+    tickers = list(TICKERS)
+    if str(args.symbols or "").strip():
+        want = {s.strip().upper() for s in str(args.symbols).split(",") if s.strip()}
+        tickers = [t for t in TICKERS if t.upper() in want]
+        missing = sorted(want - {t.upper() for t in tickers})
+        if missing:
+            print(f"[warn] --symbols not in TICKERS (ignored): {', '.join(missing)}")
+        if not tickers:
+            print("No matching symbols in TICKERS.")
+            return
+
+    do_fundamentals = (not bool(args.skip_fundamentals)) and (_fund_ensure_symbols is not None)
+    if bool(args.skip_fundamentals):
+        print("[fundamentals] skipped (--skip-fundamentals)")
+    elif _fund_ensure_symbols is None:
+        print("[fundamentals] skipped (fundamentals_yfinance import failed)")
+    elif _fund_yfinance_disabled is not None and _fund_yfinance_disabled():
+        print("[fundamentals] NO_YFINANCE set — cache-only ensure still runs")
+
+    force_fund = bool(args.force_fundamentals) or (
+        _fund_force_refresh_requested() if _fund_force_refresh_requested is not None else False
+    )
+
+    if bool(args.fundamentals_only):
+        if not do_fundamentals:
+            print("Fundamentals-only requested but fundamentals unavailable.")
+            return
+        print(f"[fundamentals-only] refreshing {len(tickers)} symbol(s) (force={force_fund})...")
+        ok = 0
+        for sym in tickers:
+            try:
+                _fund_ensure_symbols([sym], force_refresh=force_fund, quiet=False)
+                ok += 1
+            except Exception as e:
+                print(f"[fundamentals] {sym} failed: {e}")
+        print(f"Fundamentals-only complete. Updated={ok}/{len(tickers)}")
+        return
 
     if not os.path.exists(args.data_dir):
         os.makedirs(args.data_dir)
@@ -1426,7 +1573,7 @@ def main():
     incremental_start = _compute_start_date("incremental", args.incremental_days)
     full_symbols: list[str] = []
     incremental_symbols: list[str] = []
-    for ticker in TICKERS:
+    for ticker in tickers:
         output_file = os.path.join(args.data_dir, f"{ticker}.csv")
         if args.mode == "full" or args.force_history_backfill:
             full_symbols.append(ticker)
@@ -1445,13 +1592,13 @@ def main():
     elif full_symbols:
         print(f"[backfill] {len(full_symbols)} symbol(s) missing history before {START_DATE} -> full download.")
     print(
-        f"Downloading data for {len(TICKERS)} symbols to {END_DATE} "
+        f"Downloading data for {len(tickers)} symbols to {END_DATE} "
         f"(mode={args.mode}, full={len(full_symbols)}, incremental={len(incremental_symbols)})..."
     )
     data_full = pd.DataFrame()
     if full_symbols:
         data_full = yf.download(
-            full_symbols,
+            _yahoo_symbols(full_symbols),
             start=START_DATE,
             end=END_DATE,
             group_by="ticker",
@@ -1459,9 +1606,10 @@ def main():
             multi_level_index=False,
             auto_adjust=False,
         )
+    data_inc = pd.DataFrame()
     if incremental_symbols:
         data_inc = yf.download(
-            incremental_symbols,
+            _yahoo_symbols(incremental_symbols),
             start=incremental_start,
             end=END_DATE,
             group_by="ticker",
@@ -1485,9 +1633,11 @@ def main():
     sma_periods = [20, 30, 50, 100, 200]
     updated = 0
     skipped = 0
+    fund_ok = 0
+    fund_skip = 0
 
     try:
-        for ticker in TICKERS:
+        for ticker in tickers:
             try:
                 output_file = os.path.join(args.data_dir, f"{ticker}.csv")
                 is_full_download = ticker in full_symbols
@@ -1515,6 +1665,15 @@ def main():
                 if con is not None:
                     _upsert_symbol_to_db(con, args.db_table, ticker, df_new)
                 updated += 1
+
+                # After successful OHLC: Yahoo EPS + short (TTL / --force-fundamentals).
+                if do_fundamentals:
+                    try:
+                        _fund_ensure_symbols([ticker], force_refresh=force_fund, quiet=False)
+                        fund_ok += 1
+                    except Exception as fe:
+                        fund_skip += 1
+                        print(f"[fundamentals] {ticker} failed: {fe}")
             except Exception as e:
                 skipped += 1
                 print(f"Skipped {ticker}: {e}")
@@ -1535,7 +1694,10 @@ def main():
         except Exception as e:
             print(f"DuckDB prune skipped: {e}")
 
-    print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}")
+    fund_msg = ""
+    if do_fundamentals:
+        fund_msg = f", Fundamentals ok={fund_ok} fail={fund_skip}"
+    print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}{fund_msg}")
 
 if __name__ == "__main__":
     main()

@@ -343,7 +343,7 @@ def _build_systems() -> list[SystemCard]:
     # StockBee — usable / DailyRun wired
     sb_summary = (
         f"Momentum Burst engine usable: gold universe ({gold_n} names), "
-        f"`run_sb.bat` / DailyRun step [10/13], host outputs SB_*. "
+        f"`run_sb.bat` / DailyRun step [10/14], host outputs SB_*. "
         f"Recent drive stamp {last_sb or 'n/a'}. "
         "Reconcile freeze: `sb_baseline_260803121109` (gold-56 Closed; replaces gold-97). "
         "Gate A/Bs (ATR/52w, MM+2Lynch, vol×50d) completed — none beat control on Total PnL."
@@ -366,13 +366,15 @@ def _build_systems() -> list[SystemCard]:
         )
     )
 
-    # Minervini VCP
+    # Minervini VCP — DailyRun wired (Theory knobs HOLD; promote despite challenge HOLD-on-knobs)
     if mv_st["has_howto"] and mv_st["has_finalize"]:
-        mv_badge = "HOLD"
+        mv_badge = "DONE"
         mv_summary = (
             "Minervini Specific Entry Point Analysis (SEPA) / Volatility Contraction Pattern (VCP) "
-            "engine + HOW_TO_RUN exist; finalized HOLD (not DailyRun). "
-            "Host seed `260801191122` / expand `260801191725`. Fundamentals deferred (OHLCV-only)."
+            "engine + HOW_TO_RUN; DailyRun step [11/14] via `run_mvcp.bat` (ALL universe; Theory knobs "
+            "unchanged — RS≥80, vol 1.5×, depth_shrink 0.65, chase 5%, stop 0.92, target 1.25, "
+            "time_stop 10, trail_arm 10%, cooldown 20). Reconcile freeze `260801215052`. "
+            "Fundamentals deferred (OHLCV-only)."
         )
     elif mv_st["has_howto"]:
         mv_badge = "IN PROGRESS"
@@ -628,7 +630,7 @@ def _render_html(
     run_today_candidates = [
         ("run_sb.bat", "StockBee gold universe (56) — production / DailyRun default"),
         ("run_stockbee_burst.bat", "Same as run_sb.bat (long name)"),
-        ("run_mvcp.bat", "Minervini VCP research run (HOLD; not DailyRun)"),
+        ("run_mvcp.bat", "Minervini VCP ALL universe — production / DailyRun step [11/14]"),
         ("run_qull.bat", "Qull HTF / EP proxy seed run (DailyRun HOLD)"),
         ("run_qull_ab_prior_run.bat", "Qull A/B: prior-run floor sweep"),
         ("run_kell.bat", "Kell PAC Wedge Pop research run (standalone)"),
@@ -906,7 +908,7 @@ def _render_html(
   <h2>Open limitations</h2>
   <ul class="plain">
     <li><strong>Earnings / fundamentals:</strong> host is OHLCV-first. Full O'Neil CAN SLIM (C/A earnings growth, etc.) and true catalyst Episodic Pivot (EP) need earnings/news feeds we do not have wired.</li>
-    <li><strong>Minervini VCP (MVCP):</strong> research HOLD — expand dilution / fill-chase notes; not DailyRun; fundamentals deferred.</li>
+    <li><strong>Minervini VCP (MVCP):</strong> DailyRun-wired on Theory knobs + ALL universe (reconcile <code>260801215052</code>); expand dilution / fill-chase notes remain open; fundamentals deferred.</li>
     <li><strong>StockBee promote:</strong> usable + DailyRun-wired on gold 56, but formal TBN “production promote” still framed as HOLD pending PO accept of risk freeze / filters.</li>
     <li><strong>Qull HTF / Kell PAC / CAN SLIM:</strong> research / early engines only — DailyRun HOLD; not full host-parity Audit for Kell/CS yet.</li>
     <li><strong>SB gate A/Bs:</strong> ATR+52w, MM+2Lynch, vol×50d — none beat control on Total PnL (see comparisons).</li>

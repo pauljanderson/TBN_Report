@@ -323,6 +323,9 @@ def main() -> int:
             "MTS": drive / "MTS_LatestRun_Closed.csv",
             "WPBR": drive / "WPBR_LatestRun_Closed.csv",
             "YH": drive / "YH_LatestRun_Closed.csv",
+            "SB": drive / "SB_LatestRun_Closed.csv",
+            "MVCP": drive / "MVCP_LatestRun_Closed.csv",
+            "RS": drive / "RS_LatestRun_Closed.csv",
         }
         frames = []
         for s, path in files.items():

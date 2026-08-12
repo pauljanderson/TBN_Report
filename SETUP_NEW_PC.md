@@ -125,6 +125,22 @@ run_per_symbol_optimizer.bat --wf-mode rolling --systems RL --workers 5
 
 ```bat
 run_update_data.bat
+```
+
+OHLC update (`pygetallMore`) also refreshes Yahoo EPS + short interest into
+`drive\fundamentals_cache.duckdb` by default (TTL ~7d). Useful flags:
+
+```bat
+"%PY%" stock_analysis\pygetallMore.py --symbols AMZN --fundamentals-only --force-fundamentals
+"%PY%" stock_analysis\fundamentals_yfinance.py AMZN --force-refresh
+"%PY%" stock_analysis\pygetallMore.py --skip-fundamentals
+```
+
+EPS history: `yf_earnings_quarterly` / `yf_earnings_annual` / `yf_earnings_dates`.
+Short interest: current in `yf_symbol_info`; dated snapshots in `yf_short_interest_history`
+(Yahoo has no true short history API — we append on each refresh).
+
+```bat
 run_rl.bat
 run_gettarget.bat
 publish_github_pages.bat

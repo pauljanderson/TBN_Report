@@ -2,9 +2,10 @@
 Stable column order for BRT_Report / BRT_Audit_Report / BRT_Audit_Report_RL and optimizer.
 
 Single shared Audit schema for all systems (BRT / YH / RS / RL / WPBR / IND / MTS /
-VEC / MVCP / SB / QULL). System-specific levers (``mvcp_*``, ``sb_mode`` / ``burst_*``,
-``qull_*``, …) are always present; non-active systems leave them blank (see
-``rocket_tbn._fill_sb_mode_audit`` / ``_fill_mvcp_mode_audit`` / ``_fill_qull_mode_audit``).
+VEC / MVCP / SB / QULL / VZ). System-specific levers (``mvcp_*``, ``sb_mode`` / ``burst_*``,
+``qull_*``, ``vz_*``, …) are always present; non-active systems leave them blank (see
+``rocket_tbn._fill_sb_mode_audit`` / ``_fill_mvcp_mode_audit`` / ``_fill_qull_mode_audit`` /
+``_fill_vz_mode_audit``).
 
 Trade-level IND / Trading Central horizon fields (``IND_*``, ``IND_TC_*``) are **not** listed
 here — they append to Closed / Open / Scanner via ``brt_entry_indicators.entry_indicator_csv_headers``
@@ -100,6 +101,24 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "qull_partial_days",
     "qull_partial_frac",
     "qull_fill",
+    "qull_require_above_sma50",
+    "qull_require_sma50_rising",
+    "qull_sma50_slope_bars",
+    "qull_require_above_sma20",
+    "qull_require_above_sma10",
+    "vz_mode",
+    "vz_lookback_days",
+    "vz_retest_window",
+    "vz_retest_eps_pct",
+    "vz_first_retest_only",
+    "vz_min_touches_before_entry",
+    "vz_entry_on",
+    "vz_zone_kinds",
+    "vz_exit_name",
+    "vz_exit_bars",
+    "vz_target_r",
+    "vz_stop_atr_buffer",
+    "vz_sheet_notional",
     "rl_mode",
     "rl_sma_qual",
     "rl_dip_pct",
@@ -455,6 +474,9 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "sell_on_low_vol",
     "min_zone_above_pct",
     "require_no_zone_above",
+    "zone_exits",
+    "zone_exits_union",
+    "zone_rr_min",
     "growth_history_slack_bars",
     "require_close_gt_open",
     "sheet_red_to_green_entry_enabled",
@@ -591,6 +613,28 @@ _QULL_AUDIT_LEVER_COLS: tuple[str, ...] = (
     "qull_partial_days",
     "qull_partial_frac",
     "qull_fill",
+    "qull_require_above_sma50",
+    "qull_require_sma50_rising",
+    "qull_sma50_slope_bars",
+    "qull_require_above_sma20",
+    "qull_require_above_sma10",
+)
+
+# Volume Zone-only levers (blank when vz_mode is false).
+_VZ_AUDIT_LEVER_COLS: tuple[str, ...] = (
+    "vz_mode",
+    "vz_lookback_days",
+    "vz_retest_window",
+    "vz_retest_eps_pct",
+    "vz_first_retest_only",
+    "vz_min_touches_before_entry",
+    "vz_entry_on",
+    "vz_zone_kinds",
+    "vz_exit_name",
+    "vz_exit_bars",
+    "vz_target_r",
+    "vz_stop_atr_buffer",
+    "vz_sheet_notional",
 )
 
 
@@ -612,6 +656,11 @@ def get_mvcp_audit_lever_cols() -> tuple[str, ...]:
 def get_qull_audit_lever_cols() -> tuple[str, ...]:
     """Qull-only Audit columns (blank on non-Qull runs)."""
     return _QULL_AUDIT_LEVER_COLS
+
+
+def get_vz_audit_lever_cols() -> tuple[str, ...]:
+    """Volume Zone-only Audit columns (blank on non-VZ runs)."""
+    return _VZ_AUDIT_LEVER_COLS
 
 
 def empty_audit_row() -> dict[str, str]:

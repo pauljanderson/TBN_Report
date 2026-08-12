@@ -8,5 +8,6 @@ rem   run_pbr.bat ALL
 rem   run_pbr.bat --all
 rem   run_pbr.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env: set WPBR_SYMBOLS=* / ALL / set WPBR_ALL_CSV=1
+rem Extra CLI args (%*) are forwarded via run_wpbr.bat (leading .csv / ALL stripped; -v kept).
 call "%~dp0run_wpbr.bat" %*
 exit /b %errorlevel%

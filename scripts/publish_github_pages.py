@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +81,38 @@ def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
     return html + NAV_FOOTER
 
 
+def _write_text_resilient(dst: Path, text: str, *, encoding: str = "utf-8", retries: int = 5) -> None:
+    """Write HTML via temp+replace with retries.
+
+    On Windows, Path.write_text on a large docs/*.html often raises OSError
+    Errno 22 (Invalid argument) when the destination is locked by an IDE
+    preview, browser, OneDrive, or AV — not because HTML content is invalid.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+    last_err: OSError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            tmp.write_text(text, encoding=encoding)
+            os.replace(tmp, dst)
+            return
+        except OSError as exc:
+            last_err = exc
+            try:
+                if tmp.is_file():
+                    tmp.unlink()
+            except OSError:
+                pass
+            if attempt < retries:
+                time.sleep(0.4 * attempt)
+    assert last_err is not None
+    hint = (
+        f"Could not write {dst} after {retries} attempts ({last_err}). "
+        "Close any IDE/browser tab previewing this file (and pause OneDrive sync if needed), then retry."
+    )
+    raise OSError(last_err.errno, hint, str(dst)) from last_err
+
+
 def prepare_html_for_pages(src: Path, dst: Path, *, show_nav: bool = False) -> None:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -87,8 +121,7 @@ def prepare_html_for_pages(src: Path, dst: Path, *, show_nav: bool = False) -> N
     text = src.read_text(encoding="utf-8")
     text = inject_report_page_extras(text)
     text = _inject_nav_footer(text, show_nav=show_nav)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_resilient(dst, text)
 
 
 def generate_investment_report(drive: Path) -> Path:
@@ -376,7 +409,7 @@ def main() -> int:
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
-            path.write_text(_inject_nav_footer(text, show_nav=True), encoding="utf-8")
+            _write_text_resilient(path, _inject_nav_footer(text, show_nav=True))
 
     if args.push:
         from datetime import datetime

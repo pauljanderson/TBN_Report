@@ -20,6 +20,13 @@ Outputs under ``--output-dir`` (default ``drive``)::
   {prefix}_ImprovePriority_<ts>.html
   RL_MissedMoves_<ts>.csv          # with --missed-moves (RL/DB only)
 
+For zone systems (BRT/YH/WPBR/VEC/PBR/VZ) — and any Closed book with
+``ZONE_LO``/``ZONE_HI``/``ZONE_ID``/``ZONE_CENTER`` — price PNGs shade the
+trade's zone band **between begin/end dates** (VZ: max_vol_date → last rolling-126
+max-vol-winner day; optional ``ZONE_START``/``ZONE_END`` override). VZ reconstructs
+HL/OC from the max-vol bar in ``ZONE_ID`` when ``ZONE_HI`` is absent. RS/SB with
+no zone columns are unchanged.
+
 Rule-based prose (no LLM).
 """
 from __future__ import annotations
@@ -59,6 +66,7 @@ try:
         enrich_summary_csv_with_yfinance,
         format_trade_one_liner,
         normalize_system,
+        resolve_symbol_ledger_stats,
         resolve_workers,
         write_improve_hints,
         write_system_charts,
@@ -80,6 +88,7 @@ except ImportError:
         enrich_summary_csv_with_yfinance,
         format_trade_one_liner,
         normalize_system,
+        resolve_symbol_ledger_stats,
         resolve_workers,
         write_improve_hints,
         write_system_charts,
@@ -433,15 +442,14 @@ def build_symbol_assessment(
     missed_events: Optional[list[Any]] = None,
 ) -> str:
     """CRWD-style HTML section for one symbol (rule-based)."""
-    trades = int(_fnum(summary_row.get("TRADES"), len(closed_rows)))
-    wins = int(_fnum(summary_row.get("WINS"), 0))
-    losses = int(_fnum(summary_row.get("LOSSES"), 0))
-    pct_wins = _fnum(str(summary_row.get("PCT_WINS", "")).replace("%", ""))
-    if trades and not pct_wins and wins:
-        pct_wins = wins / trades * 100
-    avg_pnl = _fnum(str(summary_row.get("AVG_PNL_PCT", "")).replace("%", ""))
-    sheet_pnl = _fnum(summary_row.get("SHEET_PNL"))
-    avg_tpy = _fnum(summary_row.get("AVG_TRADES_PER_YEAR"))
+    stats = resolve_symbol_ledger_stats(summary_row, closed_rows)
+    trades = int(stats["trades"])
+    wins = int(stats["wins"])
+    losses = int(stats["losses"])
+    pct_wins = float(stats["pct_wins"])
+    avg_pnl = float(stats["avg_pnl_pct"])
+    sheet_pnl = float(stats["sheet_pnl"])
+    avg_tpy = float(stats["avg_tpy"])
     fr = assess_symbol_fit(
         trades=trades,
         wins=wins,
@@ -571,7 +579,10 @@ def write_symbol_assessments_html(
     pref = normalize_system(prefix)
     sections: list[str] = []
     for sym in symbols:
-        srow = next((r for r in summary_rows if str(r.get("SYMBOL", "")).upper() == sym), {})
+        srow = next(
+            (r for r in summary_rows if str(r.get("SYMBOL", "")).strip().upper() == sym),
+            {},
+        )
         if not srow and sym not in closed_by_sym and not (missed_by_sym and sym in missed_by_sym):
             continue
         chart_rel = None
@@ -949,14 +960,22 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         f"workers={n_workers} output={output_dir}",
         flush=True,
     )
+    is_symbols_summary = "Summary_Symbols" in summary_path.name
+    if is_symbols_summary:
+        print(
+            f"[post_run_analysis] Summary source={summary_path.name} "
+            "(per-symbol ledger; skipping FIT/Paul CSV re-enrich)",
+            flush=True,
+        )
 
     if args.refresh_cheap or not summary_path.is_file():
         if summary_path.is_file():
             enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
-            enrich_summary_csv_with_yfinance(summary_path)
-            # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire.
-            enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
-            enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
+            if not is_symbols_summary:
+                enrich_summary_csv_with_yfinance(summary_path)
+                # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire.
+                enrich_summary_csv_with_avg_days_held(summary_path, closed_path)
+                enrich_summary_csv_with_fit(summary_path, closed_path, prefix=prefix)
             write_improve_hints(
                 closed_path,
                 output_dir,
@@ -970,7 +989,7 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
             print(f"[post_run_analysis] No Summary yet: {summary_path}", flush=True)
 
     enrich_closed_csv_with_one_liners(closed_path, dip_pct=dip)
-    if summary_path.is_file():
+    if summary_path.is_file() and not is_symbols_summary:
         enrich_summary_csv_with_yfinance(summary_path)
         # AVG_DAYS_HELD before FIT/PAUL_SCORE so the days-held peer component can fire.
         enrich_summary_csv_with_avg_days_held(summary_path, closed_path)

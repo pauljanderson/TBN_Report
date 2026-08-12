@@ -13,7 +13,7 @@ rem   run_qull_standalone.bat ALL
 rem   run_qull_standalone.bat --all
 rem   run_qull_standalone.bat "*"   (quote * in PowerShell; bare * often expands)
 rem Legacy env: set QULL_SYMBOLS=* / ALL / set QULL_ALL_CSV=1
-rem Extra CLI (%*) forwarded to python module (except leading .csv / ALL override).
+rem Extra CLI (%*) forwarded to python module (leading .csv / ALL stripped; flags kept).
 
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
@@ -35,8 +35,7 @@ if not defined QULL_MIN_PRICE set "QULL_MIN_PRICE=3"
 if not defined QULL_MIN_ADV set "QULL_MIN_ADV=2000000"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" QULL_UNIV_ARG %1 %2
-set "QULL_FORWARD=%*"
-if not "%QULL_UNIV_ARG%"=="" set "QULL_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" QULL_FORWARD "%QULL_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" QULL "%QULL_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [QULL-SA] Universe src=%QULL_UNIVERSE_SRC% pass_s=%QULL_PASS_SYMBOLS%

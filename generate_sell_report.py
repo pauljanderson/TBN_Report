@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write pending low-volume exit report (next session open) as CSV."""
+"""Write pending exit report (low-vol + SB/VZ time stops) as CSV."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sell_report_lib import (
     DEFAULT_DATA_DIR,
-    find_pending_low_vol_sells,
+    find_all_pending_sells,
     write_sell_report_csv,
 )
 
@@ -20,7 +20,9 @@ DEFAULT_GETTARGET = ROOT / "getTarget_output.csv"
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Pending sell report (sell_on_low_vol, next open)")
+    p = argparse.ArgumentParser(
+        description="Pending sell report (low-vol + SB no-FT/time + VZ time stop)"
+    )
     p.add_argument("--positions", type=Path, default=DEFAULT_POSITIONS)
     p.add_argument("--gettarget", type=Path, default=DEFAULT_GETTARGET)
     p.add_argument("--drive", type=Path, default=DRIVE)
@@ -46,7 +48,7 @@ def main() -> None:
     if args.brt_sell_on_low_vol is not None:
         overrides["BRT"] = float(args.brt_sell_on_low_vol)
 
-    pending, thresholds, as_of_resolved = find_pending_low_vol_sells(
+    pending, thresholds, time_params, as_of_resolved = find_all_pending_sells(
         positions_path=args.positions,
         gettarget_path=args.gettarget,
         drive_dir=args.drive,
@@ -58,7 +60,20 @@ def main() -> None:
     out = args.output or (args.drive / f"Sell_Report_{datetime.now():%Y%m%d_%H%M%S}.csv")
     write_sell_report_csv(pending, out)
     print(f"Wrote {out} ({len(pending)} pending sell(s); as-of {as_of_resolved})")
-    print(f"  IND sell_on_low_vol={thresholds.get('IND', 0)}  BRT sell_on_low_vol={thresholds.get('BRT', 0)}")
+    print(
+        f"  IND sell_on_low_vol={thresholds.get('IND', 0)}  "
+        f"BRT sell_on_low_vol={thresholds.get('BRT', 0)}"
+    )
+    print(
+        f"  SB no_ft={time_params.get('sb_no_ft_days')}  "
+        f"SB time_stop={time_params.get('sb_time_stop_days')}  "
+        f"VZ time_stop={time_params.get('vz_time_stop_days')}"
+    )
+    for row in pending:
+        print(
+            f"  {row.system} {row.symbol} held={row.days_held} "
+            f"→ {row.exit_reason} ({row.sell_when})"
+        )
 
     if not args.no_copy_latest:
         latest = args.drive / "Sell_Report_Latest.csv"

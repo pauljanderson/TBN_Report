@@ -32,7 +32,7 @@ GAWK_CANDIDATES = (
 # Exact list from your run_audit -s (order preserved; SPY added first in manifest).
 USER_TICKERS = [
     "TSLA", "AMD", "INTC", "XOM", "LRCX", "NFLX", "PLTR", "KLAC", "WFC", "ADI", "STX", "WDC", "ANET", "APP",
-    "TOELY", "IBKR", "CRWD", "ATEYY", "NEM", "AEM", "CNQ", "FCX", "FTNT", "MPWR", "MELI", "B", "FIX", "RCL",
+    "TOELY", "IBKR", "CRWD", "NEM", "AEM", "CNQ", "FCX", "FTNT", "MPWR", "MELI", "B", "FIX", "RCL",
     "GM", "TER", "OKE", "OXY", "AU", "TRGP", "DVN", "FLEX", "CCJ", "ARGX", "F", "CLS", "IDXX", "EME", "GFI",
     "ARES", "KGC", "ESLT", "STLD", "MTZ", "TECK", "WDAY", "TWLO", "NRG", "RMD", "FOXA", "FTAI", "NTRA", "FTI",
     "MTSI", "TPR", "STRL", "CFG", "FOX", "FSLR", "ALB", "FN", "KEY", "AKAM", "TEAM", "BEP", "LEN", "CRS", "RL",

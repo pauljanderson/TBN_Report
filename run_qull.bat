@@ -11,6 +11,7 @@ rem   run_qull.bat ALL
 rem   run_qull.bat --all
 rem   run_qull.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env: set QULL_SYMBOLS=* / ALL / set QULL_ALL_CSV=1
+rem Extra CLI args (%*) are forwarded (leading .csv / ALL stripped; -v kept).
 setlocal EnableExtensions
 cd /d "%~dp0"
 echo [QULL] run_qull.bat → run_qullamaggie_htf.bat → rocket_tbn -v qull_mode=true

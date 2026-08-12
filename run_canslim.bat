@@ -15,7 +15,8 @@ rem   run_canslim.bat ALL
 rem   run_canslim.bat --all
 rem   run_canslim.bat "*"          (quote * in PowerShell; bare * often expands)
 rem Legacy env: set CS_SYMBOLS=* / ALL / set CS_ALL_CSV=1
-rem Extra CLI: trailing %* forwarded to Python (except leading .csv / ALL override).
+rem Extra CLI: trailing %* forwarded to Python (leading .csv / ALL stripped; flags kept).
+rem   run_canslim.bat --rs-min 70
 rem
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
@@ -37,8 +38,7 @@ if /i "%CS_AGGRESSIVE%"=="1" set "CS_AGG_FLAG=--aggressive"
 if /i "%CS_AGGRESSIVE%"=="yes" set "CS_AGG_FLAG=--aggressive"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" CS_UNIV_ARG %1 %2
-set "CS_FORWARD=%*"
-if not "%CS_UNIV_ARG%"=="" set "CS_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" CS_FORWARD "%CS_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" CS "%CS_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [CS] Universe src=%CS_UNIVERSE_SRC% pass_s=%CS_PASS_SYMBOLS%

@@ -24,7 +24,9 @@ rem Legacy env: set MVCP_SYMBOLS=* / ALL / set MVCP_ALL_CSV=1
 rem          set MVCP_STOP=0.92  set MVCP_TARGET=1.25
 rem Theory levers (defaults): RS>=80, depth_shrink=0.65, vol_breakout=1.5, stop<=8%%
 rem Seed-stage reference list: drive\paul_experiments\tbn_new_systems\minervini_vcp\20_seed_universe.md
-rem Extra CLI: trailing %* forwarded to rocket_tbn (except leading .csv / ALL universe override).
+rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped; -v kept).
+rem   run_mvcp.bat -v mvcp_depth_shrink=0.70
+rem   run_mvcp.bat ALL -v max_positions=10
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"
@@ -40,8 +42,7 @@ if /i "%MVCP_AGGRESSIVE%"=="1" set "MVCP_AGG_FLAG=--aggressive"
 if /i "%MVCP_AGGRESSIVE%"=="yes" set "MVCP_AGG_FLAG=--aggressive"
 
 call "%~dp0tools\apply_universe_cli_arg.bat" MVCP_UNIV_ARG %1 %2
-set "MVCP_FORWARD=%*"
-if not "%MVCP_UNIV_ARG%"=="" set "MVCP_FORWARD="
+call "%~dp0tools\build_cli_forward.bat" MVCP_FORWARD "%MVCP_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" MVCP "%MVCP_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [MVCP] Universe src=%MVCP_UNIVERSE_SRC% pass_s=%MVCP_PASS_SYMBOLS%
@@ -54,6 +55,7 @@ if "%MVCP_PASS_SYMBOLS%"=="1" (
     -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^
     -v target_pct=%MVCP_TARGET% -v stop_pct=%MVCP_STOP% -v stop_pct_is_multiplier=true ^
     -v mvcp_rs_min_percentile=80 -v mvcp_vol_breakout_mult=1.5 -v mvcp_depth_shrink=0.65 ^
+    -v mvcp_max_extension_above_pivot=0.05 -v mvcp_time_stop_bars=10 -v mvcp_trail_arm_pct=0.10 ^
     -v mvcp_rs_universe=data_dir -v symbol_reentry_cooldown_days=20 ^
     -v max_positions=%MVCP_MAX_POSITIONS% ^
     -s "!MVCP_SYMBOLS!" ^
@@ -65,6 +67,7 @@ if "%MVCP_PASS_SYMBOLS%"=="1" (
     -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^
     -v target_pct=%MVCP_TARGET% -v stop_pct=%MVCP_STOP% -v stop_pct_is_multiplier=true ^
     -v mvcp_rs_min_percentile=80 -v mvcp_vol_breakout_mult=1.5 -v mvcp_depth_shrink=0.65 ^
+    -v mvcp_max_extension_above_pivot=0.05 -v mvcp_time_stop_bars=10 -v mvcp_trail_arm_pct=0.10 ^
     -v mvcp_rs_universe=data_dir -v symbol_reentry_cooldown_days=20 ^
     -v max_positions=%MVCP_MAX_POSITIONS% ^
     !MVCP_FORWARD!
