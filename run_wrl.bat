@@ -5,7 +5,7 @@ rem   C:\Users\songg\Downloads\stockresearch\run_wrl.bat
 rem Double-click or:  cd /d C:\Users\songg\Downloads\stockresearch  &  run_wrl.bat
 rem Engine: rocket_tbn.py + rocket_wrl.py  (-v wrl_mode=true)
 rem Outputs: drive\WRL_*_<ts>.csv (Closed / Open / Watchlist / Scanner / Summary / Audit / Equity)
-rem Docs: docs\systems\wrl.html
+rem Docs: drive\systems\wrl.html  (git/Pages copy: docs\systems\wrl.html)
 rem
 rem Levels: previous completed week high/low = range; walk back weekly for a higher high
 rem (swing high) and a lower low (swing low). Watch when daily close is in
