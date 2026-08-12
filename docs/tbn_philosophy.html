@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TBN Philosophy — Twin Beacon Networks</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 40px 28px 72px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 28px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 8px;
+  }
+  h1 { font-size: 1.85rem; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.025em; line-height: 1.2; }
+  h2 { font-size: 1.15rem; margin: 28px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .lede { margin: 0; color: var(--muted); max-width: 64ch; font-size: 0.98rem; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; font-size: 0.82rem; color: var(--muted); }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 14px; padding-left: 1.25rem; }
+  li { margin: 0.25em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px; margin: 14px 0 8px;
+  }
+  a.card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid var(--line); padding: 14px 14px 12px;
+  }
+  a.card:hover { border-color: var(--accent); box-shadow: 0 2px 10px #1c1b1912; }
+  a.card .tag {
+    display: inline-block; font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; color: var(--accent);
+  }
+  a.card .tag.gold { color: var(--ok); }
+  a.card .tag.research { color: var(--warn); }
+  a.card .tag.parked, a.card .tag.deprecated { color: var(--muted); }
+  a.card strong { display: block; font-size: 1.02rem; margin-bottom: 4px; }
+  a.card span.blurb { display: block; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
+  footer.doc-foot { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="doc-head">
+  <p class="eyebrow">Twin Beacon Networks · one-pager</p>
+  <h1>TBN Philosophy</h1>
+  <p class="lede">
+    <strong>TBN</strong> (Twin Beacon Networks) is the shared multi-sleeve trading engine and process
+    (<span class="path">stock_analysis/rocket_tbn.py</span>) — not a single strategy.
+    Each sleeve keeps its own entry/exit identity; the house standard is process discipline,
+    evidence over optimization theater, and clear promotion bars.
+  </p>
+  <div class="meta-row">
+    <span><strong>Engine</strong> TBN host</span>
+    <span><strong>Process</strong> <a href="system_setup_process.html">System setup process</a></span>
+    <span><strong>Live reports</strong> <a href="investment.html">Investment</a> · <a href="monthly.html">Monthly</a> · <a href="system_performance.html">Performance</a></span>
+  </div>
+</header>
+
+<h2>What TBN is</h2>
+<ul>
+  <li><strong>Multi-sleeve portfolio</strong> — diversify by setup type (zones, relative strength, short bursts, year-high, etc.), not by stacking correlated copies of one idea.</li>
+  <li><strong>Shared host, system prefixes</strong> — one engine; outputs stay <code>BRT_*</code>, <code>RL_*</code>, <code>RS_*</code>, … so books, reconcile, and reports stay auditable.</li>
+  <li><strong>Process over max PnL</strong> — hypothesis tests are one-knob A/Bs with frozen controls; trade-diff HTML and Thinkorswim (ToS) review gate adoption, not leaderboard chasing.</li>
+</ul>
+
+<div class="callout">
+  <strong>TBN vs BRT:</strong> TBN is the platform. <strong>BRT</strong> (Break and ReTest) is one system on that platform.
+  Do not rename engine docs as “BRT engine.”
+</div>
+
+<h2>Research discipline</h2>
+<ul>
+  <li><strong>In-sample (IS) / out-of-sample (OOS)</strong> — default chronological split: IS = entry before 2024-01-01; OOS = entry on/after. OOS is report-only; never retune on OOS to “fix” a soft result.</li>
+  <li><strong>Research candidate ≠ gold ≠ DailyRun</strong> — stamped A/Bs can be research-only; gold needs wider/walk-forward or multi-universe confirmation plus reconcile; DailyRun requires an explicit wire.</li>
+  <li><strong>Quality over count</strong> — KEEP / LEAN KEEP only when quality improves without collapsing sample size; flat → HOLD; worse → DISMISS.</li>
+  <li><strong>Selection bias honesty</strong> — picking after seeing the same-history table is in-sample selection; label it and re-score under the chosen freeze.</li>
+</ul>
+
+<div class="callout ok">
+  Canonical process: <a href="system_setup_process.html">System setup process</a>
+  · Hypothesis framing: <span class="path">docs/HYPOTHESIS_TEST.md</span> (repo).
+</div>
+
+<h2>System descriptions</h2>
+<p>Description pages for each sleeve. Production gold / DailyRun first; then research and parked.</p>
+
+<div class="grid">
+  <a class="card" href="systems/rs.html"><span class="tag gold">Production</span><strong>RS — Relative Strength</strong><span class="blurb">SPY excess + Strong Trend Condition (TC); multiplier stop/target; long time stop.</span></a>
+  <a class="card" href="systems/sb.html"><span class="tag gold">Production</span><strong>SB — StockBee Momentum Burst</strong><span class="blurb">Short impulse after coil; LOD risk; 3–5 day hold sleeve.</span></a>
+  <a class="card" href="systems/rl.html"><span class="tag gold">Production</span><strong>RL — Rocket Launcher</strong><span class="blurb">MarkTen mega-cap launcher; AWK parity authoritative vs Python port.</span></a>
+  <a class="card" href="systems/yh.html"><span class="tag gold">Production</span><strong>YH — Year High</strong><span class="blurb">Year-high zone / band path; Mag9-style universe (no TSLA in prod list).</span></a>
+  <a class="card" href="systems/brt.html"><span class="tag gold">Production</span><strong>BRT — Break and ReTest</strong><span class="blurb">Core zone break → support retest sleeve on the TBN host.</span></a>
+  <a class="card" href="systems/wpbr.html"><span class="tag gold">Production</span><strong>WPBR</strong><span class="blurb">WPBR zone math; MarkTen mega-cap seed set.</span></a>
+  <a class="card" href="systems/mts.html"><span class="tag gold">Production</span><strong>MTS</strong><span class="blurb">Sheet-parity / MTS mode path on TBN.</span></a>
+  <a class="card" href="systems/vz.html"><span class="tag research">Research</span><strong>VZ — Volume Zone</strong><span class="blurb">Max-volume HL zones; break → retest. Not DailyRun-wired.</span></a>
+  <a class="card" href="systems/mvcp.html"><span class="tag parked">Parked</span><strong>MVCP — Minervini VCP</strong><span class="blurb">Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12).</span></a>
+  <a class="card" href="systems/ind.html"><span class="tag deprecated">Deprecated</span><strong>IND</strong><span class="blurb">Legacy indicator / TC path; still in some reports, not an active gold sleeve.</span></a>
+</div>
+
+<div class="callout warn">
+  Research pages (e.g. VZ) and parked notes (MVCP) are for process transparency — not live allocation advice.
+</div>
+
+<footer class="doc-foot">
+  <p>stockresearch · TBN Philosophy · Canonical: <span class="path">drive/TBN_Philosophy.html</span> (published to Pages as <span class="path">tbn_philosophy.html</span>)</p>
+</footer>
+</div>
+
+<p style="margin-top:2rem;color:#666;font-size:0.85rem;">
+  <a href="index.html">Scanner open report</a>
+  · <a href="investment.html">Investment report</a>
+  · <a href="convergence.html">System convergence</a>
+  · <a href="monthly.html">Monthly report (all systems)</a>
+  · <a href="system_performance.html">Historical performance</a>
+  · <a href="system_setup_process.html">System setup process</a>
+  · <a href="tbn_philosophy.html">TBN Philosophy</a>
+  · Refresh this page for the latest copy.
+</p>
+
+</body>
+</html>
