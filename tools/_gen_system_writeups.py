@@ -1282,6 +1282,71 @@ PAGES: list[tuple[str, str, str]] = [
 ]
 
 
+INDEX_CARDS = [
+    ("rs.html", "gold", "Production", "RS — Relative Strength", "SPY excess + Strong Trend Condition (TC); multiplier stop/target; 252-bar time stop."),
+    ("sb.html", "gold", "Production", "SB — StockBee Momentum Burst", "Short impulse after coil; Low of Day (LOD) risk; 3–5 day hold sleeve."),
+    ("rl.html", "gold", "Production", "RL — Rocket Launcher", "50-SMA dip-and-stack mega-cap launcher; AWK math authoritative vs Python port."),
+    ("yh.html", "gold", "Production", "YH — Year High", "Year-high zone / band path; Mag9-style universe (no TSLA in prod list)."),
+    ("brt.html", "gold", "Production", "BRT — Break and ReTest", "Daily pivot-zone break → support retest on the TBN host."),
+    ("wpbr.html", "gold", "Production", "WPBR — Pivot Break and Retest", "Weekly pivot zones, weekly breakout + confirm, daily hold-above retest."),
+    ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
+    ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
+    ("mvcp.html", "parked", "Parked", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12)."),
+    ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),
+]
+
+
+def systems_index() -> str:
+    cards = "\n".join(
+        f'<a class="card" href="{href}"><span class="tag {tag}">{status}</span>'
+        f"<strong>{title}</strong><span class=\"blurb\">{blurb}</span></a>"
+        for href, tag, status, title, blurb in INDEX_CARDS
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TBN system write-ups</title>
+<style>{CSS}
+  .grid {{
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px; margin: 14px 0 8px;
+  }}
+  a.card {{
+    display: block; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid var(--line); padding: 14px 14px 12px;
+  }}
+  a.card:hover {{ border-color: var(--accent); box-shadow: 0 2px 10px #1c1b1912; }}
+  a.card .tag {{
+    display: inline-block; font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; color: var(--accent);
+  }}
+  a.card .tag.gold {{ color: var(--ok); }}
+  a.card .tag.research {{ color: var(--warn); }}
+  a.card .tag.parked, a.card .tag.deprecated {{ color: var(--muted); }}
+  a.card strong {{ display: block; font-size: 1.02rem; margin-bottom: 4px; }}
+  a.card span.blurb {{ display: block; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Twin Beacon Networks</p>
+    <h1>System write-ups</h1>
+    <p class="lede">Identity, entry, exit, frozen levers, universe, and caveats for each sleeve.</p>
+  </header>
+  <div class="grid">
+{cards}
+  </div>
+  <footer>Canonical index · also linked from <a href="../tbn_philosophy.html">TBN Philosophy</a></footer>
+</div>
+</body>
+</html>
+"""
+
+
 def write_all() -> list[Path]:
     DRIVE_SYSTEMS.mkdir(parents=True, exist_ok=True)
     DOCS_SYSTEMS.mkdir(parents=True, exist_ok=True)
@@ -1296,6 +1361,10 @@ def write_all() -> list[Path]:
         ):
             dest.write_text(html, encoding="utf-8")
             written.append(dest)
+    idx = systems_index()
+    for dest in (DRIVE_SYSTEMS / "index.html", DOCS_SYSTEMS / "index.html"):
+        dest.write_text(idx, encoding="utf-8")
+        written.append(dest)
     return written
 
 

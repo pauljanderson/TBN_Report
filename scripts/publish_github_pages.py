@@ -27,9 +27,25 @@ NAV_FOOTER = """
   · <a href="monthly.html">Monthly report (all systems)</a>
   · <a href="system_performance.html">Historical performance</a>
   · <a href="system_setup_process.html">System setup process</a>
+  · <a href="tbn_philosophy.html">TBN Philosophy</a>
   · Refresh this page for the latest copy.
 </p>
 """
+
+# Map of docs/systems/<name>.html <- relative path under drive/
+SYSTEM_PAGE_SOURCES: dict[str, str] = {
+    "rs.html": "systems/rs.html",
+    "sb.html": "systems/sb.html",
+    "vz.html": "systems/vz.html",
+    "rl.html": "systems/rl.html",
+    "yh.html": "systems/yh.html",
+    "brt.html": "systems/brt.html",
+    "wpbr.html": "systems/wpbr.html",
+    "mts.html": "systems/mts.html",
+    "ind.html": "systems/ind.html",
+    "mvcp.html": "systems/mvcp.html",
+    "index.html": "systems/index.html",
+}
 
 
 def _resolve_drive(drive: Path) -> Path:
@@ -42,40 +58,89 @@ def _resolve_drive(drive: Path) -> Path:
     raise FileNotFoundError(f"Drive folder not found: {drive}")
 
 
-def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
-    if not show_nav or "system_setup_process.html" in html:
-        return html
-    # Upgrade older nav that already has performance but not setup process.
-    if "system_performance.html" in html:
-        return re.sub(
-            r'(<a\s+href=["\']system_performance\.html["\'][^>]*>.*?</a>)',
-            r'\1\n  · <a href="system_setup_process.html">System setup process</a>',
+def _has_philosophy_nav_link(html: str) -> bool:
+    return bool(
+        re.search(
+            r'<a\s+href=["\'](?:\.\./)?tbn_philosophy\.html["\'][^>]*>\s*TBN Philosophy\s*</a>',
             html,
+            flags=re.I | re.S,
+        )
+    )
+
+
+def _inject_nav_footer(html: str, *, show_nav: bool) -> str:
+    """Ensure the shared site footer nav includes TBN Philosophy.
+
+    Only mutates the known footer <p style="margin-top:2rem..."> block (or appends
+    NAV_FOOTER). Never rewrites in-body links that happen to mention setup process.
+    """
+    if not show_nav:
+        return html
+
+    footer_nav = re.compile(
+        r'<p\s+style=["\']margin-top:2rem;color:#666;font-size:0\.85rem;["\']>.*?</p>',
+        flags=re.I | re.S,
+    )
+    m = footer_nav.search(html)
+    if m:
+        block = m.group(0)
+        if _has_philosophy_nav_link(block):
+            return html
+        if re.search(r'href=["\']system_setup_process\.html["\']', block, flags=re.I):
+            new_block = re.sub(
+                r'(<a\s+href=["\']system_setup_process\.html["\'][^>]*>.*?</a>)',
+                r'\1\n  · <a href="tbn_philosophy.html">TBN Philosophy</a>',
+                block,
+                count=1,
+                flags=re.I | re.S,
+            )
+        elif re.search(r'href=["\']system_performance\.html["\']', block, flags=re.I):
+            new_block = re.sub(
+                r'(<a\s+href=["\']system_performance\.html["\'][^>]*>.*?</a>)',
+                r'\1\n  · <a href="system_setup_process.html">System setup process</a>'
+                r'\n  · <a href="tbn_philosophy.html">TBN Philosophy</a>',
+                block,
+                count=1,
+                flags=re.I | re.S,
+            )
+        elif re.search(r'href=["\']monthly\.html["\']', block, flags=re.I):
+            new_block = re.sub(
+                r'(<a\s+href=["\']monthly\.html["\'][^>]*>.*?</a>)',
+                r'\1\n  · <a href="system_performance.html">Historical performance</a>'
+                r'\n  · <a href="system_setup_process.html">System setup process</a>'
+                r'\n  · <a href="tbn_philosophy.html">TBN Philosophy</a>',
+                block,
+                count=1,
+                flags=re.I | re.S,
+            )
+        else:
+            # Replace/append full footer
+            new_block = NAV_FOOTER.strip()
+        return html[: m.start()] + new_block + html[m.end() :]
+
+    # Convergence-style compact footer (class="small" with report links)
+    compact = re.compile(
+        r'(<p class=["\']small["\']>.*?href=["\']system_setup_process\.html["\'].*?</p>)',
+        flags=re.I | re.S,
+    )
+    cm = compact.search(html)
+    if cm:
+        block = cm.group(1)
+        if _has_philosophy_nav_link(block):
+            return html
+        new_block = re.sub(
+            r'(<a\s+href=["\']system_setup_process\.html["\'][^>]*>.*?</a>)',
+            r'\1 · <a href="tbn_philosophy.html">TBN Philosophy</a>',
+            block,
             count=1,
             flags=re.I | re.S,
         )
-    monthly_link = re.compile(
-        r'(<a\s+href=["\']monthly\.html["\'][^>]*>.*?</a>)',
-        flags=re.I | re.S,
-    )
-    if monthly_link.search(html):
-        return monthly_link.sub(
-            r'\1\n  · <a href="system_performance.html">Historical performance</a>'
-            r'\n  · <a href="system_setup_process.html">System setup process</a>',
-            html,
-            count=1,
-        )
-    compact_nav = re.compile(
-        r'(<a\s+href=["\']index\.html["\'][^>]*>Scanner open report</a>)(\s*</p>)',
-        flags=re.I,
-    )
-    if compact_nav.search(html):
-        return compact_nav.sub(
-            r'\1 · <a href="system_performance.html">Historical performance</a>'
-            r' · <a href="system_setup_process.html">System setup process</a>\2',
-            html,
-            count=1,
-        )
+        return html[: cm.start()] + new_block + html[cm.end() :]
+
+    if _has_philosophy_nav_link(html):
+        # Header nav already has it (e.g. system_performance); still add footer if absent.
+        pass
+
     if "</body>" in html.lower():
         return re.sub(r"</body>", NAV_FOOTER + "\n</body>", html, count=1, flags=re.I)
     return html + NAV_FOOTER
@@ -210,6 +275,43 @@ def publish_setup_process(*, drive: Path, docs_dir: Path, show_nav: bool) -> Pat
     return dst
 
 
+def publish_philosophy(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
+    """Copy TBN_Philosophy.html into docs/tbn_philosophy.html for Pages."""
+    src = _resolve_drive(drive) / "TBN_Philosophy.html"
+    if not src.is_file():
+        raise FileNotFoundError(f"Missing {src}")
+    dst = docs_dir / "tbn_philosophy.html"
+    prepare_html_for_pages(src, dst, show_nav=show_nav)
+    return dst
+
+
+def publish_system_pages(*, drive: Path, docs_dir: Path, show_nav: bool) -> list[Path]:
+    """Copy drive/systems/*.html (and mapped guides) into docs/systems/."""
+    drive_root = _resolve_drive(drive)
+    out_dir = docs_dir / "systems"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for dst_name, rel_src in SYSTEM_PAGE_SOURCES.items():
+        src = drive_root / rel_src
+        if not src.is_file():
+            # Fallback: paul_experiments guides for RS/SB/VZ if systems/ missing
+            alt_map = {
+                "rs.html": "paul_experiments/RS_System_Guide.html",
+                "sb.html": "paul_experiments/SB_System_Guide.html",
+                "vz.html": "paul_experiments/VZ_System_Guide.html",
+            }
+            alt = alt_map.get(dst_name)
+            if alt:
+                src = drive_root / alt
+        if not src.is_file():
+            print(f"[pages] Skipped systems/{dst_name} (no source)")
+            continue
+        dst = out_dir / dst_name
+        prepare_html_for_pages(src, dst, show_nav=show_nav)
+        written.append(dst)
+    return written
+
+
 def publish_scanner(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = drive / "Scanner_Open_Report_Latest.html"
     if not src.is_file():
@@ -279,8 +381,18 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
     status = _git(["status", "--porcelain", "--", *paths_to_add], repo_root)
     if status.returncode != 0:
         raise RuntimeError(status.stderr.strip() or "git status failed")
+    branch_proc = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root)
+    branch = (branch_proc.stdout or "").strip() or "HEAD"
+
     if not status.stdout.strip():
         print("[pages] No changes under docs/ or closed_positions_log.csv — skip commit.")
+        if branch != "main":
+            print(
+                f"[pages] NOTE: current branch is {branch}. GitHub Pages deploys only from main.\n"
+                f"        Live site will not update until main is pushed, e.g.:\n"
+                f"        git push origin {branch}:main",
+                file=sys.stderr,
+            )
         return
 
     for step in (
@@ -292,6 +404,19 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout).strip()
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
+
+    if branch != "main":
+        print(
+            f"[pages] Current branch is {branch}. GitHub Pages deploys only from main — "
+            "also pushing HEAD to origin/main."
+        )
+        proc = _git(["push", "origin", "HEAD:main"], repo_root)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).strip()
+            raise RuntimeError(
+                f"git push origin HEAD:main failed: {err}\n"
+                f"The commit is on {branch}. To go live: git push origin {branch}:main"
+            )
     print("[pages] Pushed to GitHub. Pages may take 1-2 minutes to update.")
 
 
@@ -406,6 +531,20 @@ def main() -> int:
     else:
         print(f"[pages] Skipped setup process (no {setup_src})")
 
+    philosophy_src = _resolve_drive(drive) / "TBN_Philosophy.html"
+    if philosophy_src.is_file():
+        phil_dst = publish_philosophy(drive=drive, docs_dir=docs_dir, show_nav=False)
+        published.append(phil_dst)
+        show_nav = True
+        print(f"[pages] Wrote {phil_dst}")
+    else:
+        print(f"[pages] Skipped TBN Philosophy (no {philosophy_src})")
+
+    system_pages = publish_system_pages(drive=drive, docs_dir=docs_dir, show_nav=False)
+    if system_pages:
+        # Do not inject root-relative footer into docs/systems/* (hrefs would break).
+        print(f"[pages] Wrote {len(system_pages)} system description page(s) under {docs_dir / 'systems'}")
+
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
@@ -424,6 +563,8 @@ def main() -> int:
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
     print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
     print("[pages]   Setup process: https://pauljanderson.github.io/TBN_Report/system_setup_process.html")
+    print("[pages]   TBN Philosophy: https://pauljanderson.github.io/TBN_Report/tbn_philosophy.html")
+    print("[pages]   Systems:      https://pauljanderson.github.io/TBN_Report/systems/")
     if args.push:
         print(
             "[pages] After push, check Actions > Publish reports to Pages (deploy ~1-2 min)."

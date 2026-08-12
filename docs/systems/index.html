@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TBN system write-ups</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px; margin: 14px 0 8px;
+  }
+  a.card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid var(--line); padding: 14px 14px 12px;
+  }
+  a.card:hover { border-color: var(--accent); box-shadow: 0 2px 10px #1c1b1912; }
+  a.card .tag {
+    display: inline-block; font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; color: var(--accent);
+  }
+  a.card .tag.gold { color: var(--ok); }
+  a.card .tag.research { color: var(--warn); }
+  a.card .tag.parked, a.card .tag.deprecated { color: var(--muted); }
+  a.card strong { display: block; font-size: 1.02rem; margin-bottom: 4px; }
+  a.card span.blurb { display: block; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Twin Beacon Networks</p>
+    <h1>System write-ups</h1>
+    <p class="lede">Identity, entry, exit, frozen levers, universe, and caveats for each sleeve.</p>
+  </header>
+  <div class="grid">
+<a class="card" href="rs.html"><span class="tag gold">Production</span><strong>RS — Relative Strength</strong><span class="blurb">SPY excess + Strong Trend Condition (TC); multiplier stop/target; 252-bar time stop.</span></a>
+<a class="card" href="sb.html"><span class="tag gold">Production</span><strong>SB — StockBee Momentum Burst</strong><span class="blurb">Short impulse after coil; Low of Day (LOD) risk; 3–5 day hold sleeve.</span></a>
+<a class="card" href="rl.html"><span class="tag gold">Production</span><strong>RL — Rocket Launcher</strong><span class="blurb">50-SMA dip-and-stack mega-cap launcher; AWK math authoritative vs Python port.</span></a>
+<a class="card" href="yh.html"><span class="tag gold">Production</span><strong>YH — Year High</strong><span class="blurb">Year-high zone / band path; Mag9-style universe (no TSLA in prod list).</span></a>
+<a class="card" href="brt.html"><span class="tag gold">Production</span><strong>BRT — Break and ReTest</strong><span class="blurb">Daily pivot-zone break → support retest on the TBN host.</span></a>
+<a class="card" href="wpbr.html"><span class="tag gold">Production</span><strong>WPBR — Pivot Break and Retest</strong><span class="blurb">Weekly pivot zones, weekly breakout + confirm, daily hold-above retest.</span></a>
+<a class="card" href="mts.html"><span class="tag gold">Production</span><strong>MTS — Magic Touch</strong><span class="blurb">STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline).</span></a>
+<a class="card" href="vz.html"><span class="tag research">Research</span><strong>VZ — Volume Zone</strong><span class="blurb">Max-volume HL zones; break → retest. Not DailyRun-wired.</span></a>
+<a class="card" href="mvcp.html"><span class="tag parked">Parked</span><strong>MVCP — Minervini VCP</strong><span class="blurb">Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12).</span></a>
+<a class="card" href="ind.html"><span class="tag deprecated">Deprecated</span><strong>IND — Indicator / TC</strong><span class="blurb">Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve.</span></a>
+  </div>
+  <footer>Canonical index · also linked from <a href="../tbn_philosophy.html">TBN Philosophy</a></footer>
+</div>
+</body>
+</html>
