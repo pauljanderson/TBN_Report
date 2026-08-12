@@ -249,6 +249,29 @@ WPBR_PLAN: dict[str, tuple[Any, ...]] = {
     "target_pct": (1.20, 1.22, 1.24, 1.27),
 }
 
+# run_wrl.bat — Weekly range / swing demand-zone
+WRL_BASELINE: dict[str, Any] = {
+    "brt_cash": 47_500.0,
+    "wrl_mode": True,
+    "brt_zones": False,
+    "yh_zones": False,
+    "vec_zones": False,
+    "wpbr_zones": False,
+    "wrl_target_mode": "scale",
+    "wrl_scale_frac": 0.50,
+    "stop_pct": 1.0,
+    "stop_pct_is_multiplier": True,
+    "compute_equity_metrics": True,
+}
+
+WRL_PLAN: dict[str, tuple[Any, ...]] = {
+    "wrl_target_mode": ("scale", "range", "swing"),
+    "wrl_scale_frac": (0.33, 0.50, 0.67),
+    "stop_pct": (0.98, 0.99, 1.0),
+    "wrl_min_zone_pct": (0.0, 0.01, 0.02),
+}
+
+
 MARKTEN_WPBR = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA", "AU", "AMD", "NFLX"]
 
 
@@ -334,6 +357,13 @@ SYSTEMS: dict[str, SystemSpec] = {
         min_trades_symbol=2, min_trades_universe=15,
         min_trades_wf_train_symbol=1, min_trades_wf_val_symbol=1,
         min_trades_wf_train_universe=8, min_trades_wf_val_universe=4,
+        daily_symbols=lambda: list(MARKTEN_WPBR),
+    ),
+    "WRL": SystemSpec(
+        "WRL", "brt", WRL_BASELINE, WRL_PLAN,
+        min_trades_symbol=2, min_trades_universe=10,
+        min_trades_wf_train_symbol=1, min_trades_wf_val_symbol=1,
+        min_trades_wf_train_universe=6, min_trades_wf_val_universe=3,
         daily_symbols=lambda: list(MARKTEN_WPBR),
     ),
 }

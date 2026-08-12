@@ -2,10 +2,10 @@
 Stable column order for BRT_Report / BRT_Audit_Report / BRT_Audit_Report_RL and optimizer.
 
 Single shared Audit schema for all systems (BRT / YH / RS / RL / WPBR / IND / MTS /
-VEC / MVCP / SB / QULL / VZ). System-specific levers (``mvcp_*``, ``sb_mode`` / ``burst_*``,
-``qull_*``, ``vz_*``, …) are always present; non-active systems leave them blank (see
+VEC / MVCP / SB / QULL / VZ / WRL). System-specific levers (``mvcp_*``, ``sb_mode`` / ``burst_*``,
+``qull_*``, ``vz_*``, ``wrl_*``, …) are always present; non-active systems leave them blank (see
 ``rocket_tbn._fill_sb_mode_audit`` / ``_fill_mvcp_mode_audit`` / ``_fill_qull_mode_audit`` /
-``_fill_vz_mode_audit``).
+``_fill_vz_mode_audit`` / ``_fill_wrl_mode_audit``).
 
 Trade-level IND / Trading Central horizon fields (``IND_*``, ``IND_TC_*``) are **not** listed
 here — they append to Closed / Open / Scanner via ``brt_entry_indicators.entry_indicator_csv_headers``
@@ -119,6 +119,11 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "vz_target_r",
     "vz_stop_atr_buffer",
     "vz_sheet_notional",
+    "wrl_mode",
+    "wrl_target_mode",
+    "wrl_scale_frac",
+    "wrl_min_zone_pct",
+    "wrl_time_stop_bars",
     "rl_mode",
     "rl_sma_qual",
     "rl_dip_pct",
@@ -637,6 +642,15 @@ _VZ_AUDIT_LEVER_COLS: tuple[str, ...] = (
     "vz_sheet_notional",
 )
 
+# Weekly Range / Swing-only levers (blank when wrl_mode is false).
+_WRL_AUDIT_LEVER_COLS: tuple[str, ...] = (
+    "wrl_mode",
+    "wrl_target_mode",
+    "wrl_scale_frac",
+    "wrl_min_zone_pct",
+    "wrl_time_stop_bars",
+)
+
 
 def get_brt_audit_column_order() -> tuple[str, ...]:
     """Return full audit header order (immutable tuple)."""
@@ -661,6 +675,11 @@ def get_qull_audit_lever_cols() -> tuple[str, ...]:
 def get_vz_audit_lever_cols() -> tuple[str, ...]:
     """Volume Zone-only Audit columns (blank on non-VZ runs)."""
     return _VZ_AUDIT_LEVER_COLS
+
+
+def get_wrl_audit_lever_cols() -> tuple[str, ...]:
+    """Weekly Range / Swing-only Audit columns (blank on non-WRL runs)."""
+    return _WRL_AUDIT_LEVER_COLS
 
 
 def empty_audit_row() -> dict[str, str]:

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WRL — Weekly Range / Swing</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Research · Weekly Range / Swing</p>
+    <h1>WRL — Weekly Range / Swing</h1>
+    <p class="lede">Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. Watch a daily close in the lower pocket; buy the next session if price trades up out of it. Targets are last week’s high, then the swing high.</p>
+    <div class="badge badge-bad">Research candidate — not DailyRun</div>
+    <div class="meta-row"><span>Mode <code>wrl_mode=true</code></span><span>Runner <code>run_wrl.bat</code></span><span>Engine <span class='path'>stock_analysis/wrl_zones.py</span></span><span>Host <span class='path'>stock_analysis/rocket_wrl.py</span></span></div>
+  </header>
+
+<div class="callout bad">
+  <strong>Not production gold. Not a DailyRun numbered step. Not in the $500k allocation mix.</strong>
+  Do not treat Watchlist rows as same-day fills. The last bar closing in the zone only arms
+  <em>tomorrow’s</em> breakout check.
+</div>
+<div class="callout ok">
+  <strong>Predictive timing.</strong>
+  Watch is known at the close of day T (needs T’s Close). Fill is on day T+1 only.
+  The engine never buys the open of the watch morning using that morning’s range.
+</div>
+<div class="callout">
+  <strong>Where this file lives.</strong>
+  Local: <span class="path">drive\systems\wrl.html</span>
+  · Pages: <span class="path">docs\systems\wrl.html</span>.
+  After <code>git pull origin main</code>, open
+  <span class="path">C:\Users\songg\Downloads\stockresearch\drive\systems\wrl.html</span>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Each daily bar is mapped to the <strong>previous completed Friday week</strong> (never the in-progress week).
+  That week’s high and low are the <strong>range</strong>. Walking backward independently, the engine finds
+  a <strong>swing high</strong> (first earlier week whose high is above the range high) and a
+  <strong>swing low</strong> (first earlier week whose low is below the range low). Those two weeks can differ.
+</p>
+<p>
+  Hypothesis: when a daily close sits in the pocket between swing low and range low, the market is
+  testing demand under last week’s range. If the next session opens without gapping through the swing
+  low and then trades back up through the range low, buy that reclaim.
+</p>
+
+<h2>2. The four prices (weekly math)</h2>
+<ol class="steps">
+  <li><strong>Previous week</strong> = last Friday week-end <em>strictly before</em> the as-of daily bar.
+      Monday–Friday of the current week is ignored even if those days have already printed.</li>
+  <li><strong>Range high / range low</strong> = that previous week’s High and Low.</li>
+  <li><strong>Swing high</strong> = walk week-by-week backward from the week <em>before</em> the range week.
+      Stop at the first week with <code>High &gt; range_high</code>.</li>
+  <li><strong>Swing low</strong> = independent walk from the same starting point.
+      Stop at the first week with <code>Low &lt; range_low</code>.</li>
+</ol>
+<p>
+  Structure is valid only when
+  <code>swing_low &lt; range_low ≤ range_high &lt; swing_high</code>.
+  Otherwise that daily bar has <strong>no setup</strong>.
+</p>
+<div class="card">
+  <p><strong>Worked numbers.</strong> Previous completed week High 105, Low 98.</p>
+  <ul>
+    <li>First earlier week with High &gt; 105 printed 110 → swing high = 110.</li>
+    <li>First earlier week with Low &lt; 98 printed 95 → swing low = 95. (Need not be the same week.)</li>
+    <li>Demand zone = <code>[95, 98]</code>. Monday close 97 → WATCH. Tuesday open 97.20, high 99.10 → BUY. Fill = 98.</li>
+  </ul>
+</div>
+
+<h2>3. Daily sequence</h2>
+<ol class="steps">
+  <li>If already in a trade, and this is not the fill bar: manage exits. Then skip new entries.</li>
+  <li>If yesterday was a WATCH: this bar is the only chance to buy that watch.
+      Reject if <code>Open &lt; swing_low</code>. Buy if <code>High &gt; range_low</code>.
+      Otherwise the watch expires (a later close in the zone can re-arm).</li>
+  <li>If flat: today’s close in <code>[swing_low, range_low]</code> inclusive → arm WATCH for tomorrow.</li>
+</ol>
+<p>
+  Fill = Open if already <code>≥ range_low</code>, else range low (intraday break).
+  Skip if <code>stop ≥ fill</code> or primary target <code>≤ fill</code>.
+</p>
+
+<h2>4. Watchlist / Scanner / Open / Closed</h2>
+<ul>
+  <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
+  <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+</ul>
+
+<h2>5. Exits</h2>
+<p><strong>No exit management on the fill bar.</strong> Intraday order after that: gap through stop → remaining target at the open → stop → remaining target. Time stop default off.</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><code>scale</code> (default)</td><td>50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
+    <tr><td><code>range</code></td><td>Full size out at range high.</td></tr>
+    <tr><td><code>swing</code></td><td>Full size out at swing high.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
+
+<h2>6. How to run</h2>
+<div class="card">
+  <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
+  <p><code>run_wrl.bat</code> — Mag10 if <code>drive\universes\WRL_universe.csv</code> is missing.</p>
+  <p><code>run_wrl.bat drive\universes\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
+  <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
+</div>
+
+<h2>7. Do not</h2>
+<ul>
+  <li>Use this week’s high/low as the range — only a completed Friday week strictly before the as-of bar.</li>
+  <li>Buy the watch-day open. Fill is the next session only.</li>
+  <li>Keep a watch alive for more than one session.</li>
+  <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
+  <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
+  <li><code>run_wrl.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
+  <li><span class="path">tools/test_wrl_levels.py</span></li>
+</ul>
+
+  <footer>Canonical WRL write-up · Twin Beacon Networks (TBN) · research only</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

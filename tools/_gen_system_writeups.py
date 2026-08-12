@@ -1081,6 +1081,142 @@ def vz() -> str:
     )
 
 
+def wrl() -> str:
+    return page(
+        title="WRL — Weekly Range / Swing",
+        eyebrow="Research · Weekly Range / Swing",
+        lede=(
+            "Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. "
+            "Watch a daily close in the lower pocket; buy the next session if price trades up out of it. "
+            "Targets are last week’s high, then the swing high."
+        ),
+        badge_class="badge-bad",
+        badge_text="Research candidate — not DailyRun",
+        meta=(
+            "<span>Mode <code>wrl_mode=true</code></span>"
+            "<span>Runner <code>run_wrl.bat</code></span>"
+            "<span>Engine <span class='path'>stock_analysis/wrl_zones.py</span></span>"
+            "<span>Host <span class='path'>stock_analysis/rocket_wrl.py</span></span>"
+        ),
+        body="""
+<div class="callout bad">
+  <strong>Not production gold. Not a DailyRun numbered step. Not in the $500k allocation mix.</strong>
+  Do not treat Watchlist rows as same-day fills. The last bar closing in the zone only arms
+  <em>tomorrow’s</em> breakout check.
+</div>
+<div class="callout ok">
+  <strong>Predictive timing.</strong>
+  Watch is known at the close of day T (needs T’s Close). Fill is on day T+1 only.
+  The engine never buys the open of the watch morning using that morning’s range.
+</div>
+<div class="callout">
+  <strong>Where this file lives.</strong>
+  Local: <span class="path">drive\\systems\\wrl.html</span>
+  · Pages: <span class="path">docs\\systems\\wrl.html</span>.
+  After <code>git pull origin main</code>, open
+  <span class="path">C:\\Users\\songg\\Downloads\\stockresearch\\drive\\systems\\wrl.html</span>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Each daily bar is mapped to the <strong>previous completed Friday week</strong> (never the in-progress week).
+  That week’s high and low are the <strong>range</strong>. Walking backward independently, the engine finds
+  a <strong>swing high</strong> (first earlier week whose high is above the range high) and a
+  <strong>swing low</strong> (first earlier week whose low is below the range low). Those two weeks can differ.
+</p>
+<p>
+  Hypothesis: when a daily close sits in the pocket between swing low and range low, the market is
+  testing demand under last week’s range. If the next session opens without gapping through the swing
+  low and then trades back up through the range low, buy that reclaim.
+</p>
+
+<h2>2. The four prices (weekly math)</h2>
+<ol class="steps">
+  <li><strong>Previous week</strong> = last Friday week-end <em>strictly before</em> the as-of daily bar.
+      Monday–Friday of the current week is ignored even if those days have already printed.</li>
+  <li><strong>Range high / range low</strong> = that previous week’s High and Low.</li>
+  <li><strong>Swing high</strong> = walk week-by-week backward from the week <em>before</em> the range week.
+      Stop at the first week with <code>High &gt; range_high</code>.</li>
+  <li><strong>Swing low</strong> = independent walk from the same starting point.
+      Stop at the first week with <code>Low &lt; range_low</code>.</li>
+</ol>
+<p>
+  Structure is valid only when
+  <code>swing_low &lt; range_low ≤ range_high &lt; swing_high</code>.
+  Otherwise that daily bar has <strong>no setup</strong>.
+</p>
+<div class="card">
+  <p><strong>Worked numbers.</strong> Previous completed week High 105, Low 98.</p>
+  <ul>
+    <li>First earlier week with High &gt; 105 printed 110 → swing high = 110.</li>
+    <li>First earlier week with Low &lt; 98 printed 95 → swing low = 95. (Need not be the same week.)</li>
+    <li>Demand zone = <code>[95, 98]</code>. Monday close 97 → WATCH. Tuesday open 97.20, high 99.10 → BUY. Fill = 98.</li>
+  </ul>
+</div>
+
+<h2>3. Daily sequence</h2>
+<ol class="steps">
+  <li>If already in a trade, and this is not the fill bar: manage exits. Then skip new entries.</li>
+  <li>If yesterday was a WATCH: this bar is the only chance to buy that watch.
+      Reject if <code>Open &lt; swing_low</code>. Buy if <code>High &gt; range_low</code>.
+      Otherwise the watch expires (a later close in the zone can re-arm).</li>
+  <li>If flat: today’s close in <code>[swing_low, range_low]</code> inclusive → arm WATCH for tomorrow.</li>
+</ol>
+<p>
+  Fill = Open if already <code>≥ range_low</code>, else range low (intraday break).
+  Skip if <code>stop ≥ fill</code> or primary target <code>≤ fill</code>.
+</p>
+
+<h2>4. Watchlist / Scanner / Open / Closed</h2>
+<ul>
+  <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
+  <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+</ul>
+
+<h2>5. Exits</h2>
+<p><strong>No exit management on the fill bar.</strong> Intraday order after that: gap through stop → remaining target at the open → stop → remaining target. Time stop default off.</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><code>scale</code> (default)</td><td>50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
+    <tr><td><code>range</code></td><td>Full size out at range high.</td></tr>
+    <tr><td><code>swing</code></td><td>Full size out at swing high.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
+
+<h2>6. How to run</h2>
+<div class="card">
+  <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
+  <p><code>run_wrl.bat</code> — Mag10 if <code>drive\\universes\\WRL_universe.csv</code> is missing.</p>
+  <p><code>run_wrl.bat drive\\universes\\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
+  <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
+</div>
+
+<h2>7. Do not</h2>
+<ul>
+  <li>Use this week’s high/low as the range — only a completed Friday week strictly before the as-of bar.</li>
+  <li>Buy the watch-day open. Fill is the next session only.</li>
+  <li>Keep a watch alive for more than one session.</li>
+  <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
+  <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
+  <li><code>run_wrl.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
+  <li><span class="path">tools/test_wrl_levels.py</span></li>
+</ul>
+""",
+        footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · research only",
+    )
+
+
 def mvcp() -> str:
     return page(
         title="MVCP — Minervini VCP",
@@ -1277,6 +1413,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("wpbr.html", "WPBR_System_Guide.html", wpbr),
     ("mts.html", "MTS_System_Guide.html", mts),
     ("vz.html", "VZ_System_Guide.html", vz),
+    ("wrl.html", "WRL_System_Guide.html", wrl),
     ("mvcp.html", "MVCP_System_Guide.html", mvcp),
     ("ind.html", "IND_System_Guide.html", ind),
 ]
@@ -1291,6 +1428,7 @@ INDEX_CARDS = [
     ("wpbr.html", "gold", "Production", "WPBR — Pivot Break and Retest", "Weekly pivot zones, weekly breakout + confirm, daily hold-above retest."),
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
     ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
+    ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
     ("mvcp.html", "parked", "Parked", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12)."),
     ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),
 ]

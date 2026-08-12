@@ -21,6 +21,10 @@ rem     set SKIP_SB=1             skip StockBee step
 rem     VZ (Volume Zone) — RESEARCH sleeve only; NOT in DailyRun step list.
 rem       Standalone: run_vz.bat  (drive\universes\VZ_universe.csv DualPaul78 research default)
 rem       Optional later: call run_vz.bat behind SKIP_VZ — do not treat as gold from wiring alone.
+rem     WRL (Weekly Range / Swing) — RESEARCH sleeve; runner lives at this root:
+rem       C:\Users\songg\Downloads\stockresearch\run_wrl.bat
+rem       Standalone: run_wrl.bat  (Mag10 default; run_wrl.bat ALL = full universe)
+rem       Optional later: call run_wrl.bat behind SKIP_WRL — do not treat as gold from wiring alone.
 rem     MVCP (Minervini VCP) step [11/14]: call run_mvcp.bat — default ALL from drive\universes\MVCP_universe.csv
 rem       Theory knobs HOLD: RS>=80, vol 1.5x, depth_shrink 0.65, chase 5%, stop 0.92, target 1.25,
 rem         time_stop 10, trail_arm 10%, cooldown 20; --aggressive ON (MVCP_AGGRESSIVE=true)

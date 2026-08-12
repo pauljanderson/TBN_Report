@@ -19,6 +19,8 @@
              (Minervini VCP; also writes MVCP_LatestRun_* itself).
     VZ run: latest yyMMddHHmmss from VZ_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
              (Volume Zone research sleeve; also writes VZ_LatestRun_* itself).
+    WRL run: latest yyMMddHHmmss from WRL_Closed|Open|Watchlist|Scanner|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
+             (Weekly Range / Swing research sleeve; also writes WRL_LatestRun_* itself).
 
     Rocket Launcher / audit: prefer newest RL_Closed|Open|Scanner|Watchlist|Summary_<ts>.csv;
              fall back to drive\last_run_ts.txt (AWK/Python RL still write this).
@@ -33,6 +35,7 @@
       SB_Closed|Open|Watchlist|Summary|RejectedFills|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<sbTs>.csv -> SB_LatestRun_*.csv
       MVCP_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<mvcpTs>.csv -> MVCP_LatestRun_*.csv
       VZ_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<vzTs>.csv -> VZ_LatestRun_*.csv
+      WRL_Closed|Open|Watchlist|Scanner|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<wrlTs>.csv -> WRL_LatestRun_*.csv
       RL_Closed|Open|Scanner|Watchlist|Summary_<rlTs>.csv    -> RL_LatestRun_*.csv
 
 .PARAMETER RepoRoot
@@ -70,6 +73,9 @@
 
 .PARAMETER VzTimestamp
     Force VZ yyMMddHHmmss (optional).
+
+.PARAMETER WrlTimestamp
+    Force WRL yyMMddHHmmss (optional).
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -84,7 +90,8 @@ param(
     [string] $RsTimestamp = "",
     [string] $SbTimestamp = "",
     [string] $MvcpTimestamp = "",
-    [string] $VzTimestamp = ""
+    [string] $VzTimestamp = "",
+    [string] $WrlTimestamp = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,6 +113,7 @@ $RsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $SbStems = @("Closed", "Open", "Watchlist", "Summary", "RejectedFills", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $MvcpStems = @("Closed", "Open", "Watchlist", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $VzStems = @("Closed", "Open", "Watchlist", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
+$WrlStems = @("Closed", "Open", "Watchlist", "Scanner", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $IndStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary", "indicators_while_held", "EquityCurve_Aggressive")
 $RlStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 
@@ -259,6 +267,10 @@ function Get-LatestVzCoreTimestamp([string]$dir, [string]$override, [string[]]$s
     return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "VZ" -Stems $stems -Override $override
 }
 
+function Get-LatestWrlCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
+    return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "WRL" -Stems $stems -Override $override
+}
+
 function Get-RlTimestamp([string]$dir, [string]$override, [string[]]$stems) {
     if ($override) { return $override.Trim() }
     # Prefer newest RL_* stamped cores so later SB/MVCP runs that overwrite last_run_ts.txt
@@ -356,6 +368,12 @@ try {
 } catch {
     Write-Warning $_.Exception.Message
 }
+$wrlTs = $null
+try {
+    $wrlTs = Get-LatestWrlCoreTimestamp $OutputDir $WrlTimestamp $WrlStems
+} catch {
+    Write-Warning $_.Exception.Message
+}
 $rlTs = Get-RlTimestamp $OutputDir $RlTimestamp $RlStems
 
 Write-Host "Drive:       $OutputDir" -ForegroundColor Cyan
@@ -368,6 +386,7 @@ if ($rsTs) { Write-Host "RS core ts:  $rsTs" -ForegroundColor Yellow }
 if ($sbTs) { Write-Host "SB core ts:  $sbTs" -ForegroundColor Yellow }
 if ($mvcpTs) { Write-Host "MVCP core ts: $mvcpTs" -ForegroundColor Yellow }
 if ($vzTs) { Write-Host "VZ core ts:  $vzTs" -ForegroundColor Yellow }
+if ($wrlTs) { Write-Host "WRL core ts: $wrlTs" -ForegroundColor Yellow }
 Write-Host "RL audit ts: $rlTs" -ForegroundColor Yellow
 
 Write-Host "BRT_LatestRun:" -ForegroundColor Cyan
@@ -428,6 +447,13 @@ if ($vzTs) {
     Write-Host "VZ_LatestRun:" -ForegroundColor Cyan
     foreach ($stem in $VzStems) {
         Copy-RunCsv -SourcePrefix "VZ" -Stem $stem -Timestamp $vzTs -DestPrefix "VZ_LatestRun" -Dir $OutputDir
+    }
+}
+
+if ($wrlTs) {
+    Write-Host "WRL_LatestRun:" -ForegroundColor Cyan
+    foreach ($stem in $WrlStems) {
+        Copy-RunCsv -SourcePrefix "WRL" -Stem $stem -Timestamp $wrlTs -DestPrefix "WRL_LatestRun" -Dir $OutputDir
     }
 }
 
