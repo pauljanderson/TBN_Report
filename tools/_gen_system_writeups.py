@@ -1238,8 +1238,9 @@ def wrl() -> str:
 <h2>Canonical links</h2>
 <ul>
   <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
-  <li><code>run_wrl.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
-  <li><span class="path">tools/test_wrl_levels.py</span></li>
+  <li><code>run_wrl.bat</code> / <code>run_wrl_ab.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
+  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers)</li>
+  <li><span class="path">tools/test_wrl_levels.py</span> · <span class="path">tools/run_wrl_ab.py</span></li>
 </ul>
 """,
         footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · research only",
