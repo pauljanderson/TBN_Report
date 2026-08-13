@@ -148,6 +148,13 @@ def _metrics_row(label: str, rows: list[dict]) -> dict:
         "oos_avg_pnl": oos["avg_pnl_pct"],
         "oos_avg_r": oos["avg_r"],
         "oos_ann_ror": oos["ann_ror"],
+        "max_dd": full["max_dd_pct"],
+        "calmar": full["calmar"],
+        "avg_conc": full["avg_concurrent"],
+        "is_max_dd": iso["max_dd_pct"],
+        "is_calmar": iso["calmar"],
+        "oos_max_dd": oos["max_dd_pct"],
+        "oos_calmar": oos["calmar"],
     }
 
 
@@ -205,14 +212,18 @@ def _arm_table_html(rows: list[dict], caption: str) -> str:
             f"<td>{_fmt_num(float(r['avg_r']))}</td>"
             f"<td>{_fmt_num(float(r['med_pnl']))}</td>"
             f"<td>{_fmt_num(float(r['ann_ror']))}</td>"
+            f"<td>{_fmt_num(float(r['max_dd']))}</td>"
+            f"<td>{_fmt_num(float(r['calmar']))}</td>"
             f"<td>{int(r['is_n'])}</td>"
             f"<td>{_fmt_pct(float(r['is_wr']))}%</td>"
             f"<td>{_fmt_num(float(r['is_avg_pnl']))}</td>"
             f"<td>{_fmt_num(float(r['is_ann_ror']))}</td>"
+            f"<td>{_fmt_num(float(r['is_max_dd']))}</td>"
             f"<td>{int(r['oos_n'])}</td>"
             f"<td>{_fmt_pct(float(r['oos_wr']))}%</td>"
             f"<td>{_fmt_num(float(r['oos_avg_pnl']))}</td>"
             f"<td>{_fmt_num(float(r['oos_ann_ror']))}</td>"
+            f"<td>{_fmt_num(float(r['oos_max_dd']))}</td>"
             "</tr>"
         )
     heads = "".join(
@@ -226,14 +237,18 @@ def _arm_table_html(rows: list[dict], caption: str) -> str:
             sortable_th("Avg R", "num"),
             sortable_th("Med PnL%", "num"),
             sortable_th("Book Ann ROR%", "num"),
+            sortable_th("Max DD%", "num"),
+            sortable_th("Calmar", "num"),
             sortable_th("IS N", "num"),
             sortable_th("IS WR%", "num"),
             sortable_th("IS Avg PnL%", "num"),
             sortable_th("IS Ann ROR%", "num"),
+            sortable_th("IS Max DD%", "num"),
             sortable_th("OOS N", "num"),
             sortable_th("OOS WR%", "num"),
             sortable_th("OOS Avg PnL%", "num"),
             sortable_th("OOS Ann ROR%", "num"),
+            sortable_th("OOS Max DD%", "num"),
         ]
     )
     return (
@@ -249,39 +264,66 @@ def main() -> int:
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     ap.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 4))
     ap.add_argument("--symbols", default="")
+    ap.add_argument(
+        "--replay",
+        action="store_true",
+        help="Rescore Max DD / Calmar from existing trades_mt1.csv + trades_mt0.csv (no engine).",
+    )
     args = ap.parse_args()
 
-    data_dir = Path(args.data_dir)
-    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] or list(DUAL_PAUL78)
-    symbols = [s for s in symbols if (data_dir / f"{s}.csv").is_file()]
-    print(f"[VZ-playbook] symbols={len(symbols)} workers={args.workers} stamp={args.stamp}", flush=True)
-
-    mt1: list[dict] = []
-    mt0: list[dict] = []
+    out_dir = Path(args.out_dir) / args.stamp
+    out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    n_w = max(1, int(args.workers))
-    jobs = [(s, str(data_dir)) for s in symbols]
-    if n_w == 1:
-        results = [_worker(j) for j in jobs]
+
+    if args.replay:
+        mt1_path = out_dir / "trades_mt1.csv"
+        mt0_path = out_dir / "trades_mt0.csv"
+        if not mt1_path.is_file() or not mt0_path.is_file():
+            print(f"[VZ-playbook] --replay needs {mt1_path} and {mt0_path}", flush=True)
+            return 1
+        mt1 = _closed_signal_rows(pd.read_csv(mt1_path).to_dict("records"))
+        mt0 = _closed_signal_rows(pd.read_csv(mt0_path).to_dict("records"))
+        print(
+            f"[VZ-playbook] replay closed mt1={len(mt1)} mt0={len(mt0)} from {out_dir}",
+            flush=True,
+        )
     else:
-        results = []
-        with ProcessPoolExecutor(max_workers=n_w) as ex:
-            futs = [ex.submit(_worker, j) for j in jobs]
-            for i, fut in enumerate(as_completed(futs), 1):
-                res = fut.result()
-                results.append(res)
-                print(f"  [{i}/{len(symbols)}] {res['symbol']} {res['status']} "
-                      f"mt1={len(res['mt1'])} mt0={len(res['mt0'])}", flush=True)
-    if n_w == 1:
-        for i, res in enumerate(results, 1):
-            print(f"  [{i}/{len(symbols)}] {res['symbol']} {res['status']} "
-                  f"mt1={len(res['mt1'])} mt0={len(res['mt0'])}", flush=True)
-    for res in results:
-        mt1.extend(res["mt1"])
-        mt0.extend(res["mt0"])
-    mt1 = _closed_signal_rows(mt1)
-    mt0 = _closed_signal_rows(mt0)
-    print(f"[VZ-playbook] closed mt1={len(mt1)} mt0={len(mt0)} in {time.time()-t0:.0f}s", flush=True)
+        data_dir = Path(args.data_dir)
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] or list(DUAL_PAUL78)
+        symbols = [s for s in symbols if (data_dir / f"{s}.csv").is_file()]
+        print(f"[VZ-playbook] symbols={len(symbols)} workers={args.workers} stamp={args.stamp}", flush=True)
+
+        mt1 = []
+        mt0 = []
+        n_w = max(1, int(args.workers))
+        jobs = [(s, str(data_dir)) for s in symbols]
+        if n_w == 1:
+            results = [_worker(j) for j in jobs]
+        else:
+            results = []
+            with ProcessPoolExecutor(max_workers=n_w) as ex:
+                futs = [ex.submit(_worker, j) for j in jobs]
+                for i, fut in enumerate(as_completed(futs), 1):
+                    res = fut.result()
+                    results.append(res)
+                    print(
+                        f"  [{i}/{len(symbols)}] {res['symbol']} {res['status']} "
+                        f"mt1={len(res['mt1'])} mt0={len(res['mt0'])}",
+                        flush=True,
+                    )
+        if n_w == 1:
+            for i, res in enumerate(results, 1):
+                print(
+                    f"  [{i}/{len(symbols)}] {res['symbol']} {res['status']} "
+                    f"mt1={len(res['mt1'])} mt0={len(res['mt0'])}",
+                    flush=True,
+                )
+        for res in results:
+            mt1.extend(res["mt1"])
+            mt0.extend(res["mt0"])
+        mt1 = _closed_signal_rows(mt1)
+        mt0 = _closed_signal_rows(mt0)
+        print(f"[VZ-playbook] closed mt1={len(mt1)} mt0={len(mt0)} in {time.time()-t0:.0f}s", flush=True)
 
     ctrl = _metrics_row("CONTROL mt>=1", mt1)
     arms_meta = [
@@ -329,15 +371,16 @@ def main() -> int:
         print(
             f"  {name:28s} N={m['n']:5d} WR={m['wr']*100:5.1f}% "
             f"PnL={m['avg_pnl']:+6.2f} Ann={m['ann_ror']:7.1f} "
-            f"OOS_N={m['oos_n']:4d} OOS_PnL={m['oos_avg_pnl']:+6.2f}  {m['lean']}",
+            f"MaxDD={m['max_dd']:5.1f} Calmar={m['calmar']:4.2f} "
+            f"OOS_N={m['oos_n']:4d} OOS_PnL={m['oos_avg_pnl']:+6.2f} "
+            f"OOS_DD={m['oos_max_dd']:5.1f}  {m['lean']}",
             flush=True,
         )
 
-    out_dir = Path(args.out_dir) / args.stamp
-    out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(table).to_csv(out_dir / "ab_metrics.csv", index=False)
-    pd.DataFrame(mt1).to_csv(out_dir / "trades_mt1.csv", index=False)
-    pd.DataFrame(mt0).to_csv(out_dir / "trades_mt0.csv", index=False)
+    if not args.replay:
+        pd.DataFrame(mt1).to_csv(out_dir / "trades_mt1.csv", index=False)
+        pd.DataFrame(mt0).to_csv(out_dir / "trades_mt0.csv", index=False)
 
     # Coverage of features on control
     c = pd.DataFrame(mt1)
@@ -376,6 +419,7 @@ def main() -> int:
 Do not retune on OOS. One hypothesis per pair of alternatives vs CONTROL.
 </div>
 <p>{" ".join(html_mod.escape(x) for x in cov_lines)}</p>
+<p>Max DD is the house passive book path (fixed notional, PnL at exit, no OHLC MTM). Init capital is sized to average concurrent slots.</p>
 <h2>1. Hypotheses</h2>
 <ol>
 <li><strong>H1 climatic origin.</strong> Only keep zones whose max-vol day is a real spike vs the 20-day average (rvol ≥ 2.5 / ≥ 4.0). Quiet-window “max” bars are noise.</li>
@@ -386,7 +430,8 @@ Do not retune on OOS. One hypothesis per pair of alternatives vs CONTROL.
 {_arm_table_html(table, "Click headers to sort. Lean is not an adopt.")}
 <h2>3. How to read</h2>
 <ul>
-<li>Judge quality (WR / Avg R / Avg PnL / book Ann ROR), not max profit. OOS is 2024+.</li>
+<li>Judge quality (WR / Avg R / Avg PnL / book Ann ROR / Max DD), not max profit. OOS is 2024+.</li>
+<li>Max DD is the house passive book path (fixed notional, PnL at exit, no OHLC MTM). Calmar = book Ann ROR / Max DD.</li>
 <li>LEAN KEEP = IS quality up and OOS not soft. HOLD = mixed. DISMISS = no edge or worse.</li>
 <li>H2 changes the entry set (engine re-run). H1/H3 are filters on CONTROL trades.</li>
 </ul>
@@ -401,10 +446,17 @@ Do not retune on OOS. One hypothesis per pair of alternatives vs CONTROL.
             f"| {r['arm']} | {r['knob']} | {r['lean']} | {int(r['n'])} | "
             f"{_fmt_pct(float(r['wr']))}% | {_fmt_num(float(r['avg_pnl']))} | "
             f"{_fmt_num(float(r['avg_r']))} | {_fmt_num(float(r['ann_ror']))} | "
+            f"{_fmt_num(float(r['max_dd']))} | {_fmt_num(float(r['calmar']))} | "
             f"{int(r['is_n'])} | {_fmt_pct(float(r['is_wr']))}% | {_fmt_num(float(r['is_avg_pnl']))} | "
-            f"{int(r['oos_n'])} | {_fmt_pct(float(r['oos_wr']))}% | {_fmt_num(float(r['oos_avg_pnl']))} |"
+            f"{_fmt_num(float(r['is_max_dd']))} | "
+            f"{int(r['oos_n'])} | {_fmt_pct(float(r['oos_wr']))}% | {_fmt_num(float(r['oos_avg_pnl']))} | "
+            f"{_fmt_num(float(r['oos_max_dd']))} |"
         )
 
+    ctrl_m = table[0]
+    by_arm = {r["arm"]: r for r in table}
+    h1_hi = by_arm["H1 ORIGIN_RVOL>=4.0"]
+    h2_naked = by_arm["H2 NAKED only"]
     md = [
         "# VZ playbook strength ABs",
         "",
@@ -412,23 +464,41 @@ Do not retune on OOS. One hypothesis per pair of alternatives vs CONTROL.
         "",
         "## Verdict",
         "",
+        "**Do not adopt any of these three playbook gates.** They do not beat control on quality-over-count. "
+        "`min_touches≥1` is doing real work; naked/first-touch lore is the wrong direction for this sleeve.",
+        "",
+        f"Control: N={int(ctrl_m['n'])}, WR {_fmt_pct(float(ctrl_m['wr']))}%, avg PnL {_fmt_num(float(ctrl_m['avg_pnl']))}%, "
+        f"book Ann ROR {_fmt_num(float(ctrl_m['ann_ror']))}%, Max DD {_fmt_num(float(ctrl_m['max_dd']))}% "
+        f"(OOS N={int(ctrl_m['oos_n'])}, PnL {_fmt_num(float(ctrl_m['oos_avg_pnl']))}%, Max DD {_fmt_num(float(ctrl_m['oos_max_dd']))}%). "
+        "Max DD is the house passive book path (fixed notional, PnL at exit, no OHLC MTM). "
+        "Init capital is sized to average concurrent slots, so thinner sleeves are not automatically calmer.",
+        "",
+        "H1 origin rvol ≥4.0 is the only arm with a clearly smaller book Max DD "
+        f"({_fmt_num(float(h1_hi['max_dd']))}% vs {_fmt_num(float(ctrl_m['max_dd']))}%) and higher Calmar. "
+        "That sleeve is ~31% of control N; do not treat the DD cut as a free lunch. "
+        f"H2 naked is worse on DD ({_fmt_num(float(h2_naked['max_dd']))}%).",
+        "",
     ]
     for hyp, title in (("H1", "H1 origin climatic rvol"), ("H2", "H2 naked / drop min_touches"), ("H3", "H3 lighter retest volume")):
         md.append(f"### {title}")
         md.append("")
         for r in table:
             if r["hyp"] == hyp:
-                md.append(f"- **{r['arm']}**: {r['lean']} — FULL N={int(r['n'])} WR {_fmt_pct(float(r['wr']))}% "
-                          f"avg PnL {_fmt_num(float(r['avg_pnl']))}% Ann ROR {_fmt_num(float(r['ann_ror']))}% "
-                          f"(OOS N={int(r['oos_n'])} PnL {_fmt_num(float(r['oos_avg_pnl']))}%)")
+                md.append(
+                    f"- **{r['arm']}**: {r['lean']} — FULL N={int(r['n'])} WR {_fmt_pct(float(r['wr']))}% "
+                    f"avg PnL {_fmt_num(float(r['avg_pnl']))}% Ann ROR {_fmt_num(float(r['ann_ror']))}% "
+                    f"Max DD {_fmt_num(float(r['max_dd']))}% "
+                    f"(OOS N={int(r['oos_n'])} PnL {_fmt_num(float(r['oos_avg_pnl']))}% "
+                    f"Max DD {_fmt_num(float(r['oos_max_dd']))}%)"
+                )
         md.append("")
     md += [
         "## Setup",
         "",
         *cov_lines,
         "",
-        "| Arm | Knob | Lean | N | WR% | Avg PnL% | Avg R | Book Ann ROR% | IS N | IS WR% | IS Avg PnL% | OOS N | OOS WR% | OOS Avg PnL% |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Knob | Lean | N | WR% | Avg PnL% | Avg R | Book Ann ROR% | Max DD% | Calmar | IS N | IS WR% | IS Avg PnL% | IS Max DD% | OOS N | OOS WR% | OOS Avg PnL% | OOS Max DD% |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     md.extend(md_row(r) for r in table)
     md += [
@@ -437,6 +507,7 @@ Do not retune on OOS. One hypothesis per pair of alternatives vs CONTROL.
         "",
         "```",
         "python tools/vz_playbook_strength_ab.py",
+        "python tools/vz_playbook_strength_ab.py --replay   # rescore Max DD from saved trades",
         "```",
         "",
         "Not gold. Not DailyRun. Do not retune on OOS.",
