@@ -37,6 +37,7 @@ SYSTEM_PAGE_SOURCES: dict[str, str] = {
     "rs.html": "systems/rs.html",
     "sb.html": "systems/sb.html",
     "vz.html": "systems/vz.html",
+    "wrl.html": "systems/wrl.html",
     "rl.html": "systems/rl.html",
     "yh.html": "systems/yh.html",
     "brt.html": "systems/brt.html",
@@ -372,12 +373,69 @@ def _git_out(args: list[str], cwd: Path) -> str:
     return (proc.stdout or "").strip()
 
 
+def _git_err(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stderr or proc.stdout or "").strip()
+
+
+def integrate_origin_main(repo_root: Path) -> None:
+    """Fetch and combine origin/main into HEAD before pushing Pages.
+
+    DailyRun --push used to `git push` the local main tip only. If origin/main
+    moved while the Windows job was still running (WRL landed 2026-08-12 17:32
+    ET; 6:30pm DailyRun then failed at step 14b), the push is a non-fast-forward
+    and DailyRun exits 1 with no new reports on GitHub Pages.
+
+    Prefer rebase (linear "Update reports" history). If that conflicts, merge
+    with -X ours so regenerated docs/ win while still taking non-docs commits
+    from origin/main.
+    """
+    fetch = _git(["fetch", "origin"], repo_root)
+    if fetch.returncode != 0:
+        print(
+            f"[pages] WARNING: git fetch origin failed: {_git_err(fetch)}",
+            file=sys.stderr,
+        )
+        return
+
+    if _git(["rev-parse", "--verify", "origin/main"], repo_root).returncode != 0:
+        return
+
+    if _git(["merge-base", "--is-ancestor", "origin/main", "HEAD"], repo_root).returncode == 0:
+        return
+
+    rebase = _git(["rebase", "origin/main"], repo_root)
+    if rebase.returncode == 0:
+        print("[pages] Rebased onto origin/main.")
+        return
+
+    print(
+        f"[pages] Rebase onto origin/main did not apply cleanly; merging instead.\n"
+        f"{_git_err(rebase)}",
+        file=sys.stderr,
+    )
+    abort = _git(["rebase", "--abort"], repo_root)
+    if abort.returncode != 0 and "No rebase in progress" not in _git_err(abort):
+        print(f"[pages] WARNING: git rebase --abort: {_git_err(abort)}", file=sys.stderr)
+
+    merge = _git(["merge", "--no-edit", "-X", "ours", "origin/main"], repo_root)
+    if merge.returncode != 0:
+        raise RuntimeError(
+            "git merge origin/main failed after a diverged DailyRun publish:\n"
+            f"{_git_err(merge)}\n"
+            "Commit or stash non-docs local changes, then: git pull origin main && "
+            "git push origin main"
+        )
+    print("[pages] Merged origin/main (kept local docs/ on conflicts).")
+
+
 def push_origin_main(repo_root: Path, branch: str) -> None:
     """Pages workflow (.github/workflows/publish-pages.yml) runs only on push to main.
 
     `git push` of a feature branch does not update the live site. Always push HEAD to
-    origin/main when --push is used.
+    origin/main when --push is used. Fetch/rebase first so a long DailyRun does not
+    fail when origin/main moved during the job.
     """
+    integrate_origin_main(repo_root)
     sha = _git_out(["rev-parse", "--short", "HEAD"], repo_root)
     origin_main = ""
     rev = _git(["rev-parse", "--short", "origin/main"], repo_root)
@@ -387,7 +445,7 @@ def push_origin_main(repo_root: Path, branch: str) -> None:
     if branch == "main":
         proc = _git(["push", "origin", "main"], repo_root)
         if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout).strip()
+            err = _git_err(proc)
             raise RuntimeError(f"git push origin main failed: {err}")
         print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
         return
@@ -398,7 +456,7 @@ def push_origin_main(repo_root: Path, branch: str) -> None:
     )
     proc = _git(["push", "origin", "HEAD:main"], repo_root)
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout).strip()
+        err = _git_err(proc)
         raise RuntimeError(
             f"git push origin HEAD:main failed: {err}\n"
             f"HEAD is on {branch} ({sha}); origin/main was not updated.\n"
@@ -433,11 +491,10 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
     for step in (
         ["add", "--", *paths_to_add],
         ["commit", "-m", message],
-        ["push"],
     ):
         proc = _git(step, repo_root)
         if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout).strip()
+            err = _git_err(proc)
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
 
     push_origin_main(repo_root, branch)

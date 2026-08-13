@@ -1428,6 +1428,7 @@ def main() -> None:
             "RsMode": mode_col if system == "RS" else None,
             "SbMode": mode_col if system == "SB" else None,
             "MvcpMode": mode_col if system == "MVCP" else None,
+            "CsMode": mode_col if system == "CS" else None,
             "WrlMode": "structural" if system == "WRL" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,

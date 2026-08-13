@@ -260,6 +260,7 @@ call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 14b) Investment report + GitHub Pages ---
+rem --push fetches/rebases origin/main first so a long DailyRun does not fail if main moved.
 echo [14/14] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
