@@ -4,6 +4,10 @@ Research only. Control = `RESEARCH_CANDIDATE_V2` rw126, DualPaul78, next_open, `
 
 ## Verdict
 
+**Do not adopt any of these three playbook gates.** They do not beat control on quality-over-count. `min_touches≥1` is doing real work; naked/first-touch lore is the wrong direction for this sleeve.
+
+Control: N=5313, WR 50.7%, avg PnL 2.76%, book Ann ROR 64.3% (OOS N=827, 5.22%). Origin bars are already climatic vs 20d (median rvol 3.09); retest/origin volume median is already 0.29.
+
 ### H1 origin climatic rvol
 
 - **H1 ORIGIN_RVOL>=2.5**: DISMISS — FULL N=3631 WR 50.8% avg PnL 2.76% Ann ROR 61.76% (OOS N=561 PnL 5.38%)
