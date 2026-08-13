@@ -17,7 +17,9 @@ REM   concat.bat rs               merge RS_Audit_Report_*.csv -> all_rs.csv
 REM   concat.bat rl               merge RL_Audit_Report_*.csv -> all_rl.csv
 REM   concat.bat sb               merge SB_Audit_Report_*.csv -> all_sb.csv
 REM   concat.bat mvcp             merge MVCP_Audit_Report_*.csv -> all_mvcp.csv
-REM   concat.bat 26062211         merge BRT+IND+YH+VEC+WPBR+PBR+MTS+RS+RL+SB+MVCP *_Audit_Report_26062211*.csv -> all.csv
+REM   concat.bat vz               merge VZ_Audit_Report_*.csv -> all_vz.csv
+REM   concat.bat wrl              merge WRL_Audit_Report_*.csv -> all_wrl.csv
+REM   concat.bat 26062211         merge BRT+IND+YH+VEC+WPBR+PBR+MTS+RS+RL+SB+MVCP+VZ+WRL *_Audit_Report_26062211*.csv -> all.csv
 REM   concat.bat yh 26062211      merge YH_Audit_Report_26062211*.csv -> all_yh.csv
 REM   concat.bat vec 26062211     merge VEC_Audit_Report_26062211*.csv -> all_vec.csv
 REM   concat.bat wpbr 26062211    merge WPBR_Audit_Report_26062211*.csv -> all_wpbr.csv
@@ -25,6 +27,8 @@ REM   concat.bat rs 26062211      merge RS_Audit_Report_26062211*.csv -> all_rs.
 REM   concat.bat rl 26062211      merge RL_Audit_Report_26062211*.csv -> all_rl.csv
 REM   concat.bat sb 26062211      merge SB_Audit_Report_26062211*.csv -> all_sb.csv
 REM   concat.bat mvcp 26062211    merge MVCP_Audit_Report_26062211*.csv -> all_mvcp.csv
+REM   concat.bat vz 26062211      merge VZ_Audit_Report_26062211*.csv -> all_vz.csv
+REM   concat.bat wrl 26062211     merge WRL_Audit_Report_26062211*.csv -> all_wrl.csv
 REM   NOTE: Prefer stamp filters for mixed eras. Wide-row audits (Timestamp_Drive header)
 REM   are preferred over legacy key/value when both exist; *.bak / *keyvalue* files skipped.
 REM
@@ -80,6 +84,14 @@ if /I "%~1"=="yh" (
   set "MODE=mvcp"
   set "OUT_NAME=all_mvcp.csv"
   if not "%~2"=="" set "TS_FILTER=%~2"
+) else if /I "%~1"=="vz" (
+  set "MODE=vz"
+  set "OUT_NAME=all_vz.csv"
+  if not "%~2"=="" set "TS_FILTER=%~2"
+) else if /I "%~1"=="wrl" (
+  set "MODE=wrl"
+  set "OUT_NAME=all_wrl.csv"
+  if not "%~2"=="" set "TS_FILTER=%~2"
 ) else if not "%~1"=="" (
   set "TS_FILTER=%~1"
 )
@@ -126,11 +138,23 @@ if "!MODE!"=="yh" (
   ) else (
     set "PATS=MVCP_Audit_Report_!TS_FILTER!*.csv"
   )
+) else if "!MODE!"=="vz" (
+  if "!TS_FILTER!"=="" (
+    set "PATS=VZ_Audit_Report_*.csv"
+  ) else (
+    set "PATS=VZ_Audit_Report_!TS_FILTER!*.csv"
+  )
+) else if "!MODE!"=="wrl" (
+  if "!TS_FILTER!"=="" (
+    set "PATS=WRL_Audit_Report_*.csv"
+  ) else (
+    set "PATS=WRL_Audit_Report_!TS_FILTER!*.csv"
+  )
 ) else (
   if "!TS_FILTER!"=="" (
     set "PATS=BRT_Audit_Report_*.csv;IND_Audit_Report_*.csv;MTS_Audit_Report_*.csv"
   ) else (
-    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv;RS_Audit_Report_!TS_FILTER!*.csv;RL_Audit_Report_!TS_FILTER!*.csv;SB_Audit_Report_!TS_FILTER!*.csv;MVCP_Audit_Report_!TS_FILTER!*.csv"
+    set "PATS=BRT_Audit_Report_!TS_FILTER!*.csv;IND_Audit_Report_!TS_FILTER!*.csv;YH_Audit_Report_!TS_FILTER!*.csv;VEC_Audit_Report_!TS_FILTER!*.csv;WPBR_Audit_Report_!TS_FILTER!*.csv;PBR_Audit_Report_!TS_FILTER!*.csv;MTS_Audit_Report_!TS_FILTER!*.csv;RS_Audit_Report_!TS_FILTER!*.csv;RL_Audit_Report_!TS_FILTER!*.csv;SB_Audit_Report_!TS_FILTER!*.csv;MVCP_Audit_Report_!TS_FILTER!*.csv;VZ_Audit_Report_!TS_FILTER!*.csv;WRL_Audit_Report_!TS_FILTER!*.csv"
   )
 )
 

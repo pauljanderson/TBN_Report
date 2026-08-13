@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -282,6 +282,88 @@ def _primary_target(levels: WeeklyLevels, mode: str) -> float:
     if m == "swing":
         return float(levels.swing_high)
     return float(levels.range_high)
+
+
+def wrl_closed_to_brt_trade(r: WrlClosedRow) -> Any:
+    """Map a WRL closed trade onto BRTTrade so compute_metrics / Audit match VZ/SB."""
+    try:
+        from rocket_tbn import BRTTrade
+    except ImportError:
+        from stock_analysis.rocket_tbn import BRTTrade  # type: ignore
+
+    t = BRTTrade(
+        symbol=str(r.symbol).upper(),
+        date_opened=str(r.date_opened),
+        entry_price=float(r.entry_price),
+        stop_price=float(r.stop_price),
+        target_price=float(r.target_price),
+        date_closed=str(r.date_closed or ""),
+        exit_price=float(r.exit_price or 0.0),
+        exit_type=str(r.exit_type or ""),
+        days_held=int(r.days_held or 0),
+        pnl_pct=float(r.pnl_pct or 0.0),
+        pnl_dollars=float(r.pnl_dollars or 0.0),
+        max_price=float(r.max_price or r.entry_price or 0.0),
+        zone_low=float(r.swing_low or 0.0),
+        zone_high=float(r.range_low or 0.0),
+        zone_center=float(r.range_high or 0.0),
+        side=str(r.side or "LONG"),
+    )
+    t.signal_date = str(r.signal_date or "")
+    return t
+
+
+def brt_config_from_wrl(cfg: WrlConfig, host_cfg: Any = None) -> Any:
+    """BRTConfig for unified Audit/Report (same wide schema as VZ/SB)."""
+    try:
+        from rocket_tbn import BRTConfig
+    except ImportError:
+        from stock_analysis.rocket_tbn import BRTConfig  # type: ignore
+
+    base_kw: dict[str, Any] = dict(
+        wrl_mode=True,
+        vz_mode=False,
+        sb_mode=False,
+        qull_mode=False,
+        mvcp_mode=False,
+        brt_zones=False,
+        yh_zones=False,
+        wpbr_zones=False,
+        vec_zones=False,
+        rl_mode="false",
+        relative_strength_enabled=False,
+        wrl_target_mode=str(cfg.wrl_target_mode or "scale"),
+        wrl_scale_frac=float(cfg.wrl_scale_frac or 0.50),
+        wrl_min_zone_pct=float(cfg.wrl_min_zone_pct or 0.0),
+        wrl_time_stop_bars=int(cfg.wrl_time_stop_bars or 0),
+        stop_pct=float(cfg.stop_pct),
+        stop_pct_is_multiplier=bool(cfg.stop_pct_is_multiplier),
+        brt_cash=float(cfg.brt_cash),
+        symbol_reentry_cooldown_days=int(cfg.symbol_reentry_cooldown_days or 0),
+        entry_start_date=str(cfg.entry_start_date or ""),
+        entry_end_date=str(cfg.entry_end_date or ""),
+        compute_equity_metrics=True,
+    )
+    if host_cfg is not None:
+        for k in (
+            "initial_capital",
+            "aggressive",
+            "aggressive_max_multiple",
+            "margin_utilization",
+            "max_positions",
+            "aggressive_margin_interest",
+            "aggressive_avg_positions",
+            "aggressive_sizing_equity_cap",
+            "days_per_year",
+        ):
+            if hasattr(host_cfg, k):
+                base_kw[k] = getattr(host_cfg, k)
+        if hasattr(host_cfg, "wrl_mode"):
+            try:
+                return replace(host_cfg, **base_kw)
+            except TypeError:
+                pass
+    return BRTConfig(**base_kw)
 
 
 # ---------------------------------------------------------------------------
@@ -687,6 +769,8 @@ def write_wrl_outputs(
     host_meta: Optional[dict[str, Any]] = None,
     tickers: Optional[dict[str, pd.DataFrame]] = None,
     host_cfg: Any = None,
+    tbn_cfg: Any = None,
+    drive_link: str = "",
     no_yfinance: bool = False,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -864,33 +948,6 @@ def write_wrl_outputs(
                 ]
             )
 
-    n_tr = len(closed)
-    wins = sum(1 for r in closed if r.pnl_pct > 0)
-    total_pnl = sum(r.pnl_dollars for r in closed)
-    avg_pnl = (sum(r.pnl_pct for r in closed) / n_tr) if n_tr else 0.0
-    exit_counts: dict[str, int] = {}
-    for r in closed:
-        exit_counts[r.exit_type] = exit_counts.get(r.exit_type, 0) + 1
-    with report_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["metric", "value"])
-        w.writerow(["stamp", ts])
-        w.writerow(["trades", n_tr])
-        w.writerow(["wins", wins])
-        w.writerow(["losses", n_tr - wins])
-        w.writerow(["pct_wins", f"{(100.0 * wins / n_tr) if n_tr else 0:.2f}"])
-        w.writerow(["total_pnl_dollars", f"{total_pnl:.2f}"])
-        w.writerow(["avg_pnl_pct", f"{avg_pnl:.2f}"])
-        w.writerow(["open_positions", len(open_rows)])
-        w.writerow(["watch_rows", len(watch_rows)])
-        w.writerow(["wrl_target_mode", cfg.wrl_target_mode])
-        w.writerow(["Max_Positions", host_meta.get("host_max_positions", "")])
-        w.writerow(["brt_cash", host_meta.get("host_brt_cash", getattr(cfg, "brt_cash", ""))])
-        w.writerow(["audit_brt_cash_1m", host_meta.get("host_audit_brt_cash", "")])
-        w.writerow(["total_pnl_audit_1m_scale", host_meta.get("total_pnl_audit_1m", "")])
-        for k, v in sorted(exit_counts.items()):
-            w.writerow([f"exit_{k}", v])
-
     equity_path = output_dir / f"WRL_EquityCurve_{ts}.csv"
     equity_meta_path = output_dir / f"WRL_EquityMeta_{ts}.csv"
     max_dd = 0.0
@@ -965,57 +1022,60 @@ def write_wrl_outputs(
         ).to_csv(equity_meta_path, index=False)
 
     try:
-        from brt_audit_columns import empty_audit_row, write_wide_audit_csv
+        from rocket_tbn import compute_metrics, write_brt_audit_report, write_brt_report
     except ImportError:
-        from stock_analysis.brt_audit_columns import (  # type: ignore
-            empty_audit_row,
-            write_wide_audit_csv,
+        from stock_analysis.rocket_tbn import (  # type: ignore
+            compute_metrics,
+            write_brt_audit_report,
+            write_brt_report,
         )
 
-    link = f"https://drive.google.com/drive/search?q={ts}"
-    row = empty_audit_row()
-    row["Timestamp_Drive"] = f'=hyperlink("{link}","{ts}")'
-    row["wrl_mode"] = "true"
-    row["mvcp_mode"] = "false"
-    row["sb_mode"] = "false"
-    row["rs_mode"] = "false"
-    row["rl_mode"] = "false"
-    row["vz_mode"] = "false"
-    for fdef in fields(WrlConfig):
-        if fdef.name in row:
-            row[fdef.name] = getattr(cfg, fdef.name)
-    if host_cfg is not None:
-        for k in (
-            "initial_capital",
-            "aggressive",
-            "aggressive_max_multiple",
-            "margin_utilization",
-            "max_positions",
-            "aggressive_margin_interest",
-            "aggressive_avg_positions",
-            "aggressive_sizing_equity_cap",
-        ):
-            if hasattr(host_cfg, k) and k in row:
-                row[k] = getattr(host_cfg, k)
-    losses = n_tr - wins
-    row["Total_Trades"] = n_tr
-    row["Wins"] = wins
-    row["Losses"] = losses
-    row["BE"] = 0
-    row["Pct_Wins"] = f"{(100.0 * wins / n_tr) if n_tr else 0:.2f}"
-    row["Pct_Losses"] = f"{(100.0 * losses / n_tr) if n_tr else 0:.2f}"
-    row["Total_PNL"] = host_meta.get("total_pnl_audit_1m", f"{total_pnl:.2f}")
-    row["Avg_PNL_Pct"] = f"{avg_pnl:.2f}"
-    row["Max_Positions"] = host_meta.get("host_max_positions", "")
-    row["brt_cash"] = host_meta.get(
-        "host_audit_brt_cash", host_meta.get("host_brt_cash", getattr(cfg, "brt_cash", ""))
+    report_cfg = brt_config_from_wrl(cfg, tbn_cfg if tbn_cfg is not None else host_cfg)
+    if host_meta.get("host_brt_cash") not in (None, ""):
+        try:
+            report_cfg = replace(report_cfg, brt_cash=float(host_meta["host_brt_cash"]))
+        except (TypeError, ValueError):
+            pass
+    brt_closed = [wrl_closed_to_brt_trade(r) for r in closed]
+    metrics = compute_metrics(brt_closed, report_cfg)
+    if host_meta.get("host_max_positions") not in (None, ""):
+        try:
+            metrics["Max_Positions"] = int(host_meta["host_max_positions"])
+        except (TypeError, ValueError):
+            pass
+    if max_dd_pct:
+        metrics["Max_Drawdown"] = max_dd_pct
+    if aggressive_total not in (None, ""):
+        metrics["Aggressive_Total_PNL"] = aggressive_total
+    if aggressive_max_dd not in (None, ""):
+        metrics["Aggressive_Max_Drawdown"] = aggressive_max_dd
+    elif host_meta.get("aggressive_max_dd") not in (None, ""):
+        metrics["Aggressive_Max_Drawdown"] = host_meta.get("aggressive_max_dd")
+    if host_meta.get("aggressive_total_pnl") not in (None, "") and not aggressive_total:
+        metrics["Aggressive_Total_PNL"] = host_meta.get("aggressive_total_pnl")
+
+    write_brt_report(
+        report_cfg,
+        metrics,
+        str(output_dir),
+        ts,
+        drive_link=drive_link,
+        file_prefix="WRL",
     )
-    row["Aggressive_Total_PNL"] = aggressive_total or host_meta.get("aggressive_total_pnl", "")
-    row["Aggressive_Max_DD"] = aggressive_max_dd or host_meta.get("aggressive_max_dd", "")
-    row["Max_DD"] = f"{max_dd_pct:.2f}"
-    row["Param_Name"] = ""
-    row["Param_Value"] = ""
-    write_wide_audit_csv(audit_path, row)
+    write_brt_audit_report(
+        report_cfg,
+        metrics,
+        str(output_dir),
+        ts,
+        drive_link=drive_link,
+        file_prefix="WRL",
+    )
+    written_audit = output_dir / f"WRL_Audit_Report_{ts}.csv"
+    if written_audit.exists() and written_audit.resolve() != audit_path.resolve():
+        audit_path.write_bytes(written_audit.read_bytes())
+    written_report = output_dir / f"WRL_Report_{ts}.csv"
+    if written_report.exists():
+        report_path = written_report
 
     corr_path = output_dir / f"WRL_Correlation_{ts}.csv"
     try:
@@ -1095,7 +1155,6 @@ def run_wrl_from_brt_main(
     drive_link: str = "",
     no_yfinance: bool = False,
 ) -> int:
-    del drive_link
     wcfg = wrl_config_from_brt(cfg)
     n_workers = max(0, int(workers or 0))
     print(
@@ -1195,6 +1254,8 @@ def run_wrl_from_brt_main(
         host_meta=host_meta,
         tickers=loaded,
         host_cfg=hcfg,
+        tbn_cfg=cfg,
+        drive_link=drive_link,
         no_yfinance=bool(no_yfinance),
     )
     wins = sum(1 for r in all_closed if r.pnl_pct > 0)

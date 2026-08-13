@@ -216,6 +216,137 @@ def test_aggregate_weekly_used() -> None:
     assert "High" in w.columns and "Low" in w.columns
 
 
+def test_wrl_audit_uses_full_tbn_metrics() -> None:
+    """Optimizer sheet columns come from compute_metrics, not the short WRL stub."""
+    from rocket_tbn import compute_metrics
+    from rocket_wrl import WrlClosedRow, brt_config_from_wrl, wrl_closed_to_brt_trade
+
+    rows = [
+        WrlClosedRow(
+            symbol="AAPL",
+            side="LONG",
+            date_opened="20240108",
+            entry_price=98.0,
+            stop_price=95.0,
+            target_price=105.0,
+            target2_price=110.0,
+            date_closed="20240122",
+            exit_price=105.0,
+            exit_type="TARGET1",
+            days_held=10,
+            pnl_pct=7.14,
+            pnl_dollars=714.0,
+            ann_ror_pct=0.0,
+            max_price=105.0,
+            range_high=105.0,
+            range_low=98.0,
+            swing_high=110.0,
+            swing_low=95.0,
+            watch_date="20240105",
+            signal_date="20240108",
+            range_week_end="2024-01-05",
+            one_liner="",
+        ),
+        WrlClosedRow(
+            symbol="AAPL",
+            side="LONG",
+            date_opened="20240205",
+            entry_price=98.0,
+            stop_price=95.0,
+            target_price=105.0,
+            target2_price=110.0,
+            date_closed="20240208",
+            exit_price=95.0,
+            exit_type="STOP_LOSS",
+            days_held=3,
+            pnl_pct=-3.06,
+            pnl_dollars=-306.0,
+            ann_ror_pct=0.0,
+            max_price=99.0,
+            range_high=105.0,
+            range_low=98.0,
+            swing_high=110.0,
+            swing_low=95.0,
+            watch_date="20240202",
+            signal_date="20240205",
+            range_week_end="2024-02-02",
+            one_liner="",
+        ),
+    ]
+    trades = [wrl_closed_to_brt_trade(r) for r in rows]
+    metrics = compute_metrics(trades, brt_config_from_wrl(WrlConfig()))
+    assert int(metrics["Wins"]) == 1
+    assert int(metrics["Losses"]) == 1
+    assert float(str(metrics["Profit_Factor"]).replace("%", "")) > 0
+    assert "Expectancy" in metrics
+    assert "Annualized_ROR" in metrics
+    assert "Avg_Days_Held" in metrics
+    assert "Capital_Days" in metrics
+    assert "CES_AVG" in metrics
+
+
+def test_wrl_write_audit_report_has_optimizer_columns() -> None:
+    import tempfile
+
+    from rocket_wrl import WrlClosedRow, write_wrl_outputs
+
+    row = WrlClosedRow(
+        symbol="MSFT",
+        side="LONG",
+        date_opened="20240108",
+        entry_price=100.0,
+        stop_price=95.0,
+        target_price=110.0,
+        target2_price=120.0,
+        date_closed="20240122",
+        exit_price=110.0,
+        exit_type="TARGET",
+        days_held=10,
+        pnl_pct=10.0,
+        pnl_dollars=1000.0,
+        ann_ror_pct=0.0,
+        max_price=110.0,
+        range_high=110.0,
+        range_low=100.0,
+        swing_high=120.0,
+        swing_low=95.0,
+        watch_date="20240105",
+        signal_date="20240108",
+        range_week_end="2024-01-05",
+        one_liner="",
+    )
+    with tempfile.TemporaryDirectory() as td:
+        paths = write_wrl_outputs(
+            Path(td),
+            "260101120000",
+            [row],
+            [],
+            [],
+            [],
+            WrlConfig(),
+            no_yfinance=True,
+        )
+        audit = Path(paths["audit"])
+        text = audit.read_text(encoding="utf-8")
+        header = text.splitlines()[0]
+        for col in (
+            "Timestamp_Drive",
+            "Total_PNL",
+            "Wins",
+            "Losses",
+            "BE",
+            "Profit_Factor",
+            "Expectancy",
+            "Avg_Days_Held",
+            "Ann_ROR",
+            "Max_DD",
+            "wrl_mode",
+            "wrl_target_mode",
+        ):
+            assert col in header, f"missing {col}"
+        assert "true" in text.splitlines()[1] or "True" in text.splitlines()[1]
+
+
 if __name__ == "__main__":
     tests = [
         test_walk_swing_independent_weeks,
@@ -226,6 +357,8 @@ if __name__ == "__main__":
         test_backtest_range_target_only,
         test_end_of_series_watch,
         test_aggregate_weekly_used,
+        test_wrl_audit_uses_full_tbn_metrics,
+        test_wrl_write_audit_report_has_optimizer_columns,
     ]
     failed = 0
     for fn in tests:

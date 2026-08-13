@@ -72,6 +72,7 @@ KNOWN_SYSTEM_PREFIXES: tuple[str, ...] = (
     "DB",
     "SB",
     "VZ",
+    "WRL",
 )
 
 ZONE_SYSTEMS = frozenset({"BRT", "WPBR", "YH", "VEC", "PBR", "VZ"})
