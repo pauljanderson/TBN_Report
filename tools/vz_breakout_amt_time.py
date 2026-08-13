@@ -334,6 +334,7 @@ def main() -> int:
     verdict = _verdict(corr_rows, time_full, dist_full, time_oos)
     print(verdict, flush=True)
 
+    html_verdict = html_mod.escape(verdict).replace("**", "")
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <title>VZ breakout amount / time — {html_mod.escape(args.stamp)}</title>
@@ -357,7 +358,7 @@ def main() -> int:
 Prior to the rw63 trade-count cut. Amount = how far price went above the zone before the retest.
 Time = bars from upside break close to fill (<code>bars_after_break</code>, includes T+1 next-open).
 </div>
-<p>{html_mod.escape(verdict)}</p>
+<p>{html_verdict}</p>
 <h2>1. Correlations</h2>
 {_corr_html(corr_rows)}
 <p class="muted">Within-symbol mean Spearman vs PnL (symbols ≥8 trades, n={w_n}):
