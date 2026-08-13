@@ -43,7 +43,7 @@ DOCS_COPY = REPO / "docs" / "systems" / "wrl_ab.html"
 
 CONTROL = "00_control"
 ARMS: list[tuple[str, dict[str, Any], str]] = [
-    (CONTROL, {}, "House: scale 50/50, stop at swing low, min-zone off"),
+    (CONTROL, {}, "House: scale 50/50, stop at swing low, min-zone off, min-RR off"),
     ("01_target_range", {"wrl_target_mode": "range"}, "Full size out at range high"),
     ("02_target_swing", {"wrl_target_mode": "swing"}, "Full size out at swing high"),
     ("03_scale_033", {"wrl_scale_frac": 0.33}, "Scale: 33% at range high, rest to swing high"),
@@ -52,6 +52,15 @@ ARMS: list[tuple[str, dict[str, Any], str]] = [
     ("06_stop_099", {"stop_pct": 0.99}, "Stop = 99% of swing low (slightly tighter)"),
     ("07_minzone_01", {"wrl_min_zone_pct": 0.01}, "Require demand zone ≥ 1% wide"),
     ("08_minzone_02", {"wrl_min_zone_pct": 0.02}, "Require demand zone ≥ 2% wide"),
+    ("09_rr_range_15", {"wrl_min_rr": 1.5, "wrl_min_rr_target": "range"}, "Skip unless T1 (range high) ≥ 1.5R"),
+    ("10_rr_range_2", {"wrl_min_rr": 2.0, "wrl_min_rr_target": "range"}, "Skip unless T1 (range high) ≥ 2R"),
+    ("11_rr_range_3", {"wrl_min_rr": 3.0, "wrl_min_rr_target": "range"}, "Skip unless T1 (range high) ≥ 3R"),
+    ("12_rr_range_4", {"wrl_min_rr": 4.0, "wrl_min_rr_target": "range"}, "Skip unless T1 (range high) ≥ 4R"),
+    ("13_rr_swing_2", {"wrl_min_rr": 2.0, "wrl_min_rr_target": "swing"}, "Skip unless T2 (swing high) ≥ 2R"),
+    ("14_rr_swing_3", {"wrl_min_rr": 3.0, "wrl_min_rr_target": "swing"}, "Skip unless T2 (swing high) ≥ 3R"),
+    ("15_rr_swing_4", {"wrl_min_rr": 4.0, "wrl_min_rr_target": "swing"}, "Skip unless T2 (swing high) ≥ 4R"),
+    ("16_timestop_10", {"wrl_time_stop_bars": 10}, "Time stop after 10 bars"),
+    ("17_timestop_20", {"wrl_time_stop_bars": 20}, "Time stop after 20 bars"),
 ]
 
 
@@ -215,6 +224,147 @@ def _latest(arm_dir: Path, pattern: str) -> Optional[Path]:
     return files[0] if files else None
 
 
+def _ymd(s: Any) -> Optional[pd.Timestamp]:
+    raw = str(s or "").replace("-", "").replace(".", "")[:8]
+    if len(raw) < 8 or not raw.isdigit():
+        return None
+    try:
+        return pd.Timestamp(f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+    except Exception:
+        return None
+
+
+def _closed_with_rr(path: Path) -> Optional[pd.DataFrame]:
+    if not path.is_file():
+        return None
+    df = pd.read_csv(path)
+    if df.empty or "ENTRY_PRICE" not in df.columns:
+        return None
+    for c in ("ENTRY_PRICE", "STOP_PRICE", "RANGE_HIGH", "SWING_HIGH", "PNL_PCT", "PNL_DOLLARS"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(
+                df[c].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False),
+                errors="coerce",
+            )
+    risk = df["ENTRY_PRICE"] - df["STOP_PRICE"]
+    if "RR_T1" not in df.columns:
+        df["RR_T1"] = (df["RANGE_HIGH"] - df["ENTRY_PRICE"]) / risk
+        df.loc[risk <= 0, "RR_T1"] = pd.NA
+    else:
+        df["RR_T1"] = pd.to_numeric(df["RR_T1"], errors="coerce")
+        miss = df["RR_T1"].isna() & (risk > 0)
+        df.loc[miss, "RR_T1"] = (df.loc[miss, "RANGE_HIGH"] - df.loc[miss, "ENTRY_PRICE"]) / risk[miss]
+    if "RR_T2" not in df.columns:
+        df["RR_T2"] = (df["SWING_HIGH"] - df["ENTRY_PRICE"]) / risk
+        df.loc[risk <= 0, "RR_T2"] = pd.NA
+    else:
+        df["RR_T2"] = pd.to_numeric(df["RR_T2"], errors="coerce")
+        miss = df["RR_T2"].isna() & (risk > 0)
+        df.loc[miss, "RR_T2"] = (df.loc[miss, "SWING_HIGH"] - df.loc[miss, "ENTRY_PRICE"]) / risk[miss]
+    return df
+
+
+def _bucket_rows(df: pd.DataFrame, col: str) -> list[dict[str, Any]]:
+    edges = [0.0, 1.0, 1.5, 2.0, 3.0, 4.0, float("inf")]
+    labels = ["<1R", "1–1.5R", "1.5–2R", "2–3R", "3–4R", "≥4R"]
+    out = []
+    s = pd.to_numeric(df[col], errors="coerce")
+    for i, lab in enumerate(labels):
+        lo, hi = edges[i], edges[i + 1]
+        m = (s >= lo) & (s < hi) if hi != float("inf") else (s >= lo)
+        sub = df.loc[m]
+        n = int(len(sub))
+        if n == 0:
+            out.append({"bucket": lab, "n": 0, "wr": 0.0, "avg_pct": 0.0, "pnl": 0.0})
+            continue
+        wins = int((sub["PNL_PCT"] > 0).sum())
+        out.append(
+            {
+                "bucket": lab,
+                "n": n,
+                "wr": 100.0 * wins / n,
+                "avg_pct": float(sub["PNL_PCT"].mean()),
+                "pnl": float(sub["PNL_DOLLARS"].sum()) if "PNL_DOLLARS" in sub.columns else 0.0,
+            }
+        )
+    return out
+
+
+def _control_diagnostics(root: Path) -> dict[str, Any]:
+    """RR vs outcome + Mag10 overlap heat from the control Closed file."""
+    empty: dict[str, Any] = {
+        "ok": False,
+        "n": 0,
+        "r_t1": 0.0,
+        "r_t2": 0.0,
+        "t1_buckets": [],
+        "t2_buckets": [],
+        "max_conc": 0,
+        "mean_conc": 0.0,
+        "pct_ge5": 0.0,
+        "pct_ge8": 0.0,
+        "pair_mean": 0.0,
+        "pair_max": ("", 0.0),
+    }
+    arm_dir = root / CONTROL
+    path = _latest(arm_dir, "WRL_Closed_*.csv")
+    if path is None:
+        return empty
+    df = _closed_with_rr(path)
+    if df is None or df.empty:
+        return empty
+    out = dict(empty)
+    out["ok"] = True
+    out["n"] = int(len(df))
+    pnl = pd.to_numeric(df["PNL_PCT"], errors="coerce")
+    for key, col in (("r_t1", "RR_T1"), ("r_t2", "RR_T2")):
+        rr = pd.to_numeric(df[col], errors="coerce")
+        both = pd.concat([rr, pnl], axis=1).dropna()
+        if len(both) >= 10 and both.iloc[:, 0].std() > 0 and both.iloc[:, 1].std() > 0:
+            out[key] = float(both.iloc[:, 0].corr(both.iloc[:, 1]))
+    out["t1_buckets"] = _bucket_rows(df, "RR_T1")
+    out["t2_buckets"] = _bucket_rows(df, "RR_T2")
+
+    opened = df["DATE_OPENED"].map(_ymd) if "DATE_OPENED" in df.columns else None
+    closed = df["DATE_CLOSED"].map(_ymd) if "DATE_CLOSED" in df.columns else None
+    if opened is not None and closed is not None and opened.notna().any():
+        start = opened.min()
+        end = closed.max()
+        if pd.notna(start) and pd.notna(end) and end >= start:
+            days = pd.bdate_range(start, end)
+            occ = pd.Series(0, index=days, dtype=int)
+            by_sym: dict[str, pd.Series] = {}
+            for _, row in df.iterrows():
+                a, b = _ymd(row.get("DATE_OPENED")), _ymd(row.get("DATE_CLOSED"))
+                if a is None or b is None or b < a:
+                    continue
+                sl = pd.bdate_range(a, b)
+                occ.loc[occ.index.intersection(sl)] += 1
+                sym = str(row.get("SYMBOL", "")).upper()
+                if not sym:
+                    continue
+                ser = by_sym.setdefault(sym, pd.Series(0, index=days, dtype=int))
+                ser.loc[ser.index.intersection(sl)] = 1
+            if len(occ):
+                out["max_conc"] = int(occ.max())
+                out["mean_conc"] = float(occ.mean())
+                out["pct_ge5"] = 100.0 * float((occ >= 5).mean())
+                out["pct_ge8"] = 100.0 * float((occ >= 8).mean())
+            names = sorted(by_sym)
+            pair_rs: list[tuple[str, float]] = []
+            for i, a in enumerate(names):
+                for b in names[i + 1 :]:
+                    sa, sb = by_sym[a].astype(float), by_sym[b].astype(float)
+                    if sa.std() == 0 or sb.std() == 0:
+                        continue
+                    r = float(sa.corr(sb))
+                    pair_rs.append((f"{a}/{b}", r))
+            if pair_rs:
+                out["pair_mean"] = float(sum(x[1] for x in pair_rs) / len(pair_rs))
+                out["pair_max"] = max(pair_rs, key=lambda x: x[1])
+    return out
+
+
 def _arm_metrics(arm_dir: Path) -> dict[str, Any]:
     note = next((n for a, _, n in ARMS if a == arm_dir.name), "")
     out: dict[str, Any] = {
@@ -294,7 +444,7 @@ def summarize(root: Path = OUT_ROOT) -> Path:
         "# WRL A/B — one-knob levers vs house control",
         "",
         "Universe: Mag10 (`AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA,TSLA`).",
-        "Control: `wrl_target_mode=scale`, `wrl_scale_frac=0.50`, `stop_pct=1.0`, `wrl_min_zone_pct=0`.",
+        "Control: `wrl_target_mode=scale`, `wrl_scale_frac=0.50`, `stop_pct=1.0`, `wrl_min_zone_pct=0`, `wrl_min_rr=0`.",
         "Host cash scaled like `run_wrl.bat` (500k × 2.0 × 0.6). Aggressive equity off for the A/B.",
         "Research only — `run_wrl.bat` defaults unchanged.",
         "",
@@ -336,6 +486,41 @@ def summarize(root: Path = OUT_ROOT) -> Path:
                 ]
             )
 
+    diag = _control_diagnostics(root)
+    if diag.get("ok"):
+        pair_name, pair_r = diag["pair_max"] if diag["pair_max"] else ("", 0.0)
+        md.extend(
+            [
+                "",
+                "## Control RR and overlap (why Max DD is huge)",
+                "",
+                f"- Pearson **RR_T1 vs PNL_PCT** = **{diag['r_t1']:.3f}**; **RR_T2 vs PNL_PCT** = **{diag['r_t2']:.3f}** (n={diag['n']}).",
+                f"- Concurrent Mag10 names in a trade: mean **{diag['mean_conc']:.2f}**, peak **{diag['max_conc']}**. "
+                f"Days with ≥5 names: **{diag['pct_ge5']:.1f}%**; ≥8 names: **{diag['pct_ge8']:.1f}%**.",
+                f"- Mean pairwise occupancy correlation **{diag['pair_mean']:.3f}**; highest pair `{pair_name}` at **{pair_r:.3f}**.",
+                "",
+                "T1 = (range high − fill) / (fill − stop). T2 = (swing high − fill) / (fill − stop).",
+                "",
+                "| T1 bucket | n | WR% | Avg PnL% | PnL $ |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for b in diag["t1_buckets"]:
+            md.append(
+                f"| {b['bucket']} | {b['n']} | {b['wr']:.1f} | {b['avg_pct']:.2f} | {b['pnl']:.0f} |"
+            )
+        md.extend(
+            [
+                "",
+                "| T2 bucket | n | WR% | Avg PnL% | PnL $ |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for b in diag["t2_buckets"]:
+            md.append(
+                f"| {b['bucket']} | {b['n']} | {b['wr']:.1f} | {b['avg_pct']:.2f} | {b['pnl']:.0f} |"
+            )
+
     (root / "README.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
     def th(label: str, sort: str) -> str:
@@ -375,6 +560,44 @@ def summarize(root: Path = OUT_ROOT) -> Path:
             "</div>"
         )
 
+    diag = _control_diagnostics(root)
+    diag_html = ""
+    if diag.get("ok"):
+        pair_name, pair_r = diag["pair_max"] if diag["pair_max"] else ("", 0.0)
+
+        def _bk_table(title: str, buckets: list[dict[str, Any]]) -> str:
+            rows_h = "".join(
+                f"<tr><td>{html.escape(b['bucket'])}</td><td>{b['n']}</td>"
+                f"<td>{b['wr']:.1f}</td><td>{b['avg_pct']:.2f}</td><td>{b['pnl']:.0f}</td></tr>"
+                for b in buckets
+            )
+            return (
+                f"<h3>{html.escape(title)}</h3>"
+                "<table class='sortable'><thead><tr>"
+                f"{th('Bucket','text')}{th('n','num')}{th('WR%','num')}"
+                f"{th('Avg PnL%','num')}{th('PnL $','num')}"
+                "</tr></thead><tbody>"
+                f"{rows_h}</tbody></table>"
+            )
+
+        diag_html = (
+            "<h2>Control RR and overlap</h2>"
+            "<p class='muted'>T1 = (range high − fill) / (fill − stop). "
+            "T2 = (swing high − fill) / (fill − stop). "
+            "Occupancy = Mag10 names simultaneously in a trade (calendar of open→close).</p>"
+            f"<div class='callout warn'><strong>Why Max DD is huge even in control:</strong> "
+            f"peak concurrent names <strong>{diag['max_conc']}</strong> "
+            f"(mean {diag['mean_conc']:.2f}). "
+            f"Days with ≥5 names: {diag['pct_ge5']:.1f}%; ≥8 names: {diag['pct_ge8']:.1f}%. "
+            f"Mean pairwise occupancy correlation {diag['pair_mean']:.3f} "
+            f"(highest <code>{html.escape(str(pair_name))}</code> at {pair_r:.3f}). "
+            f"Pearson RR_T1 vs PNL% = {diag['r_t1']:.3f}; RR_T2 vs PNL% = {diag['r_t2']:.3f} "
+            f"(n={diag['n']}). Price-level Correlation_*.csv is not this — those R values are "
+            "almost zero because raw prices are not R-multiples.</div>"
+            f"{_bk_table('T1 (range high) R buckets on control Closed', diag['t1_buckets'])}"
+            f"{_bk_table('T2 (swing high) R buckets on control Closed', diag['t2_buckets'])}"
+        )
+
     page = f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
@@ -396,8 +619,9 @@ th.sortable-th{{cursor:pointer}}
 </head><body>
 <p class="muted"><a href="wrl.html">&larr; WRL system description</a></p>
 <h1>WRL A/B — one-knob levers vs house control</h1>
-<p class="muted">Mag10 · control = scale 50/50, stop at swing low, min-zone off. Research only.</p>
+<p class="muted">Mag10 · control = scale 50/50, stop at swing low, min-zone off, min-RR off. Research only.</p>
 {verdict_html}
+{diag_html}
 <table class="sortable">
 <thead><tr>
 {th("Arm","text")}{th("What changed","text")}{th("Trades","num")}{th("WR%","num")}
@@ -454,6 +678,12 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=max(1, min(8, os.cpu_count() or 4)))
     ap.add_argument("--smoke", action="store_true", help="Control arm only")
     ap.add_argument("--summarize-only", action="store_true")
+    ap.add_argument("--only", default="", help="Comma list of arm names to run (default: all)")
+    ap.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip arms that already have STAMP.txt (reuse prior Mag10 folders)",
+    )
     ap.add_argument("--data-dir", default=str(DATA_DIR))
     args = ap.parse_args()
     if args.summarize_only:
@@ -474,7 +704,17 @@ def main() -> int:
         return 1
     print(f"[WRL-AB] {len(frames)} symbols, {args.workers} workers", flush=True)
     arms = ARMS[:1] if args.smoke else ARMS
+    if args.only:
+        want = {s.strip() for s in args.only.split(",") if s.strip()}
+        arms = [a for a in ARMS if a[0] in want]
+        if not arms:
+            print(f"[WRL-AB] --only matched nothing: {sorted(want)}", flush=True)
+            return 1
     for arm, overrides, _note in arms:
+        stamp = OUT_ROOT / arm / "STAMP.txt"
+        if args.skip_existing and stamp.is_file():
+            print(f"[WRL-AB] skip {arm}: already has {stamp}", flush=True)
+            continue
         _run_arm(arm, overrides, list(frames), frames, int(args.workers))
     summarize()
     return 0
