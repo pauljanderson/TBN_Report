@@ -119,9 +119,11 @@
   <em>tomorrow’s</em> breakout check.
 </div>
 <div class="callout ok">
-  <strong>Predictive timing.</strong>
-  Watch is known at the close of day T (needs T’s Close). Fill is on day T+1 only.
-  The engine never buys the open of the watch morning using that morning’s range.
+  <strong>Live timing — buy stop, not a known high.</strong>
+  After the watch close you do <em>not</em> know whether tomorrow will clear the range low.
+  The name goes on the Watchlist overnight. Next session, if the open holds the swing low,
+  rest a <strong>buy stop</strong> at the range low for that day only. The buy happens when
+  (if) price trades that stop — you do not wait to see the day’s high and then chase.
 </div>
 <div class="callout">
   <strong>Where this file lives.</strong>
@@ -160,35 +162,61 @@
   Otherwise that daily bar has <strong>no setup</strong>.
 </p>
 <div class="card">
-  <p><strong>Worked numbers.</strong> Previous completed week High 105, Low 98.</p>
-  <ul>
-    <li>First earlier week with High &gt; 105 printed 110 → swing high = 110.</li>
-    <li>First earlier week with Low &lt; 98 printed 95 → swing low = 95. (Need not be the same week.)</li>
-    <li>Demand zone = <code>[95, 98]</code>. Monday close 97 → WATCH. Tuesday open 97.20, high 99.10 → BUY. Fill = 98.</li>
-  </ul>
+  <p><strong>Worked numbers.</strong> Previous completed week High 105, Low 98. Swing high 110, swing low 95. Demand zone <code>[95, 98]</code>.</p>
+  <ol class="steps">
+    <li><strong>Monday close 97</strong> — known at the close. WATCHLIST. No fill yet. You still do not know Tuesday’s high.</li>
+    <li><strong>Tuesday open 97.20</strong> — held the swing low (not through 95), still under 98. Place a <strong>buy stop at 98</strong> for Tuesday only.</li>
+    <li><strong>Tuesday, whenever price first trades 98</strong> — that is the trigger and the buy. Engine fill = 98. (If the day later prints high 99.10, that only proves the stop would have been hit; you do not wait for 99.10.)</li>
+    <li>If Tuesday never trades 98, cancel at the close. Watch dies. Do not leave the buy stop working Wednesday.</li>
+  </ol>
 </div>
 
-<h2>3. Daily sequence</h2>
+<h2>3. Live order (what to actually place)</h2>
+<p>
+  The backtest sees a full daily bar, so it can ask “did High clear range low?”
+  Live you cannot. The matching broker order is a <strong>buy stop</strong>
+  (also called buy-stop or stop order to buy). In Fidelity: Buy, order type Stop, stop price = range low.
+  It sits <em>above</em> the current price and becomes a market order when that price is traded.
+</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr><th>Tuesday open</th><th>What you do</th><th>Engine fill</th></tr></thead>
+  <tbody>
+    <tr><td>Open &lt; swing low (e.g. 94)</td><td>Do nothing. Gap through demand — watch dies.</td><td>No trade</td></tr>
+    <tr><td>swing low ≤ Open &lt; range low (e.g. 97.20)</td><td>Rest a <strong>buy stop at range low (98)</strong> for that session only.</td><td>98 if hit; else no trade</td></tr>
+    <tr><td>Open ≥ range low (e.g. 99)</td><td>Already through. Buy the open (market / MOO). Not a stop.</td><td>Open</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  Do not wait until price has already gone through 98 and then send a market buy — that is chasing,
+  and you will pay worse than the engine’s 98 fill. The stop must be working <em>at</em> 98.
+  A <strong>buy stop-limit</strong> (stop 98, limit 98) is the cautious cousin: you may miss the fill
+  if it blasts through; the engine models stop-market at 98.
+</p>
+
+<h2>4. Daily sequence (engine)</h2>
 <ol class="steps">
   <li>If already in a trade, and this is not the fill bar: manage exits. Then skip new entries.</li>
   <li>If yesterday was a WATCH: this bar is the only chance to buy that watch.
-      Reject if <code>Open &lt; swing_low</code>. Buy if <code>High &gt; range_low</code>.
+      Reject if <code>Open &lt; swing_low</code>. Buy if <code>High &gt; range_low</code>
+      (backtest proxy for “the buy stop at range low was hit”).
       Otherwise the watch expires (a later close in the zone can re-arm).</li>
   <li>If flat: today’s close in <code>[swing_low, range_low]</code> inclusive → arm WATCH for tomorrow.</li>
 </ol>
 <p>
-  Fill = Open if already <code>≥ range_low</code>, else range low (intraday break).
+  Fill = Open if already <code>≥ range_low</code>, else range low (buy-stop fill).
   Skip if <code>stop ≥ fill</code> or primary target <code>≤ fill</code>.
 </p>
 
-<h2>4. Watchlist / Scanner / Open / Closed</h2>
+<h2>5. Watchlist / Scanner / Open / Closed</h2>
 <ul>
   <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
   <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
   <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
 </ul>
 
-<h2>5. Exits</h2>
+<h2>6. Exits</h2>
 <p><strong>No exit management on the fill bar.</strong> Intraday order after that: gap through stop → remaining target at the open → stop → remaining target. Time stop default off.</p>
 <div class="table-wrap">
 <table class="sortable">
@@ -202,7 +230,7 @@
 </div>
 <p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
 
-<h2>6. How to run</h2>
+<h2>7. How to run</h2>
 <div class="card">
   <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
   <p><code>run_wrl.bat</code> — Mag10 if <code>drive\universes\WRL_universe.csv</code> is missing.</p>
@@ -211,11 +239,12 @@
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 
-<h2>7. Do not</h2>
+<h2>8. Do not</h2>
 <ul>
   <li>Use this week’s high/low as the range — only a completed Friday week strictly before the as-of bar.</li>
   <li>Buy the watch-day open. Fill is the next session only.</li>
-  <li>Keep a watch alive for more than one session.</li>
+  <li>Keep a watch alive for more than one session. Cancel the buy stop at the close if it was not hit.</li>
+  <li>Wait for the day’s high to print, then market-buy — that is chasing. The buy stop must be working at the range low.</li>
   <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
   <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
 </ul>
