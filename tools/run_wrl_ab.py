@@ -485,6 +485,34 @@ def summarize(root: Path = OUT_ROOT) -> Path:
                     ),
                 ]
             )
+            by_arm = {r["arm"]: r for r in rows if r.get("ok")}
+            rr2 = by_arm.get("10_rr_range_2")
+            rr3 = by_arm.get("11_rr_range_3")
+            ts20 = by_arm.get("17_timestop_20")
+            t1_15 = by_arm.get("09_rr_range_15")
+            md.extend(["", "## Risk read (RR gate + time stop)", ""])
+            if rr2:
+                md.append(
+                    f"- **Do not adopt T1 ≥ 2R.** `{rr2['arm']}` PF {rr2['pf']:.2f} but Max DD **{rr2['max_dd']:.1f}** "
+                    f"(control {ctrl['max_dd']:.1f}) and Δ PnL {rr2['pnl'] - ctrl['pnl']:+.0f}."
+                )
+            if rr3:
+                md.append(
+                    f"- T1 ≥ 3R / 4R is worse: Max DD {rr3['max_dd']:.1f}"
+                    + (f" / {by_arm['12_rr_range_4']['max_dd']:.1f}" if "12_rr_range_4" in by_arm else "")
+                    + ". Higher R setups have *lower* WR; stripping the <1R grinders leaves clustered losers."
+                )
+            if t1_15:
+                md.append(
+                    f"- Soft T1 ≥ 1.5R (`{t1_15['arm']}`) is the only RR arm that cuts DD "
+                    f"({t1_15['max_dd']:.1f}) — and it costs Δ PnL {t1_15['pnl'] - ctrl['pnl']:+.0f}."
+                )
+            if ts20:
+                md.append(
+                    f"- **Time stop 20 bars** (`{ts20['arm']}`): Max DD **{ts20['max_dd']:.1f}** vs control "
+                    f"{ctrl['max_dd']:.1f}, Δ PnL {ts20['pnl'] - ctrl['pnl']:+.0f}. Best risk one-knob that does not wreck PnL."
+                )
+            md.append("- House `run_wrl.bat` still unchanged (scale 50/50, min-RR off).")
 
     diag = _control_diagnostics(root)
     if diag.get("ok"):
@@ -559,6 +587,26 @@ def summarize(root: Path = OUT_ROOT) -> Path:
             f"{html.escape(dd_bit)}"
             "</div>"
         )
+        by_arm = {r["arm"]: r for r in rows if r.get("ok")}
+        rr2 = by_arm.get("10_rr_range_2")
+        ts20 = by_arm.get("17_timestop_20")
+        bits = []
+        if rr2:
+            bits.append(
+                f"T1 ≥ 2R does <em>not</em> reduce risk: Max DD {rr2['max_dd']:.1f} vs control "
+                f"{ctrl['max_dd']:.1f}, Δ PnL {rr2['pnl'] - ctrl['pnl']:+.0f}. 3R/4R Max DD blows up."
+            )
+        if ts20:
+            bits.append(
+                f"Time stop 20 bars cuts Max DD to {ts20['max_dd']:.1f} with Δ PnL "
+                f"{ts20['pnl'] - ctrl['pnl']:+.0f}."
+            )
+        if bits:
+            verdict_html += (
+                "<div class='callout warn'><strong>Risk read:</strong> "
+                + " ".join(bits)
+                + " Pearson RR vs PNL% is ~0. House defaults unchanged.</div>"
+            )
 
     diag = _control_diagnostics(root)
     diag_html = ""
