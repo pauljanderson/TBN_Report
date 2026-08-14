@@ -412,6 +412,7 @@ Overall: <strong>{html_mod.escape(overall)}</strong>. {html_mod.escape(pt_note)}
 Local FullOHLC / DailyRun dump is not in this environment; SPX500 is the broader proxy.
 </div>
 <ul>{"".join(f"<li>{html_mod.escape(v.replace('**',''))}</li>" for v in verdicts)}</ul>
+<p>The DualPaul78 ~18% Max DD does not travel. On S&P 500 the gap shrinks to ~7pp; outside DualPaul78 it is ~5pp. DualPaul78 names that are also in SPX have worse H1 Max DD. Do not promote. Keep rw63 as the main sleeve.</p>
 <h2>Results</h2>
 {_arm_table_html(table, "Control vs H1 rvol≥4 on each universe. Lean on H1 rows is the confirmation judge.")}
 <p class="muted">Max DD is the house passive book path (fixed notional, PnL at exit, no OHLC MTM).
@@ -435,8 +436,17 @@ PASS requires ≥12pp Max DD gap vs that universe's control, WR/Avg R not collap
         "",
         *verdicts,
         "",
+        "### What this means",
+        "",
+        "The DualPaul78 ~18% Max DD does **not** travel. On S&P 500, H1 is only ~7pp calmer (39.8% → 32.4%). "
+        "Take DualPaul78 names out of SPX and the gap is ~5pp (41.7% → 36.4%) — below the 12pp bar. "
+        "The DualPaul78 names that *are* in SPX actually have **worse** H1 Max DD (21.8% → 35.1%). "
+        "So the original DD cut lives in the non-SPX DualPaul78 cluster (small/mid, foreign, resource names), not in a general climatic-origin rule.",
+        "",
+        "**Do not promote H1 rvol≥4.** Keep the main sleeve as rw63. Stop papering H1 as a second book.",
+        "",
         "PASS bar: H1 Max DD at least **12pp** below that universe's rw126 control, WR/Avg R not collapsing, "
-        "OOS not reversing. DualPaul78's gap was ~21pp (38.5% → 17.7%). A shrink to ~3pp is a fail.",
+        "OOS not reversing. DualPaul78's gap was ~21pp (38.5% → 17.7%).",
         "",
         "## Setup",
         "",
