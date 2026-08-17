@@ -1,6 +1,6 @@
 @echo off
 
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 rem --- Project root (batch always cds here; Task Scheduler "Start in" is optional) ---
 cd /d "C:\Users\songg\Downloads\stockresearch"
@@ -25,15 +25,17 @@ rem     WRL (Weekly Range / Swing) — RESEARCH sleeve; runner lives at this roo
 rem       C:\Users\songg\Downloads\stockresearch\run_wrl.bat
 rem       Standalone: run_wrl.bat  (Mag10 default; run_wrl.bat ALL = full universe)
 rem       Optional later: call run_wrl.bat behind SKIP_WRL — do not treat as gold from wiring alone.
-rem     MVCP (Minervini VCP) step [11/14]: call run_mvcp.bat — default ALL from drive\universes\MVCP_universe.csv
-rem       Theory knobs HOLD: RS>=80, vol 1.5x, depth_shrink 0.65, chase 5%, stop 0.92, target 1.25,
-rem         time_stop 10, trail_arm 10%, cooldown 20; --aggressive ON (MVCP_AGGRESSIVE=true)
-rem       set MVCP_SYMBOLS=NVDA,TSLA  override ALL scan
-rem       set SKIP_MVCP=1         skip Minervini VCP step
+rem     MVCP (Minervini VCP) — PARKED 2026-08-12 from live DailyRun sleeve (research only).
+rem       Evidence: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html / PARK.md
+rem       Standalone research: run_mvcp.bat / run_minervini_vcp.bat (engine kept).
+rem       Default: SKIP_MVCP=1. Opt-in only: set SKIP_MVCP=0
+rem       set MVCP_SYMBOLS=NVDA,TSLA  override ALL scan when opting in
 rem     set SKIP_RECONCILE_GATE=1 skip frozen Closed gate
 rem     set SKIP_GET=1            skip pygetallMore (run_update_data)
+rem     set FORCE_GET=1           always run pygetallMore (override auto fresh skip)
 rem     DailyRun --noGet          same as SKIP_GET=1
 rem     DailyRun --no-get         same as SKIP_GET=1
+rem     Default (no flags): auto — skip step 1 when data is fresh (see tools/data_update_freshness.py)
 
 rem --- CLI flags (optional) ---
 :parse_args
@@ -122,10 +124,33 @@ if errorlevel 1 (
 
 rem --- 1) Update data (pygetallMore via run_update_data) ---
 rem Disable: set SKIP_GET=1  or  DailyRun --noGet / --no-get
+rem Force:   set FORCE_GET=1
+rem Default: auto fresh check (drive\data_update_last_ok.json from last pygetallMore)
+set "SKIP_GET_REASON="
+if /i not "%SKIP_GET%"=="1" if /i not "%FORCE_GET%"=="1" (
+  echo [1/14] checking data freshness...
+  echo [1/14] checking data freshness...>>"%LOG%"
+  set "FRESHCHK=%TEMP%\DailyRun_fresh_%STAMP%.txt"
+  "%PY%" tools\data_update_freshness.py --check > "!FRESHCHK!" 2>&1
+  set "FRESH_EXIT=!errorlevel!"
+  type "!FRESHCHK!"
+  type "!FRESHCHK!">>"%LOG%"
+  if "!FRESH_EXIT!"=="0" (
+    set "SKIP_GET=1"
+    set "SKIP_GET_REASON=auto"
+  )
+  del "!FRESHCHK!" 2>nul
+)
 if /i "%SKIP_GET%"=="1" (
-  echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)
-  echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)>>"%LOG%"
+  if /i "%SKIP_GET_REASON%"=="auto" (
+    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)
+    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)>>"%LOG%"
+  ) else (
+    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)
+    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)>>"%LOG%"
+  )
 ) else (
+  echo [1/14] Data stale — running update>>"%LOG%"
   echo [1/14] run_update_data>>"%LOG%"
   call "%~dp0run_update_data.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
@@ -226,18 +251,17 @@ if /i "%SKIP_SB%"=="1" (
   if errorlevel 1 goto :fail
 )
 
-rem --- 11) MVCP (Minervini VCP Stage-2) -----------------------------------------
-rem Default: run_mvcp.bat with no args loads drive\universes\MVCP_universe.csv (* = ALL)
-rem Theory knobs HOLD (unchanged): RS>=80, vol 1.5x, depth_shrink 0.65, chase 5%,
-rem   stop 0.92, target 1.25, time_stop 10, trail_arm 10%, cooldown 20; --aggressive ON
-rem Disable: set SKIP_MVCP=1
-rem Docs: drive\paul_experiments\tbn_new_systems\minervini_vcp\HOW_TO_RUN.html
-if /i "%SKIP_MVCP%"=="1" (
-  echo [11/14] SKIPPED - run_mvcp ^(SKIP_MVCP=1^)
-  echo [11/14] SKIPPED - run_mvcp ^(SKIP_MVCP=1^)>>"%LOG%"
+rem --- 11) MVCP (PARKED — research only; not live sleeve) -----------------------
+rem PARK 2026-08-12: default skip so MVCP does not drag DailyRun / allocation.
+rem Opt-in: set SKIP_MVCP=0  then this step calls run_mvcp.bat
+rem Docs: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html / PARK.md
+if not defined SKIP_MVCP set "SKIP_MVCP=1"
+if /i not "%SKIP_MVCP%"=="0" (
+  echo [11/14] PARKED - run_mvcp ^(SKIP_MVCP=%SKIP_MVCP%; set SKIP_MVCP=0 to opt in^)
+  echo [11/14] PARKED - run_mvcp ^(SKIP_MVCP=%SKIP_MVCP%^)>>"%LOG%"
 ) else (
-  echo [11/14] run_mvcp ^(MVCP_universe.csv ALL / Theory knobs^)
-  echo [11/14] run_mvcp ^(MVCP_universe.csv ALL / Theory knobs^)>>"%LOG%"
+  echo [11/14] run_mvcp ^(opt-in SKIP_MVCP=0 / MVCP_universe.csv^)
+  echo [11/14] run_mvcp ^(opt-in SKIP_MVCP=0 / MVCP_universe.csv^)>>"%LOG%"
   call "%~dp0run_mvcp.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 )
@@ -247,7 +271,7 @@ echo [12/14] run_copy_latest>>"%LOG%"
 call "%~dp0run_copy_latest.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 13) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB/MVCP)
+rem --- 13) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB; MVCP parked)
 rem Disable: set SKIP_RECONCILE_GATE=1  or  set RECONCILE_GATE=0
 rem Docs: drive\paul_experiments\yh_baseline_20260731\RECONCILE_GATE.md
 echo [13/14] run_reconcile_gate>>"%LOG%"

@@ -27,6 +27,7 @@ CLI sets defaults per system, e.g.:
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -60,6 +61,64 @@ _SYSTEM_ALIASES = {
 
 # Percent/ATR live systems (RL, VZ, and WRL are separate). Order matches help text.
 PERCENT_ATR_SYSTEMS = ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS")
+
+# Dollar fields written to CSV / console (ceil to nearest cent at output time).
+_DOLLAR_OUTPUT_KEYS = frozenset(
+    {
+        "EntryPrice",
+        "CurrentPrice",
+        "SMA20",
+        "SMA50",
+        "SMAStopLevel",
+        "TargetPrice",
+        "Target2Price",
+        "LimitPrice",
+        "TargetPriceYesterday",
+        "StopInitial",
+        "StopTrailing",
+        "PrevStopFloor",
+        "ATR",
+        "ATRScheduleProgressPrice",
+        "ATRScheduleExitPrice",
+        "SignalLow",
+        "RangeHigh",
+        "RangeLow",
+        "SwingHigh",
+        "SwingLow",
+        "vz_zone_lo",
+        "vz_signal_entry_price",
+    }
+)
+
+
+def _ceil_cent(value: Optional[float]) -> Optional[float]:
+    """Round dollar amounts up to the nearest cent ($0.01)."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return value  # type: ignore[return-value]
+    if pd.isna(v) or not math.isfinite(v):
+        return value
+    return math.ceil(v * 100.0) / 100.0
+
+
+def _format_dollar(value: Optional[float]) -> str:
+    rounded = _ceil_cent(value)
+    if rounded is None or (isinstance(rounded, float) and pd.isna(rounded)):
+        return "NaN"
+    return f"{rounded:.2f}"
+
+
+def _apply_dollar_rounding(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    for key in _DOLLAR_OUTPUT_KEYS:
+        if key in out and out[key] is not None:
+            rounded = _ceil_cent(out[key])
+            if rounded is not None:
+                out[key] = rounded
+    return out
 
 
 def _normalize_system(system: str) -> str:
@@ -323,7 +382,7 @@ def _apply_stop_floor(
         if float(stop_trailing) < float(prev_floor):
             print(
                 f"[WARN] {sym}: computed StopTrailing would decrease "
-                f"({float(stop_trailing_raw):.4f} -> floor {float(prev_floor):.4f}); keeping floor."
+                f"({_format_dollar(float(stop_trailing_raw))} -> floor {_format_dollar(float(prev_floor))}); keeping floor."
             )
             stop_trailing = float(prev_floor)
             stop_floor_applied = True
@@ -1462,7 +1521,7 @@ def main() -> None:
                     prev["System"] = prev["System"].astype(str).str.upper()
                     grouped = prev.groupby(["Symbol", "System"], as_index=False)["StopTrailing"].max()
                     stop_floor_by_key = {
-                        (str(r["Symbol"]), str(r["System"])): float(r["StopTrailing"])
+                        (str(r["Symbol"]), str(r["System"])): float(_ceil_cent(float(r["StopTrailing"])))
                         for _, r in grouped.iterrows()
                     }
                 else:
@@ -1471,7 +1530,7 @@ def main() -> None:
                         .set_index("Symbol")["StopTrailing"]
                         .items()
                     ):
-                        stop_floor_by_key[(str(sym), "")] = float(st)
+                        stop_floor_by_key[(str(sym), "")] = float(_ceil_cent(float(st)))
         except Exception as e:
             print(f"[WARN] Could not read prior stop floor from {out_path}: {e}")
 
@@ -1527,7 +1586,7 @@ def main() -> None:
         if not entry_in_data:
             print(
                 f"[INFO] {sym}: entry {requested_ts.date()} not in CSV; "
-                f"using entry_price={entry_price:.4f} ({entry_src})"
+                f"using entry_price={_format_dollar(entry_price)} ({entry_src})"
             )
 
         _sym_ov = overrides_for_symbol(_per_symbol_settings, sym, system) if _per_symbol_settings else {}
@@ -1604,7 +1663,7 @@ def main() -> None:
         target_changed = None
         if target_price_yesterday is not None and target_today is not None:
             try:
-                target_changed = abs(float(target_today) - float(target_price_yesterday)) > 1e-4
+                target_changed = _ceil_cent(float(target_today)) != _ceil_cent(float(target_price_yesterday))
             except (TypeError, ValueError):
                 target_changed = None
 
@@ -1660,43 +1719,56 @@ def main() -> None:
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,
-            **{k: v for k, v in payload.items() if k not in ("error",)},
+            **{
+                k: v
+                for k, v in payload.items()
+                if k
+                not in (
+                    "error",
+                    "StopInitial",
+                    "StopTrailing",
+                    "TargetPrice",
+                    "LimitPrice",
+                )
+            },
         }
+        row_out = _apply_dollar_rounding(row_out)
         results.append(row_out)
 
-        tgt = payload.get("TargetPrice")
-        st = stop_trailing
+        tgt = row_out.get("TargetPrice")
+        st = row_out.get("StopTrailing")
+        limit_out = row_out.get("LimitPrice")
         extra = ""
         if payload.get("ATRProgressStopApplied"):
-            extra += f" [progress_stop={payload.get('ATRScheduleProgressPrice'):.4f}]"
-        if payload.get("SMAStopApplied") and payload.get("SMAStopLevel") is not None:
-            extra += f" [sma_stop={float(payload['SMAStopLevel']):.4f} N={payload.get('sma_stop_days')}]"
+            extra += f" [progress_stop={_format_dollar(row_out.get('ATRScheduleProgressPrice'))}]"
+        if payload.get("SMAStopApplied") and row_out.get("SMAStopLevel") is not None:
+            extra += f" [sma_stop={_format_dollar(row_out.get('SMAStopLevel'))} N={payload.get('sma_stop_days')}]"
         if payload.get("RL_TrailTier"):
             extra += f" [RL_trail_tier={payload.get('RL_TrailTier')}]"
-        if stop_floor_applied and prev_floor is not None:
-            extra += f" [floor={float(prev_floor):.4f}]"
-        if payload.get("use_sma50") and payload.get("SMA50"):
-            extra += f" [SMA50={float(payload['SMA50']):.2f}]"
-        if payload.get("SignalLow") is not None:
-            extra += f" [signal_low={float(payload['SignalLow']):.4f}]"
-        if system == "VZ" and payload.get("vz_zone_lo") is not None:
+        if stop_floor_applied and row_out.get("PrevStopFloor") is not None:
+            extra += f" [floor={_format_dollar(row_out.get('PrevStopFloor'))}]"
+        if payload.get("use_sma50") and row_out.get("SMA50") is not None:
+            extra += f" [SMA50={_format_dollar(row_out.get('SMA50'))}]"
+        if row_out.get("SignalLow") is not None:
+            extra += f" [signal_low={_format_dollar(row_out.get('SignalLow'))}]"
+        if system == "VZ" and row_out.get("vz_zone_lo") is not None:
             extra += (
-                f" [vz zone.lo={float(payload['vz_zone_lo']):.4f}"
+                f" [vz zone.lo={_format_dollar(row_out.get('vz_zone_lo'))}"
                 f" sig_entry={payload.get('vz_signal_entry_date')}"
                 f" exit={payload.get('vz_exit_name')}]"
             )
 
         print(
             f"{sym} [{system}] {entry_ts.date()} | "
-            f"Entry={entry_price:.4f} ({entry_src}) | "
-            f"Current={current_price if current_price is not None else 'NaN'} | "
-            f"SMA20={sma20 if sma20 is not None else 'NaN'} | "
-            f"Target={tgt if tgt is not None else 'NaN'} | "
-            f"Target_yday={target_price_yesterday if target_price_yesterday is not None else 'NaN'}"
+            f"Entry={_format_dollar(entry_price)} ({entry_src}) | "
+            f"Current={_format_dollar(current_price)} | "
+            f"SMA20={_format_dollar(sma20)} | "
+            f"Target={_format_dollar(tgt)} | "
+            f"Target_yday={_format_dollar(row_out.get('TargetPriceYesterday'))}"
             f"{' *CHANGED*' if target_changed else ''} | "
-            f"Limit={limit_price if limit_price is not None else 'NaN'} | "
-            f"Stop_initial={payload.get('StopInitial')} | "
-            f"Stop_trailing={st if st is not None else 'NaN'} | "
+            f"Limit={_format_dollar(limit_out)} | "
+            f"Stop_initial={_format_dollar(row_out.get('StopInitial'))} | "
+            f"Stop_trailing={_format_dollar(st)} | "
             f"as_of={as_of_effective.date() if as_of_effective is not None else requested_ts.date()}{extra}"
         )
 

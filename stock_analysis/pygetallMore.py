@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -1510,6 +1512,33 @@ def _upsert_symbol_to_db(con: duckdb.DuckDBPyConnection, table: str, symbol: str
     con.unregister("stage_prices")
 
 
+def _write_update_stamp(
+    *,
+    updated: int,
+    skipped: int,
+    total: int,
+    full_backfill_count: int,
+    ok: bool = True,
+) -> None:
+    """Record last successful pygetallMore run for DailyRun auto SKIP_GET."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    stamp_dir = os.path.join(repo_root, "drive")
+    os.makedirs(stamp_dir, exist_ok=True)
+    path = os.path.join(stamp_dir, "data_update_last_ok.json")
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    payload = {
+        "ok": bool(ok),
+        "ok_at": now_et.isoformat(),
+        "updated": int(updated),
+        "skipped": int(skipped),
+        "total": int(total),
+        "full_backfill_count": int(full_backfill_count),
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    print(f"[stamp] wrote {path}")
+
+
 def _merge_with_existing_csv(output_file: str, fresh_df: pd.DataFrame) -> pd.DataFrame:
     if os.path.exists(output_file):
         try:
@@ -1727,7 +1756,20 @@ def main():
     fund_msg = ""
     if do_fundamentals:
         fund_msg = f", Fundamentals ok={fund_ok} fail={fund_skip}"
+    total = len(tickers)
+    stamp_ok = updated > 0 or (not _is_us_weekday(datetime.now(ZoneInfo("America/New_York"))))
+    _write_update_stamp(
+        updated=updated,
+        skipped=skipped,
+        total=total,
+        full_backfill_count=len(full_symbols),
+        ok=stamp_ok,
+    )
     print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}{fund_msg}")
+
+
+def _is_us_weekday(dt: datetime) -> bool:
+    return dt.weekday() < 5
 
 if __name__ == "__main__":
     main()
