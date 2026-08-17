@@ -231,7 +231,7 @@ def _parse_sell_list(raw: str) -> list[str]:
         if not part:
             continue
         mode = _normalize_aggressive_sell(part)
-        if mode not in ("false", "average", "losers", "winners"):
+        if mode not in ("false", "average", "losers", "winners", "fifo"):
             raise ValueError(f"Invalid aggressive_sell mode: {part!r}")
         out.append(mode)
     return out
@@ -494,7 +494,7 @@ def main() -> int:
     p.add_argument(
         "--aggressive-sell",
         default="",
-        help="Comma-separated modes: false,average,losers,winners (default: audit)",
+        help="Comma-separated modes: false,average,losers,winners,fifo (default: audit)",
     )
     p.add_argument(
         "--risk-grid",

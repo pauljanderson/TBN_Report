@@ -840,7 +840,7 @@ class BRTConfig:
     aggressive_avg_positions: float = 0.0
     aggressive_sizing_equity_cap: float = 10.0
     # When aggressive: sell existing holdings at new-entry open to free gross/cash.
-    # false | average | losers | winners
+    # false | average | losers | winners | fifo
     aggressive_sell: str = "false"
     # Fraction of total margin buying power to deploy (equity * aggressive_max_multiple).
     # Default 0.6 = 60% of 2× account. Applies to passive brt_cash / Max_DD sizing only;
@@ -1514,6 +1514,8 @@ def _normalize_aggressive_sell(val: Any) -> str:
         return "losers"
     if s in ("winners", "winner", "best"):
         return "winners"
+    if s in ("fifo", "first", "oldest"):
+        return "fifo"
     return "false"
 
 
@@ -16771,7 +16773,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "aggressive_avg_positions": "Override average positions for aggressive sizing (0 = auto from run history; see aggressive_avg_positions_actual for value used).",
     "aggressive_avg_positions_actual": "Average active positions used in this run's aggressive equity simulation (auto mean when override is 0).",
     "aggressive_sizing_equity_cap": "Cap equity used for aggressive entry sizing at initial_capital×this multiple (default 10); does not cap reported equity.",
-    "aggressive_sell": "When aggressive: false=current behavior; average=equal %% trim of all holdings at new entry; losers=trim worst unrealized PnL first; winners=trim best first.",
+    "aggressive_sell": "When aggressive: false=current behavior; average=equal %% trim of all holdings at new entry; losers=trim worst unrealized PnL first; winners=trim best first; fifo=trim oldest open positions first (entry order).",
     "margin_utilization": "Fraction of total margin buying power to deploy for passive brt_cash/Max_DD (initial_capital×aggressive_max_multiple×this). Default 0.6; --aggressive does not override (overlay sim uses full util).",
     "max_positions": "Per-slot notional divisor: deployable_margin / max_positions. 0 = auto from peak concurrent closed trades.",
     "symbol_reentry_cooldown_days": "Calendar days after closing a symbol before a new entry in that same symbol is allowed (0=off). Example: 5 blocks same-week re-entry; 20 ~ one month.",
