@@ -33,6 +33,13 @@ PATH
 STDERR
 
 # Temp / debug workspaces
+_tmp_*
+Debug.txt
+experiments/
+*.bat.bak
+tools/_tmp_*
+tools/*_out.txt
+tools/*_zones.txt
 _prof_*/
 temp_*/
 drive_*/

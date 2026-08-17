@@ -40,6 +40,11 @@ except ImportError:
 DATA_DIR = "C:\\Users\\songg\\Downloads\\stockresearch\\data\\newdata\\data"
 # Start date for full-history downloads and automatic backfill detection.
 START_DATE = "2010-01-01"
+# First US equity session in 2010 was 2010-01-04 (Jan 1 holiday). Without slack,
+# every symbol re-triggers full download on each incremental run.
+BACKFILL_START_SLACK_DAYS = 7
+# Min rows when listing started after START_DATE (IPO / ADR) — treat as complete history.
+BACKFILL_MIN_ROWS_LATE_START = 200
 
 # End date is today+1 so yfinance includes latest close
 END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -1370,20 +1375,45 @@ def _read_existing_coverage_start(output_file: str) -> datetime | None:
         return None
 
 
-def _should_backfill_full_history(output_file: str, start_date: str) -> bool:
+def _history_covers_start(output_file: str, start_date: str) -> bool:
     """
-    In incremental mode, backfill full history when the local CSV is missing or does not
-    cover the configured start date.
+    True when local CSV already has adequate history (incremental is enough).
+
+    Strict ``earliest_bar > START_DATE`` falsely flags every symbol after a full
+    download because the first 2010 session is 2010-01-04, not 2010-01-01.
+    Late-start listings (IPO/ADR) are accepted when the file spans most of their
+    available history.
     """
     cov_start = _read_existing_coverage_start(output_file)
     if cov_start is None:
-        return True
+        return False
     try:
         req_start = datetime.strptime(start_date, "%Y-%m-%d")
     except ValueError:
-        return False
-    # If earliest local bar is after configured start, we are missing history.
-    return cov_start.date() > req_start.date()
+        return True
+    slack_end = req_start + timedelta(days=BACKFILL_START_SLACK_DAYS)
+    if cov_start.date() <= slack_end.date():
+        return True
+    try:
+        old = pd.read_csv(output_file, usecols=["Date"], parse_dates=["Date"])
+        if old.empty:
+            return False
+        mn = pd.Timestamp(old["Date"].min()).normalize()
+        mx = pd.Timestamp(old["Date"].max()).normalize()
+        age_days = (datetime.now().date() - mn.date()).days
+        span_days = (mx - mn).days
+        if age_days <= 90:
+            return True
+        if len(old) >= BACKFILL_MIN_ROWS_LATE_START and span_days >= max(180, int(age_days * 0.65)):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _should_backfill_full_history(output_file: str, start_date: str) -> bool:
+    """In incremental mode, full re-download only when local history is missing or truncated."""
+    return not _history_covers_start(output_file, start_date)
 
 
 def _extract_symbol_frame(download_df: pd.DataFrame, ticker: str) -> pd.DataFrame:

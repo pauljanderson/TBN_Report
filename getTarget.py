@@ -6,13 +6,13 @@ BRT (backtest percent or ATR live params), IND (deprecated; manual/historical su
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
 WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
 MVCP (Minervini Volatility Contraction Pattern), CS (CAN SLIM price-legs),
-or WRL (Weekly Range / Swing structural targets).
+WRL (Weekly Range / Swing structural targets), or VZ (Volume Zone break/retest).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, or WRL (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, or VZ (case-insensitive).
   Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
-  RANGE/SWING/WEEKLY_RANGE→WRL.
+  RANGE/SWING/WEEKLY_RANGE→WRL, VOLUME_ZONE/VOL_ZONE→VZ.
 
 Qull / Kell use EMA trails (not fixed target_pct); they are not mapped here yet.
 
@@ -53,9 +53,12 @@ _SYSTEM_ALIASES = {
     "RANGE": "WRL",
     "SWING": "WRL",
     "WEEKLY_RANGE": "WRL",
+    "VOLUME_ZONE": "VZ",
+    "VOL_ZONE": "VZ",
+    "VOLZONE": "VZ",
 }
 
-# Percent/ATR live systems (RL is separate). Order matches help text.
+# Percent/ATR live systems (RL, VZ, and WRL are separate). Order matches help text.
 PERCENT_ATR_SYSTEMS = ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS")
 
 
@@ -69,7 +72,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, VZ
 
 
 @dataclass
@@ -107,6 +110,21 @@ class PercentProfile:
     # When stop_anchor=signal_low but signal Low is unavailable (no CSV / synthetic entry).
     # 0 = fall back to entry * stop_pct. SB uses 0.922 (burst_max_risk ≈ 7.8%).
     fallback_stop_pct: float = 0.0
+
+
+@dataclass
+class VzProfile:
+    """Volume Zone live stop/target (research freeze EXIT_atr4_s025_r15 / ts40)."""
+
+    exit_name: str = "EXIT_atr4_s025_r15"
+    exit_bars: int = 40
+    target_r: float = 1.5
+    stop_atr_buffer: float = 0.25
+    lookback_days: int = 126
+    retest_window: int = 63
+    retest_eps_pct: float = 0.005
+    entry_on: str = "next_open"
+    min_touches_before_entry: int = 1
 
 
 @dataclass
@@ -690,6 +708,154 @@ def _entry_stop_pct(profile: PercentProfile) -> float:
     return float(profile.stop_pct)
 
 
+def _df_for_vz(df: pd.DataFrame) -> pd.DataFrame:
+    """OHLC frame with a Date column (vol_zone helpers expect column, not index)."""
+    out = df.copy()
+    if "Date" not in out.columns:
+        out = out.reset_index()
+        if "Date" not in out.columns and out.columns.size:
+            if out.columns[0] != "Date":
+                out = out.rename(columns={out.columns[0]: "Date"})
+    out["Date"] = pd.to_datetime(out["Date"])
+    return out.sort_values("Date").reset_index(drop=True)
+
+
+def _match_vz_signal(
+    sigs: list[Any],
+    df_vz: pd.DataFrame,
+    purchase_ts: pd.Timestamp,
+    exit_bars: int,
+) -> Optional[Any]:
+    """Pick the research-freeze signal that owns this open lot."""
+    if not sigs:
+        return None
+    purchase = pd.Timestamp(purchase_ts).normalize()
+    dates = pd.to_datetime(df_vz["Date"])
+    purchase_i: Optional[int] = None
+    hits = [i for i, d in enumerate(dates) if pd.Timestamp(d).normalize() == purchase]
+    if hits:
+        purchase_i = int(hits[0])
+    else:
+        earlier = [i for i, d in enumerate(dates) if pd.Timestamp(d).normalize() <= purchase]
+        if earlier:
+            purchase_i = int(earlier[-1])
+
+    exact = [s for s in sigs if pd.Timestamp(s.entry_date).normalize() == purchase]
+    if exact:
+        return exact[-1]
+
+    if purchase_i is None:
+        prior = [
+            s
+            for s in sigs
+            if pd.Timestamp(s.entry_date).normalize() <= purchase
+            and (purchase - pd.Timestamp(s.entry_date).normalize()).days <= int(exit_bars) + 5
+        ]
+        return max(prior, key=lambda s: pd.Timestamp(s.entry_date)) if prior else None
+
+    still_open = [
+        s
+        for s in sigs
+        if int(s.entry_idx) <= purchase_i
+        and (purchase_i - int(s.entry_idx)) <= int(exit_bars)
+    ]
+    if still_open:
+        return max(still_open, key=lambda s: int(s.entry_idx))
+    return None
+
+
+def compute_vz_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    profile: VzProfile,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """VZ live stop/target: zone.lo − stop_atr_buffer·ATR ; target = entry + target_r·R."""
+    try:
+        import sys
+        from dataclasses import replace as _dc_replace
+
+        _repo = Path(__file__).resolve().parent
+        if str(_repo) not in sys.path:
+            sys.path.insert(0, str(_repo))
+        from tools.vol_zone_break_retest import (  # type: ignore
+            RESEARCH_CANDIDATE_V2_RW63,
+            atr14,
+            build_zones,
+            resolve_stop,
+            run_symbol_with_params,
+        )
+    except ImportError as e:
+        return {"error": f"VZ helpers unavailable: {e}"}
+
+    df_vz = _df_for_vz(df)
+    if len(df_vz) < 30:
+        return {"error": "VZ requires more OHLC history"}
+
+    params = _dc_replace(
+        RESEARCH_CANDIDATE_V2_RW63,
+        lookback_days=int(profile.lookback_days),
+        retest_window=int(profile.retest_window),
+        retest_eps_pct=float(profile.retest_eps_pct),
+        entry_on=str(profile.entry_on),  # type: ignore[arg-type]
+        min_touches_before_entry=int(profile.min_touches_before_entry),
+        first_retest_only=True,
+        zone_kinds=("HL",),
+        exit_bars=int(profile.exit_bars),
+        target_r=float(profile.target_r),
+    )
+    atr = atr14(df_vz)
+    zones = build_zones(df_vz, int(params.lookback_days))
+    sigs, _, _ = run_symbol_with_params(sym, df_vz, zones, atr, params)
+    sig = _match_vz_signal(sigs, df_vz, entry_ts, int(profile.exit_bars))
+    if sig is None:
+        return {
+            "error": (
+                "VZ: no research-freeze signal near purchase "
+                f"(looked through {len(sigs)} signal(s))"
+            )
+        }
+
+    zone_lo = float(sig.stop)
+    stop_px = float(resolve_stop(sig, atr, float(profile.stop_atr_buffer)))
+    risk = max(float(entry_price) - stop_px, float(entry_price) * 0.005)
+    target_px = float(entry_price) + float(profile.target_r) * risk
+    atr_entry = (
+        float(atr[int(sig.entry_idx)])
+        if 0 <= int(sig.entry_idx) < len(atr)
+        else None
+    )
+
+    return {
+        "System": "VZ",
+        "EntrySource": entry_src,
+        "EntryInData": entry_in_data,
+        "TargetPrice": target_px,
+        "StopInitial": stop_px,
+        "StopTrailing": stop_px,
+        "ATR": atr_entry,
+        "ATRPct": (atr_entry / float(entry_price) * 100.0) if atr_entry and entry_price else None,
+        "SMA20": None,
+        "SMA50": None,
+        "VzMode": "zone",
+        "vz_exit_name": str(profile.exit_name),
+        "vz_target_r": float(profile.target_r),
+        "vz_stop_atr_buffer": float(profile.stop_atr_buffer),
+        "vz_exit_bars": int(profile.exit_bars),
+        "vz_zone_lo": zone_lo,
+        "vz_signal_date": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
+        "vz_signal_entry_date": str(pd.Timestamp(sig.entry_date).date()),
+        "vz_signal_entry_price": float(sig.entry_price),
+        "SignalDate": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
+        "AsOfUsed": str(pd.Timestamp(as_of_effective).date()) if as_of_effective is not None else None,
+    }
+
+
 def compute_price_only_payload(
     system: str,
     entry_price: float,
@@ -698,8 +864,11 @@ def compute_price_only_payload(
     rl_profile: RlProfile,
     exit_configs: dict[str, SystemExitConfig],
     default_atr_pct: float,
+    vz_profile: Optional[VzProfile] = None,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
+    if system == "VZ":
+        return {"error": "VZ requires OHLC CSV to resolve zone.lo stop/target"}
     if system == "RL":
         target_price = entry_price * rl_profile.rl_target_pct
         stop_initial = entry_price * rl_profile.rl_stop_pct
@@ -833,12 +1002,26 @@ def compute_position_payload(
     exit_configs: dict[str, SystemExitConfig],
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
+    vz_profile: Optional[VzProfile] = None,
 ) -> dict[str, Any]:
-    """Dispatch to RL or percent/ATR calculator for a given as-of date."""
+    """Dispatch to RL, VZ, WRL, or percent/ATR calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, rl_profile, entry_in_data=entry_in_data
+        )
+    if system == "VZ":
+        if vz_profile is None:
+            vz_profile = VzProfile()
+        return compute_vz_system(
+            sym,
+            df,
+            entry_ts,
+            entry_price,
+            entry_src,
+            as_of_effective,
+            vz_profile,
+            entry_in_data=entry_in_data,
         )
     if system == "WRL":
         return compute_wrl_system(
@@ -892,7 +1075,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL; "
+            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL / VZ; "
             "deprecated IND remains available manually)."
         )
     )
@@ -1055,6 +1238,31 @@ def main() -> None:
     parser.add_argument("--cs-trailing-stop-increment", type=float, default=0.0)
     parser.add_argument("--cs-use-sma50", action="store_true", default=False)
     parser.add_argument(
+        "--vz-exit-name",
+        type=str,
+        default="EXIT_atr4_s025_r15",
+        help="VZ exit stamp name (research freeze: zone.lo-0.25*ATR, 1.5R, ts40).",
+    )
+    parser.add_argument("--vz-exit-bars", type=int, default=40, help="VZ time-stop bars.")
+    parser.add_argument("--vz-target-r", type=float, default=1.5, help="VZ target R multiple.")
+    parser.add_argument(
+        "--vz-stop-atr-buffer",
+        type=float,
+        default=0.25,
+        help="VZ stop = zone.lo − buffer·ATR14 (default 0.25).",
+    )
+    parser.add_argument("--vz-lookback-days", type=int, default=126)
+    parser.add_argument("--vz-retest-window", type=int, default=63)
+    parser.add_argument("--vz-retest-eps-pct", type=float, default=0.005)
+    parser.add_argument(
+        "--vz-entry-on",
+        type=str,
+        default="next_open",
+        choices=("next_open", "close"),
+        help="VZ fill timing when reconstructing the signal (house default next_open).",
+    )
+    parser.add_argument("--vz-min-touches", type=int, default=1)
+    parser.add_argument(
         "--per-symbol-settings",
         default="",
         help="Per-symbol optimized params JSON (default: PER_SYMBOL_SETTINGS env or "
@@ -1064,7 +1272,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.list_systems:
-        print("Supported systems:", ", ".join(("RL", "WRL") + PERCENT_ATR_SYSTEMS))
+        print("Supported systems:", ", ".join(("RL", "WRL", "VZ") + PERCENT_ATR_SYSTEMS))
         print("Aliases:", ", ".join(f"{k}->{v}" for k, v in sorted(_SYSTEM_ALIASES.items())))
         print("Not mapped (EMA trail): QULL, KELL")
         return
@@ -1120,6 +1328,24 @@ def main() -> None:
         rl_trail_stop=args.rl_trail_stop,
         rl_trail_profit2=args.rl_trail_profit2,
         rl_trail_stop2=args.rl_trail_stop2,
+    )
+
+    vz_profile = VzProfile(
+        exit_name=str(args.vz_exit_name),
+        exit_bars=int(args.vz_exit_bars),
+        target_r=float(args.vz_target_r),
+        stop_atr_buffer=float(args.vz_stop_atr_buffer),
+        lookback_days=int(args.vz_lookback_days),
+        retest_window=int(args.vz_retest_window),
+        retest_eps_pct=float(args.vz_retest_eps_pct),
+        entry_on=str(args.vz_entry_on),
+        min_touches_before_entry=int(args.vz_min_touches),
+    )
+    print(
+        f"[INFO] VZ using zone stop/target "
+        f"(exit={vz_profile.exit_name}, stop=zone.lo-{vz_profile.stop_atr_buffer}*ATR, "
+        f"target={vz_profile.target_r}R, ts={vz_profile.exit_bars}d, "
+        f"entry_on={vz_profile.entry_on}, rw={vz_profile.retest_window})."
     )
 
     def _pct(
@@ -1323,6 +1549,7 @@ def main() -> None:
             rl_profile=sym_rl_profile,
             exit_configs=sym_exit_configs,
             default_atr_pct=float(args.default_atr_pct),
+            vz_profile=vz_profile,
         )
 
         if df is None:
@@ -1429,6 +1656,7 @@ def main() -> None:
             "SbMode": mode_col if system == "SB" else None,
             "MvcpMode": mode_col if system == "MVCP" else None,
             "WrlMode": "structural" if system == "WRL" else None,
+            "VzMode": payload.get("VzMode") if system == "VZ" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,
@@ -1451,6 +1679,12 @@ def main() -> None:
             extra += f" [SMA50={float(payload['SMA50']):.2f}]"
         if payload.get("SignalLow") is not None:
             extra += f" [signal_low={float(payload['SignalLow']):.4f}]"
+        if system == "VZ" and payload.get("vz_zone_lo") is not None:
+            extra += (
+                f" [vz zone.lo={float(payload['vz_zone_lo']):.4f}"
+                f" sig_entry={payload.get('vz_signal_entry_date')}"
+                f" exit={payload.get('vz_exit_name')}]"
+            )
 
         print(
             f"{sym} [{system}] {entry_ts.date()} | "
