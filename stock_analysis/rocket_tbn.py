@@ -330,6 +330,8 @@ class BRTConfig:
     vz_exit_bars: int = 40
     vz_target_r: float = 2.0
     vz_stop_atr_buffer: float = 0.5
+    # ATR14/entry*100 gate (FILTER_atr_pct_*); 0 = off.
+    vz_min_atr_pct_at_entry: float = 0.0
     vz_sheet_notional: float = 45_000.0
     # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
     wrl_mode: bool = False
@@ -16437,6 +16439,7 @@ _AUDIT_CFG_COLS = [
     "vz_exit_bars",
     "vz_target_r",
     "vz_stop_atr_buffer",
+    "vz_min_atr_pct_at_entry",
     "vz_sheet_notional",
     # Weekly Range / Swing (appended; blanked on non-WRL via _fill_wrl_mode_audit)
     "wrl_mode",

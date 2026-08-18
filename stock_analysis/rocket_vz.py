@@ -225,6 +225,7 @@ class VzConfig:
     exit_bars: int = 40
     target_r: float = 2.0
     stop_atr_buffer: float = 0.5
+    min_atr_pct_at_entry: float = 0.0
     sheet_notional: float = SHEET_NOTIONAL
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
     aggressive: bool = True
@@ -253,15 +254,57 @@ def params_from_cfg(cfg: VzConfig) -> SysParams:
 
 
 def exit_spec_from_cfg(cfg: VzConfig) -> ExitSpec:
-    if cfg.exit_name == PRIMARY_EXIT.name:
+    """Build exit from cfg knobs so -v vz_stop_atr_buffer / vz_target_r actually apply.
+
+    Only reuse PRIMARY_EXIT identity when name + stop + target + bars all match
+    (default freeze). Custom arm names (e.g. EXIT_atr4_s025_r15) always use cfg.
+    """
+    if (
+        str(cfg.exit_name) == PRIMARY_EXIT.name
+        and float(cfg.target_r) == float(PRIMARY_EXIT.target_r)
+        and float(cfg.stop_atr_buffer) == float(PRIMARY_EXIT.stop_atr_buffer)
+        and int(cfg.exit_bars) == int(PRIMARY_EXIT.exit_bars)
+    ):
         return PRIMARY_EXIT
     return ExitSpec(
         name=str(cfg.exit_name),
-        label=f"custom {cfg.exit_name}",
+        label=(
+            PRIMARY_EXIT.label
+            if str(cfg.exit_name) == PRIMARY_EXIT.name
+            else f"custom {cfg.exit_name}"
+        ),
         exit_bars=int(cfg.exit_bars),
         target_r=float(cfg.target_r),
         stop_atr_buffer=float(cfg.stop_atr_buffer),
     )
+
+
+def filter_sigs_min_atr_pct(
+    sigs: list,
+    df: pd.DataFrame,
+    atr: np.ndarray,
+    min_atr_pct: float,
+) -> list:
+    """Keep signals with ATR14/entry_price*100 >= min_atr_pct (0 = no filter)."""
+    thr = float(min_atr_pct or 0.0)
+    if thr <= 0 or not sigs:
+        return list(sigs)
+    closes = df["Close"].to_numpy(dtype=np.float64)
+    kept: list = []
+    for s in sigs:
+        i = int(s.entry_idx)
+        px = float(s.entry_price) or (
+            float(closes[i]) if 0 <= i < len(closes) else 0.0
+        )
+        a = (
+            float(atr[i])
+            if 0 <= i < len(atr) and np.isfinite(atr[i])
+            else 0.0
+        )
+        atr_pct = (a / px * 100.0) if px > 0 else 0.0
+        if atr_pct >= thr:
+            kept.append(s)
+    return kept
 
 
 def _exit_price_from_pnl(entry: float, pnl_pct: float) -> float:
@@ -490,6 +533,9 @@ def _process_one_symbol(
         atr = atr14(df)
         zones = build_zones(df, params.lookback_days)
         sigs, _, _ = run_symbol_with_params(sym, df, zones, atr, params)
+        sigs = filter_sigs_min_atr_pct(
+            sigs, df, atr, float(getattr(cfg, "min_atr_pct_at_entry", 0.0) or 0.0)
+        )
         rows_closed, rows_open = enrich_trade_rows(
             sym, df, sigs, params, atr, exit_spec, cfg.sheet_notional
         )
@@ -783,6 +829,7 @@ def brt_config_from_vz(cfg: VzConfig, host_cfg: Any = None) -> Any:
         vz_exit_bars=int(cfg.exit_bars),
         vz_target_r=float(cfg.target_r),
         vz_stop_atr_buffer=float(cfg.stop_atr_buffer),
+        vz_min_atr_pct_at_entry=float(cfg.min_atr_pct_at_entry),
         vz_sheet_notional=float(cfg.sheet_notional),
     )
     if host_cfg is not None:
@@ -808,6 +855,7 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         exit_bars=int(getattr(cfg, "vz_exit_bars", 40)),
         target_r=float(getattr(cfg, "vz_target_r", 2.0)),
         stop_atr_buffer=float(getattr(cfg, "vz_stop_atr_buffer", 0.5)),
+        min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 0.0) or 0.0),
         sheet_notional=float(getattr(cfg, "vz_sheet_notional", SHEET_NOTIONAL)),
         initial_capital=float(getattr(cfg, "initial_capital", DEFAULT_INITIAL_CAPITAL) or DEFAULT_INITIAL_CAPITAL),
         aggressive=bool(getattr(cfg, "aggressive", True)),
@@ -1608,6 +1656,8 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
             aliases = {
                 "min_touches_before_entry": "min_touches_before_entry",
                 "min_touches": "min_touches_before_entry",
+                "vz_min_atr_pct_at_entry": "min_atr_pct_at_entry",
+                "min_atr_pct": "min_atr_pct_at_entry",
             }
             k2 = aliases.get(k, k)
             if not hasattr(cfg, k2):
