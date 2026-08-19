@@ -226,6 +226,7 @@ class VzConfig:
     target_r: float = 2.0
     stop_atr_buffer: float = 0.5
     min_atr_pct_at_entry: float = 0.0
+    require_hvn_overlap: bool = False  # default OFF; VP at signal_idx
     sheet_notional: float = SHEET_NOTIONAL
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
     aggressive: bool = True
@@ -249,6 +250,7 @@ def params_from_cfg(cfg: VzConfig) -> SysParams:
         zone_kinds=tuple(cfg.zone_kinds),  # type: ignore[arg-type]
         exit_bars=int(cfg.exit_bars),
         target_r=float(cfg.target_r),
+        require_hvn_overlap=bool(getattr(cfg, "require_hvn_overlap", False)),
     )
     return base
 
@@ -830,6 +832,7 @@ def brt_config_from_vz(cfg: VzConfig, host_cfg: Any = None) -> Any:
         vz_target_r=float(cfg.target_r),
         vz_stop_atr_buffer=float(cfg.stop_atr_buffer),
         vz_min_atr_pct_at_entry=float(cfg.min_atr_pct_at_entry),
+        vz_require_hvn_overlap=bool(getattr(cfg, "require_hvn_overlap", False)),
         vz_sheet_notional=float(cfg.sheet_notional),
     )
     if host_cfg is not None:
@@ -856,6 +859,7 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         target_r=float(getattr(cfg, "vz_target_r", 2.0)),
         stop_atr_buffer=float(getattr(cfg, "vz_stop_atr_buffer", 0.5)),
         min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 0.0) or 0.0),
+        require_hvn_overlap=bool(getattr(cfg, "vz_require_hvn_overlap", False)),
         sheet_notional=float(getattr(cfg, "vz_sheet_notional", SHEET_NOTIONAL)),
         initial_capital=float(getattr(cfg, "initial_capital", DEFAULT_INITIAL_CAPITAL) or DEFAULT_INITIAL_CAPITAL),
         aggressive=bool(getattr(cfg, "aggressive", True)),
@@ -920,7 +924,8 @@ def write_report(path: Path, stamp: str, cfg: VzConfig, meta: dict[str, Any]) ->
         f"freeze=RESEARCH_CANDIDATE_V2_RW63 exit={exit_spec.name}",
         f"lookback={params.lookback_days} rw={params.retest_window} eps={params.retest_eps_pct} "
         f"first_retest={params.first_retest_only} mt>={params.min_touches_before_entry} "
-        f"zones={','.join(params.zone_kinds)} entry_on={params.entry_on}",
+        f"zones={','.join(params.zone_kinds)} entry_on={params.entry_on} "
+        f"hvn={getattr(params, 'require_hvn_overlap', False)}",
         "PREDICTIVE: signal bar uses Low/High/Close of that bar; fill=next_open (T+1 open) "
         "or close (same-bar close). Never signal-bar open.",
         f"exit: stop=zone.lo-{exit_spec.stop_atr_buffer}*ATR target={exit_spec.target_r}R "
@@ -1034,6 +1039,7 @@ def write_baseline_md(path: Path, *, stamp: str, universe_label: str, n_symbols:
 | retest_window | {cfg.retest_window} |
 | entry_on | {cfg.entry_on} (house default next_open; prior AB freeze used close) |
 | Primary exit | `{cfg.exit_name}` (stop = zone.lo − {cfg.stop_atr_buffer}·ATR; target {cfg.target_r}R; time stop {cfg.exit_bars}d) |
+| require_hvn_overlap | {cfg.require_hvn_overlap} (default false; VP at signal_idx) |
 
 ## Predictive timing
 
@@ -1551,7 +1557,8 @@ def run_vz_from_brt_main(
     print(
         f"[VZ] Volume Zone on {len(symbols)} symbols "
         f"(lookback={vcfg.lookback_days} rw={vcfg.retest_window} "
-        f"entry_on={vcfg.entry_on} exit={vcfg.exit_name})",
+        f"entry_on={vcfg.entry_on} exit={vcfg.exit_name} "
+        f"hvn={vcfg.require_hvn_overlap})",
         flush=True,
     )
     print(
@@ -1658,6 +1665,7 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
                 "min_touches": "min_touches_before_entry",
                 "vz_min_atr_pct_at_entry": "min_atr_pct_at_entry",
                 "min_atr_pct": "min_atr_pct_at_entry",
+                "vz_require_hvn_overlap": "require_hvn_overlap",
             }
             k2 = aliases.get(k, k)
             if not hasattr(cfg, k2):

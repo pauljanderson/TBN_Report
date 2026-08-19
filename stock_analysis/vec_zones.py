@@ -6,14 +6,168 @@ pipeline as YH/BRT in rocket_brt.py.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
+# Frozen daily volume-at-price (NOT Thinkorswim tick VP). Same bins as production POC.
+VP_LOOKBACK = 60
+VP_BIN_PCT = 0.005
+VP_HVN_FRAC = 0.50  # HVN = bin vol >= 50% of POC bin (includes POC)
+VP_LVN_FRAC = 0.20  # LVN = interior valley: vol < 20% of POC AND lower than both neighbors
+
 
 def _typical_price(high: float, low: float, close: float) -> float:
     return (float(high) + float(low) + float(close)) / 3.0
+
+
+@dataclass(frozen=True)
+class DailyVolumeProfile:
+    """Daily-bar volume-at-price histogram for one as-of bar.
+
+    Bins: typical price (H+L+C)/3, width = median(tp) * bin_pct, volume summed into bins.
+    POC = center of max-volume bin. HVN/LVN are daily approximations — not ToS LVNs.
+    """
+
+    poc: float
+    lo_edge: float
+    bin_w: float
+    hist: np.ndarray
+    poc_idx: int
+    hvn_idx: np.ndarray
+    lvn_idx: np.ndarray
+
+    @property
+    def n_bins(self) -> int:
+        return int(self.hist.size)
+
+    def bin_range(self, i: int) -> tuple[float, float]:
+        lo = float(self.lo_edge) + int(i) * float(self.bin_w)
+        return lo, lo + float(self.bin_w)
+
+    def range_overlaps_indices(self, price_lo: float, price_hi: float, idxs: np.ndarray) -> bool:
+        if idxs is None or len(idxs) == 0:
+            return False
+        a = min(float(price_lo), float(price_hi))
+        b = max(float(price_lo), float(price_hi))
+        for i in idxs:
+            blo, bhi = self.bin_range(int(i))
+            if a <= bhi and b >= blo:
+                return True
+        return False
+
+    def overlaps_hvn_or_poc(self, price_lo: float, price_hi: float) -> bool:
+        return self.range_overlaps_indices(price_lo, price_hi, self.hvn_idx)
+
+    def crosses_lvn(self, price_lo: float, price_hi: float) -> bool:
+        return self.range_overlaps_indices(price_lo, price_hi, self.lvn_idx)
+
+    def price_in_bins(self, price: float, idxs: np.ndarray) -> bool:
+        if idxs is None or len(idxs) == 0 or not np.isfinite(price):
+            return False
+        px = float(price)
+        n = self.n_bins
+        for i in idxs:
+            ii = int(i)
+            blo, bhi = self.bin_range(ii)
+            if ii == n - 1:
+                if blo <= px <= bhi:
+                    return True
+            elif blo <= px < bhi:
+                return True
+        return False
+
+    def price_in_lvn(self, price: float) -> bool:
+        return self.price_in_bins(price, self.lvn_idx)
+
+    def poc_proximity(self, price: float, pct: float = 0.01) -> bool:
+        if not (np.isfinite(price) and np.isfinite(self.poc) and self.poc > 0):
+            return False
+        return abs(float(price) - float(self.poc)) / float(self.poc) <= float(pct)
+
+
+def compute_volume_profile(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray,
+    end_bar: int,
+    lookback: int = VP_LOOKBACK,
+    bin_pct: float = VP_BIN_PCT,
+    hvn_frac: float = VP_HVN_FRAC,
+    lvn_frac: float = VP_LVN_FRAC,
+) -> Optional[DailyVolumeProfile]:
+    """Point-in-time daily VP over ``[end_bar - lookback + 1, end_bar]`` inclusive.
+
+    Histogram matches ``compute_volume_poc``. HVN/LVN are extra labels on the same bins.
+    """
+    lb = max(1, int(lookback))
+    start = max(0, int(end_bar) - lb + 1)
+    end = int(end_bar) + 1
+    if start >= end:
+        return None
+
+    seg_hi = high[start:end]
+    seg_lo = low[start:end]
+    seg_cl = close[start:end]
+    seg_vol = volume[start:end]
+    mask = np.isfinite(seg_vol) & (seg_vol > 0)
+    if not np.any(mask):
+        return None
+
+    tp = (seg_hi + seg_lo + seg_cl) / 3.0
+    tp = tp[mask]
+    vol = seg_vol[mask]
+    ref = float(np.nanmedian(tp))
+    if not (np.isfinite(ref) and ref > 0):
+        return None
+
+    bp = max(1e-6, float(bin_pct))
+    bin_w = ref * bp
+    lo_edge = float(np.min(tp))
+    hi_edge = float(np.max(tp))
+    if hi_edge <= lo_edge:
+        poc = float(tp[np.argmax(vol)])
+        hist = np.array([float(np.sum(vol))], dtype=np.float64)
+        return DailyVolumeProfile(
+            poc=poc,
+            lo_edge=poc - 0.5 * bin_w,
+            bin_w=bin_w,
+            hist=hist,
+            poc_idx=0,
+            hvn_idx=np.array([0], dtype=np.int64),
+            lvn_idx=np.array([], dtype=np.int64),
+        )
+
+    n_bins = max(1, int(np.ceil((hi_edge - lo_edge) / bin_w)) + 1)
+    hist = np.zeros(n_bins, dtype=np.float64)
+    for price, v in zip(tp, vol):
+        idx = int((float(price) - lo_edge) / bin_w)
+        idx = min(max(idx, 0), n_bins - 1)
+        hist[idx] += float(v)
+    best = int(np.argmax(hist))
+    poc = float(lo_edge + (best + 0.5) * bin_w)
+    poc_vol = float(hist[best])
+    if poc_vol <= 0:
+        return None
+    hvn = np.flatnonzero(hist >= (float(hvn_frac) * poc_vol)).astype(np.int64)
+    lvn_list: list[int] = []
+    thr = float(lvn_frac) * poc_vol
+    for i in range(1, n_bins - 1):
+        vi = float(hist[i])
+        if vi < thr and vi < float(hist[i - 1]) and vi < float(hist[i + 1]):
+            lvn_list.append(i)
+    return DailyVolumeProfile(
+        poc=poc,
+        lo_edge=lo_edge,
+        bin_w=bin_w,
+        hist=hist,
+        poc_idx=best,
+        hvn_idx=hvn,
+        lvn_idx=np.array(lvn_list, dtype=np.int64),
+    )
 
 
 def compute_volume_poc(
@@ -26,42 +180,12 @@ def compute_volume_poc(
     bin_pct: float,
 ) -> float:
     """Point-in-time POC over ``[end_bar - lookback + 1, end_bar]`` inclusive."""
-    lb = max(1, int(lookback))
-    start = max(0, int(end_bar) - lb + 1)
-    end = int(end_bar) + 1
-    if start >= end:
+    prof = compute_volume_profile(
+        high, low, close, volume, end_bar, lookback=lookback, bin_pct=bin_pct
+    )
+    if prof is None:
         return float("nan")
-
-    seg_hi = high[start:end]
-    seg_lo = low[start:end]
-    seg_cl = close[start:end]
-    seg_vol = volume[start:end]
-    mask = np.isfinite(seg_vol) & (seg_vol > 0)
-    if not np.any(mask):
-        return float("nan")
-
-    tp = (seg_hi + seg_lo + seg_cl) / 3.0
-    tp = tp[mask]
-    vol = seg_vol[mask]
-    ref = float(np.nanmedian(tp))
-    if not (np.isfinite(ref) and ref > 0):
-        return float("nan")
-
-    bp = max(1e-6, float(bin_pct))
-    bin_w = ref * bp
-    lo_edge = float(np.min(tp))
-    hi_edge = float(np.max(tp))
-    if hi_edge <= lo_edge:
-        return float(tp[np.argmax(vol)])
-
-    n_bins = max(1, int(np.ceil((hi_edge - lo_edge) / bin_w)) + 1)
-    hist = np.zeros(n_bins, dtype=np.float64)
-    for price, v in zip(tp, vol):
-        idx = int((float(price) - lo_edge) / bin_w)
-        idx = min(max(idx, 0), n_bins - 1)
-        hist[idx] += float(v)
-    best = int(np.argmax(hist))
-    return float(lo_edge + (best + 0.5) * bin_w)
+    return float(prof.poc)
 
 
 def prior_period_extreme(

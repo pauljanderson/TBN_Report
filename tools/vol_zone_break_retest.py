@@ -35,10 +35,11 @@ from __future__ import annotations
 import argparse
 import html as html_mod
 import itertools
+import sys
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Optional
 
 import matplotlib
 
@@ -49,6 +50,15 @@ import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parents[1]
+_SA = str(REPO / "stock_analysis")
+if _SA not in sys.path:
+    sys.path.insert(0, _SA)
+from vec_zones import (  # noqa: E402
+    VP_BIN_PCT,
+    VP_LOOKBACK,
+    compute_volume_profile,
+)
+
 DEFAULT_DATA_DIR = REPO / "data" / "newdata" / "data"
 DEFAULT_OUT_DIR = REPO / "drive" / "paul_experiments"
 
@@ -225,6 +235,8 @@ class SysParams:
     # lightweight exit for rough win-rate
     exit_bars: int = 20
     target_r: float = 2.0
+    # Default OFF. VP at signal_idx (not entry_idx). Missing profile → drop.
+    require_hvn_overlap: bool = False
 
 
 # Research freeze (NOT production gold). Matches NVDA-shaped hypothesis.
@@ -458,6 +470,42 @@ def build_zones(df: pd.DataFrame, lookback_days: int) -> list[Zone]:
 # ---------------------------------------------------------------------------
 def _bar_intersects(lo: float, hi: float, bar_lo: float, bar_hi: float) -> bool:
     return bar_lo <= hi and bar_hi >= lo
+
+
+def zone_overlaps_hvn_at_signal(
+    highs: np.ndarray,
+    lows: np.ndarray,
+    closes: np.ndarray,
+    volumes: np.ndarray,
+    zone: Zone,
+    signal_idx: int,
+    cache: dict[int, Optional[object]],
+) -> bool:
+    """True if HL/OC zone intersects HVN/POC bins at signal bar close.
+
+    Volume profile: 60 sessions ending at ``signal_idx`` inclusive (not fill bar).
+    Missing profile → False (drop), matching overlay miss.
+    """
+    si = int(signal_idx)
+    if si in cache:
+        prof = cache[si]
+    else:
+        if si < 0 or si >= len(closes):
+            prof = None
+        else:
+            prof = compute_volume_profile(
+                highs,
+                lows,
+                closes,
+                volumes,
+                si,
+                lookback=VP_LOOKBACK,
+                bin_pct=VP_BIN_PCT,
+            )
+        cache[si] = prof
+    if prof is None:
+        return False
+    return bool(prof.overlaps_hvn_or_poc(float(zone.lo), float(zone.hi)))
 
 
 def _approach(
@@ -702,7 +750,9 @@ def generate_signals(
     opens = df["Open"].to_numpy(dtype=np.float64)
     lows = df["Low"].to_numpy(dtype=np.float64)
     highs = df["High"].to_numpy(dtype=np.float64)
+    volumes = df["Volume"].to_numpy(dtype=np.float64)
     dates = df["Date"]
+    hvn_cache: dict[int, Optional[object]] = {}
 
     if params.require_hold_bars > 0:
         for j in range(1, params.require_hold_bars + 1):
@@ -752,6 +802,14 @@ def generate_signals(
 
         # Signal known only after bar ``i`` completes (needs Low/High/Close of ``i``).
         signal_idx = i
+        if params.require_hvn_overlap:
+            if not zone_overlaps_hvn_at_signal(
+                highs, lows, closes, volumes, zone, signal_idx, hvn_cache
+            ):
+                # first_retest_only: consume this visit (overlay-equivalent drop).
+                if params.first_retest_only:
+                    break
+                continue
         if params.entry_on == "next_open":
             if i + 1 >= len(df):
                 continue

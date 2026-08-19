@@ -10,7 +10,8 @@ Data sources:
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
-  - Latest SB/VZ_Watchlist_*.csv when no Scanner (StockBee / Volume Zone watchlist fallback)
+  - Latest SB_Watchlist_*.csv when no Scanner (StockBee watchlist fallback)
+  - VZ: VZ_last_run_ts.txt / VZ_LatestRun_Watchlist|Open (not max VZ_Watchlist_* stamp)
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
 """
 from __future__ import annotations
@@ -1774,9 +1775,44 @@ _PIPELINE_TS_RE = re.compile(
 )
 
 
-def _latest_run_timestamp(prefix: str, drive: Path) -> Optional[str]:
-    """Latest yyMMddHHmmss from Closed/Open/Watchlist/Pipeline (not Scanner alone)."""
+def _read_engine_last_run_ts(prefix: str, drive: Path) -> Optional[str]:
+    """12-digit yyMMddHHmmss from drive/{PREFIX}_last_run_ts.txt, if present."""
+    path = drive / f"{prefix.upper()}_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def _stamp_has_core(prefix: str, drive: Path, ts: str) -> bool:
     pfx = prefix.upper()
+    aliases = [pfx]
+    if pfx == "WPBR":
+        aliases.append("PBR")
+    kinds = ("Watchlist", "Open", "Closed", "Scanner")
+    for alias in aliases:
+        for kind in kinds:
+            if (drive / f"{alias}_{kind}_{ts}.csv").is_file():
+                return True
+    return False
+
+
+def _latest_run_timestamp(prefix: str, drive: Path) -> Optional[str]:
+    """Latest yyMMddHHmmss from Closed/Open/Watchlist/Pipeline (not Scanner alone).
+
+    VZ is pinned: Volume Zone research sleeves (ALL, experiments) also write
+    VZ_Watchlist_<stamp>.csv under drive/, so max(stamp) is not the public book.
+    Prefer drive/VZ_last_run_ts.txt when that stamp has core files.
+    """
+    pfx = prefix.upper()
+    if pfx == "VZ":
+        pinned = _read_engine_last_run_ts("VZ", drive)
+        if pinned and _stamp_has_core("VZ", drive, pinned):
+            return pinned
+        return None
     aliases = [pfx]
     if pfx == "WPBR":
         aliases.append("PBR")  # legacy outputs
@@ -1799,19 +1835,32 @@ def _scanner_for_latest_run(
     """
     Use scanner CSV only when the latest core run actually wrote one.
     Avoids stale scanner rows when the newest DailyRun had no candidates.
-    SB (StockBee) and VZ (Volume Zone) have no Scanner — fall back to Watchlist
-    for the same run stamp.
+    SB (StockBee) has no Scanner — fall back to Watchlist for the same run stamp.
+    VZ (Volume Zone) has no Scanner — Watchlist/Open for the pinned last-run stamp,
+    else VZ_LatestRun_Watchlist.csv / Open (not the newest VZ_Watchlist_* on disk).
     """
+    pfx = prefix.upper()
+    if pfx == "VZ":
+        run_ts = _latest_run_timestamp("VZ", drive)
+        candidates: list[Path] = []
+        if run_ts:
+            candidates.append(drive / f"VZ_Watchlist_{run_ts}.csv")
+            candidates.append(drive / f"VZ_Open_{run_ts}.csv")
+        candidates.append(drive / "VZ_LatestRun_Watchlist.csv")
+        candidates.append(drive / "VZ_LatestRun_Open.csv")
+        path = next((p for p in candidates if p.is_file()), None)
+        if path is None:
+            return None, pd.DataFrame(), run_ts
+        return path, pd.read_csv(path), run_ts
+
     run_ts = _latest_run_timestamp(prefix, drive)
     if not run_ts:
         return None, pd.DataFrame(), None
     candidates = [drive / f"{prefix}_Scanner_{run_ts}.csv"]
-    if prefix.upper() == "WPBR":
+    if pfx == "WPBR":
         candidates.append(drive / f"PBR_Scanner_{run_ts}.csv")
-    if prefix.upper() == "SB":
+    if pfx == "SB":
         candidates.append(drive / f"SB_Watchlist_{run_ts}.csv")
-    if prefix.upper() == "VZ":
-        candidates.append(drive / f"VZ_Watchlist_{run_ts}.csv")
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
         return None, pd.DataFrame(), run_ts
@@ -1825,12 +1874,16 @@ def _closed_avg_days_held_map(
     Mean DAYS_HELD from the Closed CSV for the same LatestRun stamp as the scanner.
     Keyed by uppercased SYMBOL. Empty when Closed is missing or has no usable days.
     """
-    if not run_ts:
-        return {}
     pfx = prefix.upper()
-    candidates = [drive / f"{pfx}_Closed_{run_ts}.csv"]
-    if pfx == "WPBR":
-        candidates.append(drive / f"PBR_Closed_{run_ts}.csv")
+    candidates: list[Path] = []
+    if run_ts:
+        candidates.append(drive / f"{pfx}_Closed_{run_ts}.csv")
+        if pfx == "WPBR":
+            candidates.append(drive / f"PBR_Closed_{run_ts}.csv")
+    if pfx == "VZ":
+        candidates.append(drive / "VZ_LatestRun_Closed.csv")
+    if not candidates:
+        return {}
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
         return {}
@@ -2826,14 +2879,17 @@ def build_report(
         else "No SB run outputs found in Drive."
     )
     vz_scan_sub = _scanner_subtitle(vz_scan_path, vz_run_ts, "VZ")
+    if vz_scan_path is not None and vz_run_ts is None:
+        vz_scan_sub = f"{vz_scan_path.name} (VZ_LatestRun alias; no VZ_last_run_ts.txt pin)"
     vz_section_title = (
         "Watchlist — VZ"
-        if vz_scan_path is not None and "Watchlist" in vz_scan_path.name
+        if vz_scan_path is not None
+        and ("Watchlist" in vz_scan_path.name or "Open" in vz_scan_path.name)
         else "Scanner — VZ"
     )
     vz_empty_msg = (
         "No VZ open/watchlist rows for the latest run (Open lists live still_open positions; Watchlist mirrors them)."
-        if vz_run_ts
+        if vz_run_ts or vz_scan_path is not None
         else "No VZ run outputs found in Drive."
     )
 

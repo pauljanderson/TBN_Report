@@ -47,6 +47,9 @@ COLORS = {
 RL_CASH = 47_500.0
 PORTFOLIO_CAPITAL = 500_000.0
 SPY_PATH = ROOT / "data" / "newdata" / "data" / "SPY.csv"
+# Standalone systems-chart overlay: first trading session on/after this date.
+# Allocation-scenario chart stays on the common overlap window (aligned $500k).
+SPY_ORIGIN = date(2010, 1, 1)
 
 
 @dataclass(frozen=True)
@@ -444,7 +447,7 @@ def _load_spy(start: date, end: date) -> tuple[pd.DataFrame, str, Path]:
     frame = frame[(frame["date"] >= start) & (frame["date"] <= end)]
     frame = frame.groupby("date", as_index=False)["price"].last().sort_values("date")
     if len(frame) < 2:
-        raise ValueError("SPY has insufficient observations in the common period")
+        raise ValueError(f"SPY has insufficient observations in {start}–{end}")
     initial = float(frame["price"].iloc[0])
     frame["equity"] = PORTFOLIO_CAPITAL * frame["price"] / initial
     frame["pnl"] = frame["equity"].diff().fillna(0.0)
@@ -576,6 +579,91 @@ def _ratio(value: float) -> str:
     return "∞" if math.isinf(value) else f"{value:.2f}"
 
 
+def _sortable_th(label: str, sort_type: str) -> str:
+    return (
+        f'<th class="sortable-th" data-sort="{sort_type}" tabindex="0" '
+        f'role="columnheader" aria-sort="none">{html.escape(label)}'
+        f'<span class="sort-ind"></span></th>'
+    )
+
+
+def _header_row(columns: list[tuple[str, str]]) -> str:
+    return "<tr>" + "".join(_sortable_th(label, sort_type) for label, sort_type in columns) + "</tr>"
+
+
+_SORTABLE_TABLE_SCRIPT = """
+<script>
+(function () {
+  var MONTHS = {
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12
+  };
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "month") {
+      var key = s.toLowerCase().split(/\\s/)[0];
+      return MONTHS[key] || 0;
+    }
+    if (type === "date") {
+      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      var mdy = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
+      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+"""
+
+
 def _metric_cells(m: dict[str, float]) -> str:
     win_loss = f"{int(m['wins'])}/{int(m['losses'])} ({_ratio(m['count_ratio'])}:1)"
     return "".join(
@@ -604,9 +692,18 @@ def _year_table(rows: list[dict[str, float]]) -> str:
             "</tr>"
         )
     return (
-        "<div class='table-wrap'><table><thead><tr><th>Year</th><th>Trades</th>"
-        "<th>Realized P&amp;L</th><th>Win rate</th><th>PF</th><th>Realized DD</th>"
-        "</tr></thead><tbody>" + "".join(body) + "</tbody></table></div>"
+        "<div class='table-wrap'><table class='sortable'><thead>"
+        + _header_row(
+            [
+                ("Year", "num"),
+                ("Trades", "num"),
+                ("Realized P&L", "num"),
+                ("Win rate", "num"),
+                ("PF", "num"),
+                ("Realized DD", "num"),
+            ]
+        )
+        + "</thead><tbody>" + "".join(body) + "</tbody></table></div>"
     )
 
 
@@ -692,10 +789,20 @@ def _system_section(
     return (
         f"<section id='{system.lower()}'><h2>{html.escape(label)}</h2>"
         f"<p class='muted'>Drawdown/equity basis: {html.escape(curve_label)}.</p>"
-        "<div class='table-wrap'><table class='summary'><thead><tr>"
-        "<th>Trades</th><th>Win rate</th><th>Avg profit</th><th>W/L count</th>"
-        "<th>W/L dollars</th><th>Avg days</th><th>Drawdown</th><th>Total profit</th>"
-        f"</tr></thead><tbody><tr>{_metric_cells(m)}</tr></tbody></table></div>"
+        "<div class='table-wrap'><table class='summary sortable'><thead>"
+        + _header_row(
+            [
+                ("Trades", "num"),
+                ("Win rate", "num"),
+                ("Avg profit", "num"),
+                ("W/L count", "text"),
+                ("W/L dollars", "num"),
+                ("Avg days", "num"),
+                ("Drawdown", "num"),
+                ("Total profit", "num"),
+            ]
+        )
+        + f"</thead><tbody><tr>{_metric_cells(m)}</tr></tbody></table></div>"
         + extra
         + _year_table(rows)
         + "</section>"
@@ -768,6 +875,10 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         allocation_dollars[name] = dollars
     scenario_curves = {name: _portfolio_curve(streams, w) for name, w in scenario_weights.items()}
     spy_curve, spy_label, spy_source = _load_spy(common_start, common_end)
+    spy_overlay, _, _ = _load_spy(SPY_ORIGIN, common_end)
+    spy_overlay_start = spy_overlay["date"].iloc[0]
+    spy_overlay_end = spy_overlay["date"].iloc[-1]
+    spy_overlay_stats = _curve_stats(spy_overlay, spy_overlay_start, spy_overlay_end)
     scenario_stats: dict[str, dict[str, float]] = {}
     for name, weights in scenario_weights.items():
         stats = _curve_stats(scenario_curves[name], common_start, common_end)
@@ -792,15 +903,15 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
             system_curve_labels[system] = "realized P&L by exit date"
 
     generated = datetime.now(ET)
+    # Allocation chart: aligned $500k series on the common overlap window.
+    # Systems chart: native equity starts; SPY overlay is 2010-origin (not retuned to first trade).
     benchmark_chart = _svg_line(
         {**scenario_curves, "SPY": spy_curve},
         f"$500,000 cumulative P&L · {common_start} to {common_end}",
     )
-    # Systems use native capital bases; SPY is $500k buy-and-hold over the same
-    # common window for a visual benchmark (fair $ comparison is the chart above).
     systems_chart = _svg_line(
-        {**system_curves, "SPY": spy_curve},
-        "Raw standalone cumulative P&L by system (+ SPY $500k)",
+        {**system_curves, "SPY": spy_overlay},
+        f"Raw standalone cumulative P&L by system (+ SPY $500k from {spy_overlay_start})",
     )
 
     scenario_rows = []
@@ -814,7 +925,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
             f"<td>{_money(stats['peak_usage'])}<br><span class='muted'>{_pct(stats['utilization'])}</span></td></tr>"
         )
     scenario_rows.append(
-        f"<tr><td>SPY</td><td>{_money(spy_stats['ending_equity'])}</td><td>{_pct(spy_stats['total_return'], sign=True)}</td>"
+        f"<tr class='total-row'><td>SPY ({common_start}–{common_end})</td><td>{_money(spy_stats['ending_equity'])}</td><td>{_pct(spy_stats['total_return'], sign=True)}</td>"
         f"<td>{_pct(spy_stats['cagr'], sign=True)}</td><td>{_money(spy_stats['max_dd'])}<br><span class='muted'>{_pct(spy_stats['max_dd_pct'])}</span></td>"
         f"<td>n/a</td><td>{_pct(spy_stats['volatility'])}</td><td>{spy_stats['sharpe']:.2f}</td>"
         f"<td>{int(spy_stats['worst_year_label'])}: {_pct(spy_stats['worst_year'], sign=True)}</td><td>100% invested</td></tr>"
@@ -857,6 +968,8 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         "allocation_dollars": allocation_dollars,
         "scenario_metrics": scenario_stats,
         "spy_metrics": spy_stats,
+        "spy_overlay_metrics": spy_overlay_stats,
+        "spy_overlay_period": {"start": spy_overlay_start, "end": spy_overlay_end},
         "spy_basis": spy_label,
         "sources": {k: str(v) for k, v in sources.items()},
     }
@@ -875,41 +988,44 @@ header .sub{{color:#cbd5e1}} nav{{margin-top:18px;display:flex;gap:9px;flex-wrap
 section{{padding:22px;margin:18px 0}} .chart{{padding:16px;margin:18px 0}} .chart-title{{font-size:16px;font-weight:700;margin:0 0 8px}} svg{{display:block;width:100%;height:auto}} .axis{{font-size:11px;fill:#64748b}}
 .legend{{display:flex;flex-wrap:wrap;gap:14px;margin:7px 8px 0}} .legend span{{color:var(--muted)}} .legend i{{display:inline-block;width:18px;height:3px;margin:0 5px 3px 0}}
 .table-wrap{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}} th{{background:#f1f5f9;color:#475569;font-size:11px;text-transform:uppercase}} th:first-child,td:first-child{{text-align:left}}
+th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable-th:hover{{background:#e2e8f0}} .sort-ind{{display:inline-block;width:0.9em;margin-left:4px;color:#94a3b8;font-size:10px}} th.sort-asc .sort-ind::after{{content:"▲";color:#334155}} th.sort-desc .sort-ind::after{{content:"▼";color:#334155}}
 .combined{{font-weight:700;background:#ecfdf5}} .pos{{color:#15803d;font-weight:650}} .neg{{color:#b91c1c;font-weight:650}} .detail-grid{{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin:16px 0}} .detail-grid div{{background:#f8fafc;border:1px solid var(--line);padding:10px;border-radius:9px}}
 .notice{{padding:13px 15px;border-radius:10px;margin:16px 0;background:#ecfeff;border:1px solid #a5f3fc}} .recommend{{background:#ecfdf5;border-color:#86efac}} details{{margin-top:12px}} footer{{color:var(--muted);font-size:12px;padding:20px 4px 36px}} a{{color:#0f766e}}
 @media(max-width:900px){{.cards{{grid-template-columns:repeat(2,1fr)}}.detail-grid{{grid-template-columns:repeat(2,1fr)}}.shell{{padding:12px}}}}
 </style></head><body><div class="shell">
 <header><h1>Historical System Performance</h1><div class="sub">$500,000 allocation model · generated {generated.strftime("%Y-%m-%d %H:%M %Z")}</div>
 <nav><a href="index.html">Scanner</a><a href="investment.html">Investment</a><a href="convergence.html">Convergence</a><a href="monthly.html">Monthly</a><a href="#allocation">Allocation</a><a href="#systems">Systems</a><a href="#method">Methodology</a></nav></header>
-<div class="notice"><strong>Common comparison period:</strong> {common_start} through {common_end}. Every portfolio sleeve and SPY uses exactly these endpoints. SPY uses {html.escape(spy_label)}.</div>
+<div class="notice"><strong>Common comparison period:</strong> {common_start} through {common_end}. Allocation sleeves and the SPY line on the $500k chart below use exactly these endpoints (aligned series). The standalone systems chart overlays SPY from {spy_overlay_start} (first session on/after {SPY_ORIGIN}). SPY uses {html.escape(spy_label)}.</div>
 <div class="cards">
 <div class="card"><span>Portfolio</span><strong>{_money(PORTFOLIO_CAPITAL)}</strong></div><div class="card"><span>Recommended ending equity</span><strong>{_money(rec['ending_equity'])}</strong></div>
 <div class="card"><span>Total return</span><strong>{_pct(rec['total_return'], sign=True)}</strong></div><div class="card"><span>CAGR</span><strong>{_pct(rec['cagr'], sign=True)}</strong></div>
 <div class="card"><span>Max drawdown</span><strong>{_pct(rec['max_dd_pct'])}</strong></div><div class="card"><span>SPY return</span><strong>{_pct(spy_stats['total_return'], sign=True)}</strong></div>
 </div>
 <section id="allocation"><h2>Allocation scenarios</h2>
-<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of full standalone accounts is not used as a portfolio result.</p>
-<div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Ending equity</th><th>Total return</th><th>CAGR</th><th>Max DD</th><th>PF</th><th>Ann. vol</th><th>Sharpe</th><th>Worst year</th><th>Peak usage</th></tr></thead><tbody>{''.join(scenario_rows)}</tbody></table></div>
+<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of full standalone accounts is not used as a portfolio result. Click column headers to sort.</p>
+<div class="table-wrap"><table class="sortable"><thead>{_header_row([("Scenario", "text"), ("Ending equity", "num"), ("Total return", "num"), ("CAGR", "num"), ("Max DD", "num"), ("PF", "num"), ("Ann. vol", "num"), ("Sharpe", "num"), ("Worst year", "text"), ("Peak usage", "num")])}</thead><tbody>{''.join(scenario_rows)}</tbody></table></div>
 <div class="chart">{benchmark_chart}</div>
-<h3>Dollar allocations</h3><div class="table-wrap"><table><thead><tr><th>System</th><th>Equal capital</th><th>Risk-balanced</th><th>Recommended</th><th>Standalone basis</th><th>Avg monthly corr.</th></tr></thead><tbody>{''.join(allocation_rows)}</tbody></table></div>
+<h3>Dollar allocations</h3><p class="muted">Click column headers to sort.</p><div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text"), ("Equal capital", "num"), ("Risk-balanced", "num"), ("Recommended", "num"), ("Standalone basis", "num"), ("Avg monthly corr.", "num")])}</thead><tbody>{''.join(allocation_rows)}</tbody></table></div>
 <div class="notice recommend"><strong>Recommendation:</strong> {', '.join(f"{s} {_pct(recommended[s] * 100)} ({_money(allocation_dollars['Recommended'][s])})" for s in ACTIVE_SYSTEMS)}. Rounded dollar targets sum to exactly $500,000. Start from inverse-drawdown risk balance, then apply modest diversification and profit-factor robustness adjustments. All sleeves remain within 10%–30%. Review annually and rebalance to target when a sleeve drifts by more than 5 percentage points.</div>
 <p class="muted">This recommendation is a backtest allocation model, not guaranteed performance or personalized financial advice.</p></section>
-<section id="systems"><h2>Raw standalone system results</h2><p>These retain each engine's native historical sizing and full available period. They are diagnostic standalone results—not amounts simultaneously investable with $500,000.</p>
-<div class="table-wrap"><table><thead><tr><th>System</th><th>Trades</th><th>Win rate</th><th>Avg profit</th><th>W/L count</th><th>W/L dollars</th><th>Avg days</th><th>Drawdown</th><th>Total profit</th></tr></thead><tbody>{''.join(summary_rows)}</tbody></table></div></section>
+<section id="systems"><h2>Raw standalone system results</h2><p>These retain each engine's native historical sizing and full available period. They are diagnostic standalone results—not amounts simultaneously investable with $500,000. Click column headers to sort.</p>
+<div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text"), ("Trades", "num"), ("Win rate", "num"), ("Avg profit", "num"), ("W/L count", "text"), ("W/L dollars", "num"), ("Avg days", "num"), ("Drawdown", "num"), ("Total profit", "num")])}</thead><tbody>{''.join(summary_rows)}</tbody></table></div></section>
 <div class="chart">{systems_chart}</div>
-<div class="notice"><strong>SPY on this chart:</strong> buy-and-hold equity starting at {_money(PORTFOLIO_CAPITAL)}, using {html.escape(spy_label)}, aligned to {common_start}–{common_end}. System lines keep their native capital bases (~{_money(min(bases.values()))}–{_money(max(bases.values()))}); for like-for-like $500k scaling see the allocation chart above.</div>
+<div class="notice"><strong>SPY on this chart:</strong> buy-and-hold equity starting at {_money(PORTFOLIO_CAPITAL)} on {spy_overlay_start} (requested origin {SPY_ORIGIN}; first available session), through {spy_overlay_end}, using {html.escape(spy_label)}. System lines keep their native capital bases (~{_money(min(bases.values()))}–{_money(max(bases.values()))}) and native start dates; they are not truncated to 2010. For like-for-like $500k scaling over {common_start}–{common_end}, see the allocation chart above.</div>
 {sections}
 <section id="method"><h2>Methodology &amp; caveats</h2><ul>
 <li><strong>Capital basis:</strong> position notional is inferred as |dollar P&amp;L ÷ percentage P&amp;L|; RL uses its native $47,500 sizing. Each denominator is that system's observed peak overlapping gross notional. Scaling allocation ÷ basis preserves trade economics and proportionally reduces all simultaneous positions when a sleeve is smaller than its standalone basis.</li>
-<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(ACTIVE_SYSTEMS)}. Only trades opened and closed inside it are used. SPY is aligned to available trading sessions inside those same dates.</li>
-<li><strong>Benchmark:</strong> local <code>{html.escape(str(spy_source.relative_to(ROOT)))}</code>, using {html.escape(spy_label)}. SPY equity is normalized to the same $500,000.</li>
+<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(ACTIVE_SYSTEMS)}. Only trades opened and closed inside it are used. The $500k allocation chart is a single aligned series: sleeves and SPY on that chart share {common_start}–{common_end}.</li>
+<li><strong>Benchmark:</strong> local <code>{html.escape(str(spy_source.relative_to(ROOT)))}</code>, using {html.escape(spy_label)}. SPY equity is normalized to the same $500,000. On the standalone systems chart, SPY starts at the first trading session on/after {SPY_ORIGIN} (actual {spy_overlay_start}) and is not shifted to a system's first trade. System equity curves keep their native starts even when they begin before or after 2010.</li>
 <li><strong>Risk-balanced:</strong> inverse realized drawdown by sleeve in the common period, constrained to 10% minimum and 30% maximum. <strong>Recommended:</strong> 55% risk-balance anchor, 25% low-correlation diversification, and 20% capped PF robustness; the same guardrails apply.</li>
 <li><strong>Drawdown/volatility limitation:</strong> portfolio P&amp;L is recorded on trade exit dates because compatible mark-to-market curves are not available for every sleeve over the common period. This can materially understate intratrade drawdown and makes volatility/Sharpe lumpy; Sharpe is descriptive, zero risk-free rate, and not a forecast.</li>
 <li><strong>Concurrency:</strong> peak usage sums scaled inferred notionals across overlapping positions. No borrowing is assumed; proportional sleeve scaling is the transparent capacity rule. Real execution, liquidity, taxes, fees, slippage, and cross-system duplicate-symbol constraints are not modeled.</li>
 <li><strong>PF:</strong> scenario PF is gross scaled winning P&amp;L divided by gross scaled losing P&amp;L and is included only as a trade-level descriptive statistic. Annual rebalancing is an operating convention, not dynamically simulated in the curve.</li>
 </ul><details><summary>Exact sources and capital bases</summary><ul>{''.join(source_items)}<li><strong>SPY:</strong> {html.escape(str(spy_source))}</li></ul></details></section>
 <footer>Generated from local LatestRun backtest exports. Historical backtests are not guarantees of future performance.</footer>
-<script type="application/json" id="report-data">{payload_json}</script></div></body></html>"""
+<script type="application/json" id="report-data">{payload_json}</script>
+{_SORTABLE_TABLE_SCRIPT}
+</div></body></html>"""
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report, encoding="utf-8")
@@ -934,6 +1050,8 @@ def main() -> int:
         f"[performance] Common period: {payload['common_period']['start']} "
         f"to {payload['common_period']['end']}"
     )
+    overlay = payload["spy_overlay_period"]
+    print(f"[performance] SPY overlay: {overlay['start']} to {overlay['end']}")
     return 0
 
 

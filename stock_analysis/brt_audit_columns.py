@@ -119,6 +119,7 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "vz_target_r",
     "vz_stop_atr_buffer",
     "vz_min_atr_pct_at_entry",
+    "vz_require_hvn_overlap",
     "vz_sheet_notional",
     "wrl_mode",
     "wrl_target_mode",
@@ -641,6 +642,7 @@ _VZ_AUDIT_LEVER_COLS: tuple[str, ...] = (
     "vz_target_r",
     "vz_stop_atr_buffer",
     "vz_min_atr_pct_at_entry",
+    "vz_require_hvn_overlap",
     "vz_sheet_notional",
 )
 

@@ -184,6 +184,7 @@ class VzProfile:
     retest_eps_pct: float = 0.005
     entry_on: str = "next_open"
     min_touches_before_entry: int = 1
+    require_hvn_overlap: bool = False
 
 
 @dataclass
@@ -867,6 +868,7 @@ def compute_vz_system(
         zone_kinds=("HL",),
         exit_bars=int(profile.exit_bars),
         target_r=float(profile.target_r),
+        require_hvn_overlap=bool(getattr(profile, "require_hvn_overlap", False)),
     )
     atr = atr14(df_vz)
     zones = build_zones(df_vz, int(params.lookback_days))
@@ -1322,6 +1324,11 @@ def main() -> None:
     )
     parser.add_argument("--vz-min-touches", type=int, default=1)
     parser.add_argument(
+        "--vz-require-hvn-overlap",
+        default="false",
+        help="VZ: require zone ∩ HVN/POC at signal bar (default false).",
+    )
+    parser.add_argument(
         "--per-symbol-settings",
         default="",
         help="Per-symbol optimized params JSON (default: PER_SYMBOL_SETTINGS env or "
@@ -1399,12 +1406,15 @@ def main() -> None:
         retest_eps_pct=float(args.vz_retest_eps_pct),
         entry_on=str(args.vz_entry_on),
         min_touches_before_entry=int(args.vz_min_touches),
+        require_hvn_overlap=str(args.vz_require_hvn_overlap).strip().lower()
+        in ("1", "true", "yes", "on"),
     )
     print(
         f"[INFO] VZ using zone stop/target "
         f"(exit={vz_profile.exit_name}, stop=zone.lo-{vz_profile.stop_atr_buffer}*ATR, "
         f"target={vz_profile.target_r}R, ts={vz_profile.exit_bars}d, "
-        f"entry_on={vz_profile.entry_on}, rw={vz_profile.retest_window})."
+        f"entry_on={vz_profile.entry_on}, rw={vz_profile.retest_window}, "
+        f"hvn={vz_profile.require_hvn_overlap})."
     )
 
     def _pct(
