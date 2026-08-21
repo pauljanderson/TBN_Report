@@ -106,18 +106,18 @@
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
   <header class="doc-head">
-    <p class="eyebrow">Parked · Minervini Volatility Contraction Pattern (VCP)</p>
+    <p class="eyebrow">Retired · Minervini Volatility Contraction Pattern (VCP)</p>
     <h1>MVCP — Minervini VCP</h1>
-    <p class="lede"><strong>MVCP</strong> (Minervini Volatility Contraction Pattern) is a Specific Entry Point Analysis (SEPA) Stage-2 pivot-breakout sleeve. The engine is kept; the sleeve is parked from DailyRun and active $500k allocation as of 2026-08-12.</p>
-    <div class="badge badge-warn">Parked from live sleeve (2026-08-12)</div>
-    <div class="meta-row"><span>Mode <code>mvcp_mode=true</code></span><span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></span><span>Prefix <code>MVCP_*</code></span><span>Module <span class='path'>stock_analysis/rocket_minervini_vcp.py</span></span></div>
+    <p class="lede"><strong>MVCP</strong> (Minervini Volatility Contraction Pattern) is a Specific Entry Point Analysis (SEPA) Stage-2 pivot-breakout sleeve. <strong>Retired 2026-08-21</strong> from DailyRun and active reporting (monthly / investment / system-performance). Engine and historical Closed stamps are kept for research.</p>
+    <div class="badge badge-muted">Retired from DailyRun (2026-08-21)</div>
+    <div class="meta-row"><span>Mode <code>mvcp_mode=true</code></span><span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone only)</span><span>Prefix <code>MVCP_*</code></span><span>Module <span class='path'>stock_analysis/rocket_minervini_vcp.py</span></span></div>
   </header>
 
 <div class="callout warn">
-  <strong>What parked means:</strong> out of DailyRun by default (<code>SKIP_MVCP=1</code>; opt-in
-  <code>SKIP_MVCP=0</code>); out of monthly / investment / system-performance active lists;
-  reconcile gate MVCP <code>enabled: false</code>. Engine kept for research.
-  Source of truth: <span class="path">drive/paul_experiments/PARK.md</span>.
+  <strong>Retired:</strong> no DailyRun step (prior <code>SKIP_MVCP</code> opt-in removed);
+  omitted from monthly / investment / system-performance active lists;
+  reconcile gate MVCP <code>enabled: false</code>. Standalone research runners kept.
+  Do not re-wire without a new promotion bar.
 </div>
 
 <h2>1. What it is</h2>
@@ -153,23 +153,22 @@
 <h2>4. Levers</h2>
 <div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>mvcp_rs_min_percentile</code></td><td>Min RS percentile vs universe</td><td><strong>80</strong></td><td>Higher → fewer, stronger RS names</td></tr><tr><td><code>mvcp_depth_shrink</code></td><td>Each contraction vs prior depth</td><td><strong>0.65</strong></td><td>Lower → stricter coil</td></tr><tr><td><code>mvcp_vol_breakout_mult</code></td><td>Breakout volume vs average</td><td><strong>1.5</strong></td><td>Higher → fewer Stage-2 fills</td></tr><tr><td><code>mvcp_max_extension_above_pivot</code></td><td>Max chase above pivot</td><td><strong>0.05</strong></td><td>Lower → reject extended breaks</td></tr><tr><td><code>stop_pct</code> (<code>MVCP_STOP</code>)</td><td>Stop multiplier</td><td><strong>0.92</strong></td><td>Lower multiplier = wider stop</td></tr><tr><td><code>target_pct</code> (<code>MVCP_TARGET</code>)</td><td>Take-profit vs entry</td><td><strong>1.25</strong></td><td>Higher → fewer TARGET hits</td></tr><tr><td><code>mvcp_time_stop_bars</code></td><td>Hard/time exit</td><td><strong>10</strong></td><td>Shorter → faster recycle</td></tr><tr><td><code>mvcp_trail_arm_pct</code></td><td>Gain before SMA trail arms</td><td><strong>0.10</strong></td><td>Higher → trail starts later</td></tr><tr><td><code>symbol_reentry_cooldown_days</code></td><td>Re-arm delay</td><td><strong>20</strong></td><td>Higher → fewer re-entries</td></tr></tbody></table></div>
 <h2>5. Universe / status</h2>
-<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Parked</strong> — research only; DailyRun skip unless SKIP_MVCP=0</td></tr><tr><td>Runner</td><td><code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></td></tr><tr><td>Universe</td><td><code>drive/universes/MVCP_universe.csv</code> (default * = full scan)</td></tr><tr><td>Sizing</td><td>Host: 500k × 2 × 0.6 = 600k deployable; <code>MVCP_MAX_POSITIONS=0</code> auto peak concurrent</td></tr><tr><td>Park evidence</td><td><span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span></td></tr></tbody></table></div>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Retired</strong> — not in DailyRun; omitted from active reports (2026-08-21)</td></tr><tr><td>Runner</td><td><code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone / research)</td></tr><tr><td>Universe</td><td><code>drive/universes/MVCP_universe.csv</code> (default * = full scan)</td></tr><tr><td>Sizing</td><td>Host: 500k × 2 × 0.6 = 600k deployable; <code>MVCP_MAX_POSITIONS=0</code> auto peak concurrent</td></tr><tr><td>Park / retire evidence</td><td><span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span></td></tr></tbody></table></div>
 <h2>6. Caveats / do not</h2>
 <ul>
-  <li>Do not retune on out-of-sample (OOS) to “fix” the park.</li>
+  <li>Do not retune on out-of-sample (OOS) to “un-retire” the sleeve.</li>
   <li>Do not re-wire DailyRun without a new failure-mode hypothesis and promotion bar.</li>
-  <li>Park is process, not a silent deletion of the engine.</li>
+  <li>Retirement is process — historical <code>MVCP_*</code> Closed/Open stamps stay on Drive.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/PARK.md</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/HOW_TO_RUN.html</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/10_theory.md</span></li>
   <li><span class="path">stock_analysis/rocket_minervini_vcp.py</span></li>
 </ul>
 
-  <footer>Canonical MVCP write-up · Twin Beacon Networks (TBN) · PARK.md is status SSoT</footer>
+  <footer>Canonical MVCP write-up · Twin Beacon Networks (TBN) · retired sleeve</footer>
 </div>
 
 <script>

@@ -13,7 +13,8 @@ backtest; charts/deep HTML are **not** part of DailyRun.
 | **RL** / DB | Rocket Launcher (dip-buy) | SMA20/50/100/200 + dip band + IN/OUT/stop |
 | **BRT** / WPBR / YH / VEC / PBR | Zone systems | Close + SMA50 + zone bands from Closed `ZONE_CENTER` + IN/OUT/stop |
 | **IND** / MTS / RS / ADX | Other | Close + SMA50 + IN/OUT/stop |
-| **SB** / **MVCP** | StockBee / Minervini VCP (standalone writers) | Close + SMA50 + IN/OUT/stop |
+| **SB** | StockBee (standalone writer) | Close + SMA50 + IN/OUT/stop |
+| **MVCP** (retired) | Minervini VCP — not DailyRun; historical stamps only | Close + SMA50 + IN/OUT/stop |
 
 Auto-detect: scan `drive/{PREFIX}_Closed_{stamp}.csv`, or pass `--system` / `--closed`.
 
