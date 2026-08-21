@@ -125,6 +125,8 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "wrl_target_mode",
     "wrl_scale_frac",
     "wrl_min_zone_pct",
+    "wrl_min_rr",
+    "wrl_min_rr_target",
     "wrl_time_stop_bars",
     "rl_mode",
     "rl_sma_qual",
@@ -652,6 +654,8 @@ _WRL_AUDIT_LEVER_COLS: tuple[str, ...] = (
     "wrl_target_mode",
     "wrl_scale_frac",
     "wrl_min_zone_pct",
+    "wrl_min_rr",
+    "wrl_min_rr_target",
     "wrl_time_stop_bars",
 )
 

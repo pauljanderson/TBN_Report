@@ -167,6 +167,35 @@ def test_backtest_watch_then_buy_scale() -> None:
     assert abs(t.exit_price - 105.5) < 1e-6
     assert t.exit_type in ("TARGET2", "GAP_UP")
     assert t.pnl_pct > 0
+    assert abs(t.rr_t1 - 1.0) < 1e-6  # (100-90) / (90-80)
+    assert abs(t.rr_t2 - 2.0) < 1e-6  # (110-90) / (90-80)
+
+
+def test_min_rr_range_blocks_1r_t1() -> None:
+    """Synth T1 is 1R; requiring 2R vs range high skips the fill."""
+    df = _synth_breakout_df()
+    closed, _, _, _ = backtest_symbol(
+        "TEST", df, WrlConfig(wrl_min_rr=2.0, wrl_min_rr_target="range")
+    )
+    assert closed == []
+
+
+def test_min_rr_swing_allows_exact_2r_t2() -> None:
+    """Synth T2 is exactly 2R; swing gate at 2.0 still takes the trade."""
+    df = _synth_breakout_df()
+    closed, _, _, _ = backtest_symbol(
+        "TEST", df, WrlConfig(wrl_min_rr=2.0, wrl_min_rr_target="swing")
+    )
+    assert len(closed) == 1
+    assert abs(closed[0].rr_t2 - 2.0) < 1e-6
+
+
+def test_min_rr_swing_blocks_above_2r() -> None:
+    df = _synth_breakout_df()
+    closed, _, _, _ = backtest_symbol(
+        "TEST", df, WrlConfig(wrl_min_rr=2.01, wrl_min_rr_target="swing")
+    )
+    assert closed == []
 
 
 def test_backtest_range_target_only() -> None:
@@ -342,6 +371,8 @@ def test_wrl_write_audit_report_has_optimizer_columns() -> None:
             "Max_DD",
             "wrl_mode",
             "wrl_target_mode",
+            "wrl_min_rr",
+            "wrl_min_rr_target",
         ):
             assert col in header, f"missing {col}"
         assert "true" in text.splitlines()[1] or "True" in text.splitlines()[1]
@@ -354,6 +385,9 @@ if __name__ == "__main__":
         test_daily_maps_to_completed_week_not_in_progress,
         test_watch_and_breakout_helpers,
         test_backtest_watch_then_buy_scale,
+        test_min_rr_range_blocks_1r_t1,
+        test_min_rr_swing_allows_exact_2r_t2,
+        test_min_rr_swing_blocks_above_2r,
         test_backtest_range_target_only,
         test_end_of_series_watch,
         test_aggregate_weekly_used,
