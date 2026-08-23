@@ -590,7 +590,7 @@ def write_scanner_open_csv(rows: list[ScannerOpenRow], path: Path, *, session_da
 def _fmt_price(v: Optional[float]) -> str:
     if v is None:
         return "—"
-    return f"{v:.4f}"
+    return f"{v:.2f}"
 
 
 def _html_table(headers: list[str], table_rows: list[list[str]]) -> str:

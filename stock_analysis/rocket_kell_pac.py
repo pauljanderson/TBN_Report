@@ -514,6 +514,7 @@ def write_outputs(
         "PCT_WINS",
         "TOTAL_PNL",
         "AVG_PNL_PCT",
+        "PROFIT_FACTOR",
         "AVG_DAYS_HELD",
     ]
     sum_rows: list[list[str]] = []
@@ -523,6 +524,9 @@ def write_outputs(
         avg_pct = sum(x.pnl_pct for x in rows) / len(rows) if rows else 0.0
         avg_days = sum(x.days_held for x in rows) / len(rows) if rows else 0.0
         tot = sum(x.pnl_dollars for x in rows)
+        sum_wins = sum(x.pnl_dollars for x in rows if x.pnl_pct > 0)
+        sum_losses = abs(sum(x.pnl_dollars for x in rows if x.pnl_pct < 0))
+        pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
         sum_rows.append(
             [
                 sym,
@@ -532,6 +536,7 @@ def write_outputs(
                 f"{(100.0 * wins / len(rows)) if rows else 0.0:.2f}",
                 f"{tot:.2f}",
                 f"{avg_pct * 100.0:.4f}",
+                f"{pf:.2f}",
                 f"{avg_days:.2f}",
             ]
         )

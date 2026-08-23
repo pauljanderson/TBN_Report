@@ -697,7 +697,7 @@ def brt() -> str:
   <li><strong>Pivots:</strong> local high/low in a ±k window with future confirmation (drop/rally). Sheet-touch Final Pivot High also requires post-drop and not-also-pivot-low. Consecutive same-price Final PHs are allowed (PO 2026-07-20).</li>
   <li><strong>Zone band:</strong> touch price × (1 ± <code>band_pct</code>). Prod <strong>0.0154</strong>. Overlapping bands are <em>not</em> merged.</li>
   <li><strong>Maturity:</strong> touch count in <code>lookback_long</code> reaches <code>touch_threshold</code> (sheet <strong>2</strong>).</li>
-  <li><strong>Strong-pivot filter:</strong> prod pre 7 bars / 8.1%, post 7 / 10.8% (bat sets the percents; spec default mode is pre).</li>
+  <li><strong>Strong-pivot filter:</strong> prod pre 7 bars / 10%, post 7 / 10% (bat sets the percents; prior house was 8.1% / 10.8%; spec default mode is pre).</li>
   <li><strong>Tight range:</strong> (max high / min low − 1) over 105 bars must be &gt; 35% or the level is blocked (dead-range qualifier).</li>
   <li><strong>Level acceptance (7/10):</strong> at least 7 of the last 10 bars close above the anchored zone lower, tied to Support Test when enabled.</li>
   <li><strong>Bullish candle window:</strong> Close &gt; Open on the maturity bar <em>or</em> the next bar only. Fill = next session open after that candle.</li>
@@ -724,8 +724,8 @@ def brt() -> str:
             ("<code>band_pct</code>", "Zone half-width around touch price", "<strong>0.0154</strong>", "Wider → more overlapping/mature zones"),
             ("<code>stop_pct</code>", "Stop multiplier", "<strong>0.934</strong>", "Lower multiplier = wider stop"),
             ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.21</strong>", "Higher → fewer TARGET hits"),
-            ("<code>strong_pre_pivot_pct</code> / bars", "Pre-pivot thrust", "<strong>0.081 / 7</strong>", "Higher % → fewer “strong” pivots"),
-            ("<code>strong_post_pivot_pct</code> / bars", "Post-pivot follow-through", "<strong>0.108 / 7</strong>", "Higher % → stricter confirmation"),
+            ("<code>strong_pre_pivot_pct</code> / bars", "Pre-pivot thrust", "<strong>0.1 / 7</strong>", "Higher % → fewer “strong” pivots"),
+            ("<code>strong_post_pivot_pct</code> / bars", "Post-pivot follow-through", "<strong>0.1 / 7</strong>", "Higher % → stricter confirmation"),
             ("<code>breakout_bars</code>", "Breakout lookback", "<strong>100</strong>", "Sheet C-cell analog"),
             ("<code>tight_range_threshold_pct</code> / lookback", "Dead-range block", "<strong>0.35 / 105</strong>", "Higher threshold → more blocks"),
             ("<code>brt_sheet_touch</code>", "Sheet Final-PH touch stream", "<strong>true</strong>", "Off → engine pivot-only stream"),
@@ -940,7 +940,7 @@ def mts() -> str:
             ("<code>band_pct</code>", "Zone half-width (C5 analog; bat override)", "<strong>0.018</strong> (optimizer was 0.016)", "Wider → more ladder overlaps / first touches"),
             ("<code>touch_threshold</code>", "Touches to mature (C6)", "<strong>2</strong>", "Higher → fewer matured zones"),
             ("<code>strong_pre_pivot_*</code>", "Pre-pivot thrust", "<strong>7 / 0.12</strong>", "Sheet C-cell analog"),
-            ("<code>strong_post_pivot_*</code>", "Post-pivot follow-through", "<strong>7 / 0.06</strong>", "Looser post than BRT’s 0.108"),
+            ("<code>strong_post_pivot_*</code>", "Post-pivot follow-through", "<strong>7 / 0.06</strong>", "Looser post than BRT’s 0.1"),
             ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.22</strong>", "Sheet C3 / +22% cap language in overrides"),
             ("<code>stop_pct</code> + <code>stop_loss_based</code>", "Stop vs signal-bar low", "<strong>0.934 / trigger_low</strong>", "Do not switch to entry-anchored without a new freeze"),
             ("<code>symbol_reentry_cooldown_days</code>", "Re-arm delay after exit", "<strong>20</strong>", "Higher → fewer re-entries"),
@@ -1250,26 +1250,26 @@ def wrl() -> str:
 def mvcp() -> str:
     return page(
         title="MVCP — Minervini VCP",
-        eyebrow="Parked · Minervini Volatility Contraction Pattern (VCP)",
+        eyebrow="Retired · Minervini Volatility Contraction Pattern (VCP)",
         lede=(
             "<strong>MVCP</strong> (Minervini Volatility Contraction Pattern) is a Specific Entry Point Analysis (SEPA) "
-            "Stage-2 pivot-breakout sleeve. The engine is kept; the sleeve is parked from DailyRun and "
-            "active $500k allocation as of 2026-08-12."
+            "Stage-2 pivot-breakout sleeve. <strong>Retired 2026-08-21</strong> from DailyRun and active reporting "
+            "(monthly / investment / system-performance). Engine and historical Closed stamps are kept for research."
         ),
-        badge_class="badge-warn",
-        badge_text="Parked from live sleeve (2026-08-12)",
+        badge_class="badge-muted",
+        badge_text="Retired from DailyRun (2026-08-21)",
         meta=(
             "<span>Mode <code>mvcp_mode=true</code></span>"
-            "<span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></span>"
+            "<span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone only)</span>"
             "<span>Prefix <code>MVCP_*</code></span>"
             "<span>Module <span class='path'>stock_analysis/rocket_minervini_vcp.py</span></span>"
         ),
         body="""
 <div class="callout warn">
-  <strong>What parked means:</strong> out of DailyRun by default (<code>SKIP_MVCP=1</code>; opt-in
-  <code>SKIP_MVCP=0</code>); out of monthly / investment / system-performance active lists;
-  reconcile gate MVCP <code>enabled: false</code>. Engine kept for research.
-  Source of truth: <span class="path">drive/paul_experiments/PARK.md</span>.
+  <strong>Retired:</strong> no DailyRun step (prior <code>SKIP_MVCP</code> opt-in removed);
+  omitted from monthly / investment / system-performance active lists;
+  reconcile gate MVCP <code>enabled: false</code>. Standalone research runners kept.
+  Do not re-wire without a new promotion bar.
 </div>
 
 <h2>1. What it is</h2>
@@ -1319,29 +1319,28 @@ def mvcp() -> str:
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Parked</strong> — research only; DailyRun skip unless SKIP_MVCP=0"),
-            ("Runner", "<code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code>"),
+            ("Status", "<strong>Retired</strong> — not in DailyRun; omitted from active reports (2026-08-21)"),
+            ("Runner", "<code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone / research)"),
             ("Universe", "<code>drive/universes/MVCP_universe.csv</code> (default * = full scan)"),
             ("Sizing", "Host: 500k × 2 × 0.6 = 600k deployable; <code>MVCP_MAX_POSITIONS=0</code> auto peak concurrent"),
-            ("Park evidence", "<span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span>"),
+            ("Park / retire evidence", "<span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span>"),
         ])
         + """
 <h2>6. Caveats / do not</h2>
 <ul>
-  <li>Do not retune on out-of-sample (OOS) to “fix” the park.</li>
+  <li>Do not retune on out-of-sample (OOS) to “un-retire” the sleeve.</li>
   <li>Do not re-wire DailyRun without a new failure-mode hypothesis and promotion bar.</li>
-  <li>Park is process, not a silent deletion of the engine.</li>
+  <li>Retirement is process — historical <code>MVCP_*</code> Closed/Open stamps stay on Drive.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/PARK.md</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/HOW_TO_RUN.html</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/10_theory.md</span></li>
   <li><span class="path">stock_analysis/rocket_minervini_vcp.py</span></li>
 </ul>
 """,
-        footer="Canonical MVCP write-up · Twin Beacon Networks (TBN) · PARK.md is status SSoT",
+        footer="Canonical MVCP write-up · Twin Beacon Networks (TBN) · retired sleeve",
     )
 
 
@@ -1459,7 +1458,7 @@ INDEX_CARDS = [
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
     ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
     ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
-    ("mvcp.html", "parked", "Parked", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12)."),
+    ("mvcp.html", "retired", "Retired", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21)."),
     ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),
 ]
 
@@ -1492,7 +1491,7 @@ def systems_index() -> str:
   }}
   a.card .tag.gold {{ color: var(--ok); }}
   a.card .tag.research {{ color: var(--warn); }}
-  a.card .tag.parked, a.card .tag.deprecated {{ color: var(--muted); }}
+  a.card .tag.parked, a.card .tag.deprecated, a.card .tag.retired {{ color: var(--muted); }}
   a.card strong {{ display: block; font-size: 1.02rem; margin-bottom: 4px; }}
   a.card span.blurb {{ display: block; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }}
 </style>

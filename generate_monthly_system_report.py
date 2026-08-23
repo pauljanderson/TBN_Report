@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / MVCP / VZ).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / VZ).
 
-Uses paper-trading outputs from the latest engine runs:
-  Drive/{BRT,IND,YH,MTS,WPBR,RS,SB,MVCP,VZ}_LatestRun_Closed.csv / _Open.csv
-  Drive/BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv (newest RL mirror)
+Uses paper-trading Closed/Open CSVs pinned to production stamps (same policy as investment.html):
+  - BRT / IND / YH / MTS / WPBR / RS / SB: max stamped Closed/Open on Drive (DailyRun production)
+  - VZ: DualPaul78 house only — VZ_house_last_run_ts.txt / house-sized Summary (never ALL / research)
+  - WRL: {PREFIX}_last_run_ts.txt when present, else LatestRun
+  - RL: newest BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv mirror (not RL_LatestRun)
+  - MVCP: retired 2026-08-21 — omitted from this report (historical Closed stamps retained on Drive)
+
+Falls back to {SYS}_LatestRun_Closed.csv / _Open.csv when no pin resolves.
 
 Writes:
   Drive/Monthly_System_Report_<stamp>.html
@@ -27,7 +32,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL")
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL")
 
 try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
@@ -41,7 +46,7 @@ except Exception:
 
         def _normalize_exit_type(exit_type: str | None) -> str:
             return (exit_type or "").strip().upper()
-SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "MVCP": "MVCP", "VZ": "VZ", "WRL": "WRL"}
+SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "VZ": "VZ", "WRL": "WRL"}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -141,8 +146,8 @@ def _fmt_money(v: float) -> str:
     return f"{sign}${abs(v):,.0f}"
 
 
-def _fmt_money_plain(v: float) -> str:
-    return f"${v:,.0f}"
+def _fmt_price(v: float) -> str:
+    return f"${v:,.2f}"
 
 
 def _fmt_pct(v: float) -> str:
@@ -156,6 +161,52 @@ def _pnl_class(v: float) -> str:
     if v < 0:
         return "neg"
     return ""
+
+
+def _read_engine_last_run_ts(prefix: str, drive: Path) -> Optional[str]:
+    """12-digit yyMMddHHmmss from drive/{PREFIX}_last_run_ts.txt, if present."""
+    path = drive / f"{prefix.upper()}_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def _production_run_stamp(prefix: str, drive: Path) -> Optional[str]:
+    """Production/house stamp per system — mirrors generate_investment_report._latest_run_timestamp."""
+    pfx = prefix.upper()
+    if pfx == "RL":
+        return None
+    try:
+        from generate_investment_report import _latest_run_timestamp
+
+        ts = _latest_run_timestamp(pfx, drive)
+        if ts:
+            return ts
+    except Exception:
+        pass
+    return _read_engine_last_run_ts(pfx, drive)
+
+
+def _stamped_paths(prefix: str, drive: Path, ts: str) -> tuple[Optional[Path], Optional[Path]]:
+    aliases = [prefix.upper()]
+    if prefix.upper() == "WPBR":
+        aliases.append("PBR")
+    closed: Optional[Path] = None
+    open_p: Optional[Path] = None
+    for alias in aliases:
+        c = drive / f"{alias}_Closed_{ts}.csv"
+        o = drive / f"{alias}_Open_{ts}.csv"
+        if c.is_file():
+            closed = c
+        if o.is_file():
+            open_p = o
+        if closed is not None:
+            break
+    return closed, open_p
 
 
 def _newest_rl_mirror_paths(drive: Path) -> tuple[Optional[Path], Optional[Path]]:
@@ -179,13 +230,19 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL"):
-        closed = drive / f"{sys}_LatestRun_Closed.csv"
-        open_p = drive / f"{sys}_LatestRun_Open.csv"
-        if sys == "WPBR" and not closed.is_file():
-            # Legacy copy-latest / outputs before PBR→WPBR rename
-            closed = drive / "PBR_LatestRun_Closed.csv"
-            open_p = drive / "PBR_LatestRun_Open.csv"
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL"):
+        closed: Optional[Path] = None
+        open_p: Optional[Path] = None
+        run_ts = _production_run_stamp(sys, drive)
+        if run_ts:
+            closed, open_p = _stamped_paths(sys, drive, run_ts)
+        if closed is None:
+            closed = drive / f"{sys}_LatestRun_Closed.csv"
+            open_p = drive / f"{sys}_LatestRun_Open.csv"
+            if sys == "WPBR" and not closed.is_file():
+                # Legacy copy-latest / outputs before PBR→WPBR rename
+                closed = drive / "PBR_LatestRun_Closed.csv"
+                open_p = drive / "PBR_LatestRun_Open.csv"
         paths[sys]["closed"] = closed if closed.is_file() else None
         paths[sys]["open"] = open_p if open_p.is_file() else None
 
@@ -492,8 +549,8 @@ def _open_table(trades: list[TradeRow]) -> str:
             "<tr>"
             f"<td>{html_mod.escape(t.symbol)}</td>"
             f"<td>{t.date_opened.strftime('%Y-%m-%d')}</td>"
-            f"<td>{_fmt_money_plain(t.entry_price)}</td>"
-            f"<td>{_fmt_money_plain(t.exit_price or 0.0)}</td>"
+            f"<td>{_fmt_price(t.entry_price)}</td>"
+            f"<td>{_fmt_price(t.exit_price or 0.0)}</td>"
             f"<td>{t.days_held}</td>"
             f"<td class=\"{_pnl_class(t.pnl_pct)}\">{_fmt_pct(t.pnl_pct)}</td>"
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"

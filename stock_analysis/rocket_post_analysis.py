@@ -6,9 +6,10 @@ Cheap enrichments (DailyRun-safe):
     same names as BRT/YH/RS ``write_brt_summary``)
   - Summary ``AVG_DAYS_HELD`` (mean Closed ``DAYS_HELD`` per symbol; aligns with
     Report/Audit ``Avg_Days_Held``)
+  - Summary ``PROFIT_FACTOR`` (per-symbol gross win $ / |gross loss $|)
   - Summary ``FIT`` / ``FIT_SCORE`` / ``FIT_SCORE_ROBUST`` / outlier cols /
     ``FIT_ASSESSMENT`` (plus ``RL_FIT`` for RL); ``PAUL_SCORE`` (0–8 peer
-    thresholds vs run mean/median) / ``PAUL_SCORE``
+    thresholds vs run **mean** only — median is not used)
   - ``{prefix}_ImproveHints_<ts>.csv|.md|.html`` (pattern hints + param tweaks +
     peer-learn when peer Closed books exist under drive/)
 
@@ -440,6 +441,16 @@ def enrich_closed_csv_with_one_liners(
 # ---------------------------------------------------------------------------
 # Fit assessment (per symbol)
 # ---------------------------------------------------------------------------
+# House FIT_ASSESSMENT gates (pass/fail checklist on Summary). Units:
+#   Expectancy  → Summary AVG_PNL_PCT (mean trade PnL %, same field FIT_SCORE uses)
+#   Trades/year → Summary AVG_TRADES_PER_YEAR
+#   Robustness  → AVG_PNL_PCT_WO_MAX (leave-max-win-out mean PnL %)
+#   Dollar PnL  → Summary SHEET_PNL (sheet-scaled $; FIT never uses TOTAL_PNL for this gate)
+FIT_GATE_EXPECTANCY_PCT = 2.5
+FIT_GATE_TRADES_PER_YEAR = 1.0
+FIT_GATE_ROBUST_AVG_PNL_PCT = 0.20
+FIT_GATE_SHEET_PNL = 10_000.0
+
 
 @dataclass
 class FitResult:
@@ -455,6 +466,13 @@ class FitResult:
     outlier_pct_of_wins: float = 0.0
     outlier_pct_of_sheet: float = 0.0
     outlier_penalty: int = 0
+    # Assessment checklist (four house gates)
+    gate_expectancy: bool = False
+    gate_tpy: bool = False
+    gate_robust: bool = False
+    gate_sheet: bool = False
+    gates_pass: bool = False
+    gates_passed: int = 0
 
 
 def _fit_tier(score: int) -> str:
@@ -463,6 +481,45 @@ def _fit_tier(score: int) -> str:
     if score >= 2:
         return "Medium"
     return "Low"
+
+
+def _fit_assessment_gates(
+    *,
+    avg_pnl_pct: float,
+    avg_tpy: float,
+    avg_pnl_pct_wo_max: float,
+    sheet_pnl: float,
+) -> tuple[bool, bool, bool, bool]:
+    """Four house FIT_ASSESSMENT gates (Expectancy / tpy / robust wo-max / sheet $)."""
+    g_exp = avg_pnl_pct >= FIT_GATE_EXPECTANCY_PCT
+    g_tpy = avg_tpy >= FIT_GATE_TRADES_PER_YEAR
+    g_rob = avg_pnl_pct_wo_max >= FIT_GATE_ROBUST_AVG_PNL_PCT
+    g_sheet = sheet_pnl > FIT_GATE_SHEET_PNL
+    return g_exp, g_tpy, g_rob, g_sheet
+
+
+def _fit_gates_assessment_text(
+    *,
+    avg_pnl_pct: float,
+    avg_tpy: float,
+    avg_pnl_pct_wo_max: float,
+    sheet_pnl: float,
+    g_exp: bool,
+    g_tpy: bool,
+    g_rob: bool,
+    g_sheet: bool,
+) -> str:
+    """Compact pass/fail line for Summary FIT_ASSESSMENT (ASCII-safe for CSV)."""
+    n_ok = int(g_exp) + int(g_tpy) + int(g_rob) + int(g_sheet)
+    status = "PASS" if n_ok == 4 else "FAIL"
+    mark = lambda ok: "ok" if ok else "FAIL"
+    return (
+        f"gates {status} {n_ok}/4 "
+        f"[exp AVG_PNL_PCT {avg_pnl_pct:+.2f}% >={FIT_GATE_EXPECTANCY_PCT:.1f} {mark(g_exp)}; "
+        f"tpy {avg_tpy:.2f} >={FIT_GATE_TRADES_PER_YEAR:.0f} {mark(g_tpy)}; "
+        f"wo AVG_PNL_PCT_WO_MAX {avg_pnl_pct_wo_max:+.2f}% >={FIT_GATE_ROBUST_AVG_PNL_PCT:.2f} {mark(g_rob)}; "
+        f"sheet SHEET_PNL ${sheet_pnl:,.0f} >{FIT_GATE_SHEET_PNL:,.0f} {mark(g_sheet)}]"
+    )
 
 
 def _fit_component_score(
@@ -476,7 +533,11 @@ def _fit_component_score(
     asym_penalty: bool = False,
     outlier_penalty: int = 0,
 ) -> int:
-    """Shared point rules for headline FIT_SCORE and FIT_SCORE_ROBUST."""
+    """Shared point rules for headline FIT_SCORE and FIT_SCORE_ROBUST.
+
+    Point floors aligned with house FIT_ASSESSMENT gates where they overlap:
+    expectancy (AVG_PNL_PCT / wo-max) ≥ 2.5% → +1; sheet $ > 10k → +2; tpy ≥ 1 → +2.
+    """
     score = 0
     if pct_wins >= 55:
         score += 2
@@ -484,21 +545,19 @@ def _fit_component_score(
         score += 1
     if pnl_pct_for_avg_bucket >= 8:
         score += 2
-    elif pnl_pct_for_avg_bucket >= 3:
+    elif pnl_pct_for_avg_bucket >= FIT_GATE_EXPECTANCY_PCT:
         score += 1
     elif pnl_pct_for_avg_bucket < 0:
         score -= 2
-    if sheet_pnl > 5000:
+    if sheet_pnl > FIT_GATE_SHEET_PNL:
         score += 2
     elif sheet_pnl > 0:
         score += 1
     elif sheet_pnl < -2000:
         score -= 2
-    # Trades/year: more activity is better (no busy/high-frequency penalty).
-    if avg_tpy >= 1.0:
+    # Trades/year: full credit only at house gate (≥1); no soft 0.36 partial.
+    if avg_tpy >= FIT_GATE_TRADES_PER_YEAR:
         score += 2
-    elif avg_tpy >= 0.36:
-        score += 1  # ~promotion-threshold activity
     if wins >= 3 and losses == 0:
         score += 1
     if asym_penalty:
@@ -509,6 +568,31 @@ def _fit_component_score(
 
 def _closed_trade_pnls(closed_rows: list[dict[str, Any]]) -> list[float]:
     return [_fnum(_col(r, "PNL %", "PNL_PCT")) for r in closed_rows]
+
+
+def _closed_trade_dollar_pnls(closed_rows: list[dict[str, Any]]) -> list[float]:
+    return [_fnum(_col(r, "PNL $", "PNL_DOLLARS", "PNL_DOLLAR")) for r in closed_rows]
+
+
+def profit_factor_from_dollar_pnls(pnls: list[float]) -> float:
+    """Gross winning $ / |gross losing $| — same definition as Report ``Profit_Factor``."""
+    gp = sum(p for p in pnls if p > 0)
+    gl = abs(sum(p for p in pnls if p < 0))
+    if gl > 0:
+        return gp / gl
+    return gp if gp > 0 else 0.0
+
+
+def _ensure_summary_profit_factor_fieldnames(fieldnames: list[str]) -> list[str]:
+    """Insert ``PROFIT_FACTOR`` after ``AVG_PNL_PCT`` (drop legacy ``Profit_Factor``)."""
+    out = [c for c in fieldnames if c not in ("PROFIT_FACTOR", "Profit_Factor")]
+    if "AVG_PNL_PCT" in out:
+        out.insert(out.index("AVG_PNL_PCT") + 1, "PROFIT_FACTOR")
+    elif "SHEET_PNL" in out:
+        out.insert(out.index("SHEET_PNL") + 1, "PROFIT_FACTOR")
+    else:
+        out.append("PROFIT_FACTOR")
+    return out
 
 
 def _outlier_fit_metrics(pnls: list[float]) -> tuple[float, float, float, float]:
@@ -584,10 +668,14 @@ def assess_symbol_fit(
 ) -> FitResult:
     """Rule-based High/Medium/Low fit for sheet paste.
 
-    ``FIT_SCORE`` (headline) uses mean ``avg_pnl_pct`` as today.
+    ``FIT_SCORE`` (headline) uses mean ``avg_pnl_pct`` (Summary ``AVG_PNL_PCT`` —
+    house “Expectancy” for FIT; not Report dollar Expectancy).
     ``FIT_SCORE_ROBUST`` re-scores with leave-max-win-out mean PnL% and sheet $,
     plus a soft outlier penalty when one win dominates positive PnL% or sheet share.
     Median trade PnL% is kept as a diagnostic column only (not scored).
+
+    ``FIT_ASSESSMENT`` always lists the four house gates (Expectancy /
+    trades-per-year / robust wo-max / sheet $) with pass/fail marks.
     """
     closed_rows = closed_rows or []
     notes: list[str] = []
@@ -625,7 +713,34 @@ def assess_symbol_fit(
             notes.append(f"sparse {trades}tr/{span}y")
 
     if trades <= 0:
-        return FitResult("Low", 0, "no trades", fit_robust="Low")
+        g_exp, g_tpy, g_rob, g_sheet = _fit_assessment_gates(
+            avg_pnl_pct=0.0,
+            avg_tpy=0.0,
+            avg_pnl_pct_wo_max=0.0,
+            sheet_pnl=0.0,
+        )
+        gate_line = _fit_gates_assessment_text(
+            avg_pnl_pct=0.0,
+            avg_tpy=0.0,
+            avg_pnl_pct_wo_max=0.0,
+            sheet_pnl=0.0,
+            g_exp=g_exp,
+            g_tpy=g_tpy,
+            g_rob=g_rob,
+            g_sheet=g_sheet,
+        )
+        return FitResult(
+            "Low",
+            0,
+            f"no trades; {gate_line}"[:400],
+            fit_robust="Low",
+            gate_expectancy=g_exp,
+            gate_tpy=g_tpy,
+            gate_robust=g_rob,
+            gate_sheet=g_sheet,
+            gates_pass=False,
+            gates_passed=0,
+        )
 
     # Soft floor only: near-zero tpy gets a note, not a score hit.
     if 0 < avg_tpy < 0.2:
@@ -656,7 +771,29 @@ def assess_symbol_fit(
     fit = _fit_tier(score)
     fit_robust = _fit_tier(score_robust)
 
-    head = f"{fit}: {pct_wins:.0f}%W avg {avg_pnl_pct:+.1f}% {trades}tr/{avg_tpy:.1f}y"
+    g_exp, g_tpy, g_rob, g_sheet = _fit_assessment_gates(
+        avg_pnl_pct=avg_pnl_pct,
+        avg_tpy=avg_tpy,
+        avg_pnl_pct_wo_max=avg_wo_max,
+        sheet_pnl=sheet_pnl,
+    )
+    gates_passed = int(g_exp) + int(g_tpy) + int(g_rob) + int(g_sheet)
+    gates_pass = gates_passed == 4
+    gate_line = _fit_gates_assessment_text(
+        avg_pnl_pct=avg_pnl_pct,
+        avg_tpy=avg_tpy,
+        avg_pnl_pct_wo_max=avg_wo_max,
+        sheet_pnl=sheet_pnl,
+        g_exp=g_exp,
+        g_tpy=g_tpy,
+        g_rob=g_rob,
+        g_sheet=g_sheet,
+    )
+
+    head = (
+        f"{fit}: {gate_line}; "
+        f"{pct_wins:.0f}%W avg {avg_pnl_pct:+.1f}% {trades}tr/{avg_tpy:.1f}y"
+    )
     if notes:
         head = f"{head}; " + "; ".join(notes[:2])
     # Flag when robust is materially weaker (outlier-carried mean / sheet).
@@ -671,7 +808,7 @@ def assess_symbol_fit(
     return FitResult(
         fit=fit,
         score=score,
-        text=head[:220],
+        text=head[:400],
         score_robust=score_robust,
         fit_robust=fit_robust,
         max_win_pct=max_win,
@@ -681,6 +818,12 @@ def assess_symbol_fit(
         outlier_pct_of_wins=outlier_of_wins,
         outlier_pct_of_sheet=outlier_of_sheet,
         outlier_penalty=outlier_pen,
+        gate_expectancy=g_exp,
+        gate_tpy=g_tpy,
+        gate_robust=g_rob,
+        gate_sheet=g_sheet,
+        gates_pass=gates_pass,
+        gates_passed=gates_passed,
     )
 
 
@@ -914,9 +1057,10 @@ def enrich_summary_csv_with_yfinance(
 
 
 # Paul Score: per-run peer thresholds on Summary (after FIT / WO_MAX cols exist).
-# +1 each if value ≥ max(mean, median): PCT_WINS, TOTAL_PNL, SHEET_PNL, AVG_PNL_PCT,
-# AVG_PNL_PCT_WO_MAX, AVG_TRADES_PER_YEAR; +1 if ≤ min(mean, median):
+# +1 each if value ≥ mean: PCT_WINS, TOTAL_PNL, SHEET_PNL, AVG_PNL_PCT,
+# AVG_PNL_PCT_WO_MAX, AVG_TRADES_PER_YEAR; +1 if ≤ mean:
 # OUTLIER_PCT_OF_WINS, AVG_DAYS_HELD (faster turnover = better).
+# Peer median is diagnostic-only (not used for thresholds). MEDIAN_PNL_PCT is never scored.
 # Integer 0–8. Blank/non-numeric cells skipped for thresholds and that component.
 _PAUL_SCORE_COL = "PAUL_SCORE"
 _PAUL_SCORE_HIGH_CANDIDATES: tuple[tuple[str, ...], ...] = (
@@ -967,7 +1111,7 @@ def apply_paul_scores_to_summary_rows(
 ) -> dict[str, Any]:
     """Write ``PAUL_SCORE`` (0–8) on each row; ensure column is in *fieldnames*.
 
-    Returns threshold diagnostics: resolved cols, per-field mean/median/threshold.
+    Returns threshold diagnostics: resolved cols, per-field mean/median (diag)/threshold.
     """
     if _PAUL_SCORE_COL not in fieldnames:
         fieldnames.append(_PAUL_SCORE_COL)
@@ -993,7 +1137,7 @@ def apply_paul_scores_to_summary_rows(
             continue
         mean_v = float(statistics.mean(vals))
         med_v = float(statistics.median(vals))
-        thr = max(mean_v, med_v)
+        thr = mean_v
         high_thr[col] = thr
         thresholds[label] = {
             "col": col,
@@ -1001,7 +1145,7 @@ def apply_paul_scores_to_summary_rows(
             "mean": mean_v,
             "median": med_v,
             "threshold": thr,
-            "rule": ">= max(mean, median)",
+            "rule": ">= mean",
         }
 
     for col, label in low_specs:
@@ -1010,7 +1154,7 @@ def apply_paul_scores_to_summary_rows(
             continue
         mean_v = float(statistics.mean(vals))
         med_v = float(statistics.median(vals))
-        thr = min(mean_v, med_v)
+        thr = mean_v
         low_thr[col] = thr
         thresholds[label] = {
             "col": col,
@@ -1018,7 +1162,7 @@ def apply_paul_scores_to_summary_rows(
             "mean": mean_v,
             "median": med_v,
             "threshold": thr,
-            "rule": "<= min(mean, median)",
+            "rule": "<= mean",
         }
 
     for row in rows:
@@ -1073,6 +1217,8 @@ def enrich_summary_csv_with_fit(
     if any(c in fieldnames for c in SUMMARY_YF_META_COLS):
         fieldnames = _ensure_summary_yf_meta_fieldnames(fieldnames)
 
+    fieldnames = _ensure_summary_profit_factor_fieldnames(fieldnames)
+
     fit_cols = [
         "FIT",
         "FIT_SCORE",
@@ -1093,7 +1239,8 @@ def enrich_summary_csv_with_fit(
         sym = str(row.get("SYMBOL", "")).strip().upper()
         if sym in ("", "ALL"):
             continue
-        stats = resolve_symbol_ledger_stats(row, by_sym.get(sym, []))
+        closed_sym = by_sym.get(sym, [])
+        stats = resolve_symbol_ledger_stats(row, closed_sym)
         fr = assess_symbol_fit(
             trades=int(stats["trades"]),
             wins=int(stats["wins"]),
@@ -1102,8 +1249,14 @@ def enrich_summary_csv_with_fit(
             avg_pnl_pct=float(stats["avg_pnl_pct"]),
             sheet_pnl=float(stats["sheet_pnl"]),
             avg_tpy=float(stats["avg_tpy"]),
-            closed_rows=by_sym.get(sym, []),
+            closed_rows=closed_sym,
         )
+        # Per-symbol PF from Closed (overwrites thin/missing Summary cells).
+        if closed_sym:
+            pf = profit_factor_from_dollar_pnls(_closed_trade_dollar_pnls(closed_sym))
+            row["PROFIT_FACTOR"] = f"{pf:.2f}"
+        elif not str(row.get("PROFIT_FACTOR", "") or "").strip():
+            row["PROFIT_FACTOR"] = ""
         row["FIT"] = fr.fit
         if "RL_FIT" in fieldnames:
             row["RL_FIT"] = fr.fit
@@ -1116,7 +1269,7 @@ def enrich_summary_csv_with_fit(
         row["OUTLIER_PCT_OF_WINS"] = f"{fr.outlier_pct_of_wins:.1f}"
         row["FIT_ASSESSMENT"] = fr.text
 
-    # After WO_MAX / outlier FIT cols exist: peer Paul Score (0–8) vs this Summary's mean/median.
+    # After WO_MAX / outlier FIT cols exist: peer Paul Score (0–8) vs this Summary's mean.
     apply_paul_scores_to_summary_rows(rows, fieldnames)
 
     with sp.open("w", newline="", encoding="utf-8") as f:

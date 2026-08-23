@@ -287,7 +287,7 @@ Full guide: **[`docs/POST_RUN_ANALYSIS.md`](POST_RUN_ANALYSIS.md)**.
 
 | Layer | When | Artifacts |
 |-------|------|-----------|
-| **Cheap (DailyRun / every run)** | Always after Summary write | Closed `ONE_LINER`; Summary `FIT` / `FIT_SCORE` / `FIT_SCORE_ROBUST` / outlier cols / `FIT_ASSESSMENT` (RL also `RL_FIT`); `{prefix}_ImproveHints_<ts>.csv` + `.md` |
+| **Cheap (DailyRun / every run)** | Always after Summary write | Closed `ONE_LINER`; Summary `PROFIT_FACTOR` / `FIT` / `FIT_SCORE` / `FIT_SCORE_ROBUST` / outlier cols / `FIT_ASSESSMENT` / `PAUL_SCORE` (RL also `RL_FIT`); `{prefix}_ImproveHints_<ts>.csv` + `.md` |
 | **Deep (optional, not DailyRun)** | Manual / review session | Charts + CRWD-style HTML |
 
 ```bat

@@ -169,12 +169,12 @@ class BRTConfig:
     # Strong Pivot Qualification (STONK_DATA 3.0): pre = lookback-only (realtime-safe); post = follow-through ahead
     strong_pivots_enabled: bool = True  # When True, only strong pivots create zones/touches
     strong_pre_pivot_bars: int = 7  # Sheet "strong Pre-Pivot bars" (C17) - lookback window ending before pivot bar
-    strong_pre_pivot_pct: float = 0.081  # Sheet C13 strong Pre-Pivot move % (8.1%)
+    strong_pre_pivot_pct: float = 0.1  # House strong Pre-Pivot move % (10%; prior sheet C13 was 8.1%)
     # When > 0: pre threshold = (strong_pre_pivot_pct_atr * ATR14) / pivot_price at the pivot bar (else strong_pre_pivot_pct).
     strong_pre_pivot_pct_atr: float = 0.0
     # Sheet C10 Strong post-pivot bars: K post-drop window + AB Touch Price pullback + AZ:BB maturity lag.
     strong_post_pivot_bars: int = 7
-    strong_post_pivot_pct: float = 0.108  # Sheet C15 Strong post-pivot move % (10.8% touch pullback)
+    strong_post_pivot_pct: float = 0.1  # House strong post-pivot move % (10%; prior sheet C15 was 10.8%)
     # Legacy unused: was incorrectly split from C10 for AB pullback. Ignored by sheet-touch path;
     # -v sheet_touch_pullback_bars=X warns and maps to strong_post_pivot_bars unless that key is also set.
     sheet_touch_pullback_bars: int = 7
@@ -326,14 +326,17 @@ class BRTConfig:
     # Default next_open = predictive (signal at T close → buy T+1 open). close = EOD fill on signal bar.
     vz_entry_on: str = "next_open"
     vz_zone_kinds: str = "HL"  # comma list; freeze is HL-only
-    vz_exit_name: str = "zone_atr05_ts40"
+    vz_exit_name: str = "EXIT_atr4_s025_r15"
     vz_exit_bars: int = 40
-    vz_target_r: float = 2.0
-    vz_stop_atr_buffer: float = 0.5
-    # ATR14/entry*100 gate (FILTER_atr_pct_*); 0 = off.
-    vz_min_atr_pct_at_entry: float = 0.0
-    vz_require_hvn_overlap: bool = False
+    vz_target_r: float = 1.5
+    vz_stop_atr_buffer: float = 0.25
+    # ATR14/entry*100 gate (FILTER_atr_pct_*); 0 = off. House freeze = 4.0.
+    vz_min_atr_pct_at_entry: float = 4.0
+    vz_require_hvn_overlap: bool = False  # Step C: knob exists, default OFF (HOLD not adopted)
     vz_sheet_notional: float = 45_000.0
+    vz_trade_side: str = "long"  # long | short | both (house default long)
+    # Post-TARGET re-entry cooldown (calendar days, inclusive). House adopt 20260821 = 10.
+    vz_cooldown_after_target_days: int = 10
     # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
     wrl_mode: bool = False
     wrl_target_mode: str = "scale"  # range | swing | scale
@@ -658,9 +661,9 @@ class BRTConfig:
 
     # Growth filter: require full lookback and Close[eval] >= Close[eval - growth_bars] (sheet: 3Y).
     # Sheet anchors 756 rows from 2016-01-01; CSVs may start a few sessions later - see growth_history_slack_bars.
-    # Pre-IPO / short history: sheet daily grids often have $0 OHLC before first real bar, so
-    # Close >= Close_{1Y/2Y/3Y} PASSes when the lookback lands on $0. Engine must PASS (not block)
-    # when eval_bar < growth_min - otherwise IPO names (META 2012) drop early sheet Closed trades.
+    # Missing lookback Close (short history / IPO / no bar at eval−N): FAIL the gate — do not coerce to $0
+    # or treat as pass. Sheet AZ may still PASS when lookback lands on padded $0 OHLC; that is an
+    # intentional economics-over-sheet-parity divergence (correct growth confirmation needs a real price).
     # RS mode: when enabled, evaluated on trigger bar T (same timing as SPY_COMPARE / IND_TC), not entry open.
     growth_filter_enabled: bool = True
     growth_bars: int = 756  # e.g. 756 = 3 years; require Close[eval] >= Close[eval - growth_bars]
@@ -2345,8 +2348,8 @@ def compute_sheet_brt_touch_stream(
     pivot_future_move_pct: float = 0.06,
     dedup_tol_pct: float = 0.01,
     pre_pivot_bars: int = 7,
-    pre_pivot_pct: float = 0.081,
-    touch_pullback_pct: float = 0.108,
+    pre_pivot_pct: float = 0.1,
+    touch_pullback_pct: float = 0.1,
     touch_pullback_bars: int = 7,
     maturity_lag: int = 7,
     warmup_bars: int = 9,
@@ -2562,9 +2565,9 @@ def compute_touch_stream(
     lookback_short: int = 105,
     strong_pivots_enabled: bool = True,
     strong_pre_pivot_bars: int = 7,
-    strong_pre_pivot_pct: float = 0.081,
+    strong_pre_pivot_pct: float = 0.1,
     strong_post_pivot_bars: int = 7,
-    strong_post_pivot_pct: float = 0.108,
+    strong_post_pivot_pct: float = 0.1,
     strong_pivot_mode: str = "pre",
     band_pct_atr: float = 0.0,
     strong_pre_pivot_pct_atr: float = 0.0,
@@ -3326,9 +3329,9 @@ _UNION_BRT_DNA: dict[str, Any] = {
     "brt_sheet_touch": True,
     "band_pct": 0.0154,
     "strong_pre_pivot_bars": 7,
-    "strong_pre_pivot_pct": 0.081,
+    "strong_pre_pivot_pct": 0.1,
     "strong_post_pivot_bars": 7,
-    "strong_post_pivot_pct": 0.108,
+    "strong_post_pivot_pct": 0.1,
     "strong_pivot_mode": "either",
     "breakout_bars": 100,
     "tight_range_threshold_pct": 0.35,
@@ -9190,20 +9193,30 @@ def run_brt_backtest(
                 elif cfg.growth_filter_enabled and int(cfg.growth_bars) > 0:
                     _growth_min = _growth_min_eval_bar_index(cfg)
                     if _growth_ago < 0:
-                        # Sheet parity: pre-IPO $0 lookback ⇒ Close >= 0 ⇒ growth OK.
-                        # Do not block IPO-era bars (e.g. META 2013–2014 Closed trades).
+                        # Need a real Close[eval−N]. Missing history ≠ sheet $0 lookback pass.
+                        _count_block("growth_not_enough_history")
                         _trace_gate(
-                            f"pass: growth_not_enough_history (eval_bar={_eval_bar} < min={_growth_min}, "
-                            f"growth_bars={cfg.growth_bars}, slack={_growth_history_slack_bars(cfg)}; "
-                            f"treat as sheet $0 lookback)"
+                            f"block: growth_not_enough_history (eval_bar={_eval_bar} < min={_growth_min}, "
+                            f"growth_bars={cfg.growth_bars}, slack={_growth_history_slack_bars(cfg)})"
                         )
                         if debug_entry and debug_date_prefix in _md_iso8:
                             print(
-                                f"[DEBUG-ENTRY] {sym} bar {i}: zone ${zc:.2f} growth_filter "
-                                f"PASS not_enough_history (eval_bar={_eval_bar} < min={_growth_min}; "
-                                f"sheet $0 lookback parity)"
+                                f"[DEBUG-ENTRY] {sym} bar {i}: zone ${zc:.2f} BLOCKED by growth_filter "
+                                f"(not enough history; eval_bar={_eval_bar} < min={_growth_min})"
                             )
+                        if _cfg_emit_would and (i + 1) < n:
+                            would_have.append({
+                                "SYMBOL": sym,
+                                "MATURITY_DATE": index_iso[maturity_bar][:4] + "-" + index_iso[maturity_bar][4:6] + "-" + index_iso[maturity_bar][6:8],
+                                "ZONE_CENTER": zc,
+                                "WOULD_ENTER_DATE": index_iso[i + 1][:4] + "-" + index_iso[i + 1][4:6] + "-" + index_iso[i + 1][6:8],
+                                "REJECT_REASON": "GROWTH",
+                            })
+                        _keep_pending()
+                        _pg()
+                        continue
                     elif growth_pct is None:
+                        # Lookback close missing/zero/NaN — do not treat as $0 pass.
                         _count_block("growth_no_data")
                         _trace_gate("block: growth_no_data")
                         if debug_entry and debug_date_prefix in _md_iso8:
@@ -10524,9 +10537,12 @@ def _indicator_only_scan_gates_block(
     if bool(getattr(cfg, "growth_filter_enabled", False)) and int(getattr(cfg, "growth_bars", 0) or 0) > 0:
         ago = _growth_ago_bar_index(signal_t, cfg)
         if ago < 0:
-            # Sheet pre-IPO $0 lookback ⇒ pass (do not block).
-            pass
-        elif float(close_arr[signal_t]) < float(close_arr[ago]):
+            # Missing Close[eval−N]: fail (do not treat as sheet $0 lookback pass).
+            return True
+        _ago_px = float(close_arr[ago])
+        if not np.isfinite(_ago_px) or _ago_px <= 0.0:
+            return True
+        if float(close_arr[signal_t]) < _ago_px:
             return True
     if _atr_pct_at_trigger_gate_blocks(cfg, atr_14_arr, close_arr, signal_t):
         return True
@@ -13586,7 +13602,11 @@ def _growth_filter_at_trigger_gate_blocks(
     close_arr: np.ndarray,
     signal_t: int,
 ) -> bool:
-    """True when growth_filter_enabled rejects at trigger bar T (Close_T < Close_{T-growth_bars})."""
+    """True when growth_filter_enabled rejects at trigger bar T.
+
+    Requires a real Close_{T-growth_bars}: insufficient history, non-finite, or <=0 lookback
+    close fails the gate (intentional divergence from sheet AZ $0-padded lookback PASS).
+    """
     if not bool(getattr(cfg, "growth_filter_enabled", False)):
         return False
     if int(getattr(cfg, "growth_bars", 0) or 0) <= 0:
@@ -13595,9 +13615,11 @@ def _growth_filter_at_trigger_gate_blocks(
         return True
     ago = _growth_ago_bar_index(signal_t, cfg)
     if ago < 0:
-        # Sheet pre-IPO $0 lookback ⇒ do not block.
-        return False
-    return float(close_arr[signal_t]) < float(close_arr[ago])
+        return True
+    ago_px = float(close_arr[ago])
+    if not np.isfinite(ago_px) or ago_px <= 0.0:
+        return True
+    return float(close_arr[signal_t]) < ago_px
 
 
 def _cfg_spy_int_tc_lag(cfg: Any) -> int:
@@ -14943,9 +14965,15 @@ def _build_brt_watchlist(
                 hints.append("bullish_bar: need Close>Open on evaluation bar (typical long entry gate)")
         if getattr(cfg, "growth_filter_enabled", False) and int(getattr(cfg, "growth_bars", 0) or 0) > 0:
             _g_ago = _growth_ago_bar_index(li, cfg)
-            if _g_ago >= 0 and float(close_arr[li]) < float(close_arr[_g_ago]):
-                gb = int(cfg.growth_bars)
-                hints.append(f"growth_filter: need Close >= close from {gb} bars ago on eval bar")
+            gb = int(cfg.growth_bars)
+            if _g_ago < 0:
+                hints.append(f"growth_filter: need Close from {gb} bars ago on eval bar (insufficient history)")
+            else:
+                _g_px = float(close_arr[_g_ago])
+                if not np.isfinite(_g_px) or _g_px <= 0.0:
+                    hints.append(f"growth_filter: need valid Close from {gb} bars ago on eval bar")
+                elif float(close_arr[li]) < _g_px:
+                    hints.append(f"growth_filter: need Close >= close from {gb} bars ago on eval bar")
         if zl > 0 and zh > 0:
             hints.append(f"zone_band [{zl:.4f} .. {zh:.4f}]")
         if eval_mode == "row_local":
@@ -15849,6 +15877,9 @@ def write_brt_summary(
       Start = max(FIRST_DATA_DATE, entry_start_date) when study start (``entry_start_date`` /
       ``-v start_date``) is set and later than first data; else FIRST_DATA_DATE.
       End = ``backtest_end_date`` if set, else last OHLC date, else max ``date_closed`` for the symbol.
+    - ``AVG_PNL_PCT``: mean Closed ``pnl_pct`` for the symbol.
+    - ``PROFIT_FACTOR``: gross winning ``pnl_dollars`` / |gross losing ``pnl_dollars``|
+      (same definition as Report/Audit ``Profit_Factor``). Blank when TRADES is 0.
     - ``AVG_DAYS_HELD``: mean calendar days held across this symbol's closed trades
       (same idea as Report/Audit ``Avg_Days_Held``, per symbol). Blank when no trades.
     - ``SHEET_PNL``: engine ``TOTAL_PNL`` scaled to sheet size -
@@ -15888,6 +15919,7 @@ def write_brt_summary(
                 "TOTAL_PNL",
                 "SHEET_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "PCT_OF_TOTAL_PNL",
                 "CURRENT_MARKET_CAP",
                 "SECTOR",
@@ -15908,6 +15940,12 @@ def write_brt_summary(
             total = sum(t.pnl_dollars for t in trades)
             sheet_pnl_s = f"{(total * sheet_scale):.2f}" if sheet_scale is not None else ""
             avg_pct = sum(t.pnl_pct for t in trades) / n_trades if n_trades else 0
+            sum_wins = sum(t.pnl_dollars for t in trades if t.pnl_pct > 0)
+            sum_losses = abs(sum(t.pnl_dollars for t in trades if t.pnl_pct < 0))
+            if sum_losses > 0:
+                pf = sum_wins / sum_losses
+            else:
+                pf = sum_wins if sum_wins > 0 else 0.0
             pct_of_total = (total / total_pnl_overall * 100) if total_pnl_overall and total_pnl_overall != 0 else 0.0
             days_held = [int(getattr(t, "days_held", 0) or 0) for t in trades]
             avg_days_s = f"{(sum(days_held) / n_trades):.1f}" if n_trades else ""
@@ -15949,6 +15987,7 @@ def write_brt_summary(
                     f"{total:.2f}",
                     sheet_pnl_s,
                     f"{avg_pct:.2f}%",
+                    f"{pf:.2f}",
                     f"{pct_of_total:.1f}%",
                     mc_cur_s,
                     sector,
@@ -16008,10 +16047,23 @@ def _write_brt_equity_canonical_outputs(
         pd.DataFrame(df_data).to_csv(outp / f"{file_prefix}_EquityCurve_{ts}.csv", index=False)
         raw = float(equity.get("_max_port_dd_raw", 0) or 0)
         init_sz = float(equity.get("_initial_account_size", 0) or 0)
+        # Sharpe on same series written to EquityCurve (prefer Equity_Regular when dual).
+        try:
+            from risk_adjusted_metrics import format_sharpe
+        except ImportError:
+            try:
+                from stock_analysis.risk_adjusted_metrics import format_sharpe  # type: ignore
+            except ImportError:
+                format_sharpe = None  # type: ignore
+        _eq_for_sharpe = values
+        if reg and len(reg) == len(values):
+            _eq_for_sharpe = reg
+        _sharpe_meta = format_sharpe(_eq_for_sharpe) if format_sharpe else equity.get("Sharpe", "N/A")
         meta_row = {
             "Initial_Account_Size": init_sz,
             "Max_Drawdown_fraction": raw,
             "Max_Drawdown_pct": equity.get("Max_Drawdown", ""),
+            "Sharpe": _sharpe_meta,
             "Max_Days_Underwater": int(equity.get("Max_Days_Underwater", 0) or 0),
             "Pct_Days_Underwater": equity.get("Pct_Days_Underwater", ""),
             "Aggressive": bool(equity.get("_aggressive")),
@@ -16443,6 +16495,8 @@ _AUDIT_CFG_COLS = [
     "vz_min_atr_pct_at_entry",
     "vz_require_hvn_overlap",
     "vz_sheet_notional",
+    "vz_trade_side",
+    "vz_cooldown_after_target_days",
     # Weekly Range / Swing (appended; blanked on non-WRL via _fill_wrl_mode_audit)
     "wrl_mode",
     "wrl_target_mode",
@@ -16489,6 +16543,8 @@ _METRIC_AUDIT_COLS = [
     "Profit_Per_Capital_Day",
     "Ann_ROR",
     "Max_DD",
+    "Calmar",
+    "Sharpe",
     "Losing_Streak",
     "DD_Per_Trade",
     "CES_AVG",
@@ -16782,6 +16838,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "margin_utilization": "Fraction of total margin buying power to deploy for passive brt_cash/Max_DD (initial_capital×aggressive_max_multiple×this). Default 0.6; --aggressive does not override (overlay sim uses full util).",
     "max_positions": "Per-slot notional divisor: deployable_margin / max_positions. 0 = auto from peak concurrent closed trades.",
     "symbol_reentry_cooldown_days": "Calendar days after closing a symbol before a new entry in that same symbol is allowed (0=off). Example: 5 blocks same-week re-entry; 20 ~ one month.",
+    "vz_cooldown_after_target_days": "Volume Zone (VZ): calendar days after a TARGET exit before a new entry on the same symbol is allowed (inclusive 0..N; 0=off). House default 10 (adopt 20260821 / ENTRY_cd_target10 live LEAN KEEP).",
     "allow_secondary_entries": "When true, allow a new entry in a symbol while another position in that same symbol is still open (default false).",
     "trailing_stop_increment": "Trailing stop: 0=off. Else working stop = initial stop + (gain%%/N)*1%% of entry (gain from peak high since entry; fractional N, not floored).",
     "sma_stop_days": "SMA trailing stop: 0=off. When >0 and Close is above SMA(N) (long) or below SMA(N) (short), working stop = max/min of other stops and SMA(N); never loosens (e.g. 20 or 8).",
@@ -16839,6 +16896,8 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "Pct_Trades_Post_Entry_Gain_Hit": "Percent of closed trades with POST_ENTRY_GAIN_HIT=1 (same window/threshold as config; exit-capped).",
     # Aggressive run diagnostics
     "Aggressive_Avg_Positions": "Average active positions used by aggressive sizing logic.",
+    "Calmar": "Ann_ROR % / |Max_DD %| (Report book Ann ROR over absolute Max DD). Blank/N/A when Max_DD missing or ~0.",
+    "Sharpe": "Daily EquityCurve returns (same series as Max_DD / Equity_Regular when present), rf=0, mean/std(ddof=1)*sqrt(252). Descriptive only.",
     "Aggressive_Max_DD": "Max drawdown on the aggressive equity curve (initial_capital basis); Max_DD stays on passive/regular equity and does not change with --aggressive.",
     "Aggressive_Total_PNL": "Aggressive total PnL on initial_capital basis (includes margin + trims + interest).",
     "Aggressive_Days_AtOrBelow_Avg": "Days where desired gross stayed at or below initial_capital (no margin).",
@@ -17089,6 +17148,38 @@ def _fill_rl_awk_subsystem_audit_defaults(row: dict, cfg: Any) -> None:
             row[k] = default
 
 
+
+def _apply_calmar_sharpe_metrics(metrics: dict, equity: dict | None = None) -> None:
+    """Set Report Calmar (Ann_ROR/|Max_DD|) and Sharpe (daily equity, rf=0, sqrt(252))."""
+    try:
+        from risk_adjusted_metrics import format_calmar, format_sharpe
+    except ImportError:
+        try:
+            from stock_analysis.risk_adjusted_metrics import format_calmar, format_sharpe  # type: ignore
+        except ImportError:
+            return
+    ann = metrics.get("Annualized_ROR", metrics.get("Ann_ROR"))
+    dd = metrics.get("Max_Drawdown", metrics.get("Max_DD"))
+    metrics["Calmar"] = format_calmar(ann, dd)
+    # Prefer passive/regular equity (aligned with Max_DD) when aggressive overwrote Equity.
+    vals = None
+    if equity:
+        dates = equity.get("equity_dates") or []
+        reg = equity.get("equity_values_regular") or []
+        cur = equity.get("equity_values") or []
+        if reg and dates and len(reg) == len(dates):
+            vals = reg
+        elif cur:
+            vals = cur
+        if equity.get("Sharpe") not in (None, "", "N/A"):
+            metrics["Sharpe"] = equity.get("Sharpe")
+            return
+    if vals is not None:
+        metrics["Sharpe"] = format_sharpe(vals)
+    elif metrics.get("Sharpe") in (None, ""):
+        metrics["Sharpe"] = "N/A"
+
+
 def _metrics_to_audit_row(metrics: dict) -> dict:
     """Convert BRT metrics dict to audit row format (same as optimizer _metrics_to_row)."""
     def num(x):
@@ -17134,7 +17225,18 @@ def _metrics_to_audit_row(metrics: dict) -> dict:
         "Capital_Days": int(metrics.get("Capital_Days", 0)),
         "Profit_Per_Capital_Day": num(metrics.get("Profit_Per_Capital_Day", 0)),
         "Ann_ROR": num(metrics.get("Annualized_ROR", 0)),
-        "Max_DD": max_dd, "Losing_Streak": int(metrics.get("Losing_Streak", 0)),
+        "Max_DD": max_dd,
+        "Calmar": (
+            metrics.get("Calmar", "N/A")
+            if metrics.get("Calmar") in (None, "N/A") or str(metrics.get("Calmar", "")).strip() == "N/A"
+            else num(metrics.get("Calmar", 0))
+        ),
+        "Sharpe": (
+            metrics.get("Sharpe", "N/A")
+            if metrics.get("Sharpe") in (None, "N/A") or str(metrics.get("Sharpe", "")).strip() == "N/A"
+            else num(metrics.get("Sharpe", 0))
+        ),
+        "Losing_Streak": int(metrics.get("Losing_Streak", 0)),
         "DD_Per_Trade": dd_per_trade,
         "CES_AVG": num(metrics.get("CES_AVG", 0)),
         "CES_Median": num(metrics.get("CES_Median", 0)),
@@ -17544,7 +17646,7 @@ def compute_metrics(closed: list[BRTTrade], cfg: BRTConfig) -> dict:
         return {
             "Total_PNL": 0, "Wins": 0, "Losses": 0, "BEs": 0,
             "Profit_Factor": 0, "Losing_Streak": 0, "Expectancy": 0, "Avg_PNL_Pct": "0.00%",
-            "Avg_Days_Held": 0, "Median_Days_Held": 0, "Annualized_ROR": 0, "Max_Drawdown": "N/A",
+            "Avg_Days_Held": 0, "Median_Days_Held": 0, "Annualized_ROR": 0, "Max_Drawdown": "N/A", "Calmar": "N/A", "Sharpe": "N/A",
             "CES_AVG": 0, "CES_Median": 0, "P90_Days": 0, "Capital_Days": 0,
             "Profit_Per_Capital_Day": 0, "Avg_Win_Pct": "0.00%", "Avg_Loss_Pct": "0.00%",
             "Win_Loss_Ratio_Dollar": 0, "Pct_PNL_Top10": "0.0%", "Pct_PNL_Bottom10": "0.0%",
@@ -18405,6 +18507,7 @@ def run_brt_backtest_batch(
                 agg_total_pnl = float(equity.get("_equity_total_pnl", 0.0) or 0.0)
                 metrics["Aggressive_Total_PNL"] = f"{agg_total_pnl:.2f}"
             md = equity["Max_Drawdown"]
+            _apply_calmar_sharpe_metrics(metrics, equity)
             if md and str(md).strip() != "N/A":
                 try:
                     pct_val = float(str(md).replace("%", "").strip()) / 100
@@ -20871,6 +20974,7 @@ def main() -> int:
                 agg_total_pnl = float(equity.get("_equity_total_pnl", 0.0) or 0.0)
                 metrics["Aggressive_Total_PNL"] = f"{agg_total_pnl:.2f}"
             md = equity["Max_Drawdown"]
+            _apply_calmar_sharpe_metrics(metrics, equity)
             if md and str(md).strip() != "N/A":
                 try:
                     pct_val = float(str(md).replace("%", "").strip()) / 100
@@ -20900,6 +21004,7 @@ def main() -> int:
         except Exception as e:
             print(f"[WARN] Equity metrics failed: {e}", file=sys.stderr)
     with (pipeline.phase("write_reports") if pipeline is not None else contextlib.nullcontext()):
+        _apply_calmar_sharpe_metrics(metrics, None)
         write_brt_report(cfg, metrics, str(output_dir), ts, args.drive_link, file_prefix=_file_prefix)
         write_brt_audit_report(cfg, metrics, str(output_dir), ts, args.drive_link, file_prefix=_file_prefix)
     if pipeline is not None:

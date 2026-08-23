@@ -758,7 +758,7 @@ def write_outputs(
         w = csv.writer(f)
         w.writerow([
             "SYMBOL", "TRADES", "WINS", "LOSSES", "PCT_WINS", "TOTAL_PNL",
-            "SHEET_PNL", "AVG_PNL_PCT", "AVG_TRADES_PER_YEAR", "AVG_DAYS_HELD",
+            "SHEET_PNL", "AVG_PNL_PCT", "PROFIT_FACTOR", "AVG_TRADES_PER_YEAR", "AVG_DAYS_HELD",
         ])
         for sym in sorted(by_sym):
             rows = by_sym[sym]
@@ -767,6 +767,9 @@ def write_outputs(
             pnl = sum(r.pnl_dollars for r in rows)
             avg_pct = sum(r.pnl_pct for r in rows) / len(rows)
             avg_days = sum(int(r.days_held or 0) for r in rows) / len(rows) if rows else 0.0
+            sum_wins = sum(r.pnl_dollars for r in rows if r.pnl_pct > 0)
+            sum_losses = abs(sum(r.pnl_dollars for r in rows if r.pnl_pct < 0))
+            pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
             # crude years from first→last
             d0 = min(r.date_opened for r in rows).replace("-", "")
             d1 = max(r.date_closed for r in rows).replace("-", "")
@@ -779,7 +782,7 @@ def write_outputs(
             w.writerow([
                 sym, len(rows), wins, losses,
                 f"{100.0 * wins / len(rows):.2f}",
-                f"{pnl:.2f}", f"{pnl:.2f}", f"{avg_pct:.4f}",
+                f"{pnl:.2f}", f"{pnl:.2f}", f"{avg_pct:.4f}", f"{pf:.2f}",
                 f"{len(rows) / years:.2f}",
                 f"{avg_days:.1f}",
             ])

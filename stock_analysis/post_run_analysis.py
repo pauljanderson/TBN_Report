@@ -51,6 +51,10 @@ if str(_SA) not in sys.path:
 
 try:
     from rocket_post_analysis import (
+        FIT_GATE_EXPECTANCY_PCT,
+        FIT_GATE_ROBUST_AVG_PNL_PCT,
+        FIT_GATE_SHEET_PNL,
+        FIT_GATE_TRADES_PER_YEAR,
         KNOWN_SYSTEM_PREFIXES,
         RL_SYSTEMS,
         _collect_improve_hints,
@@ -73,6 +77,10 @@ try:
     )
 except ImportError:
     from stock_analysis.rocket_post_analysis import (  # type: ignore[no-redef]
+        FIT_GATE_EXPECTANCY_PCT,
+        FIT_GATE_ROBUST_AVG_PNL_PCT,
+        FIT_GATE_SHEET_PNL,
+        FIT_GATE_TRADES_PER_YEAR,
         KNOWN_SYSTEM_PREFIXES,
         RL_SYSTEMS,
         _collect_improve_hints,
@@ -543,6 +551,63 @@ def build_symbol_assessment(
         )
     )
     parts.append(f"<p>{html.escape(want)}</p>")
+    # House FIT_ASSESSMENT gates (Expectancy = AVG_PNL_PCT; $ = SHEET_PNL).
+    mark = lambda ok: "PASS" if ok else "FAIL"
+    parts.append("<h4>FIT assessment gates</h4>")
+    parts.append(
+        f'<p class="muted">Checklist {fr.gates_passed}/4 '
+        f"{'PASS' if fr.gates_pass else 'FAIL'} — "
+        f"Expectancy = Summary <code>AVG_PNL_PCT</code>; "
+        f"robust = <code>AVG_PNL_PCT_WO_MAX</code>; "
+        f"dollar = <code>SHEET_PNL</code> (not TOTAL_PNL).</p>"
+    )
+    parts.append('<table class="sortable"><thead><tr>')
+    for lab, typ in (
+        ("Gate", "text"),
+        ("Field", "text"),
+        ("Threshold", "text"),
+        ("Value", "num"),
+        ("Result", "text"),
+    ):
+        parts.append(_sortable_th(lab, typ))
+    parts.append("</tr></thead><tbody>")
+    gate_rows = (
+        (
+            "Expectancy",
+            "AVG_PNL_PCT",
+            f"≥ {FIT_GATE_EXPECTANCY_PCT:g}%",
+            f"{avg_pnl:+.2f}%",
+            fr.gate_expectancy,
+        ),
+        (
+            "Trades / year",
+            "AVG_TRADES_PER_YEAR",
+            f"≥ {FIT_GATE_TRADES_PER_YEAR:g}",
+            f"{avg_tpy:.2f}",
+            fr.gate_tpy,
+        ),
+        (
+            "Robustness (wo-max)",
+            "AVG_PNL_PCT_WO_MAX",
+            f"≥ {FIT_GATE_ROBUST_AVG_PNL_PCT:g}%",
+            f"{fr.avg_pnl_pct_wo_max:+.2f}%",
+            fr.gate_robust,
+        ),
+        (
+            "Sheet PnL $",
+            "SHEET_PNL",
+            f"> {FIT_GATE_SHEET_PNL:,.0f}",
+            f"{sheet_pnl:,.0f}",
+            fr.gate_sheet,
+        ),
+    )
+    for name, field, thresh, val, ok in gate_rows:
+        parts.append(
+            f"<tr><td>{html.escape(name)}</td><td><code>{html.escape(field)}</code></td>"
+            f"<td>{html.escape(thresh)}</td><td>{html.escape(val)}</td>"
+            f"<td>{mark(ok)}</td></tr>"
+        )
+    parts.append("</tbody></table>")
     parts.append(f'<p class="muted">{html.escape(fr.text)}</p>')
 
     parts.append(f"<h3>4. Improvement hypotheses → {html.escape(pref)} levers</h3><ul>")

@@ -1011,12 +1011,16 @@ def write_outputs(
                 "WIN_RATE_PCT",
                 "TOTAL_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "AVG_DAYS_HELD",
             ]
         )
         for sym in sorted(by_sym):
             rows = by_sym[sym]
             wins = sum(1 for r in rows if r.pnl_pct > 0)
+            sum_wins = sum(r.pnl_dollars for r in rows if r.pnl_pct > 0)
+            sum_losses = abs(sum(r.pnl_dollars for r in rows if r.pnl_pct < 0))
+            pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
             w.writerow(
                 [
                     sym,
@@ -1024,12 +1028,16 @@ def write_outputs(
                     f"{100.0 * wins / len(rows):.2f}",
                     f"{sum(r.pnl_dollars for r in rows):.2f}",
                     f"{float(np.mean([r.pnl_pct for r in rows])) * 100:.4f}",
+                    f"{pf:.2f}",
                     f"{float(np.mean([r.days_held for r in rows])):.2f}",
                 ]
             )
         # universe total
         if closed:
             wins = sum(1 for r in closed if r.pnl_pct > 0)
+            sum_wins = sum(r.pnl_dollars for r in closed if r.pnl_pct > 0)
+            sum_losses = abs(sum(r.pnl_dollars for r in closed if r.pnl_pct < 0))
+            pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
             w.writerow(
                 [
                     "ALL",
@@ -1037,6 +1045,7 @@ def write_outputs(
                     f"{100.0 * wins / len(closed):.2f}",
                     f"{sum(r.pnl_dollars for r in closed):.2f}",
                     f"{float(np.mean([r.pnl_pct for r in closed])) * 100:.4f}",
+                    f"{pf:.2f}",
                     f"{float(np.mean([r.days_held for r in closed])):.2f}",
                 ]
             )

@@ -7,11 +7,11 @@ Standalone: ``python stock_analysis/rocket_vz.py …`` still works and uses the 
 Closed / Audit / Report / equity / post_run writers as RS/SB peers.
 
 Engine logic: ``tools/vol_zone_break_retest.py``
-  Freeze entry gates: RESEARCH_CANDIDATE_V2_RW63 (HL-only, first_retest, mt≥1, rw63)
-  Primary exit: PRIMARY_EXIT = zone_atr05_ts40
-  House default fill: entry_on=next_open (signal bar T close -> buy T+1 open).
-  Prior research AB freeze used entry_on=close (EOD fill on signal bar - also predictive;
-  never buys signal-bar open).
+  House freeze (DualPaul78 / ``run_vz.bat`` / control ``260817212836``):
+  HL-only, first_retest, mt≥1, eps=0.005, lookback=126, rw=63, next_open,
+  EXIT_atr4_s025_r15 (stop 0.25·ATR, 1.5R, ts40), min_atr_pct=4, HVN off,
+  cooldown_after_target_days=10 (house adopt 20260821).
+  Historical research object ``PRIMARY_EXIT=zone_atr05_ts40`` is not the house default.
 
 Outputs (prefix ``VZ_``):
   Closed / Open / Watchlist / Summary / Report / Audit_Report (wide TBN schema)
@@ -36,12 +36,13 @@ import csv
 import html as html_mod
 import os
 import pickle
+import re
 import shutil
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -79,6 +80,9 @@ from tools.gen_vol_zone_symbol_summary import (  # noqa: E402
     write_csv as write_summary_csv,
     write_html as write_summary_html,
 )
+from vec_zones import hvn_gate_fields_at_bar  # noqa: E402
+
+_HL_ZONE_ID_RE = re.compile(r"HL_(\d{4}-\d{2}-\d{2})")
 
 FILE_PREFIX = "VZ"
 DEFAULT_INITIAL_CAPITAL = 500_000.0
@@ -86,6 +90,22 @@ DEFAULT_DATA_DIR = REPO / "data" / "newdata" / "data"
 DEFAULT_OUT_DIR = REPO / "drive"
 DEFAULT_UNIVERSE = REPO / "drive" / "universes" / "VZ_universe.csv"
 STAMP_ROOT = REPO / "drive" / "paul_experiments"
+VZ_HOUSE_SUMMARY_MAX = 120
+
+
+def _is_vz_house_universe(universe_label: str, summary_path: Path) -> bool:
+    """True for house / run_vz.bat default — not ALL / full-universe research."""
+    label = str(universe_label or "").replace("\\", "/").lower()
+    if label in ("*", "all") or " all " in f" {label} ":
+        return False
+    if "vz_universe.csv" in label:
+        return True
+    try:
+        n = sum(1 for _ in summary_path.open(encoding="utf-8")) - 1
+    except OSError:
+        return False
+    return 0 < n <= VZ_HOUSE_SUMMARY_MAX
+
 
 # Extra Closed DNA spliced after write_brt_closed (peer pattern = SB burst DNA).
 _VZ_DNA_CLOSED_COLS = (
@@ -166,8 +186,49 @@ WATCH_HEADER = [
     "ZONE_KIND",
     "ZONE_LO",
     "ZONE_HI",
+    "POC",
+    "HVN $",
+    "HVN pass?",
     "NOTES",
 ]
+
+
+def _vz_watch_hvn_fields(r: dict[str, Any], df: pd.DataFrame) -> tuple[str, str, str]:
+    """Frozen daily VP at signal bar — matches vz_require_hvn_overlap gate."""
+    missing = ("—", "—", "—")
+    try:
+        zone_lo = float(r.get("ZONE_LO"))
+        hi_raw = r.get("ZONE_HI")
+        zone_hi: float
+        if hi_raw is not None and str(hi_raw).strip():
+            zone_hi = float(hi_raw)
+        else:
+            m = _HL_ZONE_ID_RE.match(str(r.get("ZONE_ID", "")))
+            if not m:
+                zone_hi = zone_lo
+            else:
+                d = m.group(1)
+                hit = df.loc[pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d") == d]
+                zone_hi = float(hit.iloc[-1]["High"]) if not hit.empty else zone_lo
+        entry_idx = int(r.get("ENTRY_BAR_INDEX", -1))
+        if entry_idx < 0:
+            return missing
+        entry_on = str(r.get("ENTRY_ON", "next_open")).strip().lower()
+        signal_idx = entry_idx - 1 if entry_on == "next_open" else entry_idx
+        if signal_idx < 0:
+            return missing
+        fields = hvn_gate_fields_at_bar(
+            df["High"].to_numpy(dtype=np.float64),
+            df["Low"].to_numpy(dtype=np.float64),
+            df["Close"].to_numpy(dtype=np.float64),
+            df["Volume"].to_numpy(dtype=np.float64),
+            signal_idx,
+            zone_lo,
+            zone_hi,
+        )
+        return fields if fields is not None else missing
+    except (TypeError, ValueError):
+        return missing
 
 
 def _as_bool(x: Any) -> bool:
@@ -221,12 +282,15 @@ class VzConfig:
     # House / TBN default: next open after signal bar (predictive). Prior AB freeze used close.
     entry_on: str = "next_open"
     zone_kinds: tuple[str, ...] = ("HL",)
-    exit_name: str = "zone_atr05_ts40"
+    exit_name: str = "EXIT_atr4_s025_r15"
     exit_bars: int = 40
-    target_r: float = 2.0
-    stop_atr_buffer: float = 0.5
-    min_atr_pct_at_entry: float = 0.0
-    require_hvn_overlap: bool = False  # default OFF; VP at signal_idx
+    target_r: float = 1.5
+    stop_atr_buffer: float = 0.25
+    min_atr_pct_at_entry: float = 4.0
+    require_hvn_overlap: bool = False  # Step C: default OFF (HOLD DualPaul78 + 764; not adopted)
+    # Post-TARGET re-entry gate: block new entries on same symbol for N calendar days
+    # after a TARGET exit (inclusive). House adopt 20260821 = 10 (0 = off).
+    cooldown_after_target_days: int = 10
     sheet_notional: float = SHEET_NOTIONAL
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
     aggressive: bool = True
@@ -236,9 +300,12 @@ class VzConfig:
     aggressive_max_multiple: float = 2.0
     margin_utilization: float = 0.6
     brt_cash: float = SHEET_NOTIONAL  # Ann_ROR scale (sheet notional by default)
+    trade_side: str = "long"  # long | short | both (house default long)
 
 
 def params_from_cfg(cfg: VzConfig) -> SysParams:
+    from tools.vol_zone_break_retest import normalize_trade_side_mode  # noqa: WPS433
+
     base = replace(
         RESEARCH_CANDIDATE_V2_RW63,
         lookback_days=int(cfg.lookback_days),
@@ -251,6 +318,7 @@ def params_from_cfg(cfg: VzConfig) -> SysParams:
         exit_bars=int(cfg.exit_bars),
         target_r=float(cfg.target_r),
         require_hvn_overlap=bool(getattr(cfg, "require_hvn_overlap", False)),
+        trade_side=normalize_trade_side_mode(getattr(cfg, "trade_side", "long")),
     )
     return base
 
@@ -259,7 +327,7 @@ def exit_spec_from_cfg(cfg: VzConfig) -> ExitSpec:
     """Build exit from cfg knobs so -v vz_stop_atr_buffer / vz_target_r actually apply.
 
     Only reuse PRIMARY_EXIT identity when name + stop + target + bars all match
-    (default freeze). Custom arm names (e.g. EXIT_atr4_s025_r15) always use cfg.
+    (legacy zone_atr05_ts40). House EXIT_atr4_s025_r15 always uses cfg knobs.
     """
     if (
         str(cfg.exit_name) == PRIMARY_EXIT.name
@@ -330,20 +398,35 @@ def enrich_trade_rows(
     atr: np.ndarray,
     exit_spec: ExitSpec,
     sheet_notional: float,
+    cooldown_after_target_days: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """House Closed + Open rows + research signal fields.
 
     ``still_open`` / ``end_of_data`` from simulate_exit go to Open (active as-of last bar),
     not Closed. Only ``time`` with bars_held >= exit_bars is a real time-stop close.
+
+    When ``cooldown_after_target_days`` > 0: per-symbol, skip entries whose entry date
+    falls 0..N calendar days (inclusive) after a prior TARGET exit on that symbol.
+    Matches Closed-overlay ``filter_cd_target10`` in ``tools/vz_improve_ab_20260821.py``.
     """
     closed: list[dict[str, Any]] = []
     opens: list[dict[str, Any]] = []
+    lows = df["Low"].to_numpy(dtype=np.float64)
     dates = df["Date"]
     highs = df["High"].to_numpy(dtype=np.float64)
     asof_ymd = _ymd(dates.iloc[-1]) if len(dates) else ""
     asof_iso = _iso(dates.iloc[-1]) if len(dates) else ""
     zone_hi_fallback = 0.0
-    for s in sigs:
+    cd = int(cooldown_after_target_days or 0)
+    last_target_exit: Optional[date] = None
+    # Chronological order required for cooldown (signals are usually bar-ordered already).
+    sigs_ordered = sorted(sigs, key=lambda s: (int(s.entry_idx), str(s.entry_date)))
+    for s in sigs_ordered:
+        entry_d = pd.Timestamp(s.entry_date).date()
+        if cd > 0 and last_target_exit is not None:
+            gap = (entry_d - last_target_exit).days
+            if 0 <= gap <= cd:
+                continue
         sim = simulate_exit_spec(df, s, exit_spec, atr=atr)
         bars = int(sim["bars_held"])
         exit_idx = min(len(df) - 1, int(s.entry_idx) + bars)
@@ -352,12 +435,17 @@ def enrich_trade_rows(
         exit_px = _exit_price_from_pnl(entry, pnl_pct)
         stop_px = float(sim["stop"])
         target_px = float(sim["target"])
-        # Max high from entry through exit/as-of bar
-        max_px = (
-            float(np.max(highs[int(s.entry_idx) : exit_idx + 1]))
-            if exit_idx >= s.entry_idx
-            else entry
-        )
+        trade_side = str(getattr(s, "side", "long") or "long").lower()
+        side_label = "SHORT" if trade_side == "short" else "LONG"
+        is_short = trade_side == "short"
+        # Max high (long) / min low (short) from entry through exit/as-of bar
+        if exit_idx >= s.entry_idx:
+            if is_short:
+                ext_px = float(np.min(lows[int(s.entry_idx) : exit_idx + 1]))
+            else:
+                ext_px = float(np.max(highs[int(s.entry_idx) : exit_idx + 1]))
+        else:
+            ext_px = entry
         raw_reason = str(sim["exit_reason"] or "").strip().lower()
         exit_reason = raw_reason.upper()
         if exit_reason == "TIME":
@@ -383,6 +471,7 @@ def enrich_trade_rows(
             "symbol": symbol,
             "zone_id": s.zone_id,
             "kind": s.kind,
+            "side": trade_side,
             "break_date": str(pd.Timestamp(s.break_date).date()),
             "signal_date": str(pd.Timestamp(getattr(s, "signal_date", s.entry_date)).date()),
             "entry_date": str(pd.Timestamp(s.entry_date).date()),
@@ -409,7 +498,7 @@ def enrich_trade_rows(
         }
         base = {
             "SYMBOL": symbol,
-            "SIDE": "LONG",
+            "SIDE": side_label,
             "DATE_OPENED": d_open,
             "ENTRY_PRICE": round(entry, 4),
             "STOP_PRICE": round(stop_px, 4),
@@ -418,7 +507,7 @@ def enrich_trade_rows(
             "PNL_PCT": round(pnl_pct, 4),
             "PNL_DOLLARS": round(pnl_dollars, 2),
             "ANN_ROR_PCT": round(_ann_ror(pnl_pct, bars), 4),
-            "MAX_PRICE": round(max_px, 4),
+            "MAX_PRICE": round(ext_px, 4),
             "R_MULT": round(float(sim["r_mult"]), 4),
             "SIGNAL_DATE": d_signal,
             "ENTRY_ON": str(params.entry_on),
@@ -443,7 +532,7 @@ def enrich_trade_rows(
         }
         if raw_reason in _STILL_OPEN_REASONS:
             one = (
-                f"{symbol} | SIG {_iso(getattr(s, 'signal_date', s.entry_date))} "
+                f"{symbol} {side_label} | SIG {_iso(getattr(s, 'signal_date', s.entry_date))} "
                 f"IN {_iso(s.entry_date)} @ {entry:.2f} -> OPEN asof {asof_iso} "
                 f"@ {exit_px:.2f} | MTM {pnl_pct:+.1f}% | {bars}d/{exit_spec.exit_bars}d | zone {s.zone_id}"
             )
@@ -460,7 +549,7 @@ def enrich_trade_rows(
         else:
             d_close = _ymd(dates.iloc[exit_idx])
             one = (
-                f"{symbol} | SIG {_iso(getattr(s, 'signal_date', s.entry_date))} "
+                f"{symbol} {side_label} | SIG {_iso(getattr(s, 'signal_date', s.entry_date))} "
                 f"IN {_iso(s.entry_date)} @ {entry:.2f} -> OUT {_iso(dates.iloc[exit_idx])} "
                 f"@ {exit_px:.2f} | {exit_type} {pnl_pct:+.1f}% | {bars}d | zone {s.zone_id}"
             )
@@ -473,6 +562,11 @@ def enrich_trade_rows(
                     "ONE_LINER": one,
                 }
             )
+            if exit_type == "TARGET":
+                try:
+                    last_target_exit = pd.Timestamp(dates.iloc[exit_idx]).date()
+                except Exception:
+                    last_target_exit = entry_d
     return closed, opens
 
 
@@ -484,10 +578,18 @@ def enrich_closed_rows(
     atr: np.ndarray,
     exit_spec: ExitSpec,
     sheet_notional: float,
+    cooldown_after_target_days: int = 0,
 ) -> list[dict[str, Any]]:
     """Backward-compatible: closed rows only (opens discarded). Prefer enrich_trade_rows."""
     closed, _opens = enrich_trade_rows(
-        symbol, df, sigs, params, atr, exit_spec, sheet_notional
+        symbol,
+        df,
+        sigs,
+        params,
+        atr,
+        exit_spec,
+        sheet_notional,
+        cooldown_after_target_days=cooldown_after_target_days,
     )
     return closed
 
@@ -535,11 +637,23 @@ def _process_one_symbol(
         atr = atr14(df)
         zones = build_zones(df, params.lookback_days)
         sigs, _, _ = run_symbol_with_params(sym, df, zones, atr, params)
+        # HVN is gated inside generate_signals (params.require_hvn_overlap). Do not
+        # post-filter here: a second drop would be redundant under first_retest_only
+        # and could diverge if first_retest_only were false. ATR remains post-signal.
         sigs = filter_sigs_min_atr_pct(
             sigs, df, atr, float(getattr(cfg, "min_atr_pct_at_entry", 0.0) or 0.0)
         )
         rows_closed, rows_open = enrich_trade_rows(
-            sym, df, sigs, params, atr, exit_spec, cfg.sheet_notional
+            sym,
+            df,
+            sigs,
+            params,
+            atr,
+            exit_spec,
+            cfg.sheet_notional,
+            cooldown_after_target_days=int(
+                getattr(cfg, "cooldown_after_target_days", 0) or 0
+            ),
         )
         # Per-symbol WR/AvgR from closed only (still_open excluded via summarize too)
         sig_dicts = [r["_signal"] for r in rows_closed if "_signal" in r]
@@ -775,6 +889,7 @@ def vz_closed_to_brt_trade(r: dict[str, Any]) -> Any:
 
     t = BRTTrade(
         symbol=str(r["SYMBOL"]).upper(),
+        side=str(r.get("SIDE") or "LONG").upper(),
         date_opened=str(r["DATE_OPENED"]),
         entry_price=float(r["ENTRY_PRICE"]),
         stop_price=float(r["STOP_PRICE"]),
@@ -834,6 +949,10 @@ def brt_config_from_vz(cfg: VzConfig, host_cfg: Any = None) -> Any:
         vz_min_atr_pct_at_entry=float(cfg.min_atr_pct_at_entry),
         vz_require_hvn_overlap=bool(getattr(cfg, "require_hvn_overlap", False)),
         vz_sheet_notional=float(cfg.sheet_notional),
+        vz_trade_side=str(getattr(cfg, "trade_side", "long") or "long"),
+        vz_cooldown_after_target_days=int(
+            getattr(cfg, "cooldown_after_target_days", 0) or 0
+        ),
     )
     if host_cfg is not None:
         try:
@@ -854,11 +973,11 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         min_touches_before_entry=int(getattr(cfg, "vz_min_touches_before_entry", 1)),
         entry_on=str(getattr(cfg, "vz_entry_on", "next_open") or "next_open"),
         zone_kinds=zone_kinds,  # type: ignore[arg-type]
-        exit_name=str(getattr(cfg, "vz_exit_name", "zone_atr05_ts40")),
+        exit_name=str(getattr(cfg, "vz_exit_name", "EXIT_atr4_s025_r15")),
         exit_bars=int(getattr(cfg, "vz_exit_bars", 40)),
-        target_r=float(getattr(cfg, "vz_target_r", 2.0)),
-        stop_atr_buffer=float(getattr(cfg, "vz_stop_atr_buffer", 0.5)),
-        min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 0.0) or 0.0),
+        target_r=float(getattr(cfg, "vz_target_r", 1.5)),
+        stop_atr_buffer=float(getattr(cfg, "vz_stop_atr_buffer", 0.25)),
+        min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 4.0) or 0.0),
         require_hvn_overlap=bool(getattr(cfg, "vz_require_hvn_overlap", False)),
         sheet_notional=float(getattr(cfg, "vz_sheet_notional", SHEET_NOTIONAL)),
         initial_capital=float(getattr(cfg, "initial_capital", DEFAULT_INITIAL_CAPITAL) or DEFAULT_INITIAL_CAPITAL),
@@ -868,6 +987,10 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         margin_utilization=float(getattr(cfg, "margin_utilization", 0.6) or 0.6),
         brt_cash=float(getattr(cfg, "brt_cash", SHEET_NOTIONAL) or SHEET_NOTIONAL),
         write_stamp_folder=True,
+        trade_side=str(getattr(cfg, "vz_trade_side", "long") or "long"),
+        cooldown_after_target_days=int(
+            getattr(cfg, "vz_cooldown_after_target_days", 0) or 0
+        ),
     )
 
 
@@ -925,10 +1048,12 @@ def write_report(path: Path, stamp: str, cfg: VzConfig, meta: dict[str, Any]) ->
         f"lookback={params.lookback_days} rw={params.retest_window} eps={params.retest_eps_pct} "
         f"first_retest={params.first_retest_only} mt>={params.min_touches_before_entry} "
         f"zones={','.join(params.zone_kinds)} entry_on={params.entry_on} "
-        f"hvn={getattr(params, 'require_hvn_overlap', False)}",
+        f"hvn={getattr(params, 'require_hvn_overlap', False)} "
+        f"trade_side={getattr(params, 'trade_side', 'long')}",
         "PREDICTIVE: signal bar uses Low/High/Close of that bar; fill=next_open (T+1 open) "
         "or close (same-bar close). Never signal-bar open.",
-        f"exit: stop=zone.lo-{exit_spec.stop_atr_buffer}*ATR target={exit_spec.target_r}R "
+        f"exit long: stop=zone.lo-{exit_spec.stop_atr_buffer}*ATR target={exit_spec.target_r}R "
+        f"| short: stop=zone.hi+{exit_spec.stop_atr_buffer}*ATR target={exit_spec.target_r}R down "
         f"time_stop={exit_spec.exit_bars}d",
         f"symbols={meta.get('n_symbols')} ok={meta.get('n_ok')} skipped={meta.get('n_skipped')}",
         f"closed={meta.get('n_closed')} open={meta.get('n_open', 0)} WR={meta.get('win_rate'):.2f}% "
@@ -995,6 +1120,8 @@ OOS is report-only - do not retune.</div>
 <tr><td>retest_eps_pct</td><td>{params.retest_eps_pct}</td></tr>
 <tr><td>first_retest_only</td><td>{params.first_retest_only}</td></tr>
 <tr><td>min_touches_before_entry</td><td>{params.min_touches_before_entry}</td></tr>
+<tr><td>require_hvn_overlap</td><td>{getattr(params, "require_hvn_overlap", False)} (house default false)</td></tr>
+<tr><td>cooldown_after_target_days</td><td>{int(getattr(cfg, "cooldown_after_target_days", 10) or 0)} (house 10)</td></tr>
 <tr><td>zone_kinds</td><td>{html_mod.escape(','.join(params.zone_kinds))}</td></tr>
 <tr><td>entry_on</td><td>{html_mod.escape(str(params.entry_on))}</td></tr>
 <tr><td>exit</td><td>stop=zone.lo−{exit_spec.stop_atr_buffer}·ATR · {exit_spec.target_r}R · ts={exit_spec.exit_bars}d</td></tr>
@@ -1040,6 +1167,8 @@ def write_baseline_md(path: Path, *, stamp: str, universe_label: str, n_symbols:
 | entry_on | {cfg.entry_on} (house default next_open; prior AB freeze used close) |
 | Primary exit | `{cfg.exit_name}` (stop = zone.lo − {cfg.stop_atr_buffer}·ATR; target {cfg.target_r}R; time stop {cfg.exit_bars}d) |
 | require_hvn_overlap | {cfg.require_hvn_overlap} (default false; VP at signal_idx) |
+| cooldown_after_target_days | {int(getattr(cfg, "cooldown_after_target_days", 10) or 0)} (house 10; calendar days after TARGET exit; 0=off) |
+| trade_side | {cfg.trade_side} (long = house HL break-up retest; short = break-down mirror) |
 
 ## Predictive timing
 
@@ -1195,14 +1324,22 @@ def write_outputs(
         w = csv.writer(f)
         w.writerow(WATCH_HEADER)
         for r in opens:
+            sym = str(r.get("SYMBOL", "")).upper()
+            df_sym = tickers_mtm.get(sym) if tickers_mtm else None
+            poc_s, hvn_s, pass_s = (
+                _vz_watch_hvn_fields(r, df_sym) if df_sym is not None and not df_sym.empty else ("—", "—", "—")
+            )
             w.writerow(
                 [
-                    str(r.get("SYMBOL", "")).upper(),
+                    sym,
                     str(r.get("ASOF_DATE", "") or ""),
                     str(r.get("ZONE_ID", "") or ""),
                     str(r.get("ZONE_KIND", "") or ""),
                     r.get("ZONE_LO", ""),
                     r.get("ZONE_HI", ""),
+                    poc_s,
+                    hvn_s,
+                    pass_s,
                     (
                         f"OPEN position as-of last bar; bars_held={r.get('DAYS_HELD', '')}/"
                         f"{cfg.exit_bars}; not a TIME exit"
@@ -1223,6 +1360,7 @@ def write_outputs(
                 "WIN_RATE_PCT",
                 "TOTAL_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "AVG_R",
                 "AVG_DAYS_HELD",
             ]
@@ -1230,6 +1368,9 @@ def write_outputs(
         for sym in sorted(by_sym):
             rows = by_sym[sym]
             wins = sum(1 for r in rows if float(r["PNL_PCT"]) > 0)
+            sum_wins = sum(float(r["PNL_DOLLARS"]) for r in rows if float(r["PNL_PCT"]) > 0)
+            sum_losses = abs(sum(float(r["PNL_DOLLARS"]) for r in rows if float(r["PNL_PCT"]) < 0))
+            pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
             w.writerow(
                 [
                     sym,
@@ -1237,12 +1378,16 @@ def write_outputs(
                     f"{100.0 * wins / len(rows):.2f}",
                     f"{sum(float(r['PNL_DOLLARS']) for r in rows):.2f}",
                     f"{float(np.mean([float(r['PNL_PCT']) for r in rows])):.4f}",
+                    f"{pf:.2f}",
                     f"{float(np.mean([float(r['R_MULT']) for r in rows])):.4f}",
                     f"{float(np.mean([float(r['DAYS_HELD']) for r in rows])):.2f}",
                 ]
             )
         if closed:
             wins = sum(1 for r in closed if float(r["PNL_PCT"]) > 0)
+            sum_wins = sum(float(r["PNL_DOLLARS"]) for r in closed if float(r["PNL_PCT"]) > 0)
+            sum_losses = abs(sum(float(r["PNL_DOLLARS"]) for r in closed if float(r["PNL_PCT"]) < 0))
+            pf = (sum_wins / sum_losses) if sum_losses > 0 else (sum_wins if sum_wins > 0 else 0.0)
             w.writerow(
                 [
                     "ALL",
@@ -1250,6 +1395,7 @@ def write_outputs(
                     f"{100.0 * wins / len(closed):.2f}",
                     f"{sum(float(r['PNL_DOLLARS']) for r in closed):.2f}",
                     f"{float(np.mean([float(r['PNL_PCT']) for r in closed])):.4f}",
+                    f"{pf:.2f}",
                     f"{float(np.mean([float(r['R_MULT']) for r in closed])):.4f}",
                     f"{float(np.mean([float(r['DAYS_HELD']) for r in closed])):.2f}",
                 ]
@@ -1512,6 +1658,8 @@ def write_outputs(
     shutil.copy2(run_html, output_dir / f"{FILE_PREFIX}_LatestRun_Run_Summary.html")
     (output_dir / f"{FILE_PREFIX}_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
     (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
+    if _is_vz_house_universe(universe_label, summary_path):
+        (output_dir / f"{FILE_PREFIX}_house_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
     paths["closed"] = closed_path
     paths["open"] = open_path
     paths["watchlist"] = watch_path
@@ -1625,10 +1773,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--first-retest-only", type=_as_bool, default=True)
     p.add_argument("--min-touches", type=int, default=1)
     p.add_argument("--entry-on", default="next_open", choices=["close", "next_open"])
-    p.add_argument("--exit-name", default="zone_atr05_ts40")
+    p.add_argument("--exit-name", default="EXIT_atr4_s025_r15")
     p.add_argument("--exit-bars", type=int, default=40)
-    p.add_argument("--target-r", type=float, default=2.0)
-    p.add_argument("--stop-atr-buffer", type=float, default=0.5)
+    p.add_argument("--target-r", type=float, default=1.5)
+    p.add_argument("--stop-atr-buffer", type=float, default=0.25)
+    p.add_argument("--min-atr-pct-at-entry", type=float, default=4.0)
+    p.add_argument(
+        "--require-hvn-overlap",
+        type=_as_bool,
+        default=False,
+        help="Require zone ∩ HVN/POC at signal bar (default false / HOLD).",
+    )
     p.add_argument("--sheet-notional", type=float, default=SHEET_NOTIONAL)
     p.add_argument("--initial-capital", type=float, default=DEFAULT_INITIAL_CAPITAL)
     p.add_argument("--aggressive", action="store_true", default=True)
@@ -1666,6 +1821,10 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
                 "vz_min_atr_pct_at_entry": "min_atr_pct_at_entry",
                 "min_atr_pct": "min_atr_pct_at_entry",
                 "vz_require_hvn_overlap": "require_hvn_overlap",
+                "vz_trade_side": "trade_side",
+                "trade_side": "trade_side",
+                "vz_cooldown_after_target_days": "cooldown_after_target_days",
+                "cooldown_after_target_days": "cooldown_after_target_days",
             }
             k2 = aliases.get(k, k)
             if not hasattr(cfg, k2):
@@ -1698,6 +1857,11 @@ def cfg_from_args(ns: argparse.Namespace) -> VzConfig:
         exit_bars=int(ns.exit_bars),
         target_r=float(ns.target_r),
         stop_atr_buffer=float(ns.stop_atr_buffer),
+        min_atr_pct_at_entry=float(getattr(ns, "min_atr_pct_at_entry", 4.0) or 0.0),
+        require_hvn_overlap=bool(getattr(ns, "require_hvn_overlap", False)),
+        cooldown_after_target_days=int(
+            getattr(ns, "cooldown_after_target_days", 10) or 0
+        ),
         sheet_notional=float(ns.sheet_notional),
         initial_capital=float(ns.initial_capital),
         aggressive=not bool(ns.no_aggressive),

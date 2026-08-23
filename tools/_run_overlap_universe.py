@@ -224,7 +224,7 @@ def cmd_for_system(system: str, py: str, symbols: str) -> tuple[list[str], str |
             "-v",
             "trailing_stop_increment=0",
             "-v",
-            "strong_pre_pivot_pct=0.081",
+            "strong_pre_pivot_pct=0.1",
             "-v",
             "strong_post_pivot_pct=0.109",
             "-v",

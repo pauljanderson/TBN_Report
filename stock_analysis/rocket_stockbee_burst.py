@@ -1048,6 +1048,7 @@ SUMMARY_FIELDS = [
     "TOTAL_PNL",
     "SHEET_PNL",
     "AVG_PNL_PCT",
+    "PROFIT_FACTOR",
     "PCT_OF_TOTAL_PNL",
     # Same names/order as BRT/YH/RS write_brt_summary (filled by write_analysis_artifacts).
     "CURRENT_MARKET_CAP",
@@ -1366,6 +1367,12 @@ def build_summary(
         avg_pct = float(np.mean(pcts)) if pcts else 0.0
         med_pct = float(np.median(pcts)) if pcts else 0.0
         max_win = max(pcts) if pcts else 0.0
+        sum_wins = sum(t.pnl_dollars for t in trades if t.pnl_pct > 1e-9)
+        sum_losses = abs(sum(t.pnl_dollars for t in trades if t.pnl_pct < -1e-9))
+        if sum_losses > 0:
+            pf = sum_wins / sum_losses
+        else:
+            pf = sum_wins if sum_wins > 0 else 0.0
         first = first_dates.get(sym, "")
         years = 0.0
         if first and trades:
@@ -1394,6 +1401,7 @@ def build_summary(
                 "TOTAL_PNL": f"{pnl:.2f}",
                 "SHEET_PNL": f"{pnl:.2f}",
                 "AVG_PNL_PCT": f"{avg_pct:.2f}%",
+                "PROFIT_FACTOR": f"{pf:.2f}",
                 "PCT_OF_TOTAL_PNL": f"{(100.0 * pnl / total_pnl) if total_pnl else 0.0:.1f}%",
                 "CURRENT_MARKET_CAP": "",
                 "SECTOR": "",

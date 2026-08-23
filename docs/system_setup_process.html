@@ -578,9 +578,9 @@
         <code>python stock_analysis/rl_post_run_analysis.py --stamp &lt;ts&gt; --charts</code>.
         Auto-detect via <code>drive/{PREFIX}_Closed_{stamp}.csv</code> or pass <code>--closed</code>.</span></li>
       <li>Read cheap artifacts already on Summary / ImproveHints.
-        <span class="detail">Summary: <code>FIT</code>, <code>FIT_SCORE</code>, <code>FIT_SCORE_ROBUST</code>,
-        <code>MAX_WIN_PCT</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag only),
-        <code>OUTLIER_PCT_OF_WINS</code>, <code>FIT_ASSESSMENT</code>.
+        <span class="detail">Summary: <code>PROFIT_FACTOR</code>, <code>FIT</code>, <code>FIT_SCORE</code>, <code>FIT_SCORE_ROBUST</code>,
+        <code>MAX_WIN_PCT</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag only; not scored),
+        <code>OUTLIER_PCT_OF_WINS</code>, <code>FIT_ASSESSMENT</code>, <code>PAUL_SCORE</code> (peer <em>mean</em> thresholds).
         Hints: <code>{prefix}_ImproveHints_&lt;ts&gt;.csv</code> + <code>.md</code> (+ cheap <code>.html</code>).
         Use headline <code>FIT_SCORE</code> for continuity; use <code>FIT_SCORE_ROBUST</code>
         (leave-max-win-out mean + outlier penalty) when deciding what to change—see
@@ -630,10 +630,30 @@
       No separate <code>FIT_ROBUST</code> tier column—tier is implied via score thresholds and optional
       <code>FIT_ASSESSMENT</code> note (<code>wo-max avg …%</code>).
     </div>
-    <p class="hint">Inputs (per symbol): Summary <code>PCT_WINS</code>, <code>AVG_PNL_PCT</code>, <code>SHEET_PNL</code>,
+    <p class="hint">Inputs (per symbol): Summary <code>PCT_WINS</code>, <code>AVG_PNL_PCT</code> (FIT “Expectancy”), <code>SHEET_PNL</code>,
     <code>AVG_TRADES_PER_YEAR</code>, <code>WINS</code>/<code>LOSSES</code>/<code>TRADES</code>; Closed rows supply each trade’s
     <code>PNL %</code> (leave-max-win-out + outlier math; median written for inspection only).
-    Zero trades → score 0 / Low. Implementation: <code>_leave_max_win_out</code> + <code>_fit_component_score</code>.</p>
+    Zero trades → score 0 / Low. Implementation: <code>_leave_max_win_out</code> + <code>_fit_component_score</code>
+    + four house <code>FIT_ASSESSMENT</code> gates.</p>
+    <p class="do-label">FIT_ASSESSMENT gates (pass/fail checklist)</p>
+    <div class="table-wrap">
+      <table class="sortable">
+        <caption>Click column headers to sort. Expectancy = <code>AVG_PNL_PCT</code>; dollar = <code>SHEET_PNL</code>.</caption>
+        <thead>
+          <tr>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Gate<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Summary field<span class="sort-ind"></span></th>
+            <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Threshold<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Expectancy</td><td><code>AVG_PNL_PCT</code></td><td class="num">≥ 2.5%</td></tr>
+          <tr><td>Trades / year</td><td><code>AVG_TRADES_PER_YEAR</code></td><td class="num">≥ 1</td></tr>
+          <tr><td>Robustness</td><td><code>AVG_PNL_PCT_WO_MAX</code></td><td class="num">≥ 0.20%</td></tr>
+          <tr><td>Sheet PnL $</td><td><code>SHEET_PNL</code></td><td class="num">&gt; 10,000</td></tr>
+        </tbody>
+      </table>
+    </div>
     <p class="do-label">Shared point rules (both scores)</p>
     <div class="table-wrap">
       <table class="sortable">
@@ -649,13 +669,12 @@
           <tr><td>Win rate</td><td><code>PCT_WINS</code> ≥ 55%</td><td class="num">+2</td></tr>
           <tr><td>Win rate</td><td>≥ 45% and &lt; 55%</td><td class="num">+1</td></tr>
           <tr><td>Avg PnL% (mean or wo-max)</td><td>bucket input ≥ 8%</td><td class="num">+2</td></tr>
-          <tr><td>Avg PnL% (mean or wo-max)</td><td>≥ 3% and &lt; 8%</td><td class="num">+1</td></tr>
+          <tr><td>Avg PnL% (mean or wo-max)</td><td>≥ 2.5% and &lt; 8%</td><td class="num">+1</td></tr>
           <tr><td>Avg PnL% (mean or wo-max)</td><td>&lt; 0%</td><td class="num">−2</td></tr>
-          <tr><td>Sheet PnL</td><td>sheet $ &gt; 5000 (headline: raw; robust: wo-max scaled)</td><td class="num">+2</td></tr>
-          <tr><td>Sheet PnL</td><td>&gt; 0 and ≤ 5000</td><td class="num">+1</td></tr>
+          <tr><td>Sheet PnL</td><td>sheet $ &gt; 10,000 (headline: raw; robust: wo-max scaled)</td><td class="num">+2</td></tr>
+          <tr><td>Sheet PnL</td><td>&gt; 0 and ≤ 10,000</td><td class="num">+1</td></tr>
           <tr><td>Sheet PnL</td><td>&lt; −2000</td><td class="num">−2</td></tr>
           <tr><td>Trades / year</td><td><code>AVG_TRADES_PER_YEAR</code> ≥ 1.0</td><td class="num">+2</td></tr>
-          <tr><td>Trades / year</td><td>≥ 0.36 and &lt; 1.0</td><td class="num">+1</td></tr>
           <tr><td>Clean book</td><td>≥ 3 wins and 0 losses</td><td class="num">+1</td></tr>
           <tr><td>Asymmetry</td><td>avg win &lt; 0.85 × |avg loss| (Closed)</td><td class="num">−1</td></tr>
         </tbody>
@@ -691,10 +710,11 @@
     <div class="callout">
       <code>FIT_SCORE_ROBUST = win_rate_pts + pnl_pts(<strong>AVG_PNL_PCT_WO_MAX</strong>) + sheet_pnl_pts(<strong>SHEET_PNL_WO_MAX</strong>) + trades_per_year_pts + clean_book_pt − asymmetry_pt − outlier_penalty</code>
       <br><br>
-      where <code>pnl_pts(x) = +2 if x ≥ 8%, +1 if 3% ≤ x &lt; 8%, 0 if 0 ≤ x &lt; 3%, −2 if x &lt; 0%</code>,
+      where <code>pnl_pts(x) = +2 if x ≥ 8%, +1 if 2.5% ≤ x &lt; 8%, 0 if 0 ≤ x &lt; 2.5%, −2 if x &lt; 0%</code>,
       and <code>outlier_penalty = 2 if top win &gt; 70% of win PnL% (or &gt; 80% of sheet share), 1 if &gt; 50% (or &gt; 60%), else 0</code>.
       Tier: score ≥ 5 → High, ≥ 2 → Medium, else Low. Headline uses the identical formula but with
       <code>pnl_pts(AVG_PNL_PCT)</code>, raw <code>SHEET_PNL</code>, and <code>outlier_penalty = 0</code>.
+      Sheet full points require <code>SHEET_PNL &gt; 10,000</code>; trades/year full points require ≥ 1.0 (no soft 0.36).
     </div>
     <p class="hint">Median is no longer in this formula. A negative median at WR≈50% no longer forces a −2 PnL
     bucket by itself—only dropping the max win (and/or the outlier penalty) can pull robust below headline.</p>
@@ -735,7 +755,7 @@
     <p class="do-label">Point-by-point: AMZN under current robust (leave-max-win-out)</p>
     <div class="table-wrap">
       <table class="sortable">
-        <caption>Win-rate / sheet / tpy unchanged; PnL bucket uses wo-max (+5.55% ≥ 3% → +1), not median (−2).</caption>
+        <caption>Win-rate / sheet / tpy unchanged; PnL bucket uses wo-max (+5.55% ≥ 2.5% → +1), not median (−2).</caption>
         <thead>
           <tr>
             <th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Component<span class="sort-ind"></span></th>
@@ -745,8 +765,8 @@
         </thead>
         <tbody>
           <tr><td>Win rate (50.0% / 51.5%, both ≥45%)</td><td class="num">+1</td><td class="num">+1</td></tr>
-          <tr><td>PnL bucket — <strong>wo-max</strong> (+5.55% / +5.85%, both ≥3%)</td><td class="num">+1</td><td class="num">+1</td></tr>
-          <tr><td>Sheet PnL (both &gt; 5000 after wo-max scale)</td><td class="num">+2</td><td class="num">+2</td></tr>
+          <tr><td>PnL bucket — <strong>wo-max</strong> (+5.55% / +5.85%, both ≥2.5%)</td><td class="num">+1</td><td class="num">+1</td></tr>
+          <tr><td>Sheet PnL (both &gt; 10,000 after wo-max scale)</td><td class="num">+2</td><td class="num">+2</td></tr>
           <tr><td>Trades / year (2.53 / 1.99, both ≥ 1.0)</td><td class="num">+2</td><td class="num">+2</td></tr>
           <tr><td>Outlier penalty (~7% / ~8% of wins — below trigger)</td><td class="num">0</td><td class="num">0</td></tr>
           <tr class="total-row"><td><strong>Robust total (now)</strong></td><td class="num"><strong>6</strong></td><td class="num"><strong>6</strong></td></tr>
@@ -767,8 +787,10 @@
     (+3.39%→+2.64%, +3.08%→+2.46%) and robust drops 5→4.</p>
     <p><strong>Q: Is <code>MEDIAN_PNL_PCT</code> gone?</strong><br>
     No—still written on Summary for inspection and charts. It is simply <strong>not</strong> an input to
-    <code>FIT_SCORE_ROBUST</code> anymore (<code>assess_symbol_fit</code> docstring +
-    <span class="path">docs/POST_RUN_ANALYSIS.md</span>).</p>
+    <code>FIT_SCORE</code>, <code>FIT_SCORE_ROBUST</code>, or <code>PAUL_SCORE</code>
+    (<code>assess_symbol_fit</code> / <code>apply_paul_scores_to_summary_rows</code> +
+    <span class="path">docs/POST_RUN_ANALYSIS.md</span>). Paul peer cuts use <strong>mean only</strong>
+    (peer median is diagnostic in threshold dumps, not the threshold).</p>
     <p><strong>Q: Does robust still catch outlier-carried books?</strong><br>
     Yes, two ways: (1) wo-max mean / scaled sheet can lose PnL or sheet points after the top win is removed;
     (2) soft −1/−2 when top win &gt;50%/70% of win PnLs or &gt;60%/80% of sheet share.</p>
@@ -975,28 +997,40 @@
         </thead>
         <tbody>
           <tr>
+            <td>Expectancy</td>
+            <td><code>AVG_PNL_PCT</code></td>
+            <td class="num">≥ 2.5%</td>
+            <td>FIT “Expectancy” = mean trade PnL % (same field as headline FIT avg-pnl bucket). Not Report dollar Expectancy.</td>
+          </tr>
+          <tr>
             <td>Trade frequency</td>
             <td><code>AVG_TRADES_PER_YEAR</code></td>
-            <td class="num">≥ ~0.36</td>
-            <td>Minimum activity: choose stocks that trade on average at least ~0.36×/year over the study window. Years = (end − start) / 365.25; start = max(<code>FIRST_DATA_DATE</code>, <code>-v start_date</code>); end = backtest end or last OHLC / last close.</td>
+            <td class="num">≥ 1</td>
+            <td>Minimum activity: at least 1 trade/year over the study window. Years = (end − start) / 365.25; start = max(<code>FIRST_DATA_DATE</code>, <code>-v start_date</code>); end = backtest end or last OHLC / last close. (Prior soft floor ~0.36 retired.)</td>
+          </tr>
+          <tr>
+            <td>Robustness (wo-max)</td>
+            <td><code>AVG_PNL_PCT_WO_MAX</code></td>
+            <td class="num">≥ 0.20%</td>
+            <td>Leave-max-win-out mean trade PnL % — edge must remain non-trivial after dropping the single largest winning trade.</td>
           </tr>
           <tr>
             <td>Sheet-scaled PnL</td>
             <td><code>SHEET_PNL</code></td>
             <td class="num">&gt; 10,000</td>
-            <td>Sheet invest $45k vs engine <code>brt_cash</code> (~47.5k typical). Do not compare raw <code>TOTAL_PNL</code> to sheet dollars without scaling.</td>
+            <td>Sheet invest $45k vs engine <code>brt_cash</code> (~47.5k typical). Do not compare raw <code>TOTAL_PNL</code> to sheet dollars without scaling. FIT dollar gate uses <code>SHEET_PNL</code>.</td>
           </tr>
           <tr>
             <td>Win rate</td>
             <td><code>PCT_WINS</code></td>
             <td class="num">≥ 50%</td>
-            <td>WINS / TRADES × 100 (BE in denominator). Same definition as Report/Audit Pct_Wins.</td>
+            <td>WINS / TRADES × 100 (BE in denominator). Same definition as Report/Audit Pct_Wins. (Still a promotion filter; not one of the four FIT_ASSESSMENT gates.)</td>
           </tr>
           <tr>
             <td>No outlier-driven avg</td>
             <td><code>TOTAL_PNL</code> / Closed rows</td>
             <td class="num">Qualitative fail</td>
-            <td>Reject if a single mega-winner carries the average; check P90 day distortion, top-1 trade % of total PnL, and MAE clusters. Sort Closed by PnL $; if top trade ≫ rest, demote.</td>
+            <td>Reject if a single mega-winner carries the average; check P90 day distortion, top-1 trade % of total PnL, and MAE clusters. Sort Closed by PnL $; if top trade ≫ rest, demote. Also read <code>FIT_SCORE_ROBUST</code> / <code>AVG_PNL_PCT_WO_MAX</code>.</td>
           </tr>
           <tr>
             <td>History depth (context)</td>
@@ -1037,7 +1071,7 @@
     <ul class="bullets">
       <li>Re-run the engine with <code>-s</code> / <code>*_SYMBOLS=</code> limited to the promotion list.
         <span class="detail">Same frozen <code>-v</code> levers as the universe run that produced Summary.</span></li>
-      <li>Review portfolio-level metrics (Ann ROR, Max DD, PF, expectancy).
+      <li>Review portfolio-level metrics (Ann ROR, Max DD, Calmar, Sharpe, PF, expectancy).
         <span class="detail">Drawdown tools: <span class="path">DrawdownCalc.py</span> for RL/BRT/MTS Closed stamps.</span></li>
       <li>Check for silent regressions vs seed behavior on overlapping names.
         <span class="detail">If a MarkTen name suddenly looks different, stop and reconcile.</span></li>
@@ -1160,7 +1194,7 @@
         <tr>
           <td>Summary columns</td>
           <td><code>*_Summary_&lt;ts&gt;.csv</code></td>
-          <td><code>FIRST_DATA_DATE</code>, <code>AVG_TRADES_PER_YEAR</code>, <code>SHEET_PNL</code>, <code>PCT_WINS</code>, <code>FIT</code>/<code>FIT_SCORE</code>/<code>FIT_SCORE_ROBUST</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag), …</td>
+          <td><code>FIRST_DATA_DATE</code>, <code>AVG_TRADES_PER_YEAR</code>, <code>SHEET_PNL</code>, <code>PCT_WINS</code>, <code>PROFIT_FACTOR</code>, <code>FIT</code>/<code>FIT_SCORE</code>/<code>FIT_SCORE_ROBUST</code>, <code>AVG_PNL_PCT_WO_MAX</code>, <code>MEDIAN_PNL_PCT</code> (diag; not scored), <code>PAUL_SCORE</code> (peer <em>mean</em> thresholds), …</td>
         </tr>
         <tr>
           <td>Sheet PnL scale</td>

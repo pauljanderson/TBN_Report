@@ -11,7 +11,7 @@ rem     set RL_SYMBOLS=AMD,NFLX  (default universe lives in run_rl.bat / run_aud
 rem     set RS_SYMBOLS=NVDA,AVGO
 rem     set RS_TARGET=1.21
 rem     set RS_STOP=0.934
-rem     SB (StockBee) step [10/14]: call run_sb.bat — default gold 56 from drive\universes\SB_universe.csv
+rem     SB (StockBee) step [10/13]: call run_sb.bat — default gold 56 from drive\universes\SB_universe.csv
 rem       Same CLI as other run_??.bat: no args = CSV whitelist; run_sb.bat ALL = full universe
 rem       Standalone same default: run_sb.bat   (no args)
 rem     set SB_SYMBOLS=NVDA,TSLA  override gold list
@@ -19,17 +19,17 @@ rem     set SB_SYMBOLS=*          (or ALL / SB_ALL_CSV=1) = all data\newdata\dat
 rem     Prefer set "SB_SYMBOLS=*" — bare set SB_SYMBOLS=* && leaves a trailing space (bat trims)
 rem     set SKIP_SB=1             skip StockBee step
 rem     VZ (Volume Zone) — RESEARCH sleeve only; NOT in DailyRun step list.
-rem       Standalone: run_vz.bat  (drive\universes\VZ_universe.csv DualPaul78 research default)
+rem       Standalone: run_vz.bat  (drive\universes\VZ_universe.csv VZ_new56 research default; DualPaul78 backup kept)
 rem       Optional later: call run_vz.bat behind SKIP_VZ — do not treat as gold from wiring alone.
+rem       If that step is added, carry VZ_REQUIRE_HVN_OVERLAP (house freeze is false; do not default-on).
 rem     WRL (Weekly Range / Swing) — RESEARCH sleeve; runner lives at this root:
 rem       C:\Users\songg\Downloads\stockresearch\run_wrl.bat
 rem       Standalone: run_wrl.bat  (Mag10 default; run_wrl.bat ALL = full universe)
 rem       Optional later: call run_wrl.bat behind SKIP_WRL — do not treat as gold from wiring alone.
-rem     MVCP (Minervini VCP) — PARKED 2026-08-12 from live DailyRun sleeve (research only).
-rem       Evidence: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html / PARK.md
-rem       Standalone research: run_mvcp.bat / run_minervini_vcp.bat (engine kept).
-rem       Default: SKIP_MVCP=1. Opt-in only: set SKIP_MVCP=0
-rem       set MVCP_SYMBOLS=NVDA,TSLA  override ALL scan when opting in
+rem     MVCP (Minervini VCP) — RETIRED 2026-08-21 from DailyRun and active reporting.
+rem       Not a DailyRun step (SKIP_MVCP removed). Standalone research only:
+rem       run_mvcp.bat / run_minervini_vcp.bat (engine + historical Closed stamps kept).
+rem       Evidence: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html
 rem     set SKIP_RECONCILE_GATE=1 skip frozen Closed gate
 rem     set SKIP_GET=1            skip pygetallMore (run_update_data)
 rem     set FORCE_GET=1           always run pygetallMore (override auto fresh skip)
@@ -126,10 +126,14 @@ rem --- 1) Update data (pygetallMore via run_update_data) ---
 rem Disable: set SKIP_GET=1  or  DailyRun --noGet / --no-get
 rem Force:   set FORCE_GET=1
 rem Default: auto fresh check (drive\data_update_last_ok.json from last pygetallMore)
+rem Intraday 1m (yfinance → data\intraday\1m) — RESEARCH only; not wired here.
+rem   Standalone: python tools\fetch_intraday_1m.py -s SPY,AAPL --lookback-days 5
+rem   Docs: docs\INTRADAY_1M.md (and data\intraday\HOW_TO.md next to local files)
+rem   Optional later: call behind SKIP_INTRADAY (after daily update; small univ first).
 set "SKIP_GET_REASON="
 if /i not "%SKIP_GET%"=="1" if /i not "%FORCE_GET%"=="1" (
-  echo [1/14] checking data freshness...
-  echo [1/14] checking data freshness...>>"%LOG%"
+  echo [1/13] checking data freshness...
+  echo [1/13] checking data freshness...>>"%LOG%"
   set "FRESHCHK=%TEMP%\DailyRun_fresh_%STAMP%.txt"
   "%PY%" tools\data_update_freshness.py --check > "!FRESHCHK!" 2>&1
   set "FRESH_EXIT=!errorlevel!"
@@ -143,15 +147,15 @@ if /i not "%SKIP_GET%"=="1" if /i not "%FORCE_GET%"=="1" (
 )
 if /i "%SKIP_GET%"=="1" (
   if /i "%SKIP_GET_REASON%"=="auto" (
-    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)
-    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)>>"%LOG%"
+    echo [1/13] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)
+    echo [1/13] SKIPPED - run_update_data / pygetallMore ^(data fresh — auto^)>>"%LOG%"
   ) else (
-    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)
-    echo [1/14] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)>>"%LOG%"
+    echo [1/13] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)
+    echo [1/13] SKIPPED - run_update_data / pygetallMore ^(SKIP_GET=1^)>>"%LOG%"
   )
 ) else (
-  echo [1/14] Data stale — running update>>"%LOG%"
-  echo [1/14] run_update_data>>"%LOG%"
+  echo [1/13] Data stale — running update>>"%LOG%"
+  echo [1/13] run_update_data>>"%LOG%"
   call "%~dp0run_update_data.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 )
@@ -162,15 +166,15 @@ rem cold miss still builds on the fly. Set WARM_IND=1 before DailyRun to pre-war
 rem Manual one-liner: call run_warm_indicator_cache.bat
 rem Cache is .brt_indicator_cache (INDICATOR_CACHE_VERSION=4); cold miss still builds TC on the fly.
 if /i "%WARM_IND%"=="1" (
-  echo [2/14] run_warm_indicator_cache ^(WARM_IND=1^)>>"%LOG%"
+  echo [2/13] run_warm_indicator_cache ^(WARM_IND=1^)>>"%LOG%"
   call "%~dp0run_warm_indicator_cache.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 ) else (
-  echo [2/14] SKIPPED - run_warm_indicator_cache ^(set WARM_IND=1 to enable^)>>"%LOG%"
+  echo [2/13] SKIPPED - run_warm_indicator_cache ^(set WARM_IND=1 to enable^)>>"%LOG%"
 )
 
 rem --- 3a) Audit (legacy AWK Rocket Launcher) ---
-echo [3/14] run_audit (AWK RL)>>"%LOG%"
+echo [3/13] run_audit (AWK RL)>>"%LOG%"
 call "%~dp0run_audit.bat" -AllowRegression >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_AWK_TS=%%a"
@@ -178,10 +182,10 @@ if not defined RL_AWK_TS (
   echo ERROR: drive\last_run_ts.txt missing after run_audit>>"%LOG%"
   goto :fail
 )
-echo [3/14] AWK RL timestamp: %RL_AWK_TS%>>"%LOG%"
+echo [3/13] AWK RL timestamp: %RL_AWK_TS%>>"%LOG%"
 
 rem --- 3b) Python Rocket Launcher ---
-echo [3/14] run_rl>>"%LOG%"
+echo [3/13] run_rl>>"%LOG%"
 call "%~dp0run_rl.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_PY_TS=%%a"
@@ -189,38 +193,38 @@ if not defined RL_PY_TS (
   echo ERROR: drive\last_run_ts.txt missing after run_rl>>"%LOG%"
   goto :fail
 )
-echo [3/14] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
+echo [3/13] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
 
 rem --- 3c) AWK vs Python RL output parity ---
-echo [3/14] run_rl_compare>>"%LOG%"
+echo [3/13] run_rl_compare>>"%LOG%"
 call "%~dp0run_rl_compare.bat" %RL_AWK_TS% %RL_PY_TS% >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 4) BRT system backtest (Break and ReTest; TBN engine via run_brt.bat ??? rocket_tbn.py) ---
-echo [4/14] run_brt>>"%LOG%"
+echo [4/13] run_brt>>"%LOG%"
 call "%~dp0run_brt.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 5) DEPRECATED: IND indicator-only backtest (manual script retained) ---
-echo [5/14] SKIPPED - run_ind (IND deprecated)>>"%LOG%"
+echo [5/13] SKIPPED - run_ind (IND deprecated)>>"%LOG%"
 
 rem --- 6) YH backtest ---
-echo [6/14] run_yh>>"%LOG%"
+echo [6/13] run_yh>>"%LOG%"
 call "%~dp0run_yh.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 7) MTS backtest ---
-echo [7/14] run_mts>>"%LOG%"
+echo [7/13] run_mts>>"%LOG%"
 call "%~dp0run_mts.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 8) WPBR backtest (Mag9; run_wpbr.bat: SC-on, stop 0.91, target 1.22, NO start_date; AMD out of WPBR) ---
-echo [8/14] run_wpbr>>"%LOG%"
+echo [8/13] run_wpbr>>"%LOG%"
 call "%~dp0run_wpbr.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- 9) RS (Relative Strength: SPY_COMPARE>0 + TC Strong) ---
-echo [9/14] run_rs>>"%LOG%"
+echo [9/13] run_rs>>"%LOG%"
 call "%~dp0run_rs.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
@@ -229,62 +233,47 @@ rem Default: run_sb.bat with no args loads drive\universes\SB_universe.csv (56 n
 rem Disable: set SKIP_SB=1
 rem Docs: drive\paul_experiments\tbn_new_systems\stockbee_momentum_burst\HOW_TO_RUN.html
 if /i "%SKIP_SB%"=="1" (
-  echo [10/14] SKIPPED - run_sb ^(SKIP_SB=1^)
-  echo [10/14] SKIPPED - run_sb ^(SKIP_SB=1^)>>"%LOG%"
+  echo [10/13] SKIPPED - run_sb ^(SKIP_SB=1^)
+  echo [10/13] SKIPPED - run_sb ^(SKIP_SB=1^)>>"%LOG%"
 ) else (
   rem Loud WARN if console left full-universe overrides set (do not block)
   if /i "%SB_SYMBOLS%"=="*" (
-    echo [10/14] WARN: SB_SYMBOLS=* - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.
-    echo [10/14] WARN: SB_SYMBOLS=* - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.>>"%LOG%"
+    echo [10/13] WARN: SB_SYMBOLS=* - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.
+    echo [10/13] WARN: SB_SYMBOLS=* - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.>>"%LOG%"
   )
   if /i "%SB_SYMBOLS%"=="ALL" (
-    echo [10/14] WARN: SB_SYMBOLS=ALL - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.
-    echo [10/14] WARN: SB_SYMBOLS=ALL - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.>>"%LOG%"
+    echo [10/13] WARN: SB_SYMBOLS=ALL - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.
+    echo [10/13] WARN: SB_SYMBOLS=ALL - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_SYMBOLS for production.>>"%LOG%"
   )
   if "%SB_ALL_CSV%"=="1" (
-    echo [10/14] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.
-    echo [10/14] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.>>"%LOG%"
+    echo [10/13] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.
+    echo [10/13] WARN: SB_ALL_CSV=1 - DailyRun SB will scan FULL data CSVs, not gold-56. Unset SB_ALL_CSV for production.>>"%LOG%"
   )
-  echo [10/14] run_sb ^(gold SB_universe.csv^)
-  echo [10/14] run_sb ^(gold SB_universe.csv^)>>"%LOG%"
+  echo [10/13] run_sb ^(gold SB_universe.csv^)
+  echo [10/13] run_sb ^(gold SB_universe.csv^)>>"%LOG%"
   call "%~dp0run_sb.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 )
 
-rem --- 11) MVCP (PARKED — research only; not live sleeve) -----------------------
-rem PARK 2026-08-12: default skip so MVCP does not drag DailyRun / allocation.
-rem Opt-in: set SKIP_MVCP=0  then this step calls run_mvcp.bat
-rem Docs: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html / PARK.md
-if not defined SKIP_MVCP set "SKIP_MVCP=1"
-if /i not "%SKIP_MVCP%"=="0" (
-  echo [11/14] PARKED - run_mvcp ^(SKIP_MVCP=%SKIP_MVCP%; set SKIP_MVCP=0 to opt in^)
-  echo [11/14] PARKED - run_mvcp ^(SKIP_MVCP=%SKIP_MVCP%^)>>"%LOG%"
-) else (
-  echo [11/14] run_mvcp ^(opt-in SKIP_MVCP=0 / MVCP_universe.csv^)
-  echo [11/14] run_mvcp ^(opt-in SKIP_MVCP=0 / MVCP_universe.csv^)>>"%LOG%"
-  call "%~dp0run_mvcp.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
-)
-
-rem --- 12) Copy latest run outputs ---
-echo [12/14] run_copy_latest>>"%LOG%"
+rem --- 11) Copy latest run outputs ---
+echo [11/13] run_copy_latest>>"%LOG%"
 call "%~dp0run_copy_latest.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 13) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB; MVCP parked)
+rem --- 12) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB; MVCP retired/disabled)
 rem Disable: set SKIP_RECONCILE_GATE=1  or  set RECONCILE_GATE=0
 rem Docs: drive\paul_experiments\yh_baseline_20260731\RECONCILE_GATE.md
-echo [13/14] run_reconcile_gate>>"%LOG%"
+echo [12/13] run_reconcile_gate>>"%LOG%"
 call "%~dp0run_reconcile_gate.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 14a) Live stop/target for open positions ---
-echo [14/14] run_gettarget>>"%LOG%"
+rem --- 13a) Live stop/target for open positions ---
+echo [13/13] run_gettarget>>"%LOG%"
 call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 14b) Investment report + GitHub Pages ---
-echo [14/14] publish_github_pages>>"%LOG%"
+rem --- 13b) Investment report + GitHub Pages ---
+echo [13/13] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 

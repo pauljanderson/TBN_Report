@@ -25,26 +25,41 @@ Emitted after Summary write:
 | Artifact | Columns / files |
 |----------|-----------------|
 | Closed | `ONE_LINER` |
-| Summary | `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `AVG_PNL_PCT_WO_MAX`, `MEDIAN_PNL_PCT` (diag only), `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`); `PAUL_SCORE` (0–8: +1 each if ≥ max(mean,median) for PCT_WINS / TOTAL_PNL / SHEET_PNL / AVG_PNL_PCT / AVG_PNL_PCT_WO_MAX / AVG_TRADES_PER_YEAR; +1 each if ≤ min(mean,median) for OUTLIER_PCT_OF_WINS / AVG_DAYS_HELD) |
+| Summary | `PROFIT_FACTOR`; `FIT`, `FIT_SCORE`, `FIT_SCORE_ROBUST`, `MAX_WIN_PCT`, `AVG_PNL_PCT_WO_MAX`, `MEDIAN_PNL_PCT` (diag only), `OUTLIER_PCT_OF_WINS`, `FIT_ASSESSMENT` (RL also keeps `RL_FIT`); `PAUL_SCORE` (0–8: +1 each if ≥ **mean** for PCT_WINS / TOTAL_PNL / SHEET_PNL / AVG_PNL_PCT / AVG_PNL_PCT_WO_MAX / AVG_TRADES_PER_YEAR; +1 each if ≤ **mean** for OUTLIER_PCT_OF_WINS / AVG_DAYS_HELD — peer median is not used for thresholds) |
 | Hints | `{prefix}_ImproveHints_<ts>.csv` + `.md` + `.html` |
 
-`FIT_SCORE` (headline) is unchanged: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
+`FIT_SCORE` (headline) is unchanged in structure: mean `AVG_PNL_PCT` drives the avg-pnl points bucket.
+In FIT, **Expectancy** means Summary **`AVG_PNL_PCT`** (mean trade PnL %), not Report dollar `Expectancy`.
+
+**FIT_ASSESSMENT gates** (pass/fail checklist on every Summary row; also shown in SymbolAssessments HTML):
+
+| Gate | Field | Threshold |
+|------|-------|-----------|
+| Expectancy | `AVG_PNL_PCT` | ≥ **2.5%** |
+| Trades / year | `AVG_TRADES_PER_YEAR` | ≥ **1** |
+| Robustness | `AVG_PNL_PCT_WO_MAX` (leave-max-win-out mean) | ≥ **0.20%** |
+| Dollar PnL | `SHEET_PNL` (sheet-scaled; not `TOTAL_PNL`) | **> $10,000** |
+
+Assessment text looks like:
+`High: gates PASS 4/4 [exp AVG_PNL_PCT +5.20% >=2.5 ok; tpy 1.30 >=1 ok; wo AVG_PNL_PCT_WO_MAX +4.80% >=0.20 ok; sheet SHEET_PNL $15,200 >10,000 ok]; …`
 
 **Before → after (robust):** median Closed `PNL %` was retired as the robust PnL input (it over-punished ~50% WR books). Current `FIT_SCORE_ROBUST` uses the same point rules but:
 
 1. **Leave-max-win-out** mean trade `PNL %` (drop the single largest winning trade, then re-average) for the avg-pnl points bucket — `AVG_PNL_PCT_WO_MAX`. Sheet PnL is scaled the same way (fixed-notional share of the dropped win).
 2. Soft outlier penalty: **−1** if top win &gt;50% of sum of winning PnL% **or** that trade’s fixed-notional share &gt;60% of sum(PnL%); **−2** if &gt;70% of win PnLs or &gt;80% of sheet share.
 
-`MEDIAN_PNL_PCT` remains on Summary for inspection but is **not** used in the robust score. Process write-up (formula + AMZN before/after): `drive/paul_experiments/system_setup_process.html` § FIT / robust (mirrored in `docs/system_setup_process.html`).
+`MEDIAN_PNL_PCT` remains on Summary for inspection but is **not** used in FIT, FIT_SCORE_ROBUST, or PAUL_SCORE. Paul peer thresholds use **mean only** (peer median is diagnostic in threshold dumps, not the cut). Process write-up (formula + AMZN before/after): `docs/system_setup_process.html` § FIT / robust.
+
+Per-symbol **`PROFIT_FACTOR`** (gross win $ / |gross loss $|, same definition as Report `Profit_Factor`) is written on Summary by `write_brt_summary` / system Summary writers and back-filled by `enrich_summary_csv_with_fit` from Closed.
 
 When robust is materially weaker (score ≥2 below headline, or tier drop), `FIT_ASSESSMENT` appends `robust Low/Med… (wo-max avg …%, outlier …% of wins)`.
 
-Use **headline** for continuity / sheet paste; use **robust** for promotion gates (“≥50% wins, sheet &gt;10k, ≥0.36 tpy, edge not carried by one outlier”).
+Use **headline** for continuity / sheet paste; use **robust** plus the four assessment gates for promotion (“Expectancy ≥2.5%, sheet &gt;10k, ≥1 tpy, wo-max ≥0.20%”).
 
 ### Control vs candidate compares (canonical metrics)
 
 Stamp A/B reports (universe, trade-diff, param) must include the full book + Summary aggregate set in
-`drive/paul_experiments/CANONICAL_COMPARE_METRICS.md` (Ann ROR, Max DD, sheet/Total PnL, PF, win%,
+`drive/paul_experiments/CANONICAL_COMPARE_METRICS.md` (Ann ROR, Max DD, Calmar, Sharpe, sheet/Total PnL, PF, win%,
 days held, capital days, Paul / FIT / FIT_SCORE_ROBUST, AVG_PNL_PCT_WO_MAX, outlier%, trades/year,
 exit mix, etc.) — absolute values and deltas. Do not ship a short subset.
 
@@ -85,14 +100,15 @@ Hints suggest a **direction** for a hypothesis test; they are not a license for 
 - **Future / tooling:** teach post-run analysis to surface near-miss / band-touch more explicitly
   across zone systems (beyond RL `--missed-moves`) so evidence for hypothesis tests is easier to count.
 
-`FIT_SCORE` trades/year component (`AVG_TRADES_PER_YEAR` in `assess_symbol_fit`): higher frequency is rewarded; there is no “busy” penalty for high tpy.
+`FIT_SCORE` trades/year component (`AVG_TRADES_PER_YEAR` in `assess_symbol_fit`): higher frequency is rewarded; there is no “busy” penalty for high tpy. House assessment gate requires **≥ 1** trade/year (soft +1 at 0.36 retired).
 
 | `AVG_TRADES_PER_YEAR` | Points |
 |-----------------------|--------|
 | ≥ 1.0 | +2 |
-| ≥ 0.36 | +1 |
 | 0 &lt; tpy &lt; 0.2 | 0 (note: `rare setups`) |
 | otherwise | 0 |
+
+Avg-PnL% points bucket (headline uses `AVG_PNL_PCT`; robust uses `AVG_PNL_PCT_WO_MAX`): ≥8% → +2; ≥**2.5%** → +1; &lt;0% → −2. Sheet $ points: **&gt;$10,000** → +2; &gt;0 → +1; &lt;−2000 → −2.
 
 ### RL post-TARGET quick stops
 

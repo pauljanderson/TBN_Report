@@ -5,7 +5,7 @@ Research only — not gold / not DailyRun. Re-aggregates ``signals_rw63.csv``
 from ``vol_zone_v2_rw63_fulluniv_*`` (no full-universe re-run).
 
 Paul Score uses ``stock_analysis.rocket_post_analysis.apply_paul_scores_to_summary_rows``
-exactly (0–8 peer thresholds vs this Summary's mean/median).
+exactly (0–8 peer thresholds vs this Summary's **mean** only).
 
 Synthetic sheet dollars: each trade notional = $45,000 (house SHEET_INVESTMENT);
 ``TOTAL_PNL`` / ``SHEET_PNL`` = sum(pnl_pct/100 * 45000). VZ has no engine cash sizing.
@@ -48,7 +48,9 @@ PROPOSED_MIN_TRADES = 20
 PROPOSED_MIN_PAUL = 5
 PROPOSED_MIN_WR = 50.0
 PROPOSED_MIN_SHEET = 10_000.0
-PROPOSED_MIN_TPY = 0.36
+PROPOSED_MIN_TPY = 1.0
+PROPOSED_MIN_EXPECTANCY = 2.5
+PROPOSED_MIN_WO_MAX = 0.20
 PROPOSED_MIN_OOS_N = 5
 PROPOSED_MIN_PAUL_OOS = 4
 
@@ -429,6 +431,10 @@ def proposed_gold_pass(row: dict[str, Any]) -> bool:
         return False
     if _f(row.get("AVG_TRADES_PER_YEAR"), 0) < PROPOSED_MIN_TPY:
         return False
+    if _f(row.get("AVG_PNL_PCT"), 0) < PROPOSED_MIN_EXPECTANCY:
+        return False
+    if _f(row.get("AVG_PNL_PCT_WO_MAX"), 0) < PROPOSED_MIN_WO_MAX:
+        return False
     return True
 
 
@@ -568,7 +574,9 @@ def write_html(
     filter_txt = (
         f"TRADES≥{PROPOSED_MIN_TRADES}, PAUL_SCORE≥{PROPOSED_MIN_PAUL}, "
         f"PCT_WINS≥{PROPOSED_MIN_WR:.0f}%, SHEET_PNL&gt;{PROPOSED_MIN_SHEET:,.0f}, "
-        f"AVG_TRADES_PER_YEAR≥{PROPOSED_MIN_TPY}"
+        f"AVG_TRADES_PER_YEAR≥{PROPOSED_MIN_TPY}, "
+        f"AVG_PNL_PCT≥{PROPOSED_MIN_EXPECTANCY}, "
+        f"AVG_PNL_PCT_WO_MAX≥{PROPOSED_MIN_WO_MAX}"
     )
     oos_note = (
         f"Optional tighten: PAUL_SCORE_OOS≥{PROPOSED_MIN_PAUL_OOS} and "
@@ -612,11 +620,11 @@ Pooled book still in <a href="VolZone_FullUniverse_Summary.html">VolZone_FullUni
 
 <h2>1. Paul Score formula (house exact)</h2>
 <div class="callout">
-<strong>One-liner:</strong> Integer <b>0–8</b>: +1 each if ≥ max(mean, median) across this Summary for
+<strong>One-liner:</strong> Integer <b>0–8</b>: +1 each if ≥ <b>mean</b> across this Summary for
 <code>PCT_WINS</code>, <code>TOTAL_PNL</code>, <code>SHEET_PNL</code>, <code>AVG_PNL_PCT</code>,
 <code>AVG_PNL_PCT_WO_MAX</code>, <code>AVG_TRADES_PER_YEAR</code>;
-+1 each if ≤ min(mean, median) for <code>OUTLIER_PCT_OF_WINS</code>, <code>AVG_DAYS_HELD</code>
-(faster turnover better). Blank/non-numeric cells skipped.
++1 each if ≤ <b>mean</b> for <code>OUTLIER_PCT_OF_WINS</code>, <code>AVG_DAYS_HELD</code>
+(faster turnover better). Peer median is not used for thresholds; <code>MEDIAN_PNL_PCT</code> is never scored. Blank/non-numeric cells skipped.
 Implemented by <code>rocket_post_analysis.apply_paul_scores_to_summary_rows</code>.
 </div>
 <p class="small"><b>Fit caveat:</b> Full-history <code>PAUL_SCORE</code> is a peer rank on the full sample
@@ -723,9 +731,9 @@ def update_baseline(stamp_dir: Path, csv_name: str, html_name: str, proposed_nam
 - `{html_name}` — sortable HTML (Paul score prominent; proposed candidates labeled research-only)
 - `{proposed_name}` — symbols passing proposed filter (NOT adopted gold)
 
-**Paul Score (house):** +1 each if ≥ max(mean, median) for PCT_WINS, TOTAL_PNL, SHEET_PNL, AVG_PNL_PCT, AVG_PNL_PCT_WO_MAX, AVG_TRADES_PER_YEAR; +1 each if ≤ min(mean, median) for OUTLIER_PCT_OF_WINS, AVG_DAYS_HELD. Full-history score is an in-sample peer rank; `PAUL_SCORE_OOS` is report-only.
+**Paul Score (house):** +1 each if ≥ mean for PCT_WINS, TOTAL_PNL, SHEET_PNL, AVG_PNL_PCT, AVG_PNL_PCT_WO_MAX, AVG_TRADES_PER_YEAR; +1 each if ≤ mean for OUTLIER_PCT_OF_WINS, AVG_DAYS_HELD. Peer median is not used for thresholds; `MEDIAN_PNL_PCT` is never scored. Full-history score is an in-sample peer rank; `PAUL_SCORE_OOS` is report-only.
 
-**Proposed filter (research):** TRADES≥{PROPOSED_MIN_TRADES}, PAUL_SCORE≥{PROPOSED_MIN_PAUL}, PCT_WINS≥{PROPOSED_MIN_WR:.0f}%, SHEET_PNL>{PROPOSED_MIN_SHEET:,.0f}, AVG_TRADES_PER_YEAR≥{PROPOSED_MIN_TPY}. Confirm before treating as gold.
+**Proposed filter (research):** TRADES≥{PROPOSED_MIN_TRADES}, PAUL_SCORE≥{PROPOSED_MIN_PAUL}, PCT_WINS≥{PROPOSED_MIN_WR:.0f}%, SHEET_PNL>{PROPOSED_MIN_SHEET:,.0f}, AVG_TRADES_PER_YEAR≥{PROPOSED_MIN_TPY}, AVG_PNL_PCT≥{PROPOSED_MIN_EXPECTANCY}, AVG_PNL_PCT_WO_MAX≥{PROPOSED_MIN_WO_MAX}. Confirm before treating as gold.
 """
     marker = "## Symbol Summary (Paul score)"
     if marker in text:

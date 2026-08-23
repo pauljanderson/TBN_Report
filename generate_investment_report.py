@@ -11,7 +11,7 @@ Data sources:
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
   - Latest SB_Watchlist_*.csv when no Scanner (StockBee watchlist fallback)
-  - VZ: VZ_last_run_ts.txt / VZ_LatestRun_Watchlist|Open (not max VZ_Watchlist_* stamp)
+  - VZ: VZ_house_last_run_ts.txt / house-sized pin / latest house Summary (VZ_new56; not ALL)
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
 """
 from __future__ import annotations
@@ -49,6 +49,7 @@ import sys
 if str(ROOT / "stock_analysis") not in sys.path:
     sys.path.insert(0, str(ROOT / "stock_analysis"))
 from mts_universe import MTS_SYMBOLS as _MTS_SYMBOLS_LIST
+from vec_zones import hvn_gate_fields_at_bar
 
 DOWNLOADS = Path(r"C:\Users\songg\Downloads")
 DRIVE = ROOT / "Drive"
@@ -1787,6 +1788,259 @@ def _read_engine_last_run_ts(prefix: str, drive: Path) -> Optional[str]:
     return ts if re.fullmatch(r"\d{12}", ts) else None
 
 
+def _read_vz_house_run_ts(drive: Path) -> Optional[str]:
+    """House pin from drive/VZ_house_last_run_ts.txt (not overwritten by ALL runs)."""
+    path = drive / "VZ_house_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def _vz_house_summary_max(drive: Path) -> int:
+    """Upper bound on VZ_Summary row count for house / run_vz.bat default universe."""
+    univ = drive / "universes" / "VZ_universe.csv"
+    if univ.is_file():
+        try:
+            n = sum(1 for _ in univ.open(encoding="utf-8")) - 1
+            if n > 0:
+                return max(100, int(n * 1.35))
+        except OSError:
+            pass
+    return 120
+
+
+def _vz_summary_row_count(drive: Path, ts: str) -> Optional[int]:
+    path = drive / f"VZ_Summary_{ts}.csv"
+    if not path.is_file():
+        return None
+    try:
+        return sum(1 for _ in path.open(encoding="utf-8")) - 1
+    except OSError:
+        return None
+
+
+def _vz_is_house_stamp(drive: Path, ts: str) -> bool:
+    n = _vz_summary_row_count(drive, ts)
+    return n is not None and n <= _vz_house_summary_max(drive)
+
+
+def _vz_house_run_timestamp(drive: Path) -> Optional[str]:
+    """Public VZ book: house stamp only — never ALL / full-universe research runs."""
+    house_max = _vz_house_summary_max(drive)
+    for ts in (_read_vz_house_run_ts(drive), _read_engine_last_run_ts("VZ", drive)):
+        if ts and _stamp_has_core("VZ", drive, ts) and _vz_is_house_stamp(drive, ts):
+            return ts
+    house_stamps: list[str] = []
+    for path in drive.glob("VZ_Summary_*.csv"):
+        m = re.match(r"VZ_Summary_(\d{12})\.csv$", path.name)
+        if not m:
+            continue
+        ts = m.group(1)
+        n = _vz_summary_row_count(drive, ts)
+        if n is not None and n <= house_max and _stamp_has_core("VZ", drive, ts):
+            house_stamps.append(ts)
+    return max(house_stamps) if house_stamps else None
+
+
+_BARS_HELD_RE = re.compile(r"bars_held=(\d+)/")
+_HL_ZONE_ID_RE = re.compile(r"HL_(\d{4}-\d{2}-\d{2})")
+_VZ_ENTRY_ON = "next_open"
+
+
+def _ohlc_bar_index(df: pd.DataFrame, ymd: Any) -> Optional[int]:
+    s = str(ymd).strip().replace("-", "")[:8]
+    if len(s) != 8 or not s.isdigit():
+        return None
+    dates = pd.to_datetime(df["Date"], errors="coerce")
+    ymd_s = dates.dt.strftime("%Y%m%d")
+    hits = np.flatnonzero(ymd_s.values == s)
+    if hits.size:
+        return int(hits[-1])
+    target = pd.Timestamp(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+    idx = int(dates.searchsorted(target, side="right") - 1)
+    return idx if idx >= 0 else None
+
+
+def _load_symbol_ohlcv(sym: str, data_dir: Path) -> Optional[pd.DataFrame]:
+    path = data_dir / f"{sym.upper()}.csv"
+    if not path.is_file():
+        return None
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return None
+    need = {"Date", "High", "Low", "Close", "Volume"}
+    if not need.issubset(df.columns):
+        return None
+    out = df[list(need)].copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Date"])
+    for c in ("High", "Low", "Close", "Volume"):
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    out = out.dropna(subset=["High", "Low", "Close", "Volume"])
+    if out.empty:
+        return None
+    return out.reset_index(drop=True)
+
+
+def _vz_zone_bounds(row: pd.Series, ohlc: pd.DataFrame) -> tuple[float, float]:
+    lo = float(pd.to_numeric(row.get("ZONE_LO"), errors="coerce"))
+    hi_raw = row.get("ZONE_HI", "")
+    hi: Optional[float] = None
+    if hi_raw is not None and str(hi_raw).strip():
+        hi = float(pd.to_numeric(hi_raw, errors="coerce"))
+    if hi is None or not np.isfinite(hi):
+        m = _HL_ZONE_ID_RE.match(str(row.get("ZONE_ID", "")))
+        if m:
+            idx = _ohlc_bar_index(ohlc, m.group(1).replace("-", ""))
+            if idx is not None:
+                hi = float(ohlc.iloc[idx]["High"])
+    if hi is None or not np.isfinite(hi):
+        hi = lo
+    return min(lo, hi), max(lo, hi)
+
+
+def _vz_signal_bar_index(
+    row: pd.Series,
+    ohlc: pd.DataFrame,
+    open_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> Optional[int]:
+    sym = str(row.get("SYMBOL", "")).strip().upper()
+    zone_lo = str(row.get("ZONE_LO", "")).strip()
+    open_row = open_by_key.get((sym, zone_lo), {})
+    entry_idx_raw = open_row.get("ENTRY_BAR_INDEX")
+    if entry_idx_raw is not None and str(entry_idx_raw).strip() != "":
+        try:
+            entry_idx = int(entry_idx_raw)
+            if _VZ_ENTRY_ON == "next_open":
+                return entry_idx - 1 if entry_idx > 0 else None
+            return entry_idx
+        except (TypeError, ValueError):
+            pass
+    entry_ymd = open_row.get("DATE_OPENED") or row.get("DATE_OPENED")
+    if entry_ymd:
+        entry_idx = _ohlc_bar_index(ohlc, entry_ymd)
+        if entry_idx is not None:
+            if _VZ_ENTRY_ON == "next_open":
+                return entry_idx - 1 if entry_idx > 0 else None
+            return entry_idx
+    notes = str(row.get("NOTES", ""))
+    m = _BARS_HELD_RE.search(notes)
+    asof_ymd = row.get("ASOF_DATE")
+    if m and asof_ymd:
+        asof_idx = _ohlc_bar_index(ohlc, asof_ymd)
+        if asof_idx is not None:
+            entry_idx = asof_idx - int(m.group(1))
+            if _VZ_ENTRY_ON == "next_open":
+                return entry_idx - 1 if entry_idx > 0 else None
+            return entry_idx
+    return None
+
+
+def _vz_open_lookup(drive: Path, run_ts: Optional[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    candidates: list[Path] = []
+    if run_ts:
+        candidates.append(drive / f"VZ_Open_{run_ts}.csv")
+    candidates.append(drive / "VZ_LatestRun_Open.csv")
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        return {}
+    try:
+        open_df = pd.read_csv(path)
+    except Exception:
+        return {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for _, r in open_df.iterrows():
+        sym = str(r.get("SYMBOL", "")).strip().upper()
+        zone_lo = str(r.get("ZONE_LOW", r.get("ZONE_LO", ""))).strip()
+        if sym:
+            out[(sym, zone_lo)] = r.to_dict()
+    return out
+
+
+def _enrich_vz_watchlist_hvn(
+    df: pd.DataFrame,
+    drive: Path,
+    run_ts: Optional[str],
+    data_dir: Path = DEFAULT_OHLCV_DATA_DIR,
+) -> pd.DataFrame:
+    """Add POC / HVN $ / HVN pass? using frozen daily VP at signal bar (research-only)."""
+    if df.empty:
+        return df
+    work = df.copy()
+    open_by_key = _vz_open_lookup(drive, run_ts)
+    ohlc_cache: dict[str, pd.DataFrame] = {}
+    poc_vals: list[str] = []
+    hvn_vals: list[str] = []
+    pass_vals: list[str] = []
+    for _, row in work.iterrows():
+        sym = str(row.get("SYMBOL", "")).strip().upper()
+        if sym not in ohlc_cache:
+            ohlc_cache[sym] = _load_symbol_ohlcv(sym, data_dir)
+        ohlc = ohlc_cache.get(sym)
+        if ohlc is None:
+            poc_vals.append("—")
+            hvn_vals.append("—")
+            pass_vals.append("—")
+            continue
+        try:
+            zone_lo, zone_hi = _vz_zone_bounds(row, ohlc)
+            signal_idx = _vz_signal_bar_index(row, ohlc, open_by_key)
+        except (TypeError, ValueError):
+            poc_vals.append("—")
+            hvn_vals.append("—")
+            pass_vals.append("—")
+            continue
+        if signal_idx is None or signal_idx < 0:
+            poc_vals.append("—")
+            hvn_vals.append("—")
+            pass_vals.append("—")
+            continue
+        fields = hvn_gate_fields_at_bar(
+            ohlc["High"].to_numpy(dtype=np.float64),
+            ohlc["Low"].to_numpy(dtype=np.float64),
+            ohlc["Close"].to_numpy(dtype=np.float64),
+            ohlc["Volume"].to_numpy(dtype=np.float64),
+            signal_idx,
+            zone_lo,
+            zone_hi,
+        )
+        if fields is None:
+            poc_vals.append("—")
+            hvn_vals.append("—")
+            pass_vals.append("—")
+        else:
+            poc_vals.append(fields[0])
+            hvn_vals.append(fields[1])
+            pass_vals.append(fields[2])
+    work["POC"] = poc_vals
+    work["HVN $"] = hvn_vals
+    work["HVN pass?"] = pass_vals
+    return work
+
+
+def _dedupe_vz_watchlist(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per SYMBOL; keep the open lot closest to the 40d time stop."""
+    if df.empty or "SYMBOL" not in df.columns:
+        return df
+
+    def _bars_held(row: pd.Series) -> int:
+        notes = str(row.get("NOTES", ""))
+        m = _BARS_HELD_RE.search(notes)
+        return int(m.group(1)) if m else -1
+
+    work = df.copy()
+    work["_sym"] = work["SYMBOL"].astype(str).str.strip().str.upper()
+    work["_bars"] = work.apply(_bars_held, axis=1)
+    work = work.sort_values(["_sym", "_bars"], ascending=[True, False])
+    out = work.drop_duplicates(subset=["_sym"], keep="first").drop(columns=["_sym", "_bars"])
+    return out.reset_index(drop=True)
+
+
 def _stamp_has_core(prefix: str, drive: Path, ts: str) -> bool:
     pfx = prefix.upper()
     aliases = [pfx]
@@ -1803,16 +2057,14 @@ def _stamp_has_core(prefix: str, drive: Path, ts: str) -> bool:
 def _latest_run_timestamp(prefix: str, drive: Path) -> Optional[str]:
     """Latest yyMMddHHmmss from Closed/Open/Watchlist/Pipeline (not Scanner alone).
 
-    VZ is pinned: Volume Zone research sleeves (ALL, experiments) also write
-    VZ_Watchlist_<stamp>.csv under drive/, so max(stamp) is not the public book.
-    Prefer drive/VZ_last_run_ts.txt when that stamp has core files.
+    VZ is pinned to the house universe only: ALL / HVN-on full-universe runs also write
+    VZ_Watchlist_<stamp>.csv and overwrite VZ_last_run_ts.txt — ignore those for the
+    public book. Prefer VZ_house_last_run_ts.txt, else a house-sized VZ_last_run_ts pin,
+    else the latest stamp whose VZ_Summary row count matches run_vz.bat house size.
     """
     pfx = prefix.upper()
     if pfx == "VZ":
-        pinned = _read_engine_last_run_ts("VZ", drive)
-        if pinned and _stamp_has_core("VZ", drive, pinned):
-            return pinned
-        return None
+        return _vz_house_run_timestamp(drive)
     aliases = [pfx]
     if pfx == "WPBR":
         aliases.append("PBR")  # legacy outputs
@@ -1851,7 +2103,8 @@ def _scanner_for_latest_run(
         path = next((p for p in candidates if p.is_file()), None)
         if path is None:
             return None, pd.DataFrame(), run_ts
-        return path, pd.read_csv(path), run_ts
+        df = _dedupe_vz_watchlist(pd.read_csv(path))
+        return path, df, run_ts
 
     run_ts = _latest_run_timestamp(prefix, drive)
     if not run_ts:
@@ -2734,6 +2987,9 @@ def build_report(
                 "TOO_HIGH_LINE",
                 "ENTRY_ALLOWED",
                 "ASOF_DATE",
+                "POC",
+                "HVN $",
+                "HVN pass?",
                 "SIGNAL_DATE",
                 "PCT_DAY",
                 "DCR",
@@ -2780,6 +3036,7 @@ def build_report(
             "MUST_OPEN_ABOVE",
             "MUST_OPEN_AT_OR_BELOW",
             "MAX_RISK_PCT",
+            "POC",
         }
         date_like = {
             "DATE",
@@ -2824,6 +3081,7 @@ def build_report(
     sb_rows, sb_cols, sb_sort = _scan_rows(
         sb_scan, _closed_avg_days_held_map("SB", drive_dir, sb_run_ts)
     )
+    vz_scan = _enrich_vz_watchlist_hvn(vz_scan, drive_dir, vz_run_ts)
     vz_rows, vz_cols, vz_sort = _scan_rows(
         vz_scan, _closed_avg_days_held_map("VZ", drive_dir, vz_run_ts)
     )
@@ -2881,6 +3139,11 @@ def build_report(
     vz_scan_sub = _scanner_subtitle(vz_scan_path, vz_run_ts, "VZ")
     if vz_scan_path is not None and vz_run_ts is None:
         vz_scan_sub = f"{vz_scan_path.name} (VZ_LatestRun alias; no VZ_last_run_ts.txt pin)"
+    if vz_rows:
+        vz_scan_sub += (
+            " · VP 60d / 0.5% bins / HVN≥50% POC @ signal bar (HVN pass? = "
+            "vz_require_hvn_overlap; house default off — research only)"
+        )
     vz_section_title = (
         "Watchlist — VZ"
         if vz_scan_path is not None

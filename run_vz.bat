@@ -11,9 +11,13 @@ rem Freeze (research - do not retune on OOS):
 rem   HL-only, first_retest_only=true, min_touches>=1, retest_eps_pct=0.005
 rem   lookback=126, retest_window=63, exit=EXIT_atr4_s025_r15, min_atr_pct=4.0
 rem   entry_on=next_open (predictive: signal bar T close -> buy T+1 open; never T open)
-rem   vz_require_hvn_overlap=false (default OFF; set VZ_REQUIRE_HVN_OVERLAP=true to gate zone ∩ HVN/POC)
+rem   vz_require_hvn_overlap=false  (delta from prior: HVN knob exists in generate_signals;
+rem     DualPaul78 engine A/B HOLD + tradable 764 HOLD — not adopted. Flip to true only after explicit adopt.)
+rem   vz_cooldown_after_target_days=10  (house adopt 20260821: post-TARGET re-entry gate;
+rem     calendar days inclusive after TARGET exit. set VZ_COOLDOWN_AFTER_TARGET_DAYS=0 to disable.)
+rem   Universe: drive\universes\VZ_universe.csv (VZ_new56); house pin VZ_house_last_run_ts.txt
 rem
-rem Universe: drive\universes\VZ_universe.csv (DualPaul78 83-name research default)
+rem Universe: drive\universes\VZ_universe.csv (VZ_new56 56-name research default; DualPaul78 backup: VZ_universe_DualPaul78_backup.csv)
 rem Override: run_vz.bat path\to\test_universe.csv
 rem          set VZ_UNIVERSE_CSV=...
 rem          set VZ_SYMBOLS=AAPL,MSFT
@@ -39,6 +43,8 @@ if not defined VZ_TARGET_R set "VZ_TARGET_R=1.5"
 if not defined VZ_STOP_ATR set "VZ_STOP_ATR=0.25"
 if not defined VZ_MIN_ATR_PCT set "VZ_MIN_ATR_PCT=4.0"
 if not defined VZ_REQUIRE_HVN_OVERLAP set "VZ_REQUIRE_HVN_OVERLAP=false"
+if not defined VZ_TRADE_SIDE set "VZ_TRADE_SIDE=long"
+if not defined VZ_COOLDOWN_AFTER_TARGET_DAYS set "VZ_COOLDOWN_AFTER_TARGET_DAYS=10"
 if not defined VZ_AGGRESSIVE set "VZ_AGGRESSIVE=true"
 if not defined VZ_WORKERS set "VZ_WORKERS=12"
 
@@ -52,7 +58,7 @@ call "%~dp0tools\build_cli_forward.bat" VZ_FORWARD "%VZ_UNIV_ARG%" %*
 call "%~dp0tools\load_universe_csv.bat" VZ "%VZ_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [VZ] RESEARCH sleeve via TBN vz_mode - Universe src=%VZ_UNIVERSE_SRC% pass_s=%VZ_PASS_SYMBOLS%
-echo [VZ] freeze lookback=%VZ_LOOKBACK% rw=%VZ_RETEST_WINDOW% entry_on=%VZ_ENTRY_ON% exit=%VZ_EXIT_NAME% stop_atr=%VZ_STOP_ATR% target_r=%VZ_TARGET_R% min_atr_pct=%VZ_MIN_ATR_PCT% hvn=%VZ_REQUIRE_HVN_OVERLAP% workers=%VZ_WORKERS%
+echo [VZ] freeze lookback=%VZ_LOOKBACK% rw=%VZ_RETEST_WINDOW% entry_on=%VZ_ENTRY_ON% exit=%VZ_EXIT_NAME% stop_atr=%VZ_STOP_ATR% target_r=%VZ_TARGET_R% min_atr_pct=%VZ_MIN_ATR_PCT% hvn=%VZ_REQUIRE_HVN_OVERLAP% trade_side=%VZ_TRADE_SIDE% cd_target=%VZ_COOLDOWN_AFTER_TARGET_DAYS% workers=%VZ_WORKERS%
 
 if /i "%VZ_UNIVERSE_SRC%"=="missing" (
   echo [VZ] ERROR: drive\universes\VZ_universe.csv missing - refusing silent full-universe fallback.
@@ -63,9 +69,9 @@ if /i "%VZ_UNIVERSE_SRC%"=="missing" (
 rem Neutralize peer systems; VZ owns entry path via vz_mode.
 rem One-line invokes (like run_rs.bat): blank lines after ^ break CMD continuation.
 if "%VZ_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %VZ_WORKERS% --no-regression %VZ_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v vz_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v vz_lookback_days=%VZ_LOOKBACK% -v vz_retest_window=%VZ_RETEST_WINDOW% -v vz_retest_eps_pct=%VZ_RETEST_EPS% -v vz_first_retest_only=true -v vz_min_touches_before_entry=%VZ_MIN_TOUCHES% -v vz_entry_on=%VZ_ENTRY_ON% -v vz_zone_kinds=HL -v vz_exit_name=%VZ_EXIT_NAME% -v vz_exit_bars=%VZ_EXIT_BARS% -v vz_target_r=%VZ_TARGET_R% -v vz_stop_atr_buffer=%VZ_STOP_ATR% -v vz_min_atr_pct_at_entry=%VZ_MIN_ATR_PCT% -v vz_require_hvn_overlap=%VZ_REQUIRE_HVN_OVERLAP% -v vz_sheet_notional=45000 -s "!VZ_SYMBOLS!" !VZ_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %VZ_WORKERS% --no-regression %VZ_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v vz_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v vz_lookback_days=%VZ_LOOKBACK% -v vz_retest_window=%VZ_RETEST_WINDOW% -v vz_retest_eps_pct=%VZ_RETEST_EPS% -v vz_first_retest_only=true -v vz_min_touches_before_entry=%VZ_MIN_TOUCHES% -v vz_entry_on=%VZ_ENTRY_ON% -v vz_zone_kinds=HL -v vz_exit_name=%VZ_EXIT_NAME% -v vz_exit_bars=%VZ_EXIT_BARS% -v vz_target_r=%VZ_TARGET_R% -v vz_stop_atr_buffer=%VZ_STOP_ATR% -v vz_min_atr_pct_at_entry=%VZ_MIN_ATR_PCT% -v vz_require_hvn_overlap=%VZ_REQUIRE_HVN_OVERLAP% -v vz_trade_side=%VZ_TRADE_SIDE% -v vz_cooldown_after_target_days=%VZ_COOLDOWN_AFTER_TARGET_DAYS% -v vz_sheet_notional=45000 -s "!VZ_SYMBOLS!" !VZ_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %VZ_WORKERS% --no-regression %VZ_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v vz_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v vz_lookback_days=%VZ_LOOKBACK% -v vz_retest_window=%VZ_RETEST_WINDOW% -v vz_retest_eps_pct=%VZ_RETEST_EPS% -v vz_first_retest_only=true -v vz_min_touches_before_entry=%VZ_MIN_TOUCHES% -v vz_entry_on=%VZ_ENTRY_ON% -v vz_zone_kinds=HL -v vz_exit_name=%VZ_EXIT_NAME% -v vz_exit_bars=%VZ_EXIT_BARS% -v vz_target_r=%VZ_TARGET_R% -v vz_stop_atr_buffer=%VZ_STOP_ATR% -v vz_min_atr_pct_at_entry=%VZ_MIN_ATR_PCT% -v vz_require_hvn_overlap=%VZ_REQUIRE_HVN_OVERLAP% -v vz_sheet_notional=45000 !VZ_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %VZ_WORKERS% --no-regression %VZ_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v vz_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v vz_lookback_days=%VZ_LOOKBACK% -v vz_retest_window=%VZ_RETEST_WINDOW% -v vz_retest_eps_pct=%VZ_RETEST_EPS% -v vz_first_retest_only=true -v vz_min_touches_before_entry=%VZ_MIN_TOUCHES% -v vz_entry_on=%VZ_ENTRY_ON% -v vz_zone_kinds=HL -v vz_exit_name=%VZ_EXIT_NAME% -v vz_exit_bars=%VZ_EXIT_BARS% -v vz_target_r=%VZ_TARGET_R% -v vz_stop_atr_buffer=%VZ_STOP_ATR% -v vz_min_atr_pct_at_entry=%VZ_MIN_ATR_PCT% -v vz_require_hvn_overlap=%VZ_REQUIRE_HVN_OVERLAP% -v vz_trade_side=%VZ_TRADE_SIDE% -v vz_cooldown_after_target_days=%VZ_COOLDOWN_AFTER_TARGET_DAYS% -v vz_sheet_notional=45000 !VZ_FORWARD!
 )
 exit /b %errorlevel%
 

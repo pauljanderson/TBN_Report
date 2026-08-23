@@ -1,6 +1,7 @@
 @echo off
 rem Live stop/target for active systems. IND is deprecated and excluded from scheduled targets.
-rem Systems: RL, BRT, YH, MTS, WPBR, RS, SB (StockBee), MVCP, CS (CAN SLIM).
+rem Systems: RL, BRT, YH, MTS, WPBR, RS, SB (StockBee), CS (CAN SLIM).
+rem MVCP retired 2026-08-21 — still mapped in getTarget.py if any historical Open lots remain.
 rem Qull/Kell (EMA trail) are not mapped yet — use --list-systems on getTarget.py.
 rem Standalone: double-click or call from DailyRun.
 setlocal EnableExtensions

@@ -121,6 +121,8 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "vz_min_atr_pct_at_entry",
     "vz_require_hvn_overlap",
     "vz_sheet_notional",
+    "vz_trade_side",
+    "vz_cooldown_after_target_days",
     "wrl_mode",
     "wrl_target_mode",
     "wrl_scale_frac",
@@ -354,6 +356,8 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "Profit_Per_Capital_Day",
     "Ann_ROR",
     "Max_DD",
+    "Calmar",
+    "Sharpe",
     "Losing_Streak",
     "DD_Per_Trade",
     "CES_AVG",
@@ -644,6 +648,8 @@ _VZ_AUDIT_LEVER_COLS: tuple[str, ...] = (
     "vz_min_atr_pct_at_entry",
     "vz_require_hvn_overlap",
     "vz_sheet_notional",
+    "vz_trade_side",
+    "vz_cooldown_after_target_days",
 )
 
 # Weekly Range / Swing-only levers (blank when wrl_mode is false).

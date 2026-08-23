@@ -20,11 +20,10 @@ DEFAULT_DRIVE = ROOT / "Drive"
 DEFAULT_OUTPUT = ROOT / "docs" / "system_performance.html"
 ET = ZoneInfo("America/New_York")
 
-ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS", "SB", "MVCP", "VZ")
+ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS", "SB", "VZ")
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
     "SB": "SB (StockBee)",
-    "MVCP": "MVCP (Minervini VCP)",
     "VZ": "VZ (Volume Zone)",
     "WRL": "WRL (Weekly Range / Swing)",
 }
@@ -36,7 +35,6 @@ COLORS = {
     "YH": "#16a34a",
     "RS": "#db2777",
     "SB": "#0d9488",
-    "MVCP": "#b45309",
     "VZ": "#64748b",
     "WRL": "#0f766e",
     "Equal capital": "#2563eb",
@@ -115,7 +113,7 @@ def _date(raw: object) -> Optional[date]:
 def resolve_sources(drive: Path) -> dict[str, Optional[Path]]:
     """Select one closed file per logical system, avoiding PBR/WPBR alias duplication."""
     out: dict[str, Optional[Path]] = {}
-    for system in ("BRT", "MTS", "YH", "RS", "SB", "MVCP", "VZ", "WRL"):
+    for system in ("BRT", "MTS", "YH", "RS", "SB", "VZ", "WRL"):
         path = drive / f"{system}_LatestRun_Closed.csv"
         out[system] = path if path.is_file() else None
 
@@ -241,12 +239,12 @@ def _equity_candidates(drive: Path, system: str) -> list[Path]:
     for prefix in prefixes:
         candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve_Regular.csv"))
         candidates.extend(drive.glob(f"{prefix}_EquityCurve_Regular_*.csv"))
-        if system in ("SB", "MVCP", "VZ", "WRL"):
+        if system in ("SB", "VZ", "WRL"):
             # Copy-latest uses {SYS}_LatestRun_EquityCurve.csv; stamp also has EquityCurve_Regular_*.
             candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve.csv"))
             candidates.extend(drive.glob(f"{prefix}_EquityCurve_*.csv"))
     unique = {p.resolve(): p for p in candidates if p.is_file()}
-    if system in ("SB", "MVCP", "VZ", "WRL"):
+    if system in ("SB", "VZ", "WRL"):
         return sorted(
             unique.values(),
             key=lambda p: (
@@ -338,14 +336,42 @@ def _losing_streak(trades: list[Trade]) -> int:
     return longest
 
 
-def metrics(trades: list[Trade], curve: Optional[pd.DataFrame] = None) -> dict[str, float]:
+def _sheet_cash(trades: list[Trade], system: str = "") -> float:
+    """Per-trade notional for book Ann ROR (same scale as Closed PNL_DOLLARS)."""
+    if system == "RL":
+        return RL_CASH
+    notionals = [t.notional for t in trades if t.notional > 0]
+    if not notionals:
+        return RL_CASH if system == "RL" else 0.0
+    return float(pd.Series(notionals).median())
+
+
+def _ann_ror(trades: list[Trade], sheet_cash: float, *, days_per_year: float = 365.0) -> float:
+    """Book Ann ROR % — canonical rocket_tbn / Report formula.
+
+    ``((1 + total_pnl / (sheet_cash * n)) ** (days_per_year / avg_days) - 1) * 100``
+    """
+    if not trades or sheet_cash <= 0:
+        return 0.0
+    n = len(trades)
+    avg_days = sum(t.days for t in trades) / n
+    if avg_days <= 0:
+        return 0.0
+    total_pnl = sum(t.pnl for t in trades)
+    base = 1.0 + total_pnl / (sheet_cash * n)
+    if base <= 0:
+        return 0.0
+    return (base ** (days_per_year / avg_days) - 1.0) * 100.0
+
+
+def metrics(trades: list[Trade], curve: Optional[pd.DataFrame] = None, system: str = "") -> dict[str, float]:
     if not trades:
         return {key: 0.0 for key in (
             "trades", "wins", "losses", "win_rate", "avg_pct", "total_pnl",
             "gross_profit", "gross_loss", "profit_factor", "avg_days", "median_days",
-            "p90_days", "expectancy", "expectancy_pct", "annualized", "ppcd",
+            "p90_days", "expectancy", "expectancy_pct", "annualized", "ann_ror", "ppcd",
             "count_ratio", "dollar_ratio", "max_dd", "max_dd_pct", "losing_streak",
-            "capital_basis", "max_concurrent", "max_usage",
+            "capital_basis", "max_concurrent", "max_usage", "sheet_cash",
         )}
     wins = [t for t in trades if t.pnl > 0]
     losses = [t for t in trades if t.pnl < 0]
@@ -363,6 +389,8 @@ def metrics(trades: list[Trade], curve: Optional[pd.DataFrame] = None) -> dict[s
         else 0.0
     )
     days = pd.Series([t.days for t in trades], dtype=float)
+    sys = system or (trades[0].system if trades else "")
+    sheet_cash = _sheet_cash(trades, sys)
     return {
         "trades": float(len(trades)),
         "wins": float(len(wins)),
@@ -379,6 +407,8 @@ def metrics(trades: list[Trade], curve: Optional[pd.DataFrame] = None) -> dict[s
         "expectancy": total / len(trades),
         "expectancy_pct": sum(t.pnl_pct for t in trades) / len(trades),
         "annualized": annualized,
+        "ann_ror": _ann_ror(trades, sheet_cash),
+        "sheet_cash": sheet_cash,
         "ppcd": total / span,
         "count_ratio": len(wins) / len(losses) if losses else float("inf"),
         "dollar_ratio": gross_profit / gross_loss if gross_loss else float("inf"),
@@ -674,10 +704,25 @@ def _metric_cells(m: dict[str, float]) -> str:
             f"<td>{win_loss}</td>",
             f"<td>{_ratio(m['dollar_ratio'])}:1</td>",
             f"<td>{m['avg_days']:.1f}</td>",
+            f"<td class='{'pos' if m['ann_ror'] >= 0 else 'neg'}'>{_pct(m['ann_ror'], sign=True)}</td>",
             f"<td>{_money(m['max_dd'])}<br><span class='muted'>{_pct(m['max_dd_pct'])}</span></td>",
             f"<td class='{'pos' if m['total_pnl'] >= 0 else 'neg'}'>{_money(m['total_pnl'], sign=True)}</td>",
         )
     )
+
+
+def _standalone_metric_headers() -> list[tuple[str, str]]:
+    return [
+        ("Trades", "num"),
+        ("Win rate", "num"),
+        ("Avg profit", "num"),
+        ("W/L count", "text"),
+        ("W/L dollars", "num"),
+        ("Avg days", "num"),
+        ("Ann ROR", "num"),
+        ("Drawdown", "num"),
+        ("Total profit", "num"),
+    ]
 
 
 def _year_table(rows: list[dict[str, float]]) -> str:
@@ -707,7 +752,12 @@ def _year_table(rows: list[dict[str, float]]) -> str:
     )
 
 
-def _svg_line(curves: dict[str, pd.DataFrame], title: str) -> str:
+def _svg_line(
+    curves: dict[str, pd.DataFrame],
+    title: str,
+    *,
+    legend_suffix: Optional[dict[str, str]] = None,
+) -> str:
     series: dict[str, list[tuple[date, float]]] = {}
     for label, frame in curves.items():
         if frame.empty:
@@ -761,8 +811,12 @@ def _svg_line(curves: dict[str, pd.DataFrame], title: str) -> str:
         )
     )
     for label in series:
+        suffix = ""
+        if legend_suffix and label in legend_suffix:
+            suffix = f" · {legend_suffix[label]}"
         parts.append(
-            f"<span><i style='background:{COLORS.get(label, '#334155')}'></i>{html.escape(LABELS.get(label, label))}</span>"
+            f"<span><i style='background:{COLORS.get(label, '#334155')}'></i>"
+            f"{html.escape(LABELS.get(label, label))}{html.escape(suffix)}</span>"
         )
     parts.append("</div>")
     return "".join(parts)
@@ -771,7 +825,7 @@ def _svg_line(curves: dict[str, pd.DataFrame], title: str) -> str:
 def _system_section(
     system: str, trades: list[Trade], curve: pd.DataFrame, curve_label: str
 ) -> str:
-    m = metrics(trades, curve)
+    m = metrics(trades, curve, system=system)
     rows = yearly_metrics(trades, m["capital_basis"])
     label = LABELS.get(system, system)
     extra = (
@@ -779,7 +833,7 @@ def _system_section(
         f"<div><span>Profit factor</span><strong>{_ratio(m['profit_factor'])}</strong></div>"
         f"<div><span>Expectancy</span><strong>{_money(m['expectancy'], sign=True)} / {_pct(m['expectancy_pct'], sign=True)}</strong></div>"
         f"<div><span>Median / P90 hold</span><strong>{m['median_days']:.0f} / {m['p90_days']:.0f} days</strong></div>"
-        f"<div><span>Annualized return</span><strong>{_pct(m['annualized'], sign=True)}</strong></div>"
+        f"<div><span>Ann ROR</span><strong>{_pct(m['ann_ror'], sign=True)}</strong></div>"
         f"<div><span>PPCD</span><strong>{_money(m['ppcd'], sign=True)}</strong></div>"
         f"<div><span>Longest losing streak</span><strong>{int(m['losing_streak'])}</strong></div>"
         f"<div><span>Max concurrent</span><strong>{int(m['max_concurrent'])}</strong></div>"
@@ -790,18 +844,7 @@ def _system_section(
         f"<section id='{system.lower()}'><h2>{html.escape(label)}</h2>"
         f"<p class='muted'>Drawdown/equity basis: {html.escape(curve_label)}.</p>"
         "<div class='table-wrap'><table class='summary sortable'><thead>"
-        + _header_row(
-            [
-                ("Trades", "num"),
-                ("Win rate", "num"),
-                ("Avg profit", "num"),
-                ("W/L count", "text"),
-                ("W/L dollars", "num"),
-                ("Avg days", "num"),
-                ("Drawdown", "num"),
-                ("Total profit", "num"),
-            ]
-        )
+        + _header_row(_standalone_metric_headers())
         + f"</thead><tbody><tr>{_metric_cells(m)}</tr></tbody></table></div>"
         + extra
         + _year_table(rows)
@@ -903,6 +946,10 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
             system_curve_labels[system] = "realized P&L by exit date"
 
     generated = datetime.now(ET)
+    standalone_metrics = {
+        system: metrics(trades_by_system[system], system_curves[system], system=system)
+        for system in ACTIVE_SYSTEMS
+    }
     # Allocation chart: aligned $500k series on the common overlap window.
     # Systems chart: native equity starts; SPY overlay is 2010-origin (not retuned to first trade).
     benchmark_chart = _svg_line(
@@ -912,6 +959,10 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
     systems_chart = _svg_line(
         {**system_curves, "SPY": spy_overlay},
         f"Raw standalone cumulative P&L by system (+ SPY $500k from {spy_overlay_start})",
+        legend_suffix={
+            system: f"Ann ROR {_pct(standalone_metrics[system]['ann_ror'], sign=True)}"
+            for system in ACTIVE_SYSTEMS
+        },
     )
 
     scenario_rows = []
@@ -943,7 +994,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
 
     summary_rows = []
     for system in ACTIVE_SYSTEMS:
-        m = metrics(trades_by_system[system], system_curves[system])
+        m = standalone_metrics[system]
         summary_rows.append(
             f"<tr><td><a href='#{system.lower()}'>{system}</a></td>" + _metric_cells(m) + "</tr>"
         )
@@ -1008,8 +1059,8 @@ th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable
 <h3>Dollar allocations</h3><p class="muted">Click column headers to sort.</p><div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text"), ("Equal capital", "num"), ("Risk-balanced", "num"), ("Recommended", "num"), ("Standalone basis", "num"), ("Avg monthly corr.", "num")])}</thead><tbody>{''.join(allocation_rows)}</tbody></table></div>
 <div class="notice recommend"><strong>Recommendation:</strong> {', '.join(f"{s} {_pct(recommended[s] * 100)} ({_money(allocation_dollars['Recommended'][s])})" for s in ACTIVE_SYSTEMS)}. Rounded dollar targets sum to exactly $500,000. Start from inverse-drawdown risk balance, then apply modest diversification and profit-factor robustness adjustments. All sleeves remain within 10%–30%. Review annually and rebalance to target when a sleeve drifts by more than 5 percentage points.</div>
 <p class="muted">This recommendation is a backtest allocation model, not guaranteed performance or personalized financial advice.</p></section>
-<section id="systems"><h2>Raw standalone system results</h2><p>These retain each engine's native historical sizing and full available period. They are diagnostic standalone results—not amounts simultaneously investable with $500,000. Click column headers to sort.</p>
-<div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text"), ("Trades", "num"), ("Win rate", "num"), ("Avg profit", "num"), ("W/L count", "text"), ("W/L dollars", "num"), ("Avg days", "num"), ("Drawdown", "num"), ("Total profit", "num")])}</thead><tbody>{''.join(summary_rows)}</tbody></table></div></section>
+<section id="systems"><h2>Raw standalone system results</h2><p>These retain each engine's native historical sizing and full available period. They are diagnostic standalone results—not amounts simultaneously investable with $500,000. <strong>Ann ROR</strong> (Annualized Rate of Return) uses the canonical book formula from Report / EquityMeta: ((1 + Total PnL ÷ (sheet cash × trades)) ^ (365 ÷ avg days held) − 1) × 100. Click column headers to sort.</p>
+<div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text")] + _standalone_metric_headers())}</thead><tbody>{''.join(summary_rows)}</tbody></table></div></section>
 <div class="chart">{systems_chart}</div>
 <div class="notice"><strong>SPY on this chart:</strong> buy-and-hold equity starting at {_money(PORTFOLIO_CAPITAL)} on {spy_overlay_start} (requested origin {SPY_ORIGIN}; first available session), through {spy_overlay_end}, using {html.escape(spy_label)}. System lines keep their native capital bases (~{_money(min(bases.values()))}–{_money(max(bases.values()))}) and native start dates; they are not truncated to 2010. For like-for-like $500k scaling over {common_start}–{common_end}, see the allocation chart above.</div>
 {sections}

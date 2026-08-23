@@ -590,7 +590,7 @@ code {{ background: #eee; padding: 1px 4px; border-radius: 3px; }}
 <h1>BRT tradable universe (2010 / ADV$2m, 764) vs production 42</h1>
 <p class="sub">Universe identity only. Knobs = current <code>run_brt.bat</code>:
 <code>stop_pct=0.934</code>, <code>target_pct=1.21</code>, <code>too_high_multiplier=0</code>,
-<code>band_pct=0.0154</code>, strong-pivot 7/8.1% and 7/10.8%, <code>breakout_bars=100</code>,
+<code>band_pct=0.0154</code>, strong-pivot 7/10% and 7/10%, <code>breakout_bars=100</code>,
 tight-range 35%/105, sheet touch + red-to-green, growth filter on, caps off
 (<code>min_market_cap=0</code>, <code>max_market_cap=0</code>). Per-symbol overlay JSON is empty <code>{{}}</code>.
 IS = entry &lt; 2024-01-01; OOS report-only. Judge quality (WR, Avg PnL%, AvgR, PF, Ann ROR, Max DD), not trade count.
@@ -679,7 +679,7 @@ Do not treat the 42-name book as an honest 2010-tradable tape. It is a whitelist
 ## Engine freeze (same as `run_brt.bat` — do not mutate)
 
 - `stop_pct=0.934`, `target_pct=1.21`, `too_high_multiplier=0`, `band_pct=0.0154`
-- Strong-pivot: 7 bars / 8.1% pre, 7 bars / 10.8% post
+- Strong-pivot: 7 bars / 10% pre, 7 bars / 10% post
 - `breakout_bars=100`, tight-range 35% / 105
 - `brt_sheet_touch=true`, `sheet_red_to_green_entry_enabled=true`
 - `growth_filter_enabled=true`

@@ -51,7 +51,7 @@ For each bar i:
 - Else if `pivot_low[i]==1` → **touch at bar i**, `touch_price[i] = Low[i]`
 - Else → **no touch**, `touch_price[i] = null`
 
-**Strong pivot filter (optional, STONK_DATA 3.0):** When `strong_pivots_enabled` is True and `realtime_filter_enabled` is False, a pivot only produces a touch if it passes the strong-pivot rules. Defaults match the BRT sheet: `strong_pre_pivot_bars=7`, `strong_pre_pivot_pct=0.081`, `strong_post_pivot_bars=7`, `strong_post_pivot_pct=0.108`, `strong_pivot_mode="pre"`. (MTS sheet uses different C-cell values — see `run_mts.bat` / `--mts-sheet-parity`.)
+**Strong pivot filter (optional, STONK_DATA 3.0):** When `strong_pivots_enabled` is True and `realtime_filter_enabled` is False, a pivot only produces a touch if it passes the strong-pivot rules. House defaults (adopted 2026-08-22): `strong_pre_pivot_bars=7`, `strong_pre_pivot_pct=0.1`, `strong_post_pivot_bars=7`, `strong_post_pivot_pct=0.1`, `strong_pivot_mode="pre"`. (Prior sheet C-cell freeze was 0.081 / 0.108. MTS sheet uses different C-cell values — see `run_mts.bat` / `--mts-sheet-parity`.)
 - **Pre (lookback, realtime-safe):** Pivot **Low** at \(t\): `(1 - Low[t] / max(High[t-pre_bars : t])) >= strong_pre_pivot_pct`. Pivot **High** at \(t\): `High[t] / min(Low[t-pre_bars : t]) - 1 >= strong_pre_pivot_pct`. Indices are prior bars only (no lookahead).
 - **Post (lookahead):** Same follow-through test as legacy: e.g. pivot low requires `max(High[t+1:t+post_bars+1])/Low[t] - 1 >= strong_post_pivot_pct`.
 - **`strong_pivot_mode`:** `pre` (default) uses only pre rules; `post` uses only post rules; `both` requires pre **and** post. With `realtime_filter_enabled`, the strong filter is skipped and **all** pivots create touches.
@@ -165,6 +165,12 @@ Wire via `-v retest_mode=stop_looking|keep_looking` (BRTConfig `wpbr_retest_mode
 - **Parameters:** `tight_range_threshold_pct = 0.35` (sheet **C7**), `tight_range_lookback = 105` (sheet **C24**), `tight_range_enabled = True`.
 - **Rationale:** NVDA Trade 1 (2021) matured after ~5 months of tight compression (25.98% range); blocked. NVDA 2–5 (larger expansion) passed.
 - Use `--tight-range-off` to disable. Use `--tight-range-threshold 0.40` to adjust.
+
+### Growth filter (`growth_filter_enabled`, default **True**)
+- Require `Close[eval] >= Close[eval − growth_bars]` (default `growth_bars=756` ≈ 3Y).
+- **Missing lookback Close** (eval bar before min history, or lookback close non-finite / ≤0): **FAIL** — do not coerce missing to $0 or treat as pass. Confirming growth needs a real price at the lookback bar.
+- Sheet **AZ** may still PASS when a padded daily grid lands the lookback on **$0** OHLC; that is an intentional economics-over-sheet-parity divergence (see `ENTRY_GATES_SHEET_VS_PROGRAM.md`).
+- Slack: `growth_history_slack_bars` (default 2) only bridges sheet row-anchor vs CSV start when enough bars exist; it does not invent a lookback price.
 
 ### Stop convention
 - **Stop reference bar:** Trigger (maturity-touch) bar — matches manual system.

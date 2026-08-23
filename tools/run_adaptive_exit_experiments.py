@@ -29,7 +29,7 @@ SYSTEMS: dict[str, dict] = {
         "extra_args": (),
         "common": (
             "stop_pct=0.934", "target_pct=1.21", "too_high_multiplier=0",
-            "band_pct=0.0154", "strong_pre_pivot_pct=0.081", "strong_post_pivot_pct=0.108",
+            "band_pct=0.0154", "strong_pre_pivot_pct=0.1", "strong_post_pivot_pct=0.1",
             "strong_pre_pivot_bars=7", "strong_post_pivot_bars=7", "breakout_bars=100",
             "tight_range_threshold_pct=0.35", "tight_range_lookback=105",
             "sheet_breakout_scan_start_row_delta=2",

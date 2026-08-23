@@ -5,12 +5,12 @@ Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk
 BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
 WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
-MVCP (Minervini Volatility Contraction Pattern), CS (CAN SLIM price-legs),
+MVCP (Minervini Volatility Contraction Pattern; retired sleeve — still supported if Open lots remain), CS (CAN SLIM price-legs),
 WRL (Weekly Range / Swing structural targets), or VZ (Volume Zone break/retest).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, or VZ (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP (retired), CS, WRL, or VZ (case-insensitive).
   Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
   RANGE/SWING/WEEKLY_RANGE→WRL, VOLUME_ZONE/VOL_ZONE→VZ.
 
@@ -184,7 +184,11 @@ class VzProfile:
     retest_eps_pct: float = 0.005
     entry_on: str = "next_open"
     min_touches_before_entry: int = 1
-    require_hvn_overlap: bool = False
+    min_atr_pct_at_entry: float = 4.0
+    require_hvn_overlap: bool = False  # house freeze OFF (DualPaul78+764 HOLD; reconstruct HVN only if freeze on)
+    trade_side: str = "long"  # long | short | both
+    # House adopt 20260821: skip new entries ≤N calendar days after TARGET exit (parity with run_vz).
+    cooldown_after_target_days: int = 10
 
 
 @dataclass
@@ -847,7 +851,9 @@ def compute_vz_system(
             RESEARCH_CANDIDATE_V2_RW63,
             atr14,
             build_zones,
+            normalize_trade_side_mode,
             resolve_stop,
+            resolve_stop_short,
             run_symbol_with_params,
         )
     except ImportError as e:
@@ -869,10 +875,21 @@ def compute_vz_system(
         exit_bars=int(profile.exit_bars),
         target_r=float(profile.target_r),
         require_hvn_overlap=bool(getattr(profile, "require_hvn_overlap", False)),
+        trade_side=normalize_trade_side_mode(getattr(profile, "trade_side", "long")),
     )
     atr = atr14(df_vz)
     zones = build_zones(df_vz, int(params.lookback_days))
     sigs, _, _ = run_symbol_with_params(sym, df_vz, zones, atr, params)
+    thr = float(getattr(profile, "min_atr_pct_at_entry", 4.0) or 0.0)
+    if thr > 0 and sigs:
+        kept = []
+        for s in sigs:
+            i = int(s.entry_idx)
+            px = float(s.entry_price) or 0.0
+            a = float(atr[i]) if 0 <= i < len(atr) else 0.0
+            if px > 0 and (a / px * 100.0) >= thr:
+                kept.append(s)
+        sigs = kept
     sig = _match_vz_signal(sigs, df_vz, entry_ts, int(profile.exit_bars))
     if sig is None:
         return {
@@ -882,10 +899,17 @@ def compute_vz_system(
             )
         }
 
-    zone_lo = float(sig.stop)
-    stop_px = float(resolve_stop(sig, atr, float(profile.stop_atr_buffer)))
-    risk = max(float(entry_price) - stop_px, float(entry_price) * 0.005)
-    target_px = float(entry_price) + float(profile.target_r) * risk
+    is_short = str(getattr(sig, "side", "long") or "long").lower() == "short"
+    zone_lo = next((float(z.lo) for z in zones if z.zone_id == sig.zone_id), float(sig.stop))
+    if is_short:
+        stop_px = float(resolve_stop_short(sig, atr, float(profile.stop_atr_buffer)))
+        risk = max(stop_px - float(entry_price), float(entry_price) * 0.005)
+        target_px = float(entry_price) - float(profile.target_r) * risk
+    else:
+        zone_lo = float(sig.stop)
+        stop_px = float(resolve_stop(sig, atr, float(profile.stop_atr_buffer)))
+        risk = max(float(entry_price) - stop_px, float(entry_price) * 0.005)
+        target_px = float(entry_price) + float(profile.target_r) * risk
     atr_entry = (
         float(atr[int(sig.entry_idx)])
         if 0 <= int(sig.entry_idx) < len(atr)
@@ -912,6 +936,7 @@ def compute_vz_system(
         "vz_signal_date": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
         "vz_signal_entry_date": str(pd.Timestamp(sig.entry_date).date()),
         "vz_signal_entry_price": float(sig.entry_price),
+        "vz_trade_side": str(getattr(profile, "trade_side", "long") or "long"),
         "SignalDate": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
         "AsOfUsed": str(pd.Timestamp(as_of_effective).date()) if as_of_effective is not None else None,
     }
@@ -1324,9 +1349,28 @@ def main() -> None:
     )
     parser.add_argument("--vz-min-touches", type=int, default=1)
     parser.add_argument(
+        "--vz-min-atr-pct",
+        type=float,
+        default=4.0,
+        help="VZ ATR14/entry*100 gate (house freeze 4.0).",
+    )
+    parser.add_argument(
         "--vz-require-hvn-overlap",
         default="false",
-        help="VZ: require zone ∩ HVN/POC at signal bar (default false).",
+        help="VZ: require zone ∩ HVN/POC at signal bar (default false / HOLD).",
+    )
+    parser.add_argument(
+        "--vz-trade-side",
+        type=str,
+        default="long",
+        choices=("long", "short", "both"),
+        help="VZ signal side: long (house), short (break-down retest), or both.",
+    )
+    parser.add_argument(
+        "--vz-cooldown-after-target-days",
+        type=int,
+        default=10,
+        help="VZ: calendar days after TARGET exit before re-entry (house adopt 10; 0=off).",
     )
     parser.add_argument(
         "--per-symbol-settings",
@@ -1406,15 +1450,21 @@ def main() -> None:
         retest_eps_pct=float(args.vz_retest_eps_pct),
         entry_on=str(args.vz_entry_on),
         min_touches_before_entry=int(args.vz_min_touches),
+        min_atr_pct_at_entry=float(args.vz_min_atr_pct),
         require_hvn_overlap=str(args.vz_require_hvn_overlap).strip().lower()
         in ("1", "true", "yes", "on"),
+        trade_side=str(args.vz_trade_side),
+        cooldown_after_target_days=int(args.vz_cooldown_after_target_days),
     )
     print(
         f"[INFO] VZ using zone stop/target "
-        f"(exit={vz_profile.exit_name}, stop=zone.lo-{vz_profile.stop_atr_buffer}*ATR, "
+        f"(exit={vz_profile.exit_name}, long stop=zone.lo-{vz_profile.stop_atr_buffer}*ATR, "
+        f"short stop=zone.hi+{vz_profile.stop_atr_buffer}*ATR, "
         f"target={vz_profile.target_r}R, ts={vz_profile.exit_bars}d, "
         f"entry_on={vz_profile.entry_on}, rw={vz_profile.retest_window}, "
-        f"hvn={vz_profile.require_hvn_overlap})."
+        f"min_atr={vz_profile.min_atr_pct_at_entry}, "
+        f"hvn={vz_profile.require_hvn_overlap}, trade_side={vz_profile.trade_side}, "
+        f"cd_target={vz_profile.cooldown_after_target_days})."
     )
 
     def _pct(
