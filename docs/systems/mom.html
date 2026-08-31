@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MOM — Momentum (Clenow)</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Research · MOM (Momentum) / Stocks on the Move</p>
+    <h1>MOM — Momentum (Clenow)</h1>
+    <p class="lede"><strong>MOM</strong> (Momentum) is a house research sleeve based on Andreas Clenow’s <em>Stocks on the Move</em> classic rules: weekly volatility-adjusted momentum ranking, 100-day Simple Moving Average (SMA) trend filter, SPY 200-day SMA regime gate, and Average True Range (ATR) risk sizing. It is a <strong>research candidate</strong> — not gold and not DailyRun-wired.</p>
+    <div class="badge badge-bad">Research candidate — not DailyRun</div>
+    <div class="meta-row"><span>Engine <span class='path'>tools/mom_clenow_ab.py</span></span><span>Freeze <code>mom_baseline_20260828</code></span><span>Universe <code>drive/universes/MOM_universe.csv</code></span><span>Review Wednesday</span></div>
+  </header>
+
+<div class="callout bad">
+  <strong>Not production gold. Not DailyRun-wired.</strong>
+  Baseline stamp: <code>drive/paul_experiments/mom_baseline_20260828/</code>.
+  Rules note: <code>drive/paul_experiments/clenow_rules_summary_20260828/</code>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Long-only equity momentum: each week, rank liquid names by 90-day log-regression slope × R²
+  (coefficient of determination), keep / buy the top ~20% of eligible names when the index is
+  in an uptrend, size by ATR, and exit on rank or SMA failure. No classic hard stop.
+</p>
+
+<h2>2. Entry logic</h2>
+<ol class="steps">
+  <li><strong>Universe:</strong> static liquid tradable tape (<code>MOM_universe.csv</code> = VZ 2010 / ADV$2m copy). Not point-in-time S&amp;P 500.</li>
+  <li><strong>Trend:</strong> close above 100-day SMA.</li>
+  <li><strong>Gap filter:</strong> no single-day |move| &gt; 15% in past 90 days (included; labeled).</li>
+  <li><strong>Rank:</strong> 90-day volatility-adjusted momentum; higher better.</li>
+  <li><strong>Pool:</strong> top 20% of eligible ranked names that review day.</li>
+  <li><strong>Index gate:</strong> new buys only if SPY &gt; 200-day SMA.</li>
+  <li><strong>Size:</strong> shares ≈ (equity × 0.001) / 20-day Wilder ATR; fill from top of rank until cash used.</li>
+  <li><strong>Cadence:</strong> Wednesday review (signal at close → next open fill); re-size every other week.</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Rank exit</td><td>Falls out of top ~20% on weekly review</td></tr><tr><td>Trend exit</td><td>Close below 100-day SMA on weekly review</td></tr><tr><td>Universe / data</td><td>Leaves usable OHLC / universe</td></tr><tr><td>Hard stop</td><td><strong>None</strong> (classic reconstruction)</td></tr></tbody></table></div>
+<h2>4. Levers</h2>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>MOM_LOOKBACK</code></td><td>Log-regression window</td><td><strong>90</strong></td><td>Shorter → faster churn</td></tr><tr><td><code>SMA_STOCK</code></td><td>Stock trend filter</td><td><strong>100</strong></td><td>Lower → more eligible</td></tr><tr><td><code>SMA_INDEX</code></td><td>SPY regime gate</td><td><strong>200</strong></td><td>Shorter → more new buys in chops</td></tr><tr><td><code>TOP_FRAC</code></td><td>Rank keep / buy pool</td><td><strong>0.20</strong></td><td>Wider → more names / more overlap</td></tr><tr><td><code>RISK_FRAC</code></td><td>ATR risk fraction</td><td><strong>0.001</strong></td><td>Higher → larger positions / fewer names</td></tr><tr><td><code>GAP_MAX</code></td><td>Shock filter</td><td><strong>15% / 90d</strong></td><td>Off → more speculative names</td></tr><tr><td>Review weekday</td><td>Weekly signal day</td><td><strong>Wednesday</strong></td><td>Friday is an alternate classic choice</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Research candidate only</strong> — not gold, not DailyRun</td></tr><tr><td>Universe</td><td><code>drive/universes/MOM_universe.csv</code> (~763 names; liquid ADV$2m since 2010)</td></tr><tr><td>OHLC</td><td><code>data/ohlcv.duckdb</code> · index <code>SPY</code></td></tr><tr><td>IS / OOS</td><td>IS = before 2024-01-01; OOS = 2024+ — report-only</td></tr><tr><td>Look-ahead</td><td>Indicators through signal close; fills next open</td></tr><tr><td>Blocker</td><td>No point-in-time S&amp;P membership — survivorship vs classic Clenow</td></tr></tbody></table></div>
+<h2>6. How to run</h2>
+<pre style="background:var(--fill);padding:12px;overflow:auto">python tools/mom_clenow_ab.py
+python tools/mom_clenow_ab.py --start 2012-01-01 --end 2026-08-28
+python tools/mom_clenow_ab.py --limit 80   # smoke</pre>
+<p>
+  Artifacts: <code>drive/paul_experiments/mom_baseline_20260828/compare.html</code>,
+  <code>MOM_Closed.csv</code>, <code>BASELINE.md</code>, <code>SUMMARY.md</code>.
+</p>
+
+  <footer>Canonical MOM write-up · Twin Beacon Networks (TBN) · research candidate</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
