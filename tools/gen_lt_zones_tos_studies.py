@@ -3,7 +3,9 @@
 
 Reads zone CSVs written by tools/lt_zones_daily_to_15m.py and emits one .ts study
 per symbol: horizontal AddCloud bands (lo/hi) plus labeled plots for yearly H/L mid
-and POC mid. Uses the same draw-priority / max_draw as the PNG charts.
+and POC mid. Also plots **live** prior-session and prior-2 session High/Low via
+ThinkScript daily aggregation (`high/low(period=DAY)[1]` / `[2]`) so those levels
+do not go stale. Uses the same draw-priority / max_draw as the PNG charts.
 
 Examples:
   python tools/gen_lt_zones_tos_studies.py
@@ -59,6 +61,9 @@ GLOBAL_RGB = {
     "HVN": (66, 165, 245),
     "SwingSR": (244, 143, 177),
     "LVN": (144, 164, 174),
+    # Session H/L (live daily aggregation — not frozen from CSV)
+    "PriorDay": (255, 152, 0),
+    "Prior2Day": (255, 204, 128),
 }
 
 
@@ -175,7 +180,8 @@ def build_thinkscript(
     lines: list[str] = [
         f"# LT {symbol} zones 15m — stamp {stamp}",
         "# Long-term daily S/R (yearly H/L, POC/HVN, swing clusters) as horizontal bands.",
-        "# Levels frozen from zone CSV (research/education only — not DailyRun).",
+        "# Zone bands frozen from zone CSV (research/education only — not DailyRun).",
+        "# Prior / prior-2 session H/L are LIVE daily aggregation (high/low[1]/[2]) — not CSV.",
         "# Apply on a 15-minute chart for the matching symbol.",
         "",
         "declare upper;",
@@ -186,10 +192,16 @@ def build_thinkscript(
         "input showSwing = yes;",
         "input showHvn = yes;",
         "input showLvn = no;",
+        "input showPriorSession = yes;",
+        "input showPrior2Session = yes;",
         "",
     ]
 
     for gname in globals_sorted:
+        r, g, b = GLOBAL_RGB[gname]
+        lines.append(f'DefineGlobalColor("{gname}", CreateColor({r}, {g}, {b}));')
+    # Always define session colors (independent of CSV zone mix)
+    for gname in ("PriorDay", "Prior2Day"):
         r, g, b = GLOBAL_RGB[gname]
         lines.append(f'DefineGlobalColor("{gname}", CreateColor({r}, {g}, {b}));')
     lines.append("")
@@ -249,58 +261,159 @@ def build_thinkscript(
         lines.append("POC.SetLineWeight(2);")
         lines.append("")
 
-    label_color = "Yearly" if "Yearly" in need_globals else globals_sorted[0]
+    lines.append("# ===================== PRIOR SESSION H/L (live daily) =====================")
+    lines.append("# On a 15m chart: high/low(period=DAY)[1] = prior completed session;")
+    lines.append("# [2] = prior-2 session. Updates live — not baked from CSV (avoids stale levels).")
+    lines.append("def dayHigh = high(period = AggregationPeriod.DAY);")
+    lines.append("def dayLow = low(period = AggregationPeriod.DAY);")
+    lines.append("")
+    lines.append("# Primary: prior session High & Low")
+    lines.append(
+        "plot PriorHigh = if showPriorSession then dayHigh[1] else Double.NaN;"
+    )
+    lines.append(
+        "plot PriorLow = if showPriorSession then dayLow[1] else Double.NaN;"
+    )
+    lines.append('PriorHigh.SetDefaultColor(GlobalColor("PriorDay"));')
+    lines.append('PriorLow.SetDefaultColor(GlobalColor("PriorDay"));')
+    lines.append("PriorHigh.SetStyle(Curve.FIRM);")
+    lines.append("PriorLow.SetStyle(Curve.FIRM);")
+    lines.append("PriorHigh.SetLineWeight(2);")
+    lines.append("PriorLow.SetLineWeight(2);")
+    lines.append('PriorHigh.SetPaintingStrategy(PaintingStrategy.HORIZONTAL);')
+    lines.append('PriorLow.SetPaintingStrategy(PaintingStrategy.HORIZONTAL);')
+    lines.append("")
+    lines.append("# Secondary: prior-2 session High & Low (lighter / dashed)")
+    lines.append(
+        "plot Prior2High = if showPrior2Session then dayHigh[2] else Double.NaN;"
+    )
+    lines.append(
+        "plot Prior2Low = if showPrior2Session then dayLow[2] else Double.NaN;"
+    )
+    lines.append('Prior2High.SetDefaultColor(GlobalColor("Prior2Day"));')
+    lines.append('Prior2Low.SetDefaultColor(GlobalColor("Prior2Day"));')
+    lines.append("Prior2High.SetStyle(Curve.SHORT_DASH);")
+    lines.append("Prior2Low.SetStyle(Curve.SHORT_DASH);")
+    lines.append("Prior2High.SetLineWeight(1);")
+    lines.append("Prior2Low.SetLineWeight(1);")
+    lines.append('Prior2High.SetPaintingStrategy(PaintingStrategy.HORIZONTAL);')
+    lines.append('Prior2Low.SetPaintingStrategy(PaintingStrategy.HORIZONTAL);')
+    lines.append("")
+
+    label_color = "Yearly" if "Yearly" in need_globals else (
+        globals_sorted[0] if globals_sorted else "PriorDay"
+    )
     lines.append(
         f'AddLabel(yes, "LT zones {symbol} ({stamp}) research", GlobalColor("{label_color}"));'
+    )
+    lines.append(
+        'AddLabel(showPriorSession, "Prior session H/L", GlobalColor("PriorDay"));'
+    )
+    lines.append(
+        'AddLabel(showPrior2Session, "Prior-2 session H/L", GlobalColor("Prior2Day"));'
     )
     lines.append("")
     return "\n".join(lines)
 
 
-def write_how_to(out_dir: Path, stamp: str, results: list[tuple[str, str, int]]) -> Path:
+def write_how_to(
+    out_dir: Path,
+    stamp: str,
+    results: list[tuple[str, str, int]],
+    *,
+    stamp_dir: Path | None = None,
+) -> Path:
     path = out_dir / "HOW_TO_TOS_IMPORT.md"
+    root = stamp_dir if stamp_dir is not None else out_dir.parent
+    has_watch = (root / "watch.html").is_file()
+    has_gallery = (root / "gallery.html").is_file()
+    example_sym = results[0][0] if results else "NVDA"
+    chart_hint = (
+        "same TF as the watch charts"
+        if has_watch and not has_gallery
+        else "same TF as the gallery PNGs"
+    )
+    regen_flags = ""
+    if has_gallery:
+        regen_flags = " --update-gallery"
+    elif has_watch and results:
+        regen_flags = " -s " + ",".join(r[0] for r in results)
+
     lines = [
         f"# Thinkorswim import — LT zones 15m (`{stamp}`)",
         "",
         "Research / education overlays only — **not** a KEEP claim, **not** DailyRun-wired.",
         "",
-        "Each `.ts` study freezes long-term daily support/resistance (S/R) levels from the "
-        "matching zone CSV (yearly high/low, Point of Control (POC) / High-Volume Node (HVN), "
-        "swing clusters) as horizontal clouds + labeled mid plots. Apply on a **15-minute** chart.",
+        "Each `.ts` study overlays:",
+        "",
+        "1. **Frozen LT zones** from the matching zone CSV — yearly high/low, Point of Control "
+        "(POC) / High-Volume Node (HVN), swing clusters — as horizontal clouds + labeled mid plots.",
+        "2. **Prior session High & Low** — live ThinkScript daily bars "
+        "(`high/low(period = AggregationPeriod.DAY)[1]`).",
+        "3. **Prior-2 session High & Low** — secondary live layer "
+        "(`high/low(period = AggregationPeriod.DAY)[2]`, lighter / dashed).",
+        "",
+        "Session H/L are **not** baked from CSV so they stay current on the chart. "
+        "Apply on a **15-minute** chart.",
         "",
         "## How to import",
         "",
-        "1. In Thinkorswim, open a chart for the symbol (e.g. `NVDA`).",
-        "2. Set aggregation to **15 minutes** (same TF as the gallery PNGs).",
+        f"1. In Thinkorswim, open a chart for the symbol (e.g. `{example_sym}`).",
+        f"2. Set aggregation to **15 minutes** ({chart_hint}).",
         "3. **Studies → Edit Studies → Create…** (or Shared → Studies → Import if you use shared study packages).",
         "4. Open the matching `.ts` file in a text editor, **copy all**, paste into the study editor.",
-        "5. Name the study e.g. `LT NVDA zones 15m` and click **OK** / apply.",
-        "6. Optional inputs: `showZones`, `showYearlyPlots`, `showPocPlot`, `showSwing`, `showHvn`, `showLvn`.",
+        f"5. Name the study e.g. `LT {example_sym} zones 15m` and click **OK** / apply.",
+        "6. Optional inputs: `showZones`, `showYearlyPlots`, `showPocPlot`, `showSwing`, "
+        "`showHvn`, `showLvn`, `showPriorSession`, `showPrior2Session`.",
         "",
-        "### Shared study import (optional)",
-        "",
-        "If you package studies via Setup → Open Shared Item / Shared → Studies:",
-        "",
-        "- Prefer **copy-paste Create** (above) for these research files — they are plain ThinkScript text.",
-        "- There is no encrypted Shared Item ID for this stamp; treat the `.ts` as source.",
-        "",
-        "## Colors (match gallery PNGs)",
-        "",
-        "| Type | Cloud / plot |",
-        "|------|----------------|",
-        "| Yearly high / low | Magenta/pink band + dashed mid plot |",
-        "| POC | Blue band + firm mid plot |",
-        "| HVN | Light-blue band (`showHvn`) |",
-        "| Swing S/R | Soft pink band (`showSwing`) |",
-        "| LVN | Gray band (off by default) |",
-        "",
-        "Draw order matches the PNG tool: yearly → POC → HVN → swing (max 12 clouds).",
-        "",
-        "## Files",
-        "",
-        "| Symbol | Zones drawn | File |",
-        "|--------|------------:|------|",
     ]
+    if has_watch:
+        lines.extend(
+            [
+                f"**Symbols:** watch set from `watch.html` ({len(results)} studies in this folder).",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "### Shared study import (optional)",
+            "",
+            "If you package studies via Setup → Open Shared Item / Shared → Studies:",
+            "",
+            "- Prefer **copy-paste Create** (above) for these research files — they are plain ThinkScript text.",
+            "- There is no encrypted Shared Item ID for this stamp; treat the `.ts` as source.",
+            "",
+            "## Prior session H/L (live)",
+            "",
+            "| Layer | ThinkScript | Style |",
+            "|-------|-------------|-------|",
+            "| Prior session H & L | `high/low(period = AggregationPeriod.DAY)[1]` | Orange, firm weight 2 |",
+            "| Prior-2 session H & L | `high/low(period = AggregationPeriod.DAY)[2]` | Light orange, short-dash weight 1 |",
+            "",
+            "On an intraday chart, `[0]` is the developing session; `[1]` is the last completed "
+            "session (prior day); `[2]` is the session before that. Toggle with "
+            "`showPriorSession` / `showPrior2Session`.",
+            "",
+            "## Colors (LT zones match gallery PNGs)",
+            "",
+            "| Type | Cloud / plot |",
+            "|------|----------------|",
+            "| Yearly high / low | Magenta/pink band + dashed mid plot |",
+            "| POC | Blue band + firm mid plot |",
+            "| HVN | Light-blue band (`showHvn`) |",
+            "| Swing S/R | Soft pink band (`showSwing`) |",
+            "| LVN | Gray band (off by default) |",
+            "| Prior session H/L | Orange firm horizontals (live) |",
+            "| Prior-2 session H/L | Light-orange dashed horizontals (live) |",
+            "",
+            "Draw order for CSV clouds matches the PNG tool: yearly → POC → HVN → swing (max 12 clouds).",
+            "",
+            "## Files",
+            "",
+            "| Symbol | Zones drawn | File |",
+            "|--------|------------:|------|",
+        ]
+    )
     for sym, fname, n in results:
         lines.append(f"| {sym} | {n} | `{fname}` |")
     lines.extend(
@@ -309,16 +422,55 @@ def write_how_to(out_dir: Path, stamp: str, results: list[tuple[str, str, int]])
             "## Regenerate",
             "",
             "```",
-            f"python tools/gen_lt_zones_tos_studies.py --stamp-dir drive/paul_experiments/{stamp} --update-gallery",
+            f"python tools/gen_lt_zones_tos_studies.py --stamp-dir drive/paul_experiments/{stamp}{regen_flags}",
             "```",
             "",
             f"Source zones: `drive/paul_experiments/{stamp}/zones/*_lt_zones.csv`",
-            f"Gallery: `drive/paul_experiments/{stamp}/gallery.html`",
-            "",
         ]
     )
+    if has_gallery:
+        lines.append(f"Gallery: `drive/paul_experiments/{stamp}/gallery.html`")
+    if has_watch:
+        lines.append(f"Watch: `drive/paul_experiments/{stamp}/watch.html`")
+    lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def note_prior_session_in_html(html_path: Path) -> bool:
+    """If an HTML page mentions LT zones / ToS, note prior-session H/L once."""
+    text = html_path.read_text(encoding="utf-8")
+    if "prior-session H/L" in text or "prior session H/L" in text.lower():
+        return False
+    marker = "Thinkorswim studies:"
+    if marker in text:
+        text = text.replace(
+            marker,
+            "Thinkorswim studies (LT zones + live prior / prior-2 session H/L):",
+            1,
+        )
+        html_path.write_text(text, encoding="utf-8")
+        return True
+    # watch.html-style disclaimer / sub line
+    if "yearly H/L, POC, HVN, swings" in text:
+        text = text.replace(
+            "yearly H/L, POC, HVN, swings",
+            "yearly H/L, POC, HVN, swings; ToS studies also plot live prior / prior-2 session H/L",
+            1,
+        )
+        html_path.write_text(text, encoding="utf-8")
+        return True
+    if '<div class="disclaimer">' in text and "prior / prior-2 session H/L" not in text:
+        text = text.replace(
+            '<div class="disclaimer">',
+            '<div class="disclaimer"><strong>Thinkorswim:</strong> '
+            '<a href="tos/HOW_TO_TOS_IMPORT.md">tos/</a> studies include LT zones plus '
+            "live prior-session and prior-2 session High/Low. ",
+            1,
+        )
+        html_path.write_text(text, encoding="utf-8")
+        return True
+    return False
 
 
 def update_gallery_html(gallery: Path, tos_dir_rel: str, symbols: list[str]) -> None:
@@ -350,10 +502,17 @@ def update_gallery_html(gallery: Path, tos_dir_rel: str, symbols: list[str]) -> 
     if "Thinkorswim studies" not in text:
         text = text.replace(
             '<div class="note">',
-            '<div class="note"><strong>Thinkorswim studies:</strong> '
+            '<div class="note"><strong>Thinkorswim studies</strong> '
+            f'(LT zones + live prior / prior-2 session H/L): '
             f'see <a href="{tos_dir_rel}/HOW_TO_TOS_IMPORT.md">tos/HOW_TO_TOS_IMPORT.md</a> '
             "and per-symbol <code>LT_&lt;SYM&gt;_zones_15m.ts</code>.</div>\n"
             '<div class="note">',
+            1,
+        )
+    elif "prior / prior-2 session H/L" not in text and "Thinkorswim studies:" in text:
+        text = text.replace(
+            "Thinkorswim studies:",
+            "Thinkorswim studies (LT zones + live prior / prior-2 session H/L):",
             1,
         )
 
@@ -427,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
         results.append((sym, fname, len(draw)))
         print(f"Wrote {dest} ({len(draw)} clouds from {len(zones)} CSV rows)")
 
-    how = write_how_to(out_dir, stamp, results)
+    how = write_how_to(out_dir, stamp, results, stamp_dir=stamp_dir)
     print(f"Wrote {how}")
 
     if args.update_gallery:
@@ -437,6 +596,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Updated {gallery}")
         else:
             print(f"WARNING: no gallery at {gallery}")
+
+    watch = stamp_dir / "watch.html"
+    if watch.is_file():
+        note_prior_session_in_html(watch)
+        print(f"Noted prior-session H/L in {watch}")
 
     return 0
 

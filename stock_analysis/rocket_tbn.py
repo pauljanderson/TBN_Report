@@ -392,9 +392,11 @@ class BRTConfig:
     rl_watch_disable: bool = False  # If true, RL_Watchlist header only
     # --- RL engine params (portfolio_audit.awk 50-trigger; all overridable via -v) ---
     rl_sma_qual: bool = True  # AWK SMA_QUAL
-    rl_dip_pct: float = 1.041
+    rl_dip_pct: float = 1.055
     rl_50_sma_lookback: int = 4
     rl_stop_pct: float = 0.934
+    rl_stop_anchor: str = "signal_low"  # signal_low | dip_lo | entry_open | sma50 | atr2
+    rl_stop_below_pct: float = 0.0  # cushion below dip_lo anchor (research)
     # Post-TARGET re-entry window (0 bars = off). Mode is mutually exclusive; see RLConfig.
     rl_post_target_reentry_bars: int = 0
     rl_post_target_reentry_mode: str = "stop_loss"
@@ -408,7 +410,7 @@ class BRTConfig:
     rl_acc_min: int = 8
     rl_acc_count: int = 10
     rl_expansion_lookback_days: int = 10
-    rl_cut_the_losers: float = 0.25
+    rl_cut_the_losers: float = 1000.0  # OFF — Paul house baseline
     # ATR% band: None = bound off (``-v RL_ATR_LOW=off`` / ``ATR_LOW=off`` / ``RL_ATR_HIGH=off`` / empty).
     # Dual numeric 0/0 also disables the % band; $ cap (rl_atr_high_value) and rl_low_price stay on.
     rl_atr_low_percent: Optional[float] = 0.0244
@@ -425,14 +427,21 @@ class BRTConfig:
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
     rl_trail_stop2: float = 0.0
-    rl_exit_percent: float = 0.29
-    rl_exit_days: int = 10000
+    rl_exit_percent: float = 0.40  # +40% entry MTM gate (adopt 40_30d 20260831)
+    rl_exit_days: int = 30  # days after +40% before timed exit
+    # Full exit when high >= entry × (1 + this). 0=off. Races SMA50×rl_target_pct and timed exit.
+    rl_entry_target_pct: float = 0.0
     rl_partial_exit_target: float = 0.0
     rl_partial_exit_percent: float = 0.50
     rl_partial_exit_follow_target: float = 0.1
+    rl_scale_ladder: str = ""
     rl_spy_inclusion: bool = False  # AWK SPY_INCLUSION (50>100>200 on entry day)
     rl_avg_vol_days: int = 50  # AWK AVG_VOL_DAYS (0=off)
     rl_vol_pct_threshold: float = 0.0  # AWK VOL_PCT_THRESHOLD (0=off)
+    # PIT absolute liquidity: require trigger-bar avg_vol (over rl_avg_vol_days) >= this (shares). 0=off.
+    rl_min_avg_vol: float = 0.0
+    # PIT absolute liquidity: require trigger-bar volume (TRIGGER_VOL) >= this (shares). 0=off.
+    rl_min_trigger_vol: float = 0.0
     # When true, optional BRT entry gates (min_spy_compare_*, growth_filter, etc.) may filter RL entries.
     rl_brt_entry_gates_enabled: bool = False
     # Legacy no-op on DailyRun: charts/deep HTML are via rl_post_run_analysis.py (not in-run).
@@ -16271,6 +16280,8 @@ _AUDIT_CFG_COLS = [
     "rl_spy_inclusion",
     "rl_avg_vol_days",
     "rl_vol_pct_threshold",
+    "rl_min_avg_vol",
+    "rl_min_trigger_vol",
     "rl_brt_entry_gates_enabled",
     "rl_charts",
     "rl_deep_analysis",
@@ -16287,10 +16298,12 @@ _AUDIT_CFG_COLS = [
     "rl_trail_stop2",
     "rl_exit_percent",
     "rl_exit_days",
+    "rl_entry_target_pct",
     "rl_flush_days",
     "rl_partial_exit_target",
     "rl_partial_exit_percent",
     "rl_partial_exit_follow_target",
+    "rl_scale_ladder",
     "rl_watch_min_score",
     "rl_watch_disable",
     "rl_cash",
@@ -16610,7 +16623,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_charts": "NOT used by DailyRun. Charts/deep HTML: python stock_analysis/rl_post_run_analysis.py --stamp <ts> --charts. If set during RL run, only prints a pointer. Cheap ONE_LINER / FIT / ImproveHints always emit from write_rl_post_reports.",
     "rl_deep_analysis": "NOT used by DailyRun. Same as rl_charts - use rl_post_run_analysis.py for CRWD-style HTML assessments. Setting true mid-run only prints a pointer.",
     "rl_sma_qual": "Master on/off for 50-SMA dip-buy (AWK SMA_QUAL; default true).",
-    "rl_dip_pct": "Dip band multiplier around SMA50 (AWK RL_DIP_PCT, default 1.041 = ±4.1%).",
+    "rl_dip_pct": "Dip band multiplier around SMA50 (AWK RL_DIP_PCT, default 1.055 = ±5.5%).",
     "rl_50_sma_lookback": "SMA50 rising lookback bars (AWK RL_50_SMA_LOOKBACK, default 4).",
     "rl_expansion": "Prior-strength expansion gate multiplier (AWK RL_EXPANSION, default 1.163).",
     "rl_expansion_lookback_days": "Window for expansion scan (AWK EXPANSION_LOOKBACK_DAYS, default 10).",
@@ -16630,6 +16643,8 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_too_high": "Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (AWK RL_TOO_HIGH, default 0=off). When on (e.g. 1.14) with stop 0.934, allows open up to ~low*1.065; rl_too_high=1 requires open <= low*0.934 (below signal low - almost never fills). 0|off|none|false|empty disables.",
     "rl_spy_inclusion": "When true, only enter if SPY SMA50>100>200 (AWK SPY_INCLUSION).",
     "rl_avg_vol_days": "Rolling average volume window reported/used at entry (AWK AVG_VOL_DAYS; 0=off).",
+    "rl_min_avg_vol": "RL PIT min average volume (shares) on trigger bar over rl_avg_vol_days; 0=off. Research gate (e.g. 500000).",
+    "rl_min_trigger_vol": "RL PIT min trigger-bar volume / TRIGGER_VOL (shares); 0=off. Research gate (e.g. 5000).",
     "rl_vol_pct_threshold": "Volume surge gate percent above avg (AWK VOL_PCT_THRESHOLD; 0=off).",
     "rl_brt_entry_gates_enabled": "When true, optional BRT zone gates may filter RL entries (default false / neutralized in rl_mode).",
     "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934).",
@@ -16661,13 +16676,26 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_trail_stop": "Tier-1 locked stop gain fraction once armed (AWK RL_TRAIL_STOP).",
     "rl_trail_profit2": "Tier-2 trail arm gain fraction (AWK RL_TRAIL_PROFIT2; 0=off).",
     "rl_trail_stop2": "Tier-2 locked stop gain fraction (AWK RL_TRAIL_STOP2).",
-    "rl_exit_percent": "Timed-exit profit trigger fraction (AWK RL_EXIT_PERCENT, default 0.29).",
-    "rl_exit_days": "Days after profit trigger before forced exit (AWK RL_EXIT_DAYS; 10000≈off).",
+    "rl_exit_percent": "Timed-exit profit trigger fraction vs entry MTM (AWK RL_EXIT_PERCENT, house 0.40).",
+    "rl_exit_days": "Days after profit trigger before forced exit (AWK RL_EXIT_DAYS; house 30; 10000≈off).",
+    "rl_entry_target_pct": (
+        "Entry-based full-exit target: exit when high >= entry × (1 + this). "
+        "0=off. Races SMA50 × rl_target_pct and rl_exit_percent/days (lowest hit price wins same bar)."
+    ),
     "rl_cash": "Rocket Launcher fixed notional per trade (AWK RL_CASH, default 47500).",
     "rl_flush_days": "Portfolio flush: sell all open RL positions after N consecutive underwater days (0=off, AWK RL_FLUSH_DAYS).",
     "rl_partial_exit_target": "Partial-exit gain trigger (AWK PARTIAL_EXIT_TARGET; 0=off).",
     "rl_partial_exit_percent": "Fraction of shares sold at partial (AWK PARTIAL_EXIT_PERCENT, default 0.50).",
-    "rl_partial_exit_follow_target": "Follow-on target increment after partial (AWK PARTIAL_EXIT_FOLLOW_TARGET).",
+    "rl_partial_exit_follow_target": (
+        "Follow-on target increment after partial (AWK PARTIAL_EXIT_FOLLOW_TARGET). "
+        "Remainder target = entry × (1 + rl_partial_exit_target + this); SMA50 × rl_target_pct is frozen."
+    ),
+    "rl_scale_ladder": (
+        "Research scale-out + stop ratchet. Steps gain:sell_frac:stop_gain separated by | "
+        "(e.g. 0.10:0.20:0|0.20:0.30:0.05). sell_frac of original shares; stop_gain is "
+        "fraction above entry (0=breakeven). Empty=off. Mutually exclusive with single "
+        "partial / Trail-1/2 on the same trade."
+    ),
     "rl_watch_min_score": "Minimum setup score for RL_Watchlist rows (AWK WATCH_MIN_SCORE, default 55).",
     "rl_watch_disable": "If true, skip RL_Watchlist rows (header-only CSV).",
     "rl100_toggle": "AWK-only: enable 100-SMA dip subsystem → RL100_Closed (default 0/off; Python port deferred).",

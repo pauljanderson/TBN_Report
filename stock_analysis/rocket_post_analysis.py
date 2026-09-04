@@ -415,7 +415,7 @@ def format_trade_one_liner(row: dict[str, Any], *, dip_pct: Optional[float] = No
 def enrich_closed_csv_with_one_liners(
     closed_path: Path,
     *,
-    dip_pct: float = 1.041,
+    dip_pct: float = 1.055,
 ) -> int:
     """Add/overwrite ONE_LINER column on Closed CSV. Returns row count."""
     path = Path(closed_path)
@@ -2409,7 +2409,7 @@ def plot_rl_symbol_chart(
     closed_rows: list[dict[str, Any]],
     output_path: Path,
     *,
-    dip_pct: float = 1.041,
+    dip_pct: float = 1.055,
     open_rows: Optional[list[dict[str, Any]]] = None,
     pad_days: int = 40,
 ) -> bool:
@@ -2675,7 +2675,7 @@ def write_system_charts(
     output_dir: Path,
     ts: str,
     prefix: str = "RL",
-    dip_pct: float = 1.041,
+    dip_pct: float = 1.055,
     band_pct: float = 0.02,
     open_path: Optional[Path] = None,
     traded_only: bool = True,
@@ -2799,7 +2799,7 @@ def write_rl_charts(
     closed_path: Path,
     output_dir: Path,
     ts: str,
-    dip_pct: float = 1.041,
+    dip_pct: float = 1.055,
     open_path: Optional[Path] = None,
     traded_only: bool = True,
     workers: int = 1,
@@ -2843,10 +2843,10 @@ def write_analysis_artifacts(
     del open_path  # reserved
     out: dict[str, Path] = {}
     pref = normalize_system(prefix) or "RL"
-    dip = 1.041
+    dip = 1.055
     skip_yf = bool(no_yfinance)
     if cfg is not None:
-        dip = float(getattr(cfg, "rl_dip_pct", 1.041) or 1.041)
+        dip = float(getattr(cfg, "rl_dip_pct", 1.055) or 1.055)
         if _truthy(getattr(cfg, "no_yfinance", False)):
             skip_yf = True
     out_dir = Path(output_dir)

@@ -24,6 +24,7 @@ NAV_FOOTER = """
   <a href="index.html">Scanner open report</a>
   · <a href="investment.html">Investment report</a>
   · <a href="convergence.html">System convergence</a>
+  · <a href="trendlines/index.html">Trendlines + VZ charts</a>
   · <a href="monthly.html">Monthly report (all systems)</a>
   · <a href="system_performance.html">Historical performance</a>
   · <a href="system_setup_process.html">System setup process</a>
@@ -312,6 +313,37 @@ def publish_system_pages(*, drive: Path, docs_dir: Path, show_nav: bool) -> list
     return written
 
 
+TRENDLINES_NAV_FOOTER = NAV_FOOTER.replace('href="', 'href="../')
+
+
+def publish_trendlines_charts(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path | None:
+    """Copy trendlines_opens_latest/charts/ → docs/trendlines/ (index + PNGs)."""
+    src_dir = _resolve_drive(drive) / "paul_studies" / "trendlines_opens_latest" / "charts"
+    src_index = src_dir / "index.html"
+    if not src_index.is_file():
+        return None
+    dst_dir = docs_dir / "trendlines"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst_index = dst_dir / "index.html"
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from report_page_extras import inject_report_page_extras
+
+    text = src_index.read_text(encoding="utf-8")
+    text = inject_report_page_extras(text)
+    if show_nav and "</body>" in text.lower():
+        text = re.sub(r"</body>", TRENDLINES_NAV_FOOTER + "\n</body>", text, count=1, flags=re.I)
+    _write_text_resilient(dst_index, text)
+    for path in src_dir.iterdir():
+        if not path.is_file():
+            continue
+        if path.name == "index.html":
+            continue
+        if path.suffix.lower() in (".png", ".md"):
+            shutil.copy2(path, dst_dir / path.name)
+    return dst_index
+
+
 def publish_scanner(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = drive / "Scanner_Open_Report_Latest.html"
     if not src.is_file():
@@ -568,6 +600,13 @@ def main() -> int:
         # Do not inject root-relative footer into docs/systems/* (hrefs would break).
         print(f"[pages] Wrote {len(system_pages)} system description page(s) under {docs_dir / 'systems'}")
 
+    trendlines_dst = publish_trendlines_charts(drive=drive, docs_dir=docs_dir, show_nav=True)
+    if trendlines_dst is not None:
+        show_nav = True
+        print(f"[pages] Wrote {trendlines_dst}")
+    else:
+        print("[pages] Skipped trendlines charts (no drive/paul_studies/trendlines_opens_latest/charts/index.html)")
+
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
@@ -583,6 +622,7 @@ def main() -> int:
     print("[pages]   Scanner:      https://pauljanderson.github.io/TBN_Report/")
     print("[pages]   Investment:   https://pauljanderson.github.io/TBN_Report/investment.html")
     print("[pages]   Convergence:  https://pauljanderson.github.io/TBN_Report/convergence.html")
+    print("[pages]   Trendlines:   https://pauljanderson.github.io/TBN_Report/trendlines/index.html")
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
     print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
     print("[pages]   Setup process: https://pauljanderson.github.io/TBN_Report/system_setup_process.html")

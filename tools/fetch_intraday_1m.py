@@ -135,7 +135,7 @@ def main() -> int:
         print(
             f"  rows {summary['rows_before']} -> {summary['rows_after']} "
             f"(fetched {summary['rows_fetched']}) "
-            f"{summary['min_ts']} .. {summary['max_ts']}{err}",
+            f"store {summary['min_ts']} .. {summary['max_ts']}{err}",
             flush=True,
         )
         if i + 1 < len(symbols) and args.sleep > 0:

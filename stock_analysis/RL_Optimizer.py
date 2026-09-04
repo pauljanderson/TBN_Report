@@ -64,7 +64,7 @@ W_P90_DAYS = 5
 # AWK portfolio_audit.awk BEGIN defaults (sequential one-at-a-time grid)
 current_best_params: dict[str, Any] = {
     "rl_cash": 47_500.0,
-    "rl_dip_pct": 1.041,
+    "rl_dip_pct": 1.055,
     "rl_50_sma_lookback": 4,
     "rl_stop_pct": 0.934,
     "rl_target_pct": 1.20,

@@ -33,6 +33,9 @@ rem       Evidence: drive\paul_experiments\mvcp_vs_sb_rl_yearly_20260811.html
 rem     set SKIP_RECONCILE_GATE=1 skip frozen Closed gate
 rem     set SKIP_GET=1            skip pygetallMore (run_update_data)
 rem     set FORCE_GET=1           always run pygetallMore (override auto fresh skip)
+rem     set SKIP_FUND_SCORECARD=1 skip fund scorecard refresh + PIT snapshot (step 1b)
+rem     set FORCE_FUND_SCORECARD=1 ignore scorecard Yahoo TTL (full refresh)
+rem     set FUND_SCORECARD_TTL_DAYS=7  Yahoo multiples TTL (default 7)
 rem     DailyRun --noGet          same as SKIP_GET=1
 rem     DailyRun --no-get         same as SKIP_GET=1
 rem     Default (no flags): auto — skip step 1 when data is fresh (see tools/data_update_freshness.py)
@@ -160,6 +163,24 @@ if /i "%SKIP_GET%"=="1" (
   if errorlevel 1 goto :fail
 )
 
+rem --- 1b) Fund scorecard refresh (TTL Yahoo) + dated PIT history snapshot ---
+rem Runs even when step 1 auto-skips OHLC, so scores are not stuck on a stale cache.
+rem Skip: set SKIP_FUND_SCORECARD=1
+rem Force Yahoo: set FORCE_FUND_SCORECARD=1
+rem Docs: drive\paul_experiments\fund_scorecard_pit_dailyrun_20260831\
+if /i "%SKIP_FUND_SCORECARD%"=="1" (
+  echo [1b/13] SKIPPED - run_fund_scorecard_refresh ^(SKIP_FUND_SCORECARD=1^)
+  echo [1b/13] SKIPPED - run_fund_scorecard_refresh ^(SKIP_FUND_SCORECARD=1^)>>"%LOG%"
+) else (
+  echo [1b/13] run_fund_scorecard_refresh
+  echo [1b/13] run_fund_scorecard_refresh>>"%LOG%"
+  call "%~dp0run_fund_scorecard_refresh.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+  if not exist "%~dp0drive\fund_scorecard_latest\scores.csv" (
+    echo [1b/13] WARN - fund_scorecard_latest\scores.csv missing after refresh>>"%LOG%"
+  )
+)
+
 rem --- 2) Optional IND indicator cache warmup (WARM_IND=1) ---
 rem Default OFF for most bats (use_indicators=false). RS always needs TC (use_indicators=true);
 rem cold miss still builds on the fly. Set WARM_IND=1 before DailyRun to pre-warm the cache.
@@ -271,6 +292,38 @@ rem --- 13a) Live stop/target for open positions ---
 echo [13/13] run_gettarget>>"%LOG%"
 call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
+
+rem --- 13c) Trendline + VZ 6m charts (opens + scanners universe) ---
+rem Runs after getTarget so gettarget_positions.csv is current; before GitHub Pages publish.
+rem Universe: gettarget opens U LatestRun opens U investment-report scanners U SPY/APP extras
+rem Skip: set SKIP_TRENDLINES=1
+rem Output: drive\paul_studies\trendlines_opens_latest\charts\index.html
+if /i "%SKIP_TRENDLINES%"=="1" (
+  echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)
+  echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)>>"%LOG%"
+) else (
+  echo [13/13] run_trendlines_daily
+  echo [13/13] run_trendlines_daily>>"%LOG%"
+  call "%~dp0run_trendlines_daily.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+
+rem --- 13d) Trendline ToS (Thinkorswim) study generation (M/W/D fractal .ts files) ---
+rem Runs right after 13c chart creation; writes .ts files to drive\paul_studies\trendlines_tos_YYYYMMDD\
+rem and copies to drive\paul_studies\trendlines_opens_latest\studies\ (latest/stable location).
+rem Skip: set SKIP_TRENDLINES_TOS=1  (SKIP_TRENDLINES=1 also implies skip)
+if /i "%SKIP_TRENDLINES_TOS%"=="1" (
+  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES_TOS=1^)
+  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES_TOS=1^)>>"%LOG%"
+) else if /i "%SKIP_TRENDLINES%"=="1" (
+  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES=1^)
+  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES=1^)>>"%LOG%"
+) else (
+  echo [13/13] run_trendlines_tos_daily
+  echo [13/13] run_trendlines_tos_daily>>"%LOG%"
+  call "%~dp0run_trendlines_tos_daily.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
 
 rem --- 13b) Investment report + GitHub Pages ---
 echo [13/13] publish_github_pages>>"%LOG%"

@@ -15,11 +15,17 @@ import numpy as np
 import pandas as pd
 
 try:
-    from rocket_rl_config import RLConfig, atr_pct_band_passes, rl_config_from_brt_cfg
+    from rocket_rl_config import (
+        RLConfig,
+        atr_pct_band_passes,
+        parse_rl_scale_ladder,
+        rl_config_from_brt_cfg,
+    )
 except ImportError:
     from stock_analysis.rocket_rl_config import (  # type: ignore
         RLConfig,
         atr_pct_band_passes,
+        parse_rl_scale_ladder,
         rl_config_from_brt_cfg,
     )
 
@@ -643,6 +649,33 @@ except ImportError:  # pragma: no cover
     )
 
 
+def _rl_compute_original_stop(
+    cfg: RLConfig,
+    *,
+    sig_low: float,
+    y_sma: float,
+    entry_price: float,
+    atr_val: float,
+    stop_pct: float,
+) -> float:
+    """Original protective stop at entry (fill gates still use signal_low × rl_stop_pct)."""
+    anchor = str(getattr(cfg, "rl_stop_anchor", "signal_low") or "signal_low").strip().lower()
+    below = float(getattr(cfg, "rl_stop_below_pct", 0.0) or 0.0)
+    if anchor in ("dip_lo", "dip_low", "zone_low"):
+        base = y_sma * (2.0 - cfg.rl_dip_pct) if y_sma > 0 else sig_low
+        return base * (1.0 - below)
+    if anchor in ("entry_open", "entry"):
+        return entry_price * stop_pct if entry_price > 0 else sig_low * stop_pct
+    if anchor in ("sma50", "sma_50"):
+        base = y_sma if y_sma > 0 else sig_low
+        return base * stop_pct
+    if anchor in ("atr2", "atr_2"):
+        if atr_val > 0 and entry_price > 0:
+            return entry_price - 2.0 * atr_val
+        return sig_low * stop_pct
+    return sig_low * stop_pct
+
+
 def _rl_effective_stop_pct(
     cfg: RLConfig,
     *,
@@ -664,6 +697,18 @@ def _rl_effective_stop_pct(
         last_exit_was_target=last_exit_was_target,
         entry_idx=entry_idx,
     )
+
+
+def partial_remainder_target_px(entry_price: float, cfg: Any) -> float:
+    """Remainder target after a partial scale-out (AWK PARTIAL_EXIT_FOLLOW_TARGET).
+
+    Production SMA target (prior SMA50 × rl_target_pct) is frozen once a partial
+    fires. Remainder uses an entry-based level:
+    ``entry × (1 + partial_exit_target + partial_exit_follow_target)``.
+    """
+    pt = float(getattr(cfg, "partial_exit_target", 0.0) or 0.0)
+    follow = float(getattr(cfg, "partial_exit_follow_target", 0.0) or 0.0)
+    return float(entry_price) * (1.0 + pt + follow)
 
 
 def _rl_exit_spy_int_turns_weak(cfg: RLConfig, spy_tc_lookup: Any, decision_ymd: str) -> bool:
@@ -758,6 +803,8 @@ def run_symbol_rl(
     # Post-TARGET tighter stop: prior closed trade exit bar / whether it was TARGET.
     last_exit_idx = -1
     last_exit_was_target = False
+    scale_ladder = parse_rl_scale_ladder(getattr(cfg, "rl_scale_ladder", ""))
+    ladder_done = [False] * len(scale_ladder)
 
     # Entry snapshot fields
     snap: dict[str, Any] = {}
@@ -862,7 +909,13 @@ def run_symbol_rl(
             if track_daily_pnl:
                 daily_unrealized[iso] = daily_unrealized.get(iso, 0.0) + (rl_inv * c[idx] - cfg.rl_cash)
 
-            if j > 1 and y_idx >= 0 and np.isfinite(sma50[y_idx]) and sma50[y_idx] > 0:
+            if (
+                has_hit_milestone == 0
+                and j > 1
+                and y_idx >= 0
+                and np.isfinite(sma50[y_idx])
+                and sma50[y_idx] > 0
+            ):
                 rl_target = float(sma50[y_idx]) * cfg.rl_target_pct
 
             execute_exit = 0
@@ -906,31 +959,72 @@ def run_symbol_rl(
             if has_hit_time == 1:
                 time_counter += 1
 
-            # Partial exit
+            # Scale-out + stop ratchet (research). Exclusive of single partial / Trail-1/2.
+            if execute_exit == 0 and scale_ladder:
+                orig = initial_shares if initial_shares > 0 else rl_inv
+                for si, (gain, sell_frac, stop_gain) in enumerate(scale_ladder):
+                    if ladder_done[si] or curr_profit_pct < gain:
+                        continue
+                    want = int(orig * sell_frac)
+                    max_sell = int(rl_inv) - 1 if rl_inv > 1 else 0
+                    shares_to_sell = max(0, min(want, max_sell))
+                    if shares_to_sell > 0:
+                        rl_inv -= float(shares_to_sell)
+                        p_exit = h[idx]
+                        total_exit_proceeds += shares_to_sell * p_exit
+                        partial_amt += (shares_to_sell * p_exit) - (shares_to_sell * entry_price)
+                        if not partial_date:
+                            partial_date = iso
+                    new_stop = entry_price * (1.0 + stop_gain)
+                    if new_stop > rl_stop:
+                        rl_stop = new_stop
+                    rl_trail_active = 2 if si >= 1 else max(rl_trail_active, 1)
+                    ladder_done[si] = True
+
+            # Partial exit (AWK PARTIAL_EXIT_*). Remainder target becomes
+            # entry × (1 + partial_exit_target + follow); SMA50 target stays frozen.
             if (
                 execute_exit == 0
+                and not scale_ladder
                 and has_hit_milestone == 0
                 and cfg.partial_exit_target > 0
                 and curr_profit_pct >= cfg.partial_exit_target
             ):
-                has_hit_milestone = 1
-                partial_date = iso
                 shares_to_sell = int(rl_inv * cfg.partial_exit_percent)
-                rl_inv -= shares_to_sell
-                p_exit = h[idx]
-                total_exit_proceeds += shares_to_sell * p_exit
-                partial_amt = (shares_to_sell * p_exit) - (shares_to_sell * entry_price)
+                remainder = rl_inv - shares_to_sell
+                if shares_to_sell > 0 and remainder > 0:
+                    has_hit_milestone = 1
+                    partial_date = iso
+                    rl_inv = remainder
+                    p_exit = h[idx]
+                    total_exit_proceeds += shares_to_sell * p_exit
+                    partial_amt = (shares_to_sell * p_exit) - (shares_to_sell * entry_price)
+                    rl_target = partial_remainder_target_px(entry_price, cfg)
 
-            if cfg.rl_trail_profit > 0 and rl_trail_active == 0 and h[idx] >= entry_price * (1 + cfg.rl_trail_profit):
+            if (
+                not scale_ladder
+                and cfg.rl_trail_profit > 0
+                and rl_trail_active == 0
+                and h[idx] >= entry_price * (1 + cfg.rl_trail_profit)
+            ):
                 rl_trail_active = 1
                 rl_stop = entry_price * (1 + cfg.rl_trail_stop)
-            if cfg.rl_trail_profit2 > 0 and h[idx] >= entry_price * (1 + cfg.rl_trail_profit2):
+            if (
+                not scale_ladder
+                and cfg.rl_trail_profit2 > 0
+                and h[idx] >= entry_price * (1 + cfg.rl_trail_profit2)
+            ):
                 rl_trail_active = 2
                 rl_stop = entry_price * (1 + cfg.rl_trail_stop2)
 
+            hit_timed = False
             if execute_exit == 0:
                 timed_exit_px = entry_price * (1 + cfg.rl_exit_percent)
                 sma_target_px = rl_target
+                entry_tgt_pct = float(getattr(cfg, "rl_entry_target_pct", 0.0) or 0.0)
+                entry_target_px = (
+                    entry_price * (1.0 + entry_tgt_pct) if entry_tgt_pct > 0 else 0.0
+                )
                 stop_price = c[idx] if iso == entry_iso else l[idx]
                 if stop_price <= rl_stop:
                     execute_exit = 1
@@ -948,31 +1042,43 @@ def run_symbol_rl(
                 else:
                     hit_sma = sma_target_px > 0 and h[idx] >= sma_target_px
                     hit_timed = has_hit_time == 1 and time_counter >= cfg.rl_exit_days
-                    if hit_sma and hit_timed:
+                    hit_entry_tgt = entry_target_px > 0 and h[idx] >= entry_target_px
+                    # Same-bar race among SMA target, entry target, and timed exit:
+                    # lowest hit price level wins (timed compared at gate; fill still @open).
+                    race: list[tuple[str, float]] = []
+                    if hit_sma:
+                        race.append(("TARGET", float(sma_target_px)))
+                    if hit_entry_tgt:
+                        race.append(("ENTRY_TARGET", float(entry_target_px)))
+                    if hit_timed:
+                        race.append(("RL_EXIT_DAYS", float(timed_exit_px)))
+                    if race:
                         execute_exit = 1
-                        if sma_target_px < timed_exit_px:
+                        exit_type = min(race, key=lambda t: t[1])[0]
+                        if exit_type == "TARGET":
                             rl_sell = sma_target_px if sma_target_px > o[idx] else o[idx]
-                            exit_type = "TARGET"
+                        elif exit_type == "ENTRY_TARGET":
+                            rl_sell = (
+                                entry_target_px if entry_target_px > o[idx] else o[idx]
+                            )
                         else:
                             rl_sell = o[idx]
-                            exit_type = "RL_EXIT_DAYS"
-                    elif hit_sma:
-                        execute_exit = 1
-                        exit_type = "TARGET"
-                        rl_sell = sma_target_px if sma_target_px > o[idx] else o[idx]
-                    elif hit_timed:
-                        execute_exit = 1
-                        exit_type = "RL_EXIT_DAYS"
-                        rl_sell = o[idx]
 
             if execute_exit == 1:
-                if exit_type == "RL_EXIT_DAYS" and hit_timed == 0:
-                    if o[idx] > entry_price * (1 + cfg.rl_exit_percent):
-                        rl_sell = o[idx]
-                    else:
-                        rl_sell = entry_price * (1 + cfg.rl_exit_percent)
+                # Fills vs original entry_price. Do not rebase cost to the +29% gate.
+                if exit_type == "RL_EXIT_DAYS":
+                    # Countdown done (hit_timed): keep race fill @open. AWK leaves this
+                    # alone; a prior Python port fell through to rl_stop and marked
+                    # RL_EXIT_DAYS while selling the stop (invalid Avg on time-stop ABs).
+                    # hit_timed false: AWK same-bar/edge path — fill at least +29% of entry.
+                    if not hit_timed:
+                        gate = entry_price * (1.0 + cfg.rl_exit_percent)
+                        rl_sell = o[idx] if o[idx] > gate else gate
                 elif exit_type == "TARGET":
                     rl_sell = rl_target if rl_target > o[idx] else o[idx]
+                elif exit_type == "ENTRY_TARGET":
+                    et = entry_price * (1.0 + float(getattr(cfg, "rl_entry_target_pct", 0.0) or 0.0))
+                    rl_sell = et if et > o[idx] else o[idx]
                 elif exit_type in (
                     "FLUSH_EXIT",
                     "SPY_INT_TC_WEAK_EXIT",
@@ -1099,6 +1205,7 @@ def run_symbol_rl(
                 partial_date = ""
                 partial_amt = 0.0
                 m_days = [0] * 6
+                ladder_done = [False] * len(scale_ladder)
                 snap = {}
 
             else:
@@ -1209,6 +1316,18 @@ def run_symbol_rl(
                     entry_day_vol = vol[next_idx] if next_idx < n else 0.0
                     vol_ok = avg_vol > 0 and entry_day_vol >= avg_vol * (1 + cfg.vol_pct_threshold / 100)
 
+                # PIT absolute liquidity on trigger bar (avg_vol window ends at signal idx).
+                min_avg_vol_ok = True
+                min_avg_vol = float(getattr(cfg, "min_avg_vol", 0.0) or 0.0)
+                if min_avg_vol > 0:
+                    min_avg_vol_ok = cfg.avg_vol_days > 0 and avg_vol >= min_avg_vol
+
+                # PIT absolute floor on trigger-bar volume (TRIGGER_VOL).
+                min_trigger_vol_ok = True
+                min_trigger_vol = float(getattr(cfg, "min_trigger_vol", 0.0) or 0.0)
+                if min_trigger_vol > 0:
+                    min_trigger_vol_ok = float(vol[idx]) >= min_trigger_vol
+
                 entry_ok = False
                 if next_iso and next_open > 0:
                     if cfg.rl_too_high == 0 or next_open <= l[idx] * cfg.rl_too_high * cfg.rl_stop_pct:
@@ -1225,6 +1344,8 @@ def run_symbol_rl(
                     and shock_qualified
                     and not too_low
                     and vol_ok
+                    and min_avg_vol_ok
+                    and min_trigger_vol_ok
                 )
 
                 if filters_ok and ind_gates_active:
@@ -1260,7 +1381,14 @@ def run_symbol_rl(
                         last_exit_was_target=last_exit_was_target,
                         entry_idx=next_idx,
                     )
-                    stop_lv = l[idx] * scan_stop_pct
+                    stop_lv = _rl_compute_original_stop(
+                        cfg,
+                        sig_low=l[idx],
+                        y_sma=y_sma,
+                        entry_price=next_open if next_open > 0 else o[next_idx] if next_idx < n else 0.0,
+                        atr_val=atr_rolling,
+                        stop_pct=scan_stop_pct,
+                    )
                     # too_high line stays on baseline rl_stop_pct (fill gate unchanged).
                     th_line = (l[idx] * cfg.rl_stop_pct) * cfg.rl_too_high
                     nxop = next_open if next_open > 0 else 0.0
@@ -1288,7 +1416,14 @@ def run_symbol_rl(
                         last_exit_was_target=last_exit_was_target,
                         entry_idx=next_idx,
                     )
-                    rl_stop = l[idx] * stop_pct
+                    rl_stop = _rl_compute_original_stop(
+                        cfg,
+                        sig_low=l[idx],
+                        y_sma=y_sma,
+                        entry_price=entry_price,
+                        atr_val=atr_rolling,
+                        stop_pct=stop_pct,
+                    )
                     original_stop = rl_stop
                     original_target = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 else 0.0
                     rl_trail_active = 0
@@ -1303,6 +1438,7 @@ def run_symbol_rl(
                     partial_date = ""
                     partial_amt = 0.0
                     m_days = [0] * 6
+                    ladder_done = [False] * len(scale_ladder)
                     hi_rng = h[idx] - l[idx]
                     close_to_high = 1 - ((h[idx] - c[idx]) / hi_rng) if hi_rng > 0 else 0.0
                     e20 = float(sma20[next_idx]) if np.isfinite(sma20[next_idx]) else 0.0

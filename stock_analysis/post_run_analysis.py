@@ -947,7 +947,7 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         default="",
         help="Comma-separated symbols (default: all traded in Closed)",
     )
-    ap.add_argument("--dip-pct", type=float, default=0.0, help="Override rl_dip_pct (0=read Report or 1.041)")
+    ap.add_argument("--dip-pct", type=float, default=0.0, help="Override rl_dip_pct (0=read Report or 1.055)")
     ap.add_argument("--band-pct", type=float, default=0.02, help="Zone half-width for zone-system charts")
     ap.add_argument(
         "--refresh-cheap",
@@ -1015,9 +1015,9 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         if report.is_file() and prefix in RL_SYSTEMS:
             with report.open(newline="", encoding="utf-8") as f:
                 r = next(csv.DictReader(f), {})
-            dip = _fnum(r.get("rl_dip_pct"), 1.041) or 1.041
+            dip = _fnum(r.get("rl_dip_pct"), 1.055) or 1.055
         else:
-            dip = 1.041
+            dip = 1.055
 
     n_workers = resolve_workers(int(args.workers))
     print(

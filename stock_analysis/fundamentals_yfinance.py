@@ -16,10 +16,15 @@ Historical vs point-in-time
 - ``yf_earnings_dates`` — earnings *report* calendar (estimate / reported / surprise).
   Yahoo often returns decades of rows via ``get_earnings_dates``; this is the longest
   EPS-related series Yahoo exposes for free.
+- ``yf_dividends`` — cash dividend per share by **ex-date** (``Ticker.dividends``).
+  Yahoo’s series is typically split-adjusted to match split-adjusted Close.
+  Upserted on refresh; older ex-dates are retained if a later pull is shorter.
 
 **Point-in-time / snapshot** — Yahoo does **not** publish a historical short-interest
 API through yfinance. ``Ticker.info`` only has the latest FINRA-lagged short fields
 (``sharesShort``, ``shortRatio``, ``shortPercentOfFloat``, ``dateShortInterest``, …).
+Snapshot dividend yield / rate / ex-date from ``info`` are also current-only
+(typed columns on ``yf_symbol_info``). Use ``yf_dividends`` for as-of backtests.
 
 - ``yf_symbol_info`` — **current** dual-write snapshot (latest refresh). Mag10 /
   earnings-snapshot scripts keep reading this.
@@ -46,7 +51,7 @@ same ``Ticker.info`` fetch — no separate command. Legacy cache rows (pre-short
 Tables
 ------
 yf_symbol_info, yf_earnings_quarterly, yf_earnings_annual, yf_earnings_dates,
-yf_short_interest_history
+yf_short_interest_history, yf_dividends
 """
 from __future__ import annotations
 
@@ -81,6 +86,11 @@ CREATE TABLE IF NOT EXISTS yf_symbol_info (
     short_ratio DOUBLE,
     short_percent_of_float DOUBLE,
     shares_percent_shares_out DOUBLE,
+    dividend_yield DOUBLE,
+    dividend_rate DOUBLE,
+    ex_dividend_date DATE,
+    last_dividend_value DOUBLE,
+    last_dividend_date DATE,
     raw_json VARCHAR,
     fetched_at TIMESTAMP NOT NULL,
     PRIMARY KEY (symbol)
@@ -127,6 +137,13 @@ CREATE TABLE IF NOT EXISTS yf_short_interest_history (
     fetched_at TIMESTAMP NOT NULL,
     PRIMARY KEY (symbol, as_of)
 );
+CREATE TABLE IF NOT EXISTS yf_dividends (
+    symbol VARCHAR NOT NULL,
+    ex_date DATE NOT NULL,
+    amount DOUBLE NOT NULL,
+    fetched_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (symbol, ex_date)
+);
 """
 
 # Yahoo caps get_earnings_dates(limit=...) at 100 (higher raises ValueError).
@@ -141,6 +158,11 @@ _YF_SYMBOL_INFO_EXTRA_COLS: tuple[tuple[str, str], ...] = (
     ("short_ratio", "DOUBLE"),
     ("short_percent_of_float", "DOUBLE"),
     ("shares_percent_shares_out", "DOUBLE"),
+    ("dividend_yield", "DOUBLE"),
+    ("dividend_rate", "DOUBLE"),
+    ("ex_dividend_date", "DATE"),
+    ("last_dividend_value", "DOUBLE"),
+    ("last_dividend_date", "DATE"),
 )
 
 _INFO_SELECT_COLS = (
@@ -157,6 +179,11 @@ _INFO_SELECT_COLS = (
     "short_ratio",
     "short_percent_of_float",
     "shares_percent_shares_out",
+    "dividend_yield",
+    "dividend_rate",
+    "ex_dividend_date",
+    "last_dividend_value",
+    "last_dividend_date",
     "raw_json",
     "fetched_at",
 )
@@ -221,7 +248,7 @@ def ensure_schema(db_path: str | Path | None = None) -> Path:
 
 
 def _migrate_yf_symbol_info(con) -> None:
-    """Add short-interest columns to existing caches (CREATE IF NOT EXISTS is a no-op)."""
+    """Add short-interest / dividend snapshot columns to existing caches."""
     for col, typ in _YF_SYMBOL_INFO_EXTRA_COLS:
         try:
             con.execute(f"ALTER TABLE yf_symbol_info ADD COLUMN IF NOT EXISTS {col} {typ}")
@@ -416,6 +443,54 @@ def _short_fields_null(info: dict[str, Any]) -> bool:
     return bool(info) and not _short_typed_present(info)
 
 
+def _dividends_never_fetched(info: dict[str, Any]) -> bool:
+    """True until a refresh has written the ``dividendsFetched`` raw_json flag.
+
+    Empty history is valid (non-payers). The flag distinguishes “never tried”
+    from “Yahoo returned no cash dividends.”
+    """
+    if not info:
+        return True
+    raw = _parse_info_raw(info)
+    return "dividendsFetched" not in raw
+
+
+def _dividend_snapshot_from_info(info: dict[str, Any]) -> dict[str, Any]:
+    """Point-in-time yield/rate/ex-date from ``Ticker.info`` (not a history)."""
+    dy = _safe_float(info.get("dividendYield"))
+    if dy is None:
+        dy = _safe_float(info.get("trailingAnnualDividendYield"))
+    dr = _safe_float(info.get("dividendRate"))
+    if dr is None:
+        dr = _safe_float(info.get("trailingAnnualDividendRate"))
+    return {
+        "dividend_yield": dy,
+        "dividend_rate": dr,
+        "ex_dividend_date": _yahoo_date(info.get("exDividendDate")),
+        "last_dividend_value": _safe_float(info.get("lastDividendValue")),
+        "last_dividend_date": _yahoo_date(info.get("lastDividendDate")),
+        "payout_ratio": _safe_float(info.get("payoutRatio")),
+    }
+
+
+def _dividends_from_ticker(t: Any) -> list[dict[str, Any]]:
+    """Cash dividend per share by ex-date. Split-adjusted to match Yahoo Close."""
+    out: list[dict[str, Any]] = []
+    try:
+        series = getattr(t, "dividends", None)
+        if series is None or getattr(series, "empty", True):
+            return out
+        for idx, val in series.items():
+            ex = _to_date(idx)
+            amt = _safe_float(val)
+            if ex is None or amt is None or amt == 0:
+                continue
+            out.append({"ex_date": ex, "amount": amt})
+    except Exception:
+        return out
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Bundle
 # ---------------------------------------------------------------------------
@@ -435,6 +510,11 @@ class SymbolFundamentals:
     short_ratio: Optional[float] = None  # days to cover
     short_percent_of_float: Optional[float] = None  # 0–1 fraction when from Yahoo
     shares_percent_shares_out: Optional[float] = None  # 0–1 fraction when present
+    dividend_yield: Optional[float] = None  # snapshot 0–1 when from Yahoo
+    dividend_rate: Optional[float] = None  # snapshot $ / share / year
+    ex_dividend_date: Optional[date] = None
+    last_dividend_value: Optional[float] = None
+    last_dividend_date: Optional[date] = None
     c_eps_yoy: Optional[float] = None  # fraction YoY (0.25 = +25%)
     a_eps_cagr: Optional[float] = None  # fraction CAGR
     current_price: Optional[float] = None
@@ -443,6 +523,7 @@ class SymbolFundamentals:
     beta: Optional[float] = None
     earnings_quarterly: list[dict[str, Any]] = field(default_factory=list)
     earnings_dates: list[dict[str, Any]] = field(default_factory=list)
+    dividends: list[dict[str, Any]] = field(default_factory=list)
     fetched_at: Optional[datetime] = None
     cache_hit: bool = False
     source: str = ""  # CACHE | FETCH | DISABLED | EMPTY
@@ -471,6 +552,15 @@ class SymbolFundamentals:
             "shortRatio": self.short_ratio,
             "shortPercentOfFloat": self.short_percent_of_float,
             "sharesPercentSharesOut": self.shares_percent_shares_out,
+            "dividendYield": self.dividend_yield,
+            "dividendRate": self.dividend_rate,
+            "exDividendDate": (
+                self.ex_dividend_date.isoformat() if self.ex_dividend_date else None
+            ),
+            "lastDividendValue": self.last_dividend_value,
+            "lastDividendDate": (
+                self.last_dividend_date.isoformat() if self.last_dividend_date else None
+            ),
             "as_of_date": as_of_date or datetime.now().strftime("%Y-%m-%d"),
         }
 
@@ -759,6 +849,17 @@ def _load_earnings_dates(con, symbol: str) -> list[dict[str, Any]]:
     return out
 
 
+def _load_dividends(con, symbol: str) -> list[dict[str, Any]]:
+    rows = con.execute(
+        "SELECT ex_date, amount, fetched_at FROM yf_dividends WHERE symbol = ? ORDER BY ex_date",
+        [symbol],
+    ).fetchall()
+    out = []
+    for r in rows:
+        out.append({"ex_date": r[0], "amount": r[1], "fetched_at": r[2]})
+    return out
+
+
 def _quarterly_covers_lookback(quarterly: list[dict[str, Any]], lookback_years: float) -> bool:
     if not quarterly:
         return False
@@ -976,6 +1077,9 @@ def _fetch_yahoo_payload(symbol: str) -> dict[str, Any]:
                 }
             )
 
+    dividend_rows = _dividends_from_ticker(t)
+    div_snap = _dividend_snapshot_from_info(info)
+
     current_price = _px_early
     raw = {
         "marketCap": market_cap,
@@ -1002,6 +1106,17 @@ def _fetch_yahoo_payload(symbol: str) -> dict[str, Any]:
         "a_eps_cagr_hint": compute_eps_cagr(annual_rows, years=3)
         if annual_rows
         else compute_eps_cagr(quarterly_rows, years=3),
+        "dividendYield": div_snap.get("dividend_yield"),
+        "dividendRate": div_snap.get("dividend_rate"),
+        "exDividendDate": (
+            div_snap["ex_dividend_date"].isoformat() if div_snap.get("ex_dividend_date") else None
+        ),
+        "lastDividendValue": div_snap.get("last_dividend_value"),
+        "lastDividendDate": (
+            div_snap["last_dividend_date"].isoformat() if div_snap.get("last_dividend_date") else None
+        ),
+        "payoutRatio": div_snap.get("payout_ratio"),
+        "dividendsFetched": True,
     }
 
     return {
@@ -1019,6 +1134,12 @@ def _fetch_yahoo_payload(symbol: str) -> dict[str, Any]:
         "quarterly": quarterly_rows,
         "annual": annual_rows,
         "earnings_dates": earnings_dates,
+        "dividends": dividend_rows,
+        "dividend_yield": div_snap.get("dividend_yield"),
+        "dividend_rate": div_snap.get("dividend_rate"),
+        "ex_dividend_date": div_snap.get("ex_dividend_date"),
+        "last_dividend_value": div_snap.get("last_dividend_value"),
+        "last_dividend_date": div_snap.get("last_dividend_date"),
         "raw": raw,
     }
 
@@ -1086,6 +1207,29 @@ def _upsert_short_history_row(con, symbol: str, payload: dict[str, Any], *, as_o
     )
 
 
+def _upsert_dividend_rows(
+    con,
+    symbol: str,
+    rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+) -> None:
+    """INSERT OR REPLACE by (symbol, ex_date) — never wipe older payments."""
+    for r in rows or []:
+        ex = _to_date(r.get("ex_date"))
+        amt = _safe_float(r.get("amount"))
+        if ex is None or amt is None:
+            continue
+        con.execute(
+            """
+            INSERT OR REPLACE INTO yf_dividends
+            (symbol, ex_date, amount, fetched_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            [symbol, ex, amt, now],
+        )
+
+
 def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime) -> None:
     as_of = now.date()
     con.execute(
@@ -1094,8 +1238,9 @@ def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime)
         (symbol, as_of, market_cap, float_shares, inst_pct, roe,
          shares_short, shares_short_prior_month, date_short_interest,
          shares_short_previous_month_date, short_ratio, short_percent_of_float,
-         shares_percent_shares_out, raw_json, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         shares_percent_shares_out, dividend_yield, dividend_rate, ex_dividend_date,
+         last_dividend_value, last_dividend_date, raw_json, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             symbol,
@@ -1111,6 +1256,11 @@ def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime)
             payload.get("short_ratio"),
             payload.get("short_percent_of_float"),
             payload.get("shares_percent_shares_out"),
+            payload.get("dividend_yield"),
+            payload.get("dividend_rate"),
+            payload.get("ex_dividend_date"),
+            payload.get("last_dividend_value"),
+            payload.get("last_dividend_date"),
             json.dumps(payload.get("raw") or {}, default=str),
             now,
         ],
@@ -1141,6 +1291,59 @@ def _upsert_payload(con, symbol: str, payload: dict[str, Any], *, now: datetime)
                 now,
             ],
         )
+
+    _upsert_dividend_rows(con, symbol, payload.get("dividends") or [], now=now)
+
+
+def _fetch_dividends_only(symbol: str) -> dict[str, Any]:
+    """Yahoo dividends + snapshot yield without re-pulling EPS / earnings dates."""
+    import yfinance as yf
+
+    t = yf.Ticker(symbol)
+    info: dict[str, Any] = {}
+    try:
+        info = dict(getattr(t, "info", None) or {})
+    except Exception:
+        info = {}
+    snap = _dividend_snapshot_from_info(info)
+    snap["dividends"] = _dividends_from_ticker(t)
+    return snap
+
+
+def _patch_info_dividends(con, symbol: str, snap: dict[str, Any]) -> None:
+    """Write snapshot yield + dividendsFetched without resetting earnings TTL."""
+    info = _load_info_row(con, symbol) or {}
+    raw = _parse_info_raw(info)
+    raw["dividendYield"] = snap.get("dividend_yield")
+    raw["dividendRate"] = snap.get("dividend_rate")
+    ex = snap.get("ex_dividend_date")
+    last_d = snap.get("last_dividend_date")
+    raw["exDividendDate"] = ex.isoformat() if hasattr(ex, "isoformat") else ex
+    raw["lastDividendValue"] = snap.get("last_dividend_value")
+    raw["lastDividendDate"] = last_d.isoformat() if hasattr(last_d, "isoformat") else last_d
+    raw["payoutRatio"] = snap.get("payout_ratio")
+    raw["dividendsFetched"] = True
+    con.execute(
+        """
+        UPDATE yf_symbol_info SET
+            dividend_yield = ?,
+            dividend_rate = ?,
+            ex_dividend_date = ?,
+            last_dividend_value = ?,
+            last_dividend_date = ?,
+            raw_json = ?
+        WHERE symbol = ?
+        """,
+        [
+            snap.get("dividend_yield"),
+            snap.get("dividend_rate"),
+            snap.get("ex_dividend_date"),
+            snap.get("last_dividend_value"),
+            snap.get("last_dividend_date"),
+            json.dumps(raw, default=str),
+            symbol,
+        ],
+    )
 
 
 def short_interest_as_of(
@@ -1193,6 +1396,46 @@ def short_interest_as_of(
         con.close()
 
 
+def load_dividends(
+    symbol: str,
+    *,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Cash dividends by ex-date for ``symbol`` (empty list if none cached)."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return []
+    p = ensure_schema(db_path)
+    con = _connect(p, read_only=True)
+    try:
+        return _load_dividends(con, sym)
+    finally:
+        con.close()
+
+
+def dividends_cash_per_share(
+    symbol: str,
+    start: date | str | datetime,
+    end: date | str | datetime,
+    *,
+    db_path: str | Path | None = None,
+) -> float:
+    """Sum of cash dividends per share with ``start < ex_date <= end`` (held through ex-date)."""
+    d0 = _to_date(start)
+    d1 = _to_date(end)
+    if d0 is None or d1 is None or d1 <= d0:
+        return 0.0
+    total = 0.0
+    for r in load_dividends(symbol, db_path=db_path):
+        ex = _to_date(r.get("ex_date"))
+        amt = _safe_float(r.get("amount"))
+        if ex is None or amt is None:
+            continue
+        if d0 < ex <= d1:
+            total += amt
+    return total
+
+
 def _bundle_from_cache(
     symbol: str,
     info: dict[str, Any],
@@ -1201,6 +1444,7 @@ def _bundle_from_cache(
     *,
     cache_hit: bool,
     source: str,
+    dividends: Optional[list[dict[str, Any]]] = None,
 ) -> SymbolFundamentals:
     yoy = compute_eps_yoy(quarterly)
     sector = industry = None
@@ -1248,6 +1492,23 @@ def _bundle_from_cache(
         if shares_percent_shares_out is None:
             shares_percent_shares_out = _safe_float(raw.get("sharesPercentSharesOut"))
 
+    dividend_yield = _safe_float(info.get("dividend_yield"))
+    dividend_rate = _safe_float(info.get("dividend_rate"))
+    ex_dividend_date = _yahoo_date(info.get("ex_dividend_date"))
+    last_dividend_value = _safe_float(info.get("last_dividend_value"))
+    last_dividend_date = _yahoo_date(info.get("last_dividend_date"))
+    if raw:
+        if dividend_yield is None:
+            dividend_yield = _safe_float(raw.get("dividendYield"))
+        if dividend_rate is None:
+            dividend_rate = _safe_float(raw.get("dividendRate"))
+        if ex_dividend_date is None:
+            ex_dividend_date = _yahoo_date(raw.get("exDividendDate"))
+        if last_dividend_value is None:
+            last_dividend_value = _safe_float(raw.get("lastDividendValue"))
+        if last_dividend_date is None:
+            last_dividend_date = _yahoo_date(raw.get("lastDividendDate"))
+
     return SymbolFundamentals(
         symbol=symbol,
         market_cap=market_cap,
@@ -1261,6 +1522,11 @@ def _bundle_from_cache(
         short_ratio=short_ratio,
         short_percent_of_float=short_percent_of_float,
         shares_percent_shares_out=shares_percent_shares_out,
+        dividend_yield=dividend_yield,
+        dividend_rate=dividend_rate,
+        ex_dividend_date=ex_dividend_date,
+        last_dividend_value=last_dividend_value,
+        last_dividend_date=last_dividend_date,
         c_eps_yoy=yoy,
         a_eps_cagr=cagr,
         current_price=current_price,
@@ -1269,6 +1535,7 @@ def _bundle_from_cache(
         beta=beta,
         earnings_quarterly=quarterly,
         earnings_dates=dates,
+        dividends=list(dividends or []),
         fetched_at=_parse_ts(info.get("fetched_at")),
         cache_hit=cache_hit,
         source=source,

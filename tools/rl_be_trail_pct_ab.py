@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """RL Trail-1 BE overlay: one knob `rl_trail_profit` (stop=0).
 
-Control = DailyRun off (no BE) on RL_LatestRun_Closed.
+Default: tradable-tape Closed 260828112205 (from-scratch 764 parent).
 Candidates replay the same Closed book + local OHLC:
   after first High >= entry * (1 + pct), subsequent Low <= entry → BE at entry
   (gap through BE → next/open fill — same convention as tools/be_stop_replay_ab.py).
 
+Evidence: ImprovePriority 260828112205 mtm_giveback_stop (253 trades / 202 names).
 Pre-agreed arms (not a grid): 14% (user historical), 20% (wider).
 10% is a cheap reference row only (already DISMISS 20260819).
 
-Research-only. Not DailyRun.
+Research-only. Not DailyRun. Do not overwrite RL_universe.csv.
 
 Usage:
   python tools/rl_be_trail_pct_ab.py
+  python tools/rl_be_trail_pct_ab.py --closed path/to/RL_Closed_*.csv --out drive/paul_experiments/foo
 """
 from __future__ import annotations
 
+import argparse
 import html as html_mod
+import math
+import subprocess
 import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +44,28 @@ from be_stop_replay_ab import (  # noqa: E402
     sortable_th,
     verdict,
 )
-from compare_format import format_money  # noqa: E402
+from compare_format import (  # noqa: E402
+    DEFAULT_INITIAL_ACCOUNT,
+    calmar_ratio,
+    filter_html_compare_columns,
+    format_money,
+    overlay_ann_ror_max_dd,
+)
 
-STAMP = "20260819"
-OUT_DIR = DRIVE / "paul_experiments" / f"rl_be_trail_pct_ab_{STAMP}"
-CLOSED = DRIVE / "RL_LatestRun_Closed.csv"
+STAMP = "20260828"
+DEFAULT_CLOSED = (
+    DRIVE
+    / "paul_experiments"
+    / "rl_tradable_2010_adv2m_20260828"
+    / "runs"
+    / "tradable"
+    / "RL_Closed_260828112205.csv"
+)
+DEFAULT_OUT = DRIVE / "paul_experiments" / f"rl_be_trail_tradable_{STAMP}"
 IS_CUT = date(2024, 1, 1)
+INIT = DEFAULT_INITIAL_ACCOUNT
+OUT_DIR = DEFAULT_OUT
+CLOSED = DEFAULT_CLOSED
 
 # Control + pre-agreed candidates + cheap 10% reference (not a search grid).
 ARMS: list[dict[str, Any]] = [
@@ -138,16 +159,26 @@ def apply_arm(ctrl: list[dict[str, Any]], pct: float | None) -> tuple[list[dict[
     return cand, missing
 
 
+def _enrich(m: dict[str, Any], trades: list[dict[str, Any]]) -> dict[str, Any]:
+    cap = overlay_ann_ror_max_dd(trades, cash=RL_CASH, initial_account=INIT)
+    m["max_dd"] = cap["max_dd"]
+    cal = calmar_ratio(m["ann_ror"], cap["max_dd"]) if calmar_ratio else None
+    m["calmar"] = cal if cal is not None else float("nan")
+    m["cap_days"] = float(cap["capital_days"] or 0.0)
+    m["exp_d"] = (m["pnl_d"] / m["n"]) if m["n"] else float("nan")
+    return m
+
+
 def pack(ctrl: list[dict], trades: list[dict], arm: dict, missing: int) -> dict[str, Any]:
     is_c, oos_c = split_is_oos(ctrl)
     is_a, oos_a = split_is_oos(trades)
     cash = RL_CASH
-    m_full = book_stats(trades, cash)
-    m_is = book_stats(is_a, cash)
-    m_oos = book_stats(oos_a, cash)
-    m_ctrl_full = book_stats(ctrl, cash)
-    m_ctrl_is = book_stats(is_c, cash)
-    m_ctrl_oos = book_stats(oos_c, cash)
+    m_full = _enrich(book_stats(trades, cash), trades)
+    m_is = _enrich(book_stats(is_a, cash), is_a)
+    m_oos = _enrich(book_stats(oos_a, cash), oos_a)
+    m_ctrl_full = _enrich(book_stats(ctrl, cash), ctrl)
+    m_ctrl_is = _enrich(book_stats(is_c, cash), is_c)
+    m_ctrl_oos = _enrich(book_stats(oos_c, cash), oos_c)
     if arm["role"] == "control":
         verd, note = "CONTROL", "DailyRun trail off (rl_trail_profit=0)"
     else:
@@ -181,27 +212,32 @@ def exit_mix(d: dict) -> str:
 
 
 def metric_table(results: list[dict], book_key: str, caption: str) -> str:
-    headers = [
-        ("Arm", "text"),
-        ("Role", "text"),
-        ("N", "num"),
-        ("Win%", "num"),
-        ("Avg PnL%", "num"),
-        ("AVG_PNL_PCT_WO_MAX", "num"),
-        ("Avg win%", "num"),
-        ("Avg loss%", "num"),
-        ("PF", "num"),
-        ("Sheet PnL $", "num"),
-        ("Total PnL $", "num"),
-        ("Ann ROR%", "num"),
-        ("Avg days", "num"),
-        ("BE hits", "num"),
-        ("Δ Avg PnL%", "num"),
-        ("Δ Win%", "num"),
-        ("Δ PF", "num"),
-        ("Exit mix", "text"),
-        ("Verdict", "text"),
-    ]
+    headers = filter_html_compare_columns(
+        [
+            ("Arm", "text"),
+            ("Role", "text"),
+            ("N", "num"),
+            ("Win%", "num"),
+            ("Avg PnL%", "num"),
+            ("AVG_PNL_PCT_WO_MAX", "num"),
+            ("Avg win%", "num"),
+            ("Avg loss%", "num"),
+            ("PF", "num"),
+            ("Sheet PnL $", "num"),
+            ("Total PnL $", "num"),
+            ("Ann ROR%", "num"),
+            ("Max DD%", "num"),
+            ("Calmar", "num"),
+            ("Expect $", "num"),
+            ("Avg days", "num"),
+            ("BE hits", "num"),
+            ("Δ Avg PnL%", "num"),
+            ("Δ Win%", "num"),
+            ("Δ PF", "num"),
+            ("Exit mix", "text"),
+            ("Verdict", "text"),
+        ]
+    )
     th = "".join(sortable_th(a, b) for a, b in headers)
     ctrl_m = results[0][book_key]
     parts = []
@@ -220,9 +256,10 @@ def metric_table(results: list[dict], book_key: str, caption: str) -> str:
             fmt_pct(m["avg_win"]),
             fmt_pct(m["avg_loss"]),
             f"{m['pf']:.2f}",
-            format_money(m["sheet"]),
-            format_money(m["pnl_d"]),
             fmt_pct(m["ann_ror"]),
+            fmt_pct(m["max_dd"]) if math.isfinite(m.get("max_dd", float("nan"))) else "—",
+            f"{m['calmar']:.2f}" if math.isfinite(m.get("calmar", float("nan"))) else "—",
+            format_money(m["exp_d"]) if math.isfinite(m.get("exp_d", float("nan"))) else "—",
             f"{m['avg_days']:.1f}",
             str(m["be_n"]),
             "—" if r["arm"]["role"] == "control" else fmt_pp(d_avg),
@@ -239,21 +276,24 @@ def metric_table(results: list[dict], book_key: str, caption: str) -> str:
 
 
 def isoos_table(results: list[dict]) -> str:
-    headers = [
-        ("Arm", "text"),
-        ("Split", "text"),
-        ("N", "num"),
-        ("Win%", "num"),
-        ("Avg PnL%", "num"),
-        ("WO_MAX", "num"),
-        ("PF", "num"),
-        ("BE hits", "num"),
-        ("Sheet PnL $", "num"),
-        ("Ann ROR%", "num"),
-        ("Avg days", "num"),
-        ("Δ Avg PnL% vs ctrl split", "num"),
-        ("Δ Win% vs ctrl split", "num"),
-    ]
+    headers = filter_html_compare_columns(
+        [
+            ("Arm", "text"),
+            ("Split", "text"),
+            ("N", "num"),
+            ("Win%", "num"),
+            ("Avg PnL%", "num"),
+            ("WO_MAX", "num"),
+            ("PF", "num"),
+            ("BE hits", "num"),
+            ("Sheet PnL $", "num"),
+            ("Ann ROR%", "num"),
+            ("Max DD%", "num"),
+            ("Avg days", "num"),
+            ("Δ Avg PnL% vs ctrl split", "num"),
+            ("Δ Win% vs ctrl split", "num"),
+        ]
+    )
     th = "".join(sortable_th(a, b) for a, b in headers)
     ctrl = results[0]
     parts = []
@@ -272,8 +312,8 @@ def isoos_table(results: list[dict]) -> str:
                 fmt_pct(m["wo_max"]),
                 f"{m['pf']:.2f}",
                 str(m["be_n"]),
-                format_money(m["sheet"]),
                 fmt_pct(m["ann_ror"]),
+                fmt_pct(m["max_dd"]) if math.isfinite(m.get("max_dd", float("nan"))) else "—",
                 f"{m['avg_days']:.1f}",
                 "—" if r["arm"]["role"] == "control" else fmt_pp(d_avg),
                 "—" if r["arm"]["role"] == "control" else fmt_pp(d_wr),
@@ -286,7 +326,7 @@ def isoos_table(results: list[dict]) -> str:
     )
 
 
-def write_html(results: list[dict]) -> Path:
+def write_html(results: list[dict], closed: Path) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     r14 = next(r for r in results if r["arm"]["key"] == "pct14")
     r20 = next(r for r in results if r["arm"]["key"] == "pct20")
@@ -294,10 +334,11 @@ def write_html(results: list[dict]) -> Path:
     bits = (
         f"14% → {r14['verd']} · 20% → {r20['verd']} · 10% ref → {r10['verd']}"
     )
+    rel = closed.as_posix()
     html = f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
-<title>RL BE trail pct A/B — {STAMP}</title>
+<title>RL BE trail pct A/B — tradable {STAMP}</title>
 <style>
 :root {{ --bg:#f7f6f2; --ink:#1c1b19; --muted:#5a574f; --line:#d4d0c4; --fill:#f0eee6; --accent:#2a4a5c; }}
 body {{ margin:0; font-family:"Segoe UI",Georgia,serif; font-size:15px; color:var(--ink); background:var(--bg); }}
@@ -315,18 +356,21 @@ caption {{ text-align:left; font-size:0.82rem; color:var(--muted); caption-side:
 code {{ background:var(--fill); padding:0.08em 0.3em; font-size:0.86em; }}
 </style></head><body>
 <div class="wrap">
-<p class="muted">Twin Beacon Networks (TBN) · Relative Strength / RL · research candidate · not gold · not DailyRun</p>
+<p class="muted">Rocket Launcher (RL) · tradable 2010 / ADV$2m tape · research candidate · not gold · not DailyRun</p>
 <h1>RL Trail-1 breakeven — <code>rl_trail_profit</code> A/B</h1>
 <p>One EXIT knob: gain that arms Trail-1 with <code>rl_trail_stop=0</code> (stop = entry).
-Control = production off. Overlay on <code>RL_LatestRun_Closed.csv</code> + local OHLC.
+Evidence: ImprovePriority <code>260828112205</code> <strong>mtm_giveback_stop</strong> (253 trades / 202 names ran ≥15% MTM then STOP).
+Control = trails off on the tradable Closed overlay + local OHLC.
 Pre-agreed alternatives (not a grid): <strong>14%</strong> (user historical) and <strong>20%</strong> (wider, fewer BE hits).
-10% is a reference row only (already DISMISS on 2026-08-19). Judge quality (WR, Avg PnL%, PF, WO_MAX), not N.
-OOS soften → HOLD, do not retune.</p>
+10% is a reference row only (already DISMISS on 2026-08-19). Judge quality (WR, Avg PnL%, PF, WO_MAX, Max DD), not N.
+OOS soften → HOLD, do not retune. Overlay keeps trade count fixed.</p>
 <div class="callout"><strong>Verdicts:</strong> {html_mod.escape(bits)}<br/>
-<strong>14% specifically:</strong> {html_mod.escape(r14['verd'])} — {html_mod.escape(r14['note'])}</div>
+<strong>14%:</strong> {html_mod.escape(r14['verd'])} — {html_mod.escape(r14['note'])}<br/>
+<strong>20%:</strong> {html_mod.escape(r20['verd'])} — {html_mod.escape(r20['note'])}</div>
 
 <h2>Full book vs control</h2>
-<p class="muted">Canonical compare set: N, Win%, Avg PnL%, AVG_PNL_PCT_WO_MAX, avg win/loss, PF, Sheet PnL, Total PnL, Ann ROR, days held, BE hits, exit mix. Dollar fields use $nnn,nnn.nn. Overlay keeps trade count fixed.</p>
+<p class="muted">Canonical compare set: N, Win%, Avg PnL%, AVG_PNL_PCT_WO_MAX, avg win/loss, PF, Ann ROR, Max DD, Calmar, Expect $, days held, BE hits, exit mix.
+Click column headers to sort.</p>
 <div class="table-wrap">{metric_table(results, "m_full", "Click column headers to sort. Overlay keeps N fixed.")}</div>
 
 <h2>IS / OOS</h2>
@@ -334,12 +378,13 @@ OOS soften → HOLD, do not retune.</p>
 
 <h2>Freeze / method</h2>
 <ul>
-<li><strong>System:</strong> RL (Relative Strength / rocket_wrl book). Control stamp: <code>drive/RL_LatestRun_Closed.csv</code>.</li>
-<li><strong>Knob:</strong> EXIT <code>rl_trail_profit</code> with <code>rl_trail_stop=0</code>. Frozen: entries, SMA target, stop_pct, no Trail-2.</li>
+<li><strong>Universe:</strong> tradable 2010 / $5 / ADV$2m (764). Not house 59. Not a Paul cut.</li>
+<li><strong>Control Closed:</strong> <code>{html_mod.escape(rel)}</code> (dip=1.055 freeze, trails off).</li>
+<li><strong>Knob:</strong> EXIT <code>rl_trail_profit</code> with <code>rl_trail_stop=0</code>. Frozen: entries, dip, expansion, stop_pct, target, no Trail-2.</li>
 <li><strong>Convention:</strong> after first High ≥ entry×(1+pct), subsequent Low ≤ entry → BE at entry; Open gap through BE → exit at Open. Fill bar arms only; never extends past original close.</li>
 <li>IS = entry_date &lt; 2024-01-01; OOS report-only. Missing local OHLC → control exit.</li>
-<li>Ann ROR uses Closed PnL $ + RL cash $47,500 — not a full equity curve. Max DD / FIT not available on this overlay.</li>
-<li>Not DailyRun. Selection: 14% and 20% pre-agreed; 10% not a new search.</li>
+<li>Ann ROR / Max DD: Closed overlay at $47,500 cash / $500k initial. Not a live aggressive equity curve.</li>
+<li>Not DailyRun. Selection: 14% and 20% pre-agreed; 10% not a new search. Do not combine with stop/target A/Bs on this stamp.</li>
 </ul>
 <p class="muted">Generated {STAMP} by <code>tools/rl_be_trail_pct_ab.py</code>.</p>
 </div>
@@ -351,21 +396,33 @@ OOS soften → HOLD, do not retune.</p>
     return path
 
 
-def write_baseline(results: list[dict]) -> Path:
+def write_baseline(results: list[dict], closed: Path) -> Path:
     lines = [
-        "# RL Trail-1 BE pct A/B — freeze / hypothesis",
+        f"# BASELINE — `rl_be_trail_tradable_{STAMP}`",
         "",
-        "Research-only Closed OHLC overlay. Not DailyRun. One EXIT knob.",
+        "**Status:** RESEARCH only. Not gold. Not DailyRun. One EXIT knob overlay.",
         "",
-        "| Field | Freeze |",
+        "## Hypothesis",
+        "",
+        "ImprovePriority `260828112205` taken-trade **mtm_giveback_stop**: 253 trades / 202 names ran ≥15% mark-to-market then exited STOP.",
+        "If we arm Trail-1 BE after a pre-agreed gain (`rl_trail_profit` with `rl_trail_stop=0`), those givebacks become BE exits without changing entries.",
+        "",
+        "## Freeze",
+        "",
+        "| Field | Value |",
         "|---|---|",
-        "| System | RL |",
-        "| Control | `drive/RL_LatestRun_Closed.csv` (DailyRun `rl_trail_profit=0`) |",
-        "| Knob | `rl_trail_profit` with `rl_trail_stop=0` (BE at entry) |",
-        "| Frozen | entries, SMA target, stop_pct, no Trail-2 |",
-        "| Arms | 14% (user), 20% (wider); 10% reference only |",
+        "| Universe | tradable 2010 / ADV$2m (764) |",
+        f"| Control Closed | `{closed.as_posix()}` |",
+        "| Engine freeze | dip=1.055, expansion=1.163, stop=0.934, target=1.20, too_high=off |",
+        "| Knob | `rl_trail_profit` + `rl_trail_stop=0` (BE at entry) |",
+        "| Frozen | entries, dip, expansion, stop_pct, target, no Trail-2 |",
+        "| Arms | 14% (candidate), 20% (candidate); 10% reference only (prior DISMISS) |",
         "| Split | IS entry_date < 2024-01-01; OOS report-only |",
-        "| Selection | pre-agreed, not a grid; do not retune on OOS |",
+        "| Method | Closed + local OHLC replay; N fixed |",
+        "",
+        "Do **not** retune on OOS. Do **not** overwrite `RL_universe.csv`.",
+        "",
+        "## Verdicts",
         "",
     ]
     for r in results:
@@ -377,7 +434,68 @@ def write_baseline(results: list[dict]) -> Path:
     return path
 
 
+def write_hypothesis(closed: Path) -> Path:
+    text = f"""# HYPOTHESIS — RL trail BE on tradable tape
+
+| Field | Fill in |
+|-------|---------|
+| System / prefix | RL |
+| Baseline stamp | `260828112205` tradable Closed |
+| Universe | tradable 2010 / ADV$2m (764) |
+| **Evidence** | ImprovePriority `RL_ImprovePriority_260828112205.html` taken-trade **mtm_giveback_stop**: 253 trades / 202 names, MFE ≥15% then STOP |
+| **Hypothesis** | If we arm Trail-1 BE after +14% (or +20%) MTM, giveback STOPs become BE exits and book quality (Avg%, WO_MAX, PF, DD) improves without collapsing N |
+| **Single knob** | `rl_trail_profit` with `rl_trail_stop=0` |
+| Frozen settings | dip=1.055, expansion=1.163, stop=0.934, target=1.20, trails otherwise off, post_target_reentry_bars=0 |
+| Alternatives | control off; 14%; 20%; 10% reference only (prior DISMISS, not a search) |
+| Method | Closed OHLC overlay on `{closed.as_posix()}` — not a live engine re-run |
+| **Decision** | (fill after compare) adopt / reject / hold |
+| Reviewer | |
+| PO sign-off | no |
+| Reconcile freeze / re-baseline done | no |
+
+OOS report-only. Do not retune. Research-only ≠ gold ≠ DailyRun.
+"""
+    path = OUT_DIR / "HYPOTHESIS.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def write_summary(results: list[dict]) -> Path:
+    lines = [
+        f"# SUMMARY — `rl_be_trail_tradable_{STAMP}`",
+        "",
+        "One EXIT knob overlay on tradable Closed `260828112205`. Research only.",
+        "",
+        "| Arm | Full WR / Avg / PF / MaxDD / BE | OOS WR / Avg / PF | Verdict |",
+        "|-----|--------------------------------|-------------------|---------|",
+    ]
+    for r in results:
+        m, o = r["m_full"], r["m_oos"]
+        lines.append(
+            f"| {r['arm']['label']} | {m['wr']:.1f}% / {m['avg_pnl']:.2f}% / {m['pf']:.2f} / "
+            f"{m['max_dd']:.2f}% / BE={m['be_n']} | {o['wr']:.1f}% / {o['avg_pnl']:.2f}% / {o['pf']:.2f} | {r['verd']} |"
+        )
+    lines.extend(["", "## Notes", ""])
+    for r in results:
+        if r["arm"]["role"] == "control":
+            continue
+        lines.append(f"- **{r['arm']['key']}**: {r['verd']} — {r['note']}")
+    path = OUT_DIR / "SUMMARY.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def main() -> int:
+    global OUT_DIR, CLOSED
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--closed", type=Path, default=DEFAULT_CLOSED)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    args = parser.parse_args()
+    CLOSED = args.closed
+    OUT_DIR = args.out
+    if not CLOSED.is_file():
+        print(f"[RL-BE] missing Closed {CLOSED}", flush=True)
+        return 1
     print(f"[RL-BE] loading {CLOSED} ...", flush=True)
     ctrl = load_closed(CLOSED, "rl")
     print(f"[RL-BE] N={len(ctrl)}", flush=True)
@@ -388,12 +506,33 @@ def main() -> int:
         results.append(r)
         print(
             f"  {arm['key']}: BE={r['m_full']['be_n']} WR={r['m_full']['wr']:.1f} "
-            f"Avg={r['m_full']['avg_pnl']:.2f} PF={r['m_full']['pf']:.2f} -> {r['verd']}",
+            f"Avg={r['m_full']['avg_pnl']:.2f} PF={r['m_full']['pf']:.2f} "
+            f"missing={missing} -> {r['verd']}",
             flush=True,
         )
-    html_path = write_html(results)
-    write_baseline(results)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    write_hypothesis(CLOSED)
+    html_path = write_html(results, CLOSED)
+    write_baseline(results, CLOSED)
+    write_summary(results)
     print(f"[RL-BE] wrote {html_path}", flush=True)
+    ntfy = ROOT / "tools" / "ntfy_job_done.py"
+    if ntfy.is_file():
+        r14 = next(r for r in results if r["arm"]["key"] == "pct14")
+        r20 = next(r for r in results if r["arm"]["key"] == "pct20")
+        subprocess.run(
+            [
+                sys.executable,
+                str(ntfy),
+                "--path",
+                str(html_path),
+                "-t",
+                "RL trail BE on tradable 764",
+                "-m",
+                f"14% {r14['verd']} · 20% {r20['verd']}",
+            ],
+            cwd=str(ROOT),
+        )
     return 0
 
 

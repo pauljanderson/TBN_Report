@@ -54,7 +54,7 @@
 .NOTES
     Optional env (typically set by run_audit.bat for DailyRun / Python parity):
     RL_ATR_LOW, RL_ATR_HIGH (e.g. off), RL_SLOPE_THRESHOLD (e.g. 0), RL_TOO_HIGH (e.g. 0),
-    RL_DIP_PCT (e.g. 1.041). Passed through as gawk -v when non-empty. Direct ps1 runs without
+    RL_DIP_PCT (e.g. 1.055). Passed through as gawk -v when non-empty. Direct ps1 runs without
     them keep AWK defaults.
 
 .EXAMPLE
@@ -294,6 +294,9 @@ if (-not [string]::IsNullOrEmpty($env:RL_ATR_HIGH)) { [void]$awkArgList.Add('-v'
 if (-not [string]::IsNullOrEmpty($env:RL_SLOPE_THRESHOLD)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_SLOPE_THRESHOLD=$($env:RL_SLOPE_THRESHOLD)") }
 if (-not [string]::IsNullOrEmpty($env:RL_TOO_HIGH)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TOO_HIGH=$($env:RL_TOO_HIGH)") }
 if (-not [string]::IsNullOrEmpty($env:RL_DIP_PCT)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_DIP_PCT=$($env:RL_DIP_PCT)") }
+if (-not [string]::IsNullOrEmpty($env:RL_CUT_THE_LOSERS)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_CUT_THE_LOSERS=$($env:RL_CUT_THE_LOSERS)") }
+if (-not [string]::IsNullOrEmpty($env:RL_EXIT_PERCENT)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_EXIT_PERCENT=$($env:RL_EXIT_PERCENT)") }
+if (-not [string]::IsNullOrEmpty($env:RL_EXIT_DAYS)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_EXIT_DAYS=$($env:RL_EXIT_DAYS)") }
 if ($RLTrailProfit -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT=$RLTrailProfit") }
 if ($RLTrailStop -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_STOP=$RLTrailStop") }
 if ($RLTrailProfit2 -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT2=$RLTrailProfit2") }

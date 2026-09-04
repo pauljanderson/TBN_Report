@@ -274,7 +274,7 @@ BEGIN {
     if (RS_DAYS == "") RS_DAYS = 5
     if (ADD_PCT == "") ADD_PCT = 0.33
     if (RL_CASH == "") RL_CASH = 47500
-    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.041
+    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.055
     if (RL_STOP_PCT == "") RL_STOP_PCT = 0.934
     if (RL_POST_TARGET_REENTRY_DAYS != "" && RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = RL_POST_TARGET_REENTRY_DAYS
     if (RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = 0
@@ -336,7 +336,7 @@ BEGIN {
     if (RL_100_TRAIL_STOP == "")   RL_100_TRAIL_STOP = RL100_TRAIL_STOP + 0
     if (RL_100_TARGET_PCT == "")   RL_100_TARGET_PCT = RL100_TARGET_PCT + 0
     if (RL_100_STOP_PCT == "")     RL_100_STOP_PCT = RL100_STOP_PCT + 0
-    if (RL_CUT_THE_LOSERS == "") RL_CUT_THE_LOSERS = 0.25 #percent to cut the losers. this is the default. if you want to NOT cut the losers, set it to 1000
+    if (RL_CUT_THE_LOSERS == "") RL_CUT_THE_LOSERS = 1000 # OFF — Paul house baseline (was 0.25; 1000=do not cut)
     if (RL_TRAIL_PROFIT2 == "") RL_TRAIL_PROFIT2 = 0  # 40% Gain
     if (RL_TRAIL_STOP2 == "") RL_TRAIL_STOP2 = 0      # 20% Stop
         
@@ -384,8 +384,8 @@ BEGIN {
     if (RL_SHOCK_THRESHOLD == "") RL_SHOCK_THRESHOLD = 0
     if (RL_SHOCK_REHAB_DAYS == "") RL_SHOCK_REHAB_DAYS = 120
     if (RL_SHOCK_MAX_ALLOWED == "") RL_SHOCK_MAX_ALLOWED = 1
-    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 10000
-    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0.29
+    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 30
+    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0.40
 
     if (RL_FLUSH_DAYS == "") RL_FLUSH_DAYS = 0 #42 may be the optimal number, but to turn it off we use 0
     if (PARTIAL_EXIT_TARGET == "") PARTIAL_EXIT_TARGET = 0
@@ -959,7 +959,7 @@ function perform_audit(sym) {
                     entry_smas_set[sym] = 1
                 }
 
-                if (j > 1 && sma50[dates[sym, j-1]] > 0) 
+                if (j > 1 && sma50[dates[sym, j-1]] > 0 && has_hit_milestone[sym] == 0)
                     {
                     rl_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
                     debug_printf(sym, "\nSETTING RL_TARGET:\nrl_target:%.2f\niso:%s\ndates[sym, j-1]:%s\nraw_hi[sym, iso]:%.2f\nexecute_exit:%d", rl_target, iso, dates[sym, j-1], raw_hi[sym, iso], execute_exit)
@@ -1028,9 +1028,10 @@ function perform_audit(sym) {
                     sym_partial_cnt[sym]++
                     sym_partial_amt[sym] += p_exit_val
 
-                    # Reset the target for the remaining shares
+                    # Reset the target for the remaining shares (entry-based; freeze SMA50 target)
                     if (PARTIAL_EXIT_TARGET != 0) {
                         current_target[sym] = (rl_entry_p[sym] * (1 + PARTIAL_EXIT_TARGET + PARTIAL_EXIT_FOLLOW_TARGET))
+                        rl_target = current_target[sym]
                         debug_printf(sym, "\ncurrent_target[sym]:%.2f\nrl_entry_p[sym]:%.2f", current_target[sym], rl_entry_p[sym])
                     }
                 }

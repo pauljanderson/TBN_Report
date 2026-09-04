@@ -8,11 +8,22 @@ Data sources:
   - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows)
   - closed_positions_log.csv — append-only permanent closed round-trips (survives rolling Fidelity export windows)
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
+  - personal_holdings_exclude.csv — personal / non-system broker lots to keep off this report
+  - sold_symbols_blocklist.csv — fully sold tickers; Open never resurrects them unless removed here
+    and re-added to gettarget_positions.csv (prevents AU/POWL-style leaks from stub exports / legacy maps)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
   - Latest SB_Watchlist_*.csv when no Scanner (StockBee watchlist fallback)
   - VZ: VZ_house_last_run_ts.txt / house-sized pin / latest house Summary (VZ_new56; not ALL)
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
+
+Personal vs system (open book):
+  - System purchase: row in gettarget_positions.csv with a report system (usually via mobile_trades BUY + system).
+  - Personal buy / sold-but-still-in-broker: do NOT add to gettarget_positions; list the symbol in
+    personal_holdings_exclude.csv. Exclude always hides that symbol from the Open table unless the
+    exact (symbol, buy date) is back in gettarget_positions. Engine Closed/Open and the trade
+    registry must not resurrect Fidelity lots onto Open. Later system purchase → add to
+    gettarget_positions (and remove from the exclude file if desired).
 """
 from __future__ import annotations
 
@@ -66,6 +77,10 @@ DEFAULT_POSITIONS = ROOT / "gettarget_positions.csv"
 DEFAULT_GETTARGET = ROOT / "getTarget_output.csv"
 DEFAULT_TRADE_REGISTRY = ROOT / "trade_system_registry.csv"
 DEFAULT_CLOSED_LOG = ROOT / "closed_positions_log.csv"
+DEFAULT_PERSONAL_EXCLUDE = ROOT / "personal_holdings_exclude.csv"
+# Symbols fully sold that must not reappear on Open via FIFO / engine / legacy fallback.
+# Re-buy as a system purchase: remove from this file AND add to gettarget_positions.csv.
+DEFAULT_SOLD_BLOCKLIST = ROOT / "sold_symbols_blocklist.csv"
 CLOSED_LOG_COLUMNS = (
     "symbol",
     "system",
@@ -118,7 +133,7 @@ _BRT_SYMBOLS = {
     "CRUS", "LUMN",
 }
 _RL_SYMBOLS = {
-    "TSLA", "AMD", "INTC", "XOM", "LRCX", "NFLX", "PLTR", "KLAC", "WFC", "ADI", "STX", "WDC", "ANET", "APP",
+    "TSLA", "AMD", "INTC", "XOM", "NFLX", "PLTR", "WFC", "ADI", "STX", "WDC", "ANET", "APP",
     "TOELY", "IBKR", "CRWD", "NEM", "AEM", "CNQ", "FCX", "FTNT", "MPWR", "MELI", "B", "FIX", "RCL",
     "GM", "TER", "OKE", "OXY", "AU", "TRGP", "DVN", "FLEX", "CCJ", "ARGX", "CLS", "IDXX", "EME", "GFI",
     "ARES", "KGC", "ESLT", "STLD", "MTZ", "TECK", "WDAY", "TWLO", "NRG", "RMD", "FOXA", "FTAI", "NTRA", "FTI",
@@ -132,6 +147,108 @@ _ENGINE_CSV_RE = re.compile(
     r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
+
+
+def _load_symbol_list_csv(path: Path) -> frozenset[str]:
+    """Load a simple symbol[,notes] CSV (personal exclude / sold blocklist)."""
+    if not path.is_file():
+        return frozenset()
+    try:
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, comment="#")
+    except Exception:
+        return frozenset()
+    cols = {c.lower(): c for c in df.columns}
+    sym_c = cols.get("symbol", "symbol")
+    out: set[str] = set()
+    for _, r in df.iterrows():
+        sym = str(r.get(sym_c, "")).strip().upper()
+        if sym and sym not in ("NAN", "NONE", "SYMBOL"):
+            out.add(sym)
+    return frozenset(out)
+
+
+def _load_personal_exclude_symbols(path: Path = DEFAULT_PERSONAL_EXCLUDE) -> frozenset[str]:
+    """
+    Symbols for personal / non-system broker lots.
+
+    Open: always hidden unless the exact (symbol, buy date) is in gettarget_positions.csv.
+    Closed: still shown when the (symbol, entry) is a known system purchase (registry / engine).
+    """
+    return _load_symbol_list_csv(path)
+
+
+def _load_sold_blocklist_symbols(path: Path = DEFAULT_SOLD_BLOCKLIST) -> frozenset[str]:
+    """
+    Fully sold tickers that must not reappear on Open.
+
+    Hidden even when a stub Fidelity export / mobile orphan buy / engine Open map would
+    otherwise FIFO them back. Re-buy: delete the row here, then add gettarget_positions.
+    """
+    return _load_symbol_list_csv(path)
+
+
+def _append_sold_blocklist(
+    symbols: set[str] | frozenset[str] | list[str],
+    path: Path = DEFAULT_SOLD_BLOCKLIST,
+    *,
+    note: str = "Sold — do not resurrect on Open",
+) -> list[str]:
+    """Append missing symbols to sold_symbols_blocklist.csv. Returns newly added."""
+    want = {str(s).strip().upper() for s in symbols if str(s).strip()}
+    if not want:
+        return []
+    existing = set(_load_sold_blocklist_symbols(path))
+    new = sorted(want - existing)
+    if not new:
+        return []
+    rows: list[dict[str, str]] = []
+    if path.is_file():
+        try:
+            old = pd.read_csv(path, dtype=str, keep_default_na=False, comment="#")
+            for _, r in old.iterrows():
+                rows.append({str(c): str(r.get(c, "")) for c in old.columns})
+        except Exception:
+            rows = []
+    if not rows:
+        rows = []
+    for sym in new:
+        rows.append({"symbol": sym, "notes": note})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows, columns=["symbol", "notes"]).to_csv(path, index=False)
+    return new
+
+
+def _is_personal_non_system_lot(
+    symbol: str,
+    buy_date: date,
+    sys_map: Optional[dict[tuple[str, str], str]],
+    personal_exclude: frozenset[str],
+) -> bool:
+    """True when symbol is on the personal exclude list and this entry is not system-mapped."""
+    sym = symbol.upper()
+    if sym not in personal_exclude:
+        return False
+    if sys_map is None:
+        return True
+    return (sym, buy_date.isoformat()) not in sys_map
+
+
+def _excluded_open_without_gettarget(
+    symbol: str,
+    buy_date: date,
+    personal_exclude: frozenset[str],
+    gettarget_keys: set[tuple[str, str]],
+    sold_blocklist: Optional[frozenset[str]] = None,
+) -> bool:
+    """Drop from Open: exclude/sold-blocklist wins unless gettarget_positions has this lot."""
+    sym = symbol.upper()
+    if (sym, buy_date.isoformat()) in gettarget_keys:
+        return False
+    if sold_blocklist and sym in sold_blocklist:
+        return True
+    if sym not in personal_exclude:
+        return False
+    return True
 
 
 def _position_value(qty: float, price: float) -> float:
@@ -301,7 +418,10 @@ def _build_full_system_map(
     return sys_map, entry_prices
 
 
-def _legacy_symbol_fallback(symbol: str) -> str:
+def _legacy_symbol_fallback(symbol: str, personal_exclude: Optional[frozenset[str]] = None) -> str:
+    if personal_exclude and symbol.upper() in personal_exclude:
+        # Do not invent RL/BRT/IND for personal broker lots.
+        return ""
     if symbol in _RL_SYMBOLS and symbol not in _BRT_SYMBOLS:
         return "RL"
     if symbol in _BRT_SYMBOLS:
@@ -315,10 +435,12 @@ def _lookup_system(
     buy_price: float,
     sys_map: dict[tuple[str, str], str],
     entry_prices: Optional[dict[tuple[str, str], float]] = None,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> str:
     """
     Resolve system for one broker entry lot (symbol + buy date [+ price]).
     Never uses symbol-only mapping — same ticker can be IND on one date and BRT on another.
+    Personal-exclude symbols without an exact system map hit return "" (not legacy RL/BRT/IND).
     """
     sym = symbol.upper()
     ds = buy_date.isoformat()
@@ -328,7 +450,7 @@ def _lookup_system(
     try:
         buy_ts = pd.Timestamp(ds)
     except Exception:
-        return _legacy_symbol_fallback(sym)
+        return _legacy_symbol_fallback(sym, personal_exclude)
 
     date_candidates: list[tuple[int, str]] = []
     price_candidates: list[tuple[float, int, str]] = []
@@ -354,7 +476,7 @@ def _lookup_system(
     if date_candidates:
         date_candidates.sort(key=lambda x: (x[0], x[1]))
         return date_candidates[0][1]
-    return _legacy_symbol_fallback(sym)
+    return _legacy_symbol_fallback(sym, personal_exclude)
 
 
 def _persist_trade_registry(
@@ -464,9 +586,11 @@ def _load_closed_positions_log(
     closed_since: date,
     min_position_value: float = MIN_POSITION_VALUE,
     sys_map: Optional[dict[tuple[str, str], str]] = None,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> list[ClosedTrade]:
     if not path.is_file():
         return []
+    personal_exclude = personal_exclude or frozenset()
     df = pd.read_csv(path, dtype=str, keep_default_na=False)
     out: list[ClosedTrade] = []
     for _, row in df.iterrows():
@@ -474,6 +598,8 @@ def _load_closed_positions_log(
         if t is None:
             continue
         if t.sell_date < closed_since:
+            continue
+        if _is_personal_non_system_lot(t.symbol, t.buy_date, sys_map, personal_exclude):
             continue
         pv = t.purchase_value or _position_value(t.original_qty or t.qty, t.buy_price)
         if sys_map is not None:
@@ -544,6 +670,7 @@ def _sync_closed_positions_log(
     closed_since: date,
     min_position_value: float,
     sys_map: Optional[dict[tuple[str, str], str]] = None,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> tuple[list[ClosedTrade], int]:
     """Append new FIFO closes to the permanent log; return merged list for the report."""
     appended = _append_closed_positions_log(log_path, fifo_trades)
@@ -552,6 +679,7 @@ def _sync_closed_positions_log(
         closed_since=closed_since,
         min_position_value=min_position_value,
         sys_map=sys_map,
+        personal_exclude=personal_exclude,
     )
     return _merge_closed_for_report(log_trades, fifo_trades), appended
 
@@ -613,11 +741,25 @@ def _max_run_date_in_accounts_file(path: Path) -> Optional[date]:
     return max(dates) if dates else None
 
 
+def _count_accounts_trade_rows(path: Path) -> int:
+    try:
+        df = _load_accounts(path)
+    except Exception:
+        return 0
+    if df.empty or "Action" not in df.columns:
+        return 0
+    act = df["Action"].astype(str)
+    return int((act.str.contains("YOU BOUGHT", na=False) | act.str.contains("YOU SOLD", na=False)).sum())
+
+
 def _latest_accounts_history(downloads: Path) -> Path:
     """
     Best full Fidelity export: numbered Accounts_History (N).csv or timestamped
-    Accounts_History - 2026-....csv. Prefers the file whose newest Run Date is latest
-    (then newest mtime). Ignores recent-history and total exports.
+    Accounts_History - 2026-....csv.
+
+    Prefers newest Run Date, then **most trade rows** (so a same-day stub export
+    with only 1–2 lines cannot beat a complete download), then newest mtime.
+    Ignores recent-history and total exports.
     """
     candidates = _candidate_full_accounts_exports(downloads)
     if not candidates:
@@ -625,11 +767,80 @@ def _latest_accounts_history(downloads: Path) -> Path:
             f"No full Accounts_History export in {downloads} "
             "(need Accounts_History (N).csv or Accounts_History - 2026-....csv)"
         )
-    scored: list[tuple[date, float, Path]] = []
+    scored: list[tuple[date, int, float, Path]] = []
     for path in candidates:
         max_d = _max_run_date_in_accounts_file(path) or date.min
-        scored.append((max_d, path.stat().st_mtime, path))
-    return max(scored, key=lambda x: (x[0], x[1]))[2]
+        n_trades = _count_accounts_trade_rows(path)
+        scored.append((max_d, n_trades, path.stat().st_mtime, path))
+    return max(scored, key=lambda x: (x[0], x[1], x[2]))[3]
+
+
+def _merge_sibling_full_accounts_trades(
+    base: pd.DataFrame, downloads: Path, *, primary: Path
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Merge YOU BOUGHT / YOU SOLD from other full Accounts_History exports.
+
+    Stub re-downloads (e.g. only today's POWL sell) must not drop older buys/sells
+    needed for correct FIFO — otherwise sold names leak back as still-open.
+    """
+    existing_buys = _buy_fingerprints(base)
+    existing_sells = _sell_fingerprints(base)
+    extra_rows: list[dict] = []
+    used: list[str] = []
+    primary_res = primary.resolve()
+    # Prefer newer / fuller files first
+    siblings = sorted(
+        _candidate_full_accounts_exports(downloads),
+        key=lambda p: (
+            _max_run_date_in_accounts_file(p) or date.min,
+            _count_accounts_trade_rows(p),
+            p.stat().st_mtime,
+        ),
+        reverse=True,
+    )
+    for path in siblings:
+        if path.resolve() == primary_res:
+            continue
+        try:
+            supplement = _load_accounts(path)
+        except Exception:
+            continue
+        if supplement.empty:
+            continue
+        added = 0
+        for _, r in supplement.iterrows():
+            action = str(r.get("Action", ""))
+            rd = r.get("Run Date")
+            if rd is None or (isinstance(rd, float) and pd.isna(rd)):
+                continue
+            try:
+                sym = str(r.get("Symbol", "")).upper()
+                qty = float(r.get("Quantity", 0))
+                price = float(r.get("Price", 0))
+            except (TypeError, ValueError):
+                continue
+            if "YOU BOUGHT" in action:
+                fp = _buy_row_fingerprint(rd, sym, qty, price)
+                if fp in existing_buys:
+                    continue
+                existing_buys.add(fp)
+            elif "YOU SOLD" in action:
+                fp = _sell_row_fingerprint(rd, sym, qty, price)
+                if fp in existing_sells:
+                    continue
+                existing_sells.add(fp)
+            else:
+                continue
+            extra_rows.append(r.to_dict())
+            added += 1
+        if added:
+            used.append(f"{path.name}(+{added})")
+    if not extra_rows:
+        return base, []
+    merged = pd.concat([base, pd.DataFrame(extra_rows)], ignore_index=True)
+    merged = merged.sort_values(["Run Date", "Symbol"], ascending=[True, True]).reset_index(drop=True)
+    return _adjust_intraday_order(merged), used
 
 
 def _latest_recent_history_export(downloads: Path) -> Optional[Path]:
@@ -846,8 +1057,10 @@ def _ensure_open_lots_for_registry(
     sys_map: dict[tuple[str, str], str],
     entry_prices: dict[tuple[str, str], float],
     downloads: Path,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> tuple[dict[tuple[str, str], Lot], list[Lot]]:
     """Ensure every gettarget_positions.csv row has a Lot (search older exports for qty if needed)."""
+    personal_exclude = personal_exclude or frozenset()
     for pos in _load_tracked_position_rows(positions_path):
         sym = pos["symbol"]
         bd: date = pos["buy_date"]
@@ -869,7 +1082,9 @@ def _ensure_open_lots_for_registry(
                     continue
         if qty <= 0 or px <= 0:
             continue
-        sys = pos.get("system") or sys_map.get(key) or _lookup_system(sym, bd, px, sys_map, entry_prices)
+        sys = pos.get("system") or sys_map.get(key) or _lookup_system(
+            sym, bd, px, sys_map, entry_prices, personal_exclude=personal_exclude
+        )
         lot = Lot(sym, bd, px, qty, sys, original_qty=qty)
         open_agg[key] = lot
         open_lots.append(lot)
@@ -878,6 +1093,75 @@ def _ensure_open_lots_for_registry(
 
 def _registry_open_keys(positions_path: Path) -> set[tuple[str, str]]:
     return {(p["symbol"], p["buy_date"].isoformat()) for p in _load_tracked_position_rows(positions_path)}
+
+
+def _prune_gettarget_positions(
+    positions_path: Path,
+    open_agg: dict[tuple[str, str], "Lot"],
+    *,
+    sold_blocklist: Optional[frozenset[str]] = None,
+) -> list[str]:
+    """
+    Drop gettarget_positions rows that are no longer broker-open (FIFO).
+
+    Also drops any row whose symbol is on the sold blocklist. Returns pruned symbols.
+    """
+    tracked = _load_tracked_position_rows(positions_path)
+    if not tracked:
+        return []
+    sold_blocklist = sold_blocklist or frozenset()
+    keep: list[dict] = []
+    pruned: list[str] = []
+    for pos in tracked:
+        sym = pos["symbol"]
+        key = (sym, pos["buy_date"].isoformat())
+        if sym in sold_blocklist:
+            pruned.append(sym)
+            continue
+        lot = open_agg.get(key)
+        if lot is None or float(lot.qty) <= 1e-9:
+            pruned.append(sym)
+            continue
+        keep.append(pos)
+    if not pruned:
+        return []
+    # Rewrite CSV preserving columns
+    df = pd.read_csv(positions_path, dtype=str, keep_default_na=False)
+    cols = {c.lower(): c for c in df.columns}
+    sym_c = cols.get("symbol", "symbol")
+    date_c = cols.get(
+        "purchase_date",
+        cols.get("purchasedate", cols.get("entrydateused", "purchase_date")),
+    )
+    keep_keys = {(p["symbol"], p["buy_date"].isoformat()) for p in keep}
+    mask = []
+    for _, r in df.iterrows():
+        sym = str(r.get(sym_c, "")).strip().upper()
+        d_norm = _normalize_entry_date(r.get(date_c, ""))
+        mask.append((sym, d_norm) in keep_keys)
+    df.loc[mask].to_csv(positions_path, index=False)
+    return sorted(set(pruned))
+
+
+def _symbols_fully_sold_in_accounts(acct: pd.DataFrame) -> set[str]:
+    """Symbols with YOU BOUGHT and YOU SOLD in the merged book whose net qty <= 0."""
+    if acct.empty:
+        return set()
+    nets: dict[str, float] = {}
+    for _, r in acct.iterrows():
+        action = str(r.get("Action", ""))
+        try:
+            sym = str(r.get("Symbol", "")).strip().upper()
+            qty = abs(float(r.get("Quantity", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if not sym:
+            continue
+        if "YOU BOUGHT" in action:
+            nets[sym] = nets.get(sym, 0.0) + qty
+        elif "YOU SOLD" in action:
+            nets[sym] = nets.get(sym, 0.0) - qty
+    return {sym for sym, net in nets.items() if net <= 1e-6 and sym in nets}
 
 
 def _mobile_fidelity_supplement_path() -> Path:
@@ -941,11 +1225,17 @@ def _load_accounts_for_report(
     """Load primary Fidelity export, merge account/recent/mobile supplements, backfill registry buys."""
     primary = accounts_path or _latest_accounts_history(downloads)
     acct = _load_accounts(primary)
+    acct, sibling_notes = _merge_sibling_full_accounts_trades(acct, downloads, primary=primary)
     acct, account_supp = _merge_account_history_trades(acct, downloads)
     acct = _merge_recent_history_sells(acct, downloads)
     acct, mobile_supp = _merge_mobile_fidelity_supplement(acct)
     acct, buy_notes = _supplement_accounts_from_tracked_positions(acct, downloads, positions_path)
     source = primary.name
+    if sibling_notes:
+        preview = ", ".join(sibling_notes[:3])
+        if len(sibling_notes) > 3:
+            preview += f", +{len(sibling_notes) - 3} more"
+        source = f"{source} + sibling exports [{preview}]"
     if account_supp:
         source = f"{source} + {account_supp}"
     if mobile_supp:
@@ -1049,9 +1339,15 @@ def backfill_closed_positions_log(
         gettarget_path=gettarget_path,
         registry_path=registry_path,
     )
-    raw_closed, _open_lots = _fifo_closed_and_open(acct, closed_since, sys_map, entry_prices)
+    personal_exclude = _load_personal_exclude_symbols()
+    raw_closed, _open_lots = _fifo_closed_and_open(
+        acct, closed_since, sys_map, entry_prices, personal_exclude=personal_exclude
+    )
     fifo_closed = _aggregate_closed_by_entry(
-        raw_closed, min_position_value=min_position_value, sys_map=sys_map
+        raw_closed,
+        min_position_value=min_position_value,
+        sys_map=sys_map,
+        personal_exclude=personal_exclude,
     )
     appended = _append_closed_positions_log(log_path, fifo_closed)
     print(
@@ -1298,9 +1594,11 @@ def _fifo_closed_and_open(
     since: date,
     sys_map: dict[tuple[str, str], str],
     entry_prices: Optional[dict[tuple[str, str], float]] = None,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> tuple[list[ClosedTrade], list[Lot]]:
     lots: dict[str, deque[Lot]] = {}
     closed: list[ClosedTrade] = []
+    personal_exclude = personal_exclude or frozenset()
 
     for _, r in df.iterrows():
         sym = r["Symbol"]
@@ -1318,7 +1616,9 @@ def _fifo_closed_and_open(
                 bd,
                 price,
                 qty,
-                _lookup_system(sym, bd, price, sys_map, entry_prices),
+                _lookup_system(
+                    sym, bd, price, sys_map, entry_prices, personal_exclude=personal_exclude
+                ),
                 original_qty=qty,
             )
             lots.setdefault(sym, deque()).append(lot)
@@ -1383,19 +1683,24 @@ def _aggregate_closed_by_entry(
     closed: list[ClosedTrade],
     min_position_value: float = MIN_POSITION_VALUE,
     sys_map: Optional[dict[tuple[str, str], str]] = None,
+    personal_exclude: Optional[frozenset[str]] = None,
 ) -> list[ClosedTrade]:
     """
     One row per (symbol, buy_date): sum sold shares, quantity-weighted avg entry/exit,
     only when total purchase amount meets the size threshold (or registry-tracked floor).
+    Personal-exclude symbols without a system map entry are dropped.
     """
     from collections import defaultdict
 
+    personal_exclude = personal_exclude or frozenset()
     groups: dict[tuple[str, date], list[ClosedTrade]] = defaultdict(list)
     for t in closed:
         groups[(t.symbol, t.buy_date)].append(t)
 
     out: list[ClosedTrade] = []
     for (sym, buy_date), slices in groups.items():
+        if _is_personal_non_system_lot(sym, buy_date, sys_map, personal_exclude):
+            continue
         lot_purchase: dict[tuple[float, float], float] = {}
         for t in slices:
             key = (t.buy_price, t.original_qty or t.qty)
@@ -2788,9 +3093,16 @@ def build_report(
         gettarget_path=gettarget_path,
         registry_path=registry_path,
     )
-    raw_closed, open_lots = _fifo_closed_and_open(acct, closed_since, sys_map, entry_prices)
+    personal_exclude = _load_personal_exclude_symbols()
+    sold_blocklist = _load_sold_blocklist_symbols()
+    raw_closed, open_lots = _fifo_closed_and_open(
+        acct, closed_since, sys_map, entry_prices, personal_exclude=personal_exclude
+    )
     fifo_closed = _aggregate_closed_by_entry(
-        raw_closed, min_position_value=min_position_value, sys_map=sys_map
+        raw_closed,
+        min_position_value=min_position_value,
+        sys_map=sys_map,
+        personal_exclude=personal_exclude,
     )
     closed, log_appended = _sync_closed_positions_log(
         closed_log_path,
@@ -2798,19 +3110,65 @@ def build_report(
         closed_since=closed_since,
         min_position_value=min_position_value,
         sys_map=sys_map,
+        personal_exclude=personal_exclude,
     )
     if log_appended:
         print(f"Appended {log_appended} closed position(s) to {closed_log_path.name}")
     open_agg = _aggregate_lots_by_entry(open_lots)
-    open_agg, open_lots = _ensure_open_lots_for_registry(
-        open_agg, open_lots, positions_path, sys_map, entry_prices, DOWNLOADS
+
+    # Keep sold names from resurrecting: blocklist + prune gettarget before ensure-open.
+    # Only auto-block tickers that were in gettarget and are now net-flat in the merged
+    # Fidelity book — do NOT dump every historical flat symbol into the blocklist.
+    fully_sold = _symbols_fully_sold_in_accounts(acct)
+    tracked_syms = {p["symbol"] for p in _load_tracked_position_rows(positions_path)}
+    open_syms = {lot.symbol for lot in open_agg.values() if float(lot.qty) > 1e-9}
+    block_add = {s for s in tracked_syms if s in fully_sold and s not in open_syms}
+    newly_blocked = _append_sold_blocklist(
+        block_add,
+        note=f"Auto-blocked {datetime.now().strftime('%Y-%m-%d')} — was in gettarget, now net flat in Fidelity FIFO",
     )
+    if newly_blocked:
+        print(f"Sold blocklist += {', '.join(newly_blocked)}")
+        sold_blocklist = _load_sold_blocklist_symbols()
+
+    pruned = _prune_gettarget_positions(
+        positions_path, open_agg, sold_blocklist=sold_blocklist
+    )
+    if pruned:
+        print(f"Pruned gettarget_positions: {', '.join(pruned)}")
+        newly_blocked2 = _append_sold_blocklist(
+            pruned,
+            note=f"Pruned from gettarget_positions {datetime.now().strftime('%Y-%m-%d')}",
+        )
+        if newly_blocked2:
+            sold_blocklist = _load_sold_blocklist_symbols()
+
+    open_agg, open_lots = _ensure_open_lots_for_registry(
+        open_agg,
+        open_lots,
+        positions_path,
+        sys_map,
+        entry_prices,
+        DOWNLOADS,
+        personal_exclude=personal_exclude,
+    )
+    # Never re-inflate sold-blocklist names via ensure-open leftovers
+    for key in list(open_agg.keys()):
+        if key[0] in sold_blocklist and key not in _registry_open_keys(positions_path):
+            open_agg.pop(key, None)
+    open_lots = [lot for lot in open_lots if lot.symbol not in sold_blocklist or (lot.symbol, lot.buy_date.isoformat()) in _registry_open_keys(positions_path)]
+
     open_df = _load_open_positions(gettarget_path)
     now_et = _now_et()
+    registry_keys = _registry_open_keys(positions_path)
     fifo_open_keys = {
         key
         for key, lot in open_agg.items()
-        if _meets_position_size_threshold(
+        if key not in registry_keys
+        and not _excluded_open_without_gettarget(
+            lot.symbol, lot.buy_date, personal_exclude, registry_keys, sold_blocklist
+        )
+        and _meets_position_size_threshold(
             _position_value(lot.qty, lot.buy_price),
             lot.symbol,
             lot.buy_date,
@@ -2818,21 +3176,28 @@ def build_report(
             min_position_value=min_position_value,
         )
     }
-    open_keys = _registry_open_keys(positions_path) | fifo_open_keys
+    open_keys = registry_keys | fifo_open_keys
 
     open_df, open_prices_as_of, open_price_source = _maybe_refresh_open_prices(
         open_df, open_agg, open_keys, gettarget_path, now_et=now_et
     )
 
     # Persist resolved entries back into the registry (symbol + entry date + system).
+    # Skip personal non-system lots so legacy fallback never invents a system tag.
     resolved_rows = [
         (t.symbol, t.buy_date.isoformat(), t.system)
         for t in closed
         if t.system in REPORT_SYSTEMS
+        and not _is_personal_non_system_lot(
+            t.symbol, t.buy_date, sys_map, personal_exclude
+        )
     ] + [
         (lot.symbol, lot.buy_date.isoformat(), lot.system)
         for lot in open_agg.values()
         if lot.system in REPORT_SYSTEMS
+        and not _excluded_open_without_gettarget(
+            lot.symbol, lot.buy_date, personal_exclude, registry_keys, sold_blocklist
+        )
     ]
     _persist_trade_registry(registry_path, sys_map, extra_rows=resolved_rows)
 
@@ -3309,7 +3674,7 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 
 <section>
 <h2>Open Positions</h2>
-<p class="small">Open rows come from <code>gettarget_positions.csv</code> (remove a row when sold) plus any other FIFO open lots ≥ {_fmt_money(min_position_value)}. Older buys are recovered from prior Fidelity exports when the newest file is a rolling window. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget.</p>
+<p class="small">Open rows come from <code>gettarget_positions.csv</code> (system purchases; remove a row when sold) plus any other FIFO open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget.</p>
 <div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop"], open_rows, ["text","text","date","num","num","date","num","num","num","num"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
 </section>
 

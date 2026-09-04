@@ -169,6 +169,7 @@ _BRT_AUDIT_COLUMN_ORDER: tuple[str, ...] = (
     "rl_partial_exit_target",
     "rl_partial_exit_percent",
     "rl_partial_exit_follow_target",
+    "rl_scale_ladder",
     "rl_watch_min_score",
     "rl_watch_disable",
     "rl_cash",

@@ -1,1 +1,1 @@
-python tools/fetch_intraday_1m.py --all --lookback-days 30 --sleep 2.5
+python tools/fetch_intraday_1m.py --all --lookback-days 1 --sleep 2.5

@@ -475,7 +475,7 @@ def rl() -> str:
 <h2>1. What it is</h2>
 <p>
   RL waits for a stacked SMA tape (20&gt;50&gt;100&gt;200) with a rising 50-SMA, then buys a
-  controlled dip into a ±4.1% band around yesterday’s 50-SMA, provided expansion, acceptance
+  controlled dip into a ±5.5% band around yesterday’s 50-SMA, provided expansion, acceptance
   (8 of 10 closes above the prior 50-SMA), peak, and fill gates pass. It is <em>not</em> a zone-retest system.
   Sizing is fixed <code>rl_cash</code> (default $47,500 per name), not the host 500k×2×0.6 deployable path.
 </p>
@@ -490,7 +490,7 @@ def rl() -> str:
 <ol class="steps">
   <li><strong>SMA stack + 200-SMA exists:</strong> SMA20 &gt; SMA50 &gt; SMA100 &gt; SMA200, all finite/positive. <code>rl_sma_qual=1</code> (prod on).</li>
   <li><strong>50-SMA rising:</strong> SMA50[T] &gt; SMA50[T − <code>rl_50_sma_lookback</code>] (prod lookback <strong>4</strong>).</li>
-  <li><strong>In the 50-zone:</strong> Low_T is inside yesterday’s 50-SMA × <code>rl_dip_pct</code> band. Prod <code>rl_dip_pct=1.041</code> → band is SMA50 × 0.959 … SMA50 × 1.041 (±4.1%).</li>
+  <li><strong>In the 50-zone:</strong> Low_T is inside yesterday’s 50-SMA × <code>rl_dip_pct</code> band. Prod <code>rl_dip_pct=1.055</code> → band is SMA50 × 0.945 … SMA50 × 1.055 (±5.5%).</li>
   <li><strong>Uptick + close above 50-SMA:</strong> Close_T &gt; Open_T and Close_T &gt; yesterday’s SMA50.</li>
   <li><strong>Expansion:</strong> some close in the last <code>expansion_lookback_days</code> (10) ≥ prior-bar SMA50 × <code>rl_expansion</code> (prod <strong>1.163</strong>).</li>
   <li><strong>Acceptance:</strong> at least <code>rl_acc_min</code> of the last <code>rl_acc_count</code> bars close above prior SMA50 (defaults <strong>8 / 10</strong>).</li>
@@ -505,7 +505,8 @@ def rl() -> str:
   <li><strong>Stop:</strong> signal-bar Low × <code>rl_stop_pct</code> → prod / AWK default <strong>0.934</strong> (−6.6% vs signal low).</li>
   <li><strong>Target:</strong> SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong>. Anchored to the 50-SMA (not entry) and <em>updated while the trade is open</em>.</li>
   <li>Shared gap-down / gap-up / intraday stop / target schedule (first match wins), matching AWK bar order.</li>
-  <li>Trail / partial / flush / time-exit levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
+  <li>Trail / partial / flush levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
+  <li><strong>Timed exit (house adopt 2026-08-31):</strong> after entry MTM reaches <code>rl_exit_percent=0.40</code> (+40%), force exit <code>rl_exit_days=30</code> later (open fill). SMA50 × <code>rl_target_pct=1.20</code> target stays live and races the timed exit.</li>
   <li>Post-TARGET re-entry window: prod <code>rl_post_target_reentry_bars=0</code> (off).</li>
   <li>AWK-only subsystems (not in the Python 50-trigger port): RL100 (100-SMA) and Dive Bomber shorts — audit defaults show them off.</li>
 </ul>
@@ -514,18 +515,20 @@ def rl() -> str:
 <p>Production from <code>run_rl.bat</code>; remaining defaults from <code>RLConfig</code> / AWK BEGIN. Do not promote a Python-only lever until AWK compare is clean.</p>
 """
         + levers([
-            ("<code>rl_dip_pct</code>", "Half-width of the 50-SMA dip band", "<strong>1.041</strong> (±4.1%)", "Tighter band → fewer dips that qualify"),
+            ("<code>rl_dip_pct</code>", "Half-width of the 50-SMA dip band", "<strong>1.055</strong> (±5.5%)", "Tighter band → fewer dips that qualify"),
             ("<code>rl_sma_qual</code>", "Require SMA stack + rising 50", "<strong>1</strong> (on)", "Off → many more unstructured dips"),
             ("<code>rl_50_sma_lookback</code>", "Bars for “50-SMA rising”", "<strong>4</strong> (config default)", "Longer lookback → slower trend confirmation"),
             ("<code>rl_stop_pct</code>", "Stop = signal Low × multiplier", "<strong>0.934</strong>", "Lower multiplier = wider stop"),
             ("<code>rl_target_pct</code>", "Target = prior SMA50 × multiplier", "<strong>1.20</strong> (config default)", "Higher → fewer TARGET hits, longer holds"),
+            ("<code>rl_exit_percent</code>", "Timed-exit profit gate vs entry MTM", "<strong>0.40</strong> (+40%)", "House adopt 40_30d 2026-08-31"),
+            ("<code>rl_exit_days</code>", "Bars after profit gate before forced exit", "<strong>30</strong>", "10000 ≈ off; races SMA50 target"),
             ("<code>rl_too_high</code>", "Fill ceiling vs signal Low × stop", "<strong>0</strong> (off)", "On (hist 1.14) rejects opens that gap too far above the stop line"),
             ("<code>rl_expansion</code>", "Min close vs SMA50 for expansion", "<strong>1.163</strong> (config default)", "Higher → require a stronger prior thrust"),
             ("<code>rl_acc_min</code> / <code>rl_acc_count</code>", "Acceptance: closes above SMA50 in window", "<strong>8 / 10</strong>", "Higher min → fewer accepted dips"),
             ("<code>rl_cash</code>", "Fixed notional per name", "<strong>$47,500</strong>", "RL does not use host 600k deployable / max_positions"),
             ("<code>ATR_LOW</code> / <code>ATR_HIGH</code>", "ATR% band at signal", "<strong>off / off</strong> in prod bat", "Config defaults 2.44% / 8.48% if not overridden"),
             ("<code>rl_slope_threshold</code>", "Min 30-bar slope", "<strong>0</strong> (off in prod bat)", "Config default 0.0643 if not overridden"),
-            ("<code>rl_cut_the_losers</code>", "Prior-bar high vs SMA50 cap", "<strong>0.25</strong> (config default)", "Blocks entries already extended above the 50"),
+            ("<code>rl_cut_the_losers</code>", "Prior-bar high vs SMA50 cap", "<strong>1000</strong> (OFF)", "0.25 would block extended prior highs; Paul house OFF"),
             ("Per-symbol JSON", "Approved overlay on gold names", "Loaded when file exists", "Keep JSON <code>rl_too_high=0</code> in sync with the bat"),
         ])
         + """
@@ -1420,6 +1423,11 @@ def ind() -> str:
 <ul>
   <li>RS is the production consumer of Strong TC outlooks — do not revive IND to “keep TC in the book.”</li>
   <li>Monthly HTML still labels an IND column for legacy Closed/Open files.</li>
+  <li>OHLC-easy add-ons (StochRSI, Ultimate Oscillator, WMA/VMA/WilderMA, Chaikin Volatility Fast/Slow,
+  volume ratios, A/D slope, Standard Error) export as <code>IND_*</code> columns and work in
+  <code>mandatory_ind_states</code> / exclude JSON, but are <strong>excluded from IND_DIFF / IND_ENTRY_* tallies</strong>
+  so historical <code>indicator_diff</code> gates stay stable. See
+  <code>drive/paul_experiments/ind_ohlc_indicators_add_20260902/</code>.</li>
 </ul>
 
 <h2>Canonical links</h2>
@@ -1427,13 +1435,104 @@ def ind() -> str:
   <li><code>run_ind.bat</code> · <code>DailyRun.bat</code> step [5/14] SKIPPED</li>
   <li><a href="rs.html">RS — Relative Strength</a> (TC Strong gates)</li>
   <li><a href="../system_setup_process.html">System setup process</a></li>
+  <li><code>stock_analysis/brt_entry_indicators.py</code> · <code>OHLC_ADDON_INDICATOR_IDS</code></li>
 </ul>
 """,
         footer="Canonical IND write-up · Twin Beacon Networks (TBN) · deprecated sleeve",
     )
 
 
-PAGES: list[tuple[str, str, str]] = [
+def mom() -> str:
+    return page(
+        title="MOM — Momentum (Clenow)",
+        eyebrow="Research · MOM (Momentum) / Stocks on the Move",
+        lede=(
+            "<strong>MOM</strong> (Momentum) is a house research sleeve based on Andreas Clenow’s "
+            "<em>Stocks on the Move</em> classic rules: weekly volatility-adjusted momentum ranking, "
+            "100-day Simple Moving Average (SMA) trend filter, SPY 200-day SMA regime gate, and "
+            "Average True Range (ATR) risk sizing. "
+            "It is a <strong>research candidate</strong> — not gold and not DailyRun-wired."
+        ),
+        badge_class="badge-bad",
+        badge_text="Research candidate — not DailyRun",
+        meta=(
+            "<span>Engine <span class='path'>tools/mom_clenow_ab.py</span></span>"
+            "<span>Freeze <code>mom_baseline_20260828</code></span>"
+            "<span>Universe <code>drive/universes/MOM_universe.csv</code></span>"
+            "<span>Review Wednesday</span>"
+        ),
+        body="""
+<div class="callout bad">
+  <strong>Not production gold. Not DailyRun-wired.</strong>
+  Baseline stamp: <code>drive/paul_experiments/mom_baseline_20260828/</code>.
+  Rules note: <code>drive/paul_experiments/clenow_rules_summary_20260828/</code>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Long-only equity momentum: each week, rank liquid names by 90-day log-regression slope × R²
+  (coefficient of determination), keep / buy the top ~20% of eligible names when the index is
+  in an uptrend, size by ATR, and exit on rank or SMA failure. No classic hard stop.
+</p>
+
+<h2>2. Entry logic</h2>
+<ol class="steps">
+  <li><strong>Universe:</strong> static liquid tradable tape (<code>MOM_universe.csv</code> = VZ 2010 / ADV$2m copy). Not point-in-time S&amp;P 500.</li>
+  <li><strong>Trend:</strong> close above 100-day SMA.</li>
+  <li><strong>Gap filter:</strong> no single-day |move| &gt; 15% in past 90 days (included; labeled).</li>
+  <li><strong>Rank:</strong> 90-day volatility-adjusted momentum; higher better.</li>
+  <li><strong>Pool:</strong> top 20% of eligible ranked names that review day.</li>
+  <li><strong>Index gate:</strong> new buys only if SPY &gt; 200-day SMA.</li>
+  <li><strong>Size:</strong> shares ≈ (equity × 0.001) / 20-day Wilder ATR; fill from top of rank until cash used.</li>
+  <li><strong>Cadence:</strong> Wednesday review (signal at close → next open fill); re-size every other week.</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+"""
+        + kv([
+            ("Rank exit", "Falls out of top ~20% on weekly review"),
+            ("Trend exit", "Close below 100-day SMA on weekly review"),
+            ("Universe / data", "Leaves usable OHLC / universe"),
+            ("Hard stop", "<strong>None</strong> (classic reconstruction)"),
+        ])
+        + """
+<h2>4. Levers</h2>
+"""
+        + levers([
+            ("<code>MOM_LOOKBACK</code>", "Log-regression window", "<strong>90</strong>", "Shorter → faster churn"),
+            ("<code>SMA_STOCK</code>", "Stock trend filter", "<strong>100</strong>", "Lower → more eligible"),
+            ("<code>SMA_INDEX</code>", "SPY regime gate", "<strong>200</strong>", "Shorter → more new buys in chops"),
+            ("<code>TOP_FRAC</code>", "Rank keep / buy pool", "<strong>0.20</strong>", "Wider → more names / more overlap"),
+            ("<code>RISK_FRAC</code>", "ATR risk fraction", "<strong>0.001</strong>", "Higher → larger positions / fewer names"),
+            ("<code>GAP_MAX</code>", "Shock filter", "<strong>15% / 90d</strong>", "Off → more speculative names"),
+            ("Review weekday", "Weekly signal day", "<strong>Wednesday</strong>", "Friday is an alternate classic choice"),
+        ])
+        + """
+<h2>5. Universe / status</h2>
+"""
+        + kv([
+            ("Status", "<strong>Research candidate only</strong> — not gold, not DailyRun"),
+            ("Universe", "<code>drive/universes/MOM_universe.csv</code> (~763 names; liquid ADV$2m since 2010)"),
+            ("OHLC", "<code>data/ohlcv.duckdb</code> · index <code>SPY</code>"),
+            ("IS / OOS", "IS = before 2024-01-01; OOS = 2024+ — report-only"),
+            ("Look-ahead", "Indicators through signal close; fills next open"),
+            ("Blocker", "No point-in-time S&amp;P membership — survivorship vs classic Clenow"),
+        ])
+        + """
+<h2>6. How to run</h2>
+<pre style="background:var(--fill);padding:12px;overflow:auto">python tools/mom_clenow_ab.py
+python tools/mom_clenow_ab.py --start 2012-01-01 --end 2026-08-28
+python tools/mom_clenow_ab.py --limit 80   # smoke</pre>
+<p>
+  Artifacts: <code>drive/paul_experiments/mom_baseline_20260828/compare.html</code>,
+  <code>MOM_Closed.csv</code>, <code>BASELINE.md</code>, <code>SUMMARY.md</code>.
+</p>
+""",
+        footer="Canonical MOM write-up · Twin Beacon Networks (TBN) · research candidate",
+    )
+
+
+PAGES: list[tuple[str, str, object]] = [
     ("rs.html", "RS_System_Guide.html", rs),
     ("sb.html", "SB_System_Guide.html", sb),
     ("rl.html", "RL_System_Guide.html", rl),
@@ -1445,6 +1544,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("wrl.html", "WRL_System_Guide.html", wrl),
     ("mvcp.html", "MVCP_System_Guide.html", mvcp),
     ("ind.html", "IND_System_Guide.html", ind),
+    ("mom.html", "MOM_System_Guide.html", mom),
 ]
 
 
@@ -1458,6 +1558,7 @@ INDEX_CARDS = [
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
     ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
     ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
+    ("mom.html", "research", "Research", "MOM — Momentum (Clenow)", "Weekly vol-adjusted momentum rank + ATR sizing. Research candidate — not DailyRun."),
     ("mvcp.html", "retired", "Retired", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21)."),
     ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),
 ]
