@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RL Trail-1 BE overlay: one knob `rl_trail_profit` (stop=0).
 
-Control = DailyRun off (no BE) on RL_LatestRun_Closed.
+Control = DailyRun off (no BE) on RL_Closed_260814183604 (LatestRun fallback).
 Candidates replay the same Closed book + local OHLC:
   after first High >= entry * (1 + pct), subsequent Low <= entry → BE at entry
   (gap through BE → next/open fill — same convention as tools/be_stop_replay_ab.py).
@@ -43,7 +43,18 @@ from compare_format import format_money  # noqa: E402
 
 STAMP = "20260819"
 OUT_DIR = DRIVE / "paul_experiments" / f"rl_be_trail_pct_ab_{STAMP}"
-CLOSED = DRIVE / "RL_LatestRun_Closed.csv"
+# Prefer the PO stamp; LatestRun is only a fallback (DailyRun copy).
+CLOSED = next(
+    (
+        p
+        for p in (
+            DRIVE / "RL_Closed_260814183604.csv",
+            DRIVE / "RL_LatestRun_Closed.csv",
+        )
+        if p.is_file()
+    ),
+    DRIVE / "RL_Closed_260814183604.csv",
+)
 IS_CUT = date(2024, 1, 1)
 
 # Control + pre-agreed candidates + cheap 10% reference (not a search grid).
@@ -334,7 +345,7 @@ OOS soften → HOLD, do not retune.</p>
 
 <h2>Freeze / method</h2>
 <ul>
-<li><strong>System:</strong> RL (Relative Strength / rocket_wrl book). Control stamp: <code>drive/RL_LatestRun_Closed.csv</code>.</li>
+<li><strong>System:</strong> RL (Rocket Launcher). Control stamp: <code>drive/RL_Closed_260814183604.csv</code> (fallback <code>RL_LatestRun_Closed.csv</code>).</li>
 <li><strong>Knob:</strong> EXIT <code>rl_trail_profit</code> with <code>rl_trail_stop=0</code>. Frozen: entries, SMA target, stop_pct, no Trail-2.</li>
 <li><strong>Convention:</strong> after first High ≥ entry×(1+pct), subsequent Low ≤ entry → BE at entry; Open gap through BE → exit at Open. Fill bar arms only; never extends past original close.</li>
 <li>IS = entry_date &lt; 2024-01-01; OOS report-only. Missing local OHLC → control exit.</li>
@@ -360,7 +371,7 @@ def write_baseline(results: list[dict]) -> Path:
         "| Field | Freeze |",
         "|---|---|",
         "| System | RL |",
-        "| Control | `drive/RL_LatestRun_Closed.csv` (DailyRun `rl_trail_profit=0`) |",
+        "| Control | `drive/RL_Closed_260814183604.csv` (fallback LatestRun; DailyRun `rl_trail_profit=0`) |",
         "| Knob | `rl_trail_profit` with `rl_trail_stop=0` (BE at entry) |",
         "| Frozen | entries, SMA target, stop_pct, no Trail-2 |",
         "| Arms | 14% (user), 20% (wider); 10% reference only |",
