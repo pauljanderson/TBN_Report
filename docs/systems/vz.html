@@ -110,13 +110,18 @@
     <h1>VZ — Volume Zone</h1>
     <p class="lede"><strong>VZ</strong> (Volume Zone) is a DailyRun official Twin Beacon Networks (TBN) sleeve: rolling max-volume days become High–Low (HL) price zones; after an upside break, the system buys a support retest. It is not Break and ReTest (BRT). <strong>TBN production sleeve / DailyRun official — not walk-forward gold.</strong></p>
     <div class="badge badge-ok">DailyRun / TBN official</div>
-    <div class="meta-row"><span>Mode <code>vz_mode=true</code></span><span>Runner <code>run_vz.bat</code></span><span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span><span>Freeze <code>EXIT_atr4_s025_r15_ts20</code> · Paul78.142</span></div>
+    <div class="meta-row"><span>Mode <code>vz_mode=true</code></span><span>Runner <code>run_vz.bat</code></span><span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span><span>Freeze <code>EXIT_atr4_s025_r15_ts20</code> · atr4=4% floor at trigger · s025 · r15 · ts20 · Paul78.142</span></div>
   </header>
 
 <div class="callout ok">
   <strong>Status:</strong> DailyRun official TBN sleeve · step [10b/13] · reconcile-gated (PO adopt 2026-09-07).
   Universe <code>drive/universes/VZ_universe.csv</code> — <strong>Paul78.142 (142)</strong>.
-  Exit <code>EXIT_atr4_s025_r15_ts20</code> (stop = zone.lo − 0.25·Average True Range (ATR)).
+  House label <code>EXIT_atr4_s025_r15_ts20</code>:
+  <strong>atr4</strong> = 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+  (quiet names never enter — <em>not</em> a 4-ATR stop; scanner-known on the trigger date);
+  <strong>s025</strong> = stop at zone low − 0.25×ATR;
+  <strong>r15</strong> = 1.5R target;
+  <strong>ts20</strong> = 20-bar time stop.
   <strong>Not walk-forward gold.</strong>
 </div>
 <div class="callout warn">
@@ -124,6 +129,9 @@
   4-arm universe AB vs old house56 was <strong>HOLD</strong> on IS annualized rate of return (Ann ROR) —
   product choice. Stop 0.25 was chosen after seeing the ImprovePriority AB table on the same 142 book
   → <strong>in-sample selection</strong>. Out-of-sample (OOS) is report-only; do not retune.
+  The 4% ATR floor moved from entry fill to trigger close on 2026-09-07
+  (<span class="path">vz_atr_trigger_adopt_20260907</span>) after a
+  <strong>HOLD</strong> quality A/B — operational / scanner-live override, not KEEP, not gold.
 </div>
 <div class="callout ok">
   <strong>Predictive timing:</strong> signal known at retest-bar <em>close</em> (uses that bar’s Low/High/Close).
@@ -143,32 +151,68 @@
   <li><strong>Retest clock:</strong> within <code>retest_window</code> bars after break (adopted <strong>63</strong>).</li>
   <li><strong>Signal bar T:</strong> bar intersects the zone band (or near-miss within <code>retest_eps_pct</code> of zone.hi), approach from_above, close still ≥ zone.lo. Known only at/after T’s close.</li>
   <li><strong>Quality gates (v2):</strong> <code>first_retest_only=True</code>; <code>min_touches_before_entry ≥ 1</code>.</li>
+  <li><strong>Volatility floor (atr4):</strong> 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger=4.0</code> / <code>VZ_MIN_ATR_PCT=4.0</code>;
+      <code>min_atr_pct_at_entry=0</code>). Quiet names fail and never enter.
+      This is <strong>not</strong> a 4-ATR stop — it is a “is this name moving enough?” screen
+      the scanner can apply on the trigger date (next-open fill is not known yet).</li>
   <li><strong>Fill:</strong> <code>entry_on=next_open</code> → Open of T+1. Alternate research: close of T. Forbidden: Open of T using T’s range.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
-<p>House exit <code>EXIT_atr4_s025_r15_ts20</code> (PO adopt 2026-09-07; stop 0.25 chosen after ImprovePriority AB on the same 142 book — in-sample selection).</p>
-<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Stop</td><td><code>zone.lo − 0.25 · ATR14[entry]</code></td></tr><tr><td>Target</td><td><strong>1.5R</strong> from entry vs stop distance</td></tr><tr><td>Time stop</td><td><strong>20</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)</td></tr><tr><td>Cooldown</td><td><strong>10</strong> calendar days after a TARGET exit (same symbol)</td></tr></tbody></table></div>
+<p>
+  The house freeze name is <code>EXIT_atr4_s025_r15_ts20</code> (PO adopt 2026-09-07; stop 0.25 chosen after
+  ImprovePriority AB on the same 142 book — in-sample selection).
+  Read the tokens left to right — <code>atr4</code> is a volatility floor, not the stop:
+</p>
+<ul>
+  <li><strong>atr4</strong> — 14-day ATR must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger</code> / <code>VZ_MIN_ATR_PCT=4.0</code>).
+      Quiet names fail this gate and never enter. <strong>Not a 4-ATR stop.</strong>
+      The same <code>atr4</code> prefix sat on the older <code>EXIT_atr4_s05_r15_ts20</code>
+      (0.5 ATR stop) — the 4 did not change when the stop did.
+      House used entry-priced 4% until 2026-09-07; trigger-priced 4% is now the DailyRun identity
+      (one gate only — entry gate off).</li>
+  <li><strong>s025</strong> — stop at zone low − 0.25×ATR (<code>stop_atr_buffer=0.25</code>).</li>
+  <li><strong>r15</strong> — 1.5R target (<code>target_r=1.5</code>): take profit at 1.5 times the entry-to-stop distance.</li>
+  <li><strong>ts20</strong> — 20-bar time stop (<code>exit_bars=20</code>).</li>
+</ul>
+<p>
+  House now measures that 4% ATR floor at <strong>trigger close</strong>
+  (<code>ATR14 / trigger_close ≥ 4%</code>) so the scanner can decide on the signal date.
+  The prior house used entry fill price (lookahead vs a live scanner). Quality A/B
+  (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>) was <strong>HOLD</strong>
+  (IS WR 60.5% vs 60.9%, AvgR 0.489 vs 0.535; OOS also slightly softer). Adopted as a
+  product / scanner-live choice — <strong>not KEEP, not gold</strong>. Do not also apply
+  the entry gate (that would be a tighter two-gate system).
+</p>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Stop</td><td><code>zone.lo − 0.25 · ATR14[entry]</code> — this is the <code>s025</code> token, not <code>atr4</code></td></tr><tr><td>Target</td><td><strong>1.5R</strong> from entry vs stop distance (<code>r15</code>)</td></tr><tr><td>Time stop</td><td><strong>20</strong> trading bars (<code>ts20</code>; end-of-data truncation stays Open, not Closed TIME)</td></tr><tr><td>Volatility floor</td><td>14-day ATR ≥ <strong>4%</strong> of trigger close (<code>atr4</code> / <code>min_atr_pct_at_trigger</code>) — not a stop</td></tr><tr><td>Cooldown</td><td><strong>10</strong> calendar days after a TARGET exit (same symbol)</td></tr></tbody></table></div>
 <div class="callout warn">
   <strong>Fidelity:</strong> zone stop and 1.5R target can sit in the broker. The <strong>20-day time stop</strong>
   is not a broker order.
 </div>
 
 <h2>4. Levers</h2>
-<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>lookback_days</code></td><td>Rolling window for max-vol winner</td><td><strong>126</strong></td><td>Shorter → more/fresh zones</td></tr><tr><td><code>zone_kinds</code></td><td>OC and/or HL geometry</td><td><strong>HL only</strong></td><td>OC+HL → more signals; HL-only lean-kept on PaulTwenty</td></tr><tr><td><code>retest_eps_pct</code></td><td>Near-miss around zone edge</td><td><strong>0.005</strong></td><td>Higher → more near-miss entries; eps=0 dismissed</td></tr><tr><td><code>retest_window</code></td><td>Bars after breakout for retest</td><td><strong>63</strong></td><td>Shorter → fewer late retests; lean-kept vs rw126</td></tr><tr><td><code>first_retest_only</code></td><td>One entry per zone after break</td><td><strong>True</strong></td><td>False → later visits / more signals</td></tr><tr><td><code>min_touches_before_entry</code></td><td>Min prior intersections</td><td><strong>1</strong></td><td>mt0 dismissed</td></tr><tr><td><code>entry_on</code></td><td>Fill at retest close vs next open</td><td><strong>next_open</strong> (house)</td><td>Prior AB freeze used close</td></tr><tr><td>Exit <code>EXIT_atr4_s025_r15_ts20</code></td><td>ATR buffer / 1.5R / 20d</td><td><strong>0.25 / 1.5 / 20</strong></td><td>PO adopt 2026-09-07 vs prior house 0.5; in-sample selection</td></tr><tr><td><code>vz_require_hvn_overlap</code></td><td>Require High Volume Node overlap</td><td><strong>false</strong></td><td>HOLD DualPaul78 + 764 — do not default-on</td></tr><tr><td><code>cooldown_after_target_days</code></td><td>Block re-entry after TARGET</td><td><strong>10</strong></td><td>Higher → fewer re-entries after winners</td></tr></tbody></table></div>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>lookback_days</code></td><td>Rolling window for max-vol winner</td><td><strong>126</strong></td><td>Shorter → more/fresh zones</td></tr><tr><td><code>zone_kinds</code></td><td>OC and/or HL geometry</td><td><strong>HL only</strong></td><td>OC+HL → more signals; HL-only lean-kept on PaulTwenty</td></tr><tr><td><code>retest_eps_pct</code></td><td>Near-miss around zone edge</td><td><strong>0.005</strong></td><td>Higher → more near-miss entries; eps=0 dismissed</td></tr><tr><td><code>retest_window</code></td><td>Bars after breakout for retest</td><td><strong>63</strong></td><td>Shorter → fewer late retests; lean-kept vs rw126</td></tr><tr><td><code>first_retest_only</code></td><td>One entry per zone after break</td><td><strong>True</strong></td><td>False → later visits / more signals</td></tr><tr><td><code>min_touches_before_entry</code></td><td>Min prior intersections</td><td><strong>1</strong></td><td>mt0 dismissed</td></tr><tr><td><code>entry_on</code></td><td>Fill at retest close vs next open</td><td><strong>next_open</strong> (house)</td><td>Prior AB freeze used close</td></tr><tr><td><code>min_atr_pct_at_trigger</code></td><td>14-day ATR must be ≥ this % of trigger close or the name never enters (the <code>atr4</code> token — not a 4-ATR stop). House / scanner identity.</td><td><strong>4.0</strong></td><td>Lower → more quiet names enter. Replaced entry-priced 4% on 2026-09-07 after HOLD AB.</td></tr><tr><td><code>min_atr_pct_at_entry</code></td><td>Optional fill-priced ATR% floor. House leaves this off so only the trigger gate applies.</td><td><strong>0</strong> (off)</td><td>Do not turn on together with trigger 4% — that is a two-gate system.</td></tr><tr><td>Exit <code>EXIT_atr4_s025_r15_ts20</code></td><td><code>atr4</code>=4% ATR floor <em>at trigger</em> (not a 4-ATR stop); <code>s025</code>=zone.lo−0.25×ATR; <code>r15</code>=1.5R; <code>ts20</code>=20 bars</td><td><strong>4% trigger / 0.25 / 1.5 / 20</strong></td><td>PO adopt 2026-09-07 vs prior house stop 0.5; in-sample selection. The atr4 prefix did not change when the stop did, nor when the measurement point moved from entry to trigger.</td></tr><tr><td><code>vz_require_hvn_overlap</code></td><td>Require High Volume Node overlap</td><td><strong>false</strong></td><td>HOLD DualPaul78 + 764 — do not default-on</td></tr><tr><td><code>cooldown_after_target_days</code></td><td>Block re-entry after TARGET</td><td><strong>10</strong></td><td>Higher → fewer re-entries after winners</td></tr></tbody></table></div>
 <h2>5. Universe / status</h2>
-<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>DailyRun official TBN sleeve</strong> — not walk-forward gold</td></tr><tr><td>TBN mode</td><td><code>vz_mode=true</code> (early dispatch in rocket_tbn)</td></tr><tr><td>Default univ</td><td><code>drive/universes/VZ_universe.csv</code> (Paul78.142, 142 names)</td></tr><tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/vz_baseline_260907093231/</code> (PO adopt <code>vz_tbn_adopt_s025_paul78_20260907</code>)</td></tr><tr><td>PaulTwenty</td><td><code>run_vz.bat drive\\universes\\PaulTwenty_universe.csv</code></td></tr><tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr></tbody></table></div>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>DailyRun official TBN sleeve</strong> — not walk-forward gold</td></tr><tr><td>TBN mode</td><td><code>vz_mode=true</code> (early dispatch in rocket_tbn)</td></tr><tr><td>Default univ</td><td><code>drive/universes/VZ_universe.csv</code> (Paul78.142, 142 names)</td></tr><tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/vz_baseline_260907175402/</code> (trigger-gate adopt <code>vz_atr_trigger_adopt_20260907</code>; prior PO s025 <code>vz_baseline_260907093231</code>)</td></tr><tr><td>PaulTwenty</td><td><code>run_vz.bat drive\\universes\\PaulTwenty_universe.csv</code></td></tr><tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
   <li><strong>Universe:</strong> Paul78.142 is a user Paul Score list (likely IS-aware). 4-arm AB vs old house56 was HOLD on IS Ann ROR — product choice, not a process KEEP.</li>
   <li><strong>Stop 0.25:</strong> chosen after seeing ImprovePriority AB on the same 142 book → in-sample selection. Re-score IS/OOS under the adopted freeze; do not retune OOS.</li>
   <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> — do not silently retune other freeze knobs on OOS.</li>
+  <li><strong>ATR% at trigger:</strong> operational adopt after HOLD quality A/B
+      (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>). Slightly worse IS/OOS
+      quality vs entry-priced 4%. Adopted so the scanner can decide on the trigger date.
+      Not KEEP. Not walk-forward gold. Do not retune the 4% floor on OOS.</li>
   <li>Not walk-forward gold. DailyRun official ≠ gold promotion bar.</li>
   <li>High Volume Node (HVN) overlap stays <strong>off</strong>.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_adopt_20260907/</span> (ATR% at trigger operational adopt)</li>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_vs_entry_ab_20260907/</span> (HOLD quality A/B)</li>
   <li><span class="path">drive/paul_experiments/vz_tbn_adopt_s025_paul78_20260907/</span></li>
   <li><span class="path">drive/paul_experiments/vz_paul78_142_adopt_20260907/BASELINE.md</span> (universe adopt)</li>
   <li><span class="path">drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html</span></li>
