@@ -106,18 +106,24 @@
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
   <header class="doc-head">
-    <p class="eyebrow">Research · Volume Zone (VZ) Break and Retest</p>
+    <p class="eyebrow">Production · Volume Zone (VZ) Break and Retest</p>
     <h1>VZ — Volume Zone</h1>
-    <p class="lede"><strong>VZ</strong> (Volume Zone) is a research prototype: rolling max-volume days become High–Low (HL) price zones; after an upside break, the system buys a support retest. It is not Break and ReTest (BRT) production and is not DailyRun-wired.</p>
-    <div class="badge badge-bad">Research candidate — not DailyRun</div>
-    <div class="meta-row"><span>Mode <code>vz_mode=true</code></span><span>Runner <code>run_vz.bat</code></span><span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span><span>Freeze <code>vol_zone_v2_rw63_20260810</code></span></div>
+    <p class="lede"><strong>VZ</strong> (Volume Zone) is a DailyRun official Twin Beacon Networks (TBN) sleeve: rolling max-volume days become High–Low (HL) price zones; after an upside break, the system buys a support retest. It is not Break and ReTest (BRT). <strong>TBN production sleeve / DailyRun official — not walk-forward gold.</strong></p>
+    <div class="badge badge-ok">DailyRun / TBN official</div>
+    <div class="meta-row"><span>Mode <code>vz_mode=true</code></span><span>Runner <code>run_vz.bat</code></span><span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span><span>Freeze <code>EXIT_atr4_s025_r15_ts20</code> · Paul78.142</span></div>
   </header>
 
-<div class="callout bad">
-  <strong>Not production gold. Not DailyRun-wired.</strong>
-  House artifacts: <code>drive/VZ_*_&lt;ts&gt;.*</code> via the TBN host.
-  Adopted freeze: entry gates <code>RESEARCH_CANDIDATE_V2_RW63</code> · exit <code>zone_atr05_ts40</code> ·
-  house fill <code>entry_on=next_open</code>.
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10b/13] · reconcile-gated (PO adopt 2026-09-07).
+  Universe <code>drive/universes/VZ_universe.csv</code> — <strong>Paul78.142 (142)</strong>.
+  Exit <code>EXIT_atr4_s025_r15_ts20</code> (stop = zone.lo − 0.25·Average True Range (ATR)).
+  <strong>Not walk-forward gold.</strong>
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> Paul78.142 is a user Paul Score list (likely in-sample / IS-aware).
+  4-arm universe AB vs old house56 was <strong>HOLD</strong> on IS annualized rate of return (Ann ROR) —
+  product choice. Stop 0.25 was chosen after seeing the ImprovePriority AB table on the same 142 book
+  → <strong>in-sample selection</strong>. Out-of-sample (OOS) is report-only; do not retune.
 </div>
 <div class="callout ok">
   <strong>Predictive timing:</strong> signal known at retest-bar <em>close</em> (uses that bar’s Low/High/Close).
@@ -127,7 +133,7 @@
 <h2>1. What it is</h2>
 <p>
   Hypothesis: high-volume nodes act as support after acceptance above them.
-  Default research universe is DualPaul78 (<code>drive/universes/VZ_universe.csv</code>).
+  Default DailyRun universe is Paul78.142 (<code>drive/universes/VZ_universe.csv</code>).
 </p>
 
 <h2>2. Entry logic</h2>
@@ -141,34 +147,36 @@
 </ol>
 
 <h2>3. Exit logic</h2>
-<p>Exit recipe <code>zone_atr05_ts40</code> (chosen in-sample on PaulTwenty — label selection bias).</p>
-<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Stop</td><td><code>zone.lo − 0.5 · ATR14[entry]</code></td></tr><tr><td>Target</td><td><strong>2.0R</strong> from entry vs stop distance</td></tr><tr><td>Time stop</td><td><strong>40</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)</td></tr></tbody></table></div>
+<p>House exit <code>EXIT_atr4_s025_r15_ts20</code> (PO adopt 2026-09-07; stop 0.25 chosen after ImprovePriority AB on the same 142 book — in-sample selection).</p>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Stop</td><td><code>zone.lo − 0.25 · ATR14[entry]</code></td></tr><tr><td>Target</td><td><strong>1.5R</strong> from entry vs stop distance</td></tr><tr><td>Time stop</td><td><strong>20</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)</td></tr><tr><td>Cooldown</td><td><strong>10</strong> calendar days after a TARGET exit (same symbol)</td></tr></tbody></table></div>
 <div class="callout warn">
-  <strong>Fidelity:</strong> zone stop and 2R target can sit in the broker. The <strong>40-day time stop</strong>
+  <strong>Fidelity:</strong> zone stop and 1.5R target can sit in the broker. The <strong>20-day time stop</strong>
   is not a broker order.
 </div>
 
 <h2>4. Levers</h2>
-<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>lookback_days</code></td><td>Rolling window for max-vol winner</td><td><strong>126</strong></td><td>Shorter → more/fresh zones</td></tr><tr><td><code>zone_kinds</code></td><td>OC and/or HL geometry</td><td><strong>HL only</strong></td><td>OC+HL → more signals; HL-only lean-kept on PaulTwenty</td></tr><tr><td><code>retest_eps_pct</code></td><td>Near-miss around zone edge</td><td><strong>0.005</strong></td><td>Higher → more near-miss entries; eps=0 dismissed</td></tr><tr><td><code>retest_window</code></td><td>Bars after breakout for retest</td><td><strong>63</strong></td><td>Shorter → fewer late retests; lean-kept vs rw126</td></tr><tr><td><code>first_retest_only</code></td><td>One entry per zone after break</td><td><strong>True</strong></td><td>False → later visits / more signals</td></tr><tr><td><code>min_touches_before_entry</code></td><td>Min prior intersections</td><td><strong>1</strong></td><td>mt0 dismissed</td></tr><tr><td><code>entry_on</code></td><td>Fill at retest close vs next open</td><td><strong>next_open</strong> (house)</td><td>Prior AB freeze used close</td></tr><tr><td>Exit <code>zone_atr05_ts40</code></td><td>ATR buffer / 2R / 40d</td><td><strong>0.5 / 2.0 / 40</strong></td><td>In-sample exit compare winner — selection bias labeled</td></tr></tbody></table></div>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>lookback_days</code></td><td>Rolling window for max-vol winner</td><td><strong>126</strong></td><td>Shorter → more/fresh zones</td></tr><tr><td><code>zone_kinds</code></td><td>OC and/or HL geometry</td><td><strong>HL only</strong></td><td>OC+HL → more signals; HL-only lean-kept on PaulTwenty</td></tr><tr><td><code>retest_eps_pct</code></td><td>Near-miss around zone edge</td><td><strong>0.005</strong></td><td>Higher → more near-miss entries; eps=0 dismissed</td></tr><tr><td><code>retest_window</code></td><td>Bars after breakout for retest</td><td><strong>63</strong></td><td>Shorter → fewer late retests; lean-kept vs rw126</td></tr><tr><td><code>first_retest_only</code></td><td>One entry per zone after break</td><td><strong>True</strong></td><td>False → later visits / more signals</td></tr><tr><td><code>min_touches_before_entry</code></td><td>Min prior intersections</td><td><strong>1</strong></td><td>mt0 dismissed</td></tr><tr><td><code>entry_on</code></td><td>Fill at retest close vs next open</td><td><strong>next_open</strong> (house)</td><td>Prior AB freeze used close</td></tr><tr><td>Exit <code>EXIT_atr4_s025_r15_ts20</code></td><td>ATR buffer / 1.5R / 20d</td><td><strong>0.25 / 1.5 / 20</strong></td><td>PO adopt 2026-09-07 vs prior house 0.5; in-sample selection</td></tr><tr><td><code>vz_require_hvn_overlap</code></td><td>Require High Volume Node overlap</td><td><strong>false</strong></td><td>HOLD DualPaul78 + 764 — do not default-on</td></tr><tr><td><code>cooldown_after_target_days</code></td><td>Block re-entry after TARGET</td><td><strong>10</strong></td><td>Higher → fewer re-entries after winners</td></tr></tbody></table></div>
 <h2>5. Universe / status</h2>
-<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>Research candidate only</strong> — not gold, not DailyRun</td></tr><tr><td>TBN mode</td><td><code>vz_mode=true</code> (early dispatch in rocket_tbn)</td></tr><tr><td>Default univ</td><td><code>drive/universes/VZ_universe.csv</code> (DualPaul78)</td></tr><tr><td>PaulTwenty</td><td><code>run_vz.bat drive\\universes\\PaulTwenty_universe.csv</code></td></tr><tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr></tbody></table></div>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>DailyRun official TBN sleeve</strong> — not walk-forward gold</td></tr><tr><td>TBN mode</td><td><code>vz_mode=true</code> (early dispatch in rocket_tbn)</td></tr><tr><td>Default univ</td><td><code>drive/universes/VZ_universe.csv</code> (Paul78.142, 142 names)</td></tr><tr><td>Reconcile freeze</td><td><code>drive/paul_experiments/vz_baseline_260907093231/</code> (PO adopt <code>vz_tbn_adopt_s025_paul78_20260907</code>)</td></tr><tr><td>PaulTwenty</td><td><code>run_vz.bat drive\\universes\\PaulTwenty_universe.csv</code></td></tr><tr><td>IS / OOS</td><td>IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only</td></tr></tbody></table></div>
 <h2>6. Caveats</h2>
 <ul>
-  <li><strong>Selection bias:</strong> HL / first_retest / mt≥1 / eps / rw63 / <code>zone_atr05_ts40</code> were chosen on overlapping PaulTwenty history.</li>
+  <li><strong>Universe:</strong> Paul78.142 is a user Paul Score list (likely IS-aware). 4-arm AB vs old house56 was HOLD on IS Ann ROR — product choice, not a process KEEP.</li>
+  <li><strong>Stop 0.25:</strong> chosen after seeing ImprovePriority AB on the same 142 book → in-sample selection. Re-score IS/OOS under the adopted freeze; do not retune OOS.</li>
   <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> — do not silently retune other freeze knobs on OOS.</li>
-  <li>Promotion bar: wider/walk-forward + process PO — research stamps alone do not wire DailyRun.</li>
-  <li>OOS softened under the toy exit on <code>vol_zone_hl_quality_20260810</code> — HOLD, not a retune trigger.</li>
+  <li>Not walk-forward gold. DailyRun official ≠ gold promotion bar.</li>
+  <li>High Volume Node (HVN) overlap stays <strong>off</strong>.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/vol_zone_v2_rw63_20260810/BASELINE.md</span></li>
+  <li><span class="path">drive/paul_experiments/vz_tbn_adopt_s025_paul78_20260907/</span></li>
+  <li><span class="path">drive/paul_experiments/vz_paul78_142_adopt_20260907/BASELINE.md</span> (universe adopt)</li>
   <li><span class="path">drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html</span></li>
   <li><code>run_vz.bat</code> / <span class="path">stock_analysis/rocket_vz.py</span> / <span class="path">tools/vol_zone_break_retest.py</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md</span></li>
 </ul>
 
-  <footer>Canonical VZ write-up · Twin Beacon Networks (TBN) · research only</footer>
+  <footer>Canonical VZ write-up · Twin Beacon Networks (TBN) · DailyRun official</footer>
 </div>
 
 <script>
