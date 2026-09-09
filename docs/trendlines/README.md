@@ -8,4 +8,4 @@
 - **HV6m:** calendar-6m max-vol High–Low box from parent `segments.json`.
 - **Trendlines:** M/W/D fractal support/resistance from `segments.json`.
 
-Generated 2026-09-08T18:52:13.
+Generated 2026-09-09T11:25:45.
