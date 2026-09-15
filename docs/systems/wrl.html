@@ -176,13 +176,18 @@
 <p>
   Fill = Open if already <code>≥ range_low</code>, else range low (buy-stop fill).
   Skip if <code>stop ≥ fill</code> or primary target <code>≤ fill</code>.
+  Optional research gate: skip unless structural reward/risk ≥ <code>wrl_min_rr</code>
+  (default <code>0</code> = off). Risk = fill − stop. Reward is range high (T1) when
+  <code>wrl_min_rr_target=range</code>, swing high (T2) when <code>swing</code>,
+  or the first target of the current exit mode when <code>primary</code>.
 </p>
 
 <h2>5. Watchlist / Scanner / Open / Closed</h2>
 <ul>
   <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
   <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
-  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.
+      <code>RR_T1</code> / <code>RR_T2</code> are fill-time reward/risk vs range high and swing high.</li>
 </ul>
 
 <h2>6. Exits</h2>
@@ -205,6 +210,8 @@
   <p><code>run_wrl.bat</code> — Mag10 if <code>drive\universes\WRL_universe.csv</code> is missing.</p>
   <p><code>run_wrl.bat drive\universes\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
   <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p>Research RR gate (off by default): <code>set WRL_MIN_RR=2</code> and optionally
+     <code>set WRL_MIN_RR_TARGET=range|swing|primary</code>.</p>
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 

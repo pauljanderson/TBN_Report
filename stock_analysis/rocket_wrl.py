@@ -67,6 +67,11 @@ class WrlConfig:
     stop_pct: float = 1.0
     stop_pct_is_multiplier: bool = True
     wrl_min_zone_pct: float = 0.0  # min (range_low/swing_low - 1); 0 = off
+    # Skip fill unless structural reward/risk >= this (0 = off).
+    # Reward is range_high-fill (range), swing_high-fill (swing), or the
+    # primary target for the current wrl_target_mode (primary).
+    wrl_min_rr: float = 0.0
+    wrl_min_rr_target: str = "range"  # range | swing | primary
     wrl_time_stop_bars: int = 0  # 0 = off
     symbol_reentry_cooldown_days: int = 0
     entry_start_date: str = ""
@@ -120,6 +125,8 @@ class WrlClosedRow:
     signal_date: str
     range_week_end: str
     one_liner: str
+    rr_t1: float = 0.0
+    rr_t2: float = 0.0
 
     def to_csv_row(self) -> list[str]:
         return [
@@ -142,6 +149,8 @@ class WrlClosedRow:
             f"{self.range_low:.4f}",
             f"{self.swing_high:.4f}",
             f"{self.swing_low:.4f}",
+            f"{self.rr_t1:.4f}",
+            f"{self.rr_t2:.4f}",
             self.watch_date,
             self.signal_date,
             self.range_week_end,
@@ -169,6 +178,8 @@ WRL_CLOSED_HEADER = [
     "RANGE_LOW",
     "SWING_HIGH",
     "SWING_LOW",
+    "RR_T1",
+    "RR_T2",
     "WATCH_DATE",
     "SIGNAL_DATE",
     "RANGE_WEEK_END",
@@ -277,6 +288,41 @@ def _zone_wide_enough(levels: WeeklyLevels, cfg: WrlConfig) -> bool:
     return (float(levels.range_low) / sl - 1.0) >= min_pct - 1e-12
 
 
+def _structural_rr(fill: float, stop: float, target: float) -> float:
+    """Reward/risk at fill: (target - fill) / (fill - stop). 0 if risk is not positive."""
+    risk = float(fill) - float(stop)
+    if risk <= 0:
+        return 0.0
+    return (float(target) - float(fill)) / risk
+
+
+def _rr_at_fill(fill: float, stop: float, levels: WeeklyLevels) -> tuple[float, float]:
+    """T1 = range high, T2 = swing high. Knowable at fill; used on Closed + correlation."""
+    return (
+        _structural_rr(fill, stop, float(levels.range_high)),
+        _structural_rr(fill, stop, float(levels.swing_high)),
+    )
+
+
+def _min_rr_reward_price(levels: WeeklyLevels, cfg: WrlConfig) -> float:
+    tgt = str(getattr(cfg, "wrl_min_rr_target", "range") or "range").strip().lower()
+    if tgt == "swing":
+        return float(levels.swing_high)
+    if tgt == "primary":
+        mode = str(getattr(cfg, "wrl_target_mode", "scale") or "scale").strip().lower()
+        return _primary_target(levels, mode)
+    return float(levels.range_high)
+
+
+def _min_rr_allows_entry(fill: float, stop: float, levels: WeeklyLevels, cfg: WrlConfig) -> bool:
+    """True when wrl_min_rr is off, or structural reward/risk is at least the threshold."""
+    min_rr = float(getattr(cfg, "wrl_min_rr", 0.0) or 0.0)
+    if min_rr <= 0:
+        return True
+    rr = _structural_rr(fill, stop, _min_rr_reward_price(levels, cfg))
+    return rr + 1e-12 >= min_rr
+
+
 def _primary_target(levels: WeeklyLevels, mode: str) -> float:
     m = (mode or "scale").strip().lower()
     if m == "swing":
@@ -335,6 +381,8 @@ def brt_config_from_wrl(cfg: WrlConfig, host_cfg: Any = None) -> Any:
         wrl_target_mode=str(cfg.wrl_target_mode or "scale"),
         wrl_scale_frac=float(cfg.wrl_scale_frac or 0.50),
         wrl_min_zone_pct=float(cfg.wrl_min_zone_pct or 0.0),
+        wrl_min_rr=float(getattr(cfg, "wrl_min_rr", 0.0) or 0.0),
+        wrl_min_rr_target=str(getattr(cfg, "wrl_min_rr_target", "range") or "range"),
         wrl_time_stop_bars=int(cfg.wrl_time_stop_bars or 0),
         stop_pct=float(cfg.stop_pct),
         stop_pct_is_multiplier=bool(cfg.stop_pct_is_multiplier),
@@ -440,6 +488,8 @@ def backtest_symbol(
                 range_low=lv.range_low,
                 swing_high=lv.swing_high,
                 swing_low=lv.swing_low,
+                rr_t1=float(pos.get("rr_t1", 0.0) or 0.0),
+                rr_t2=float(pos.get("rr_t2", 0.0) or 0.0),
                 watch_date=pos["watch_iso"],
                 signal_date=pos["signal_iso"],
                 range_week_end=_iso_dash(lv.range_week_end),
@@ -585,7 +635,9 @@ def backtest_symbol(
                     and stop < fill
                     and t1 > fill
                     and _entry_date_allowed(fill_iso, cfg.entry_start_date, cfg.entry_end_date)
+                    and _min_rr_allows_entry(fill, stop, watch_levels, cfg)
                 ):
+                    rr_t1, rr_t2 = _rr_at_fill(fill, stop, watch_levels)
                     pos = {
                         "entry_i": i,
                         "entry_iso": fill_iso,
@@ -602,6 +654,8 @@ def backtest_symbol(
                         "levels": watch_levels,
                         "watch_iso": _iso(dates[watch_i]),
                         "signal_iso": fill_iso,
+                        "rr_t1": rr_t1,
+                        "rr_t2": rr_t2,
                     }
                     if not use_scale:
                         # Full-size single target: t1 is the only target.
