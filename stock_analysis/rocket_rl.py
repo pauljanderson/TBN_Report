@@ -35,7 +35,16 @@ EXPANSION_LOOKBACK = 10
 ATR_PERIOD = 14
 ATR_EMA_MULT = 13
 DAYS_PER_YEAR = 365
-MILESTONES = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
+# Gain milestones on High vs entry (same as AWK). 25% sits between 20 and 30.
+MILESTONES = (0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60)
+# Post-milestone path horizons (trading bars after first High >= entry*(1+pct); touch = day 0).
+PNL_AFTER_25_DAYS = (30, 45, 60, 90, 120)
+MAX_GAIN_AFTER_25_DAYS = (30, 45, 60, 90, 120)
+PNL_AFTER_20_DAYS = (30, 45, 60, 90, 120)
+MAX_GAIN_AFTER_20_DAYS = (30, 45, 60, 90, 120)
+# Post-exit path horizons (trading bars after DATE CLOSED; exit bar = day 0).
+PNL_AFTER_EXIT_DAYS = (30, 60, 90, 120)
+MAX_GAIN_AFTER_EXIT_DAYS = (30, 60, 90, 120)
 
 RL_CLOSED_HEADER = (
     "SYMBOL,DATE OPENED,ENTRY PRICE,SMA20,SMA30,SMA50,SMA100,SMA200,CLOSE TO HIGH,MAX PRICE,"
@@ -45,8 +54,17 @@ RL_CLOSED_HEADER = (
     "PREVIOUS EXP TO TARGET,PRIOR RESET,MOST recent EXP,MOST RECENT RESET,SLOPE AT ENTRY,"
     "SPY AT ENTRY,SPY20,SPY30,SPY50,SPY100,SPY200,ACTIVE_SHOCKS,LAST SHOCK MAGNITUDE,"
     "SHOCK REHAB COOLDOWN REMAINING,CLOSE PRIOR,OPEN ON DAY OF CLOSE,DAYS_TO_10,DAYS_TO_20,"
-    "DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,30_TO_CLOSE,"
-    "40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,"
+    "DAYS_TO_25,DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,25_TO_CLOSE,"
+    "30_TO_CLOSE,40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,"
+    "PNL_30D_AFTER_25,PNL_45D_AFTER_25,PNL_60D_AFTER_25,PNL_90D_AFTER_25,PNL_120D_AFTER_25,"
+    "MAX_GAIN_30D_AFTER_25,MAX_GAIN_45D_AFTER_25,MAX_GAIN_60D_AFTER_25,MAX_GAIN_90D_AFTER_25,"
+    "MAX_GAIN_120D_AFTER_25,"
+    "PNL_30D_AFTER_20,PNL_45D_AFTER_20,PNL_60D_AFTER_20,PNL_90D_AFTER_20,PNL_120D_AFTER_20,"
+    "MAX_GAIN_30D_AFTER_20,MAX_GAIN_45D_AFTER_20,MAX_GAIN_60D_AFTER_20,MAX_GAIN_90D_AFTER_20,"
+    "MAX_GAIN_120D_AFTER_20,"
+    "PNL_30D_AFTER_EXIT,PNL_60D_AFTER_EXIT,PNL_90D_AFTER_EXIT,PNL_120D_AFTER_EXIT,"
+    "MAX_GAIN_30D_AFTER_EXIT,MAX_GAIN_60D_AFTER_EXIT,MAX_GAIN_90D_AFTER_EXIT,MAX_GAIN_120D_AFTER_EXIT,"
+    "Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,"
     "AVG_VOL,TRIGGER_VOL,PIVOT_HIGH_AT_ENTRY,PIVOT_LOW_AT_ENTRY,STRUCT_HIGH_AT_ENTRY,"
     "STRUCT_LOW_AT_ENTRY,MAJOR_PIVOT_HIGH_AT_ENTRY,MAJOR_PIVOT_LOW_AT_ENTRY,"
     "PIVOT_HIGH_PRICE_AT_ENTRY,PIVOT_LOW_PRICE_AT_ENTRY,LAST_PIVOT_HIGH_PRICE,"
@@ -77,6 +95,109 @@ def days_diff(d1: str, d2: str) -> int:
         return int(time.mktime(t))
 
     return int((_epoch(d2) - _epoch(d1)) / 86400)
+
+
+def compute_post_milestone_path(
+    *,
+    highs: np.ndarray,
+    closes: np.ndarray,
+    touch_idx: int,
+    exit_idx: int,
+    entry_price: float,
+    exit_price: float,
+    pnl_days: tuple[int, ...] = PNL_AFTER_25_DAYS,
+    max_gain_days: tuple[int, ...] = MAX_GAIN_AFTER_25_DAYS,
+) -> tuple[dict[int, Optional[float]], dict[int, Optional[float]]]:
+    """PnL% and MAX_GAIN path after first milestone High touch (touch bar = day 0).
+
+    PNL_XD = (close_at_touch+X − entry) / entry × 100; if exit before touch+X use exit_price.
+    MAX_GAIN_XD = (max High touch..touch+X − entry) / entry (same units as MAX GAIN).
+    Insufficient bars → None (blank in CSV). Caller maps never-hit to zeros without calling.
+    """
+    n = len(highs)
+    pnl: dict[int, Optional[float]] = {}
+    mxg: dict[int, Optional[float]] = {}
+    for d in pnl_days:
+        tgt = touch_idx + d
+        if tgt >= n:
+            pnl[d] = None
+            continue
+        px = float(exit_price) if exit_idx < tgt else float(closes[tgt])
+        pnl[d] = (px - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
+    for d in max_gain_days:
+        tgt = touch_idx + d
+        if tgt >= n:
+            mxg[d] = None
+            continue
+        mx = float(np.max(highs[touch_idx : tgt + 1]))
+        mxg[d] = (mx - entry_price) / entry_price if entry_price > 0 else 0.0
+    return pnl, mxg
+
+
+def compute_post_25_path(
+    *,
+    highs: np.ndarray,
+    closes: np.ndarray,
+    touch_idx: int,
+    exit_idx: int,
+    entry_price: float,
+    exit_price: float,
+) -> tuple[dict[int, Optional[float]], dict[int, Optional[float]]]:
+    """Backward-compatible alias for post-25% path metrics."""
+    return compute_post_milestone_path(
+        highs=highs,
+        closes=closes,
+        touch_idx=touch_idx,
+        exit_idx=exit_idx,
+        entry_price=entry_price,
+        exit_price=exit_price,
+        pnl_days=PNL_AFTER_25_DAYS,
+        max_gain_days=MAX_GAIN_AFTER_25_DAYS,
+    )
+
+
+
+def compute_post_exit_path(
+    *,
+    highs: np.ndarray,
+    closes: np.ndarray,
+    exit_idx: int,
+    exit_price: float,
+    pnl_days: tuple[int, ...] = PNL_AFTER_EXIT_DAYS,
+    max_gain_days: tuple[int, ...] = MAX_GAIN_AFTER_EXIT_DAYS,
+) -> tuple[dict[int, Optional[float]], dict[int, Optional[float]]]:
+    """PnL% and MAX_GAIN path after exit (exit bar = day 0), vs exit price.
+
+    Opportunity-cost / left-on-table metrics (already flat):
+      PNL_XD_AFTER_EXIT = (close_at_exit+X − exit) / exit × 100
+      MAX_GAIN_XD_AFTER_EXIT = (max High exit..exit+X − exit) / exit  (MAX GAIN units)
+    Unlike AFTER_25/AFTER_20 (vs entry), these are vs EXIT PRICE.
+    Insufficient bars → None (blank in CSV).
+    """
+    n = len(highs)
+    pnl: dict[int, Optional[float]] = {}
+    mxg: dict[int, Optional[float]] = {}
+    for d in pnl_days:
+        tgt = exit_idx + d
+        if tgt >= n:
+            pnl[d] = None
+            continue
+        px = float(closes[tgt])
+        pnl[d] = (px - exit_price) / exit_price * 100.0 if exit_price > 0 else 0.0
+    for d in max_gain_days:
+        tgt = exit_idx + d
+        if tgt >= n:
+            mxg[d] = None
+            continue
+        mx = float(np.max(highs[exit_idx : tgt + 1]))
+        mxg[d] = (mx - exit_price) / exit_price if exit_price > 0 else 0.0
+    return pnl, mxg
+
+
+def _fmt_opt_float(v: Optional[float], places: int = 2) -> str:
+    if v is None:
+        return ""
+    return f"{v:.{places}f}"
 
 
 def _prepare_bars(df: pd.DataFrame) -> dict[str, Any]:
@@ -161,22 +282,53 @@ class RLClosedRow:
     open_on_close: float
     m10: int
     m20: int
+    m25: int
     m30: int
     m40: int
     m50: int
     m60: int
     m10_to_close: int
     m20_to_close: int
+    m25_to_close: int
     m30_to_close: int
     m40_to_close: int
     m50_to_close: int
     m60_to_close: int
-    trade_ces: float
-    partial_date: str
-    partial_amt: float
-    avg_exit: float
-    avg_vol: float
-    trigger_vol: float
+    # Post-25 / post-20 path; None = insufficient bars (blank). Never-hit → 0.0 from caller.
+    pnl_30d_after_25: Optional[float] = 0.0
+    pnl_45d_after_25: Optional[float] = 0.0
+    pnl_60d_after_25: Optional[float] = 0.0
+    pnl_90d_after_25: Optional[float] = 0.0
+    pnl_120d_after_25: Optional[float] = 0.0
+    max_gain_30d_after_25: Optional[float] = 0.0
+    max_gain_45d_after_25: Optional[float] = 0.0
+    max_gain_60d_after_25: Optional[float] = 0.0
+    max_gain_90d_after_25: Optional[float] = 0.0
+    max_gain_120d_after_25: Optional[float] = 0.0
+    pnl_30d_after_20: Optional[float] = 0.0
+    pnl_45d_after_20: Optional[float] = 0.0
+    pnl_60d_after_20: Optional[float] = 0.0
+    pnl_90d_after_20: Optional[float] = 0.0
+    pnl_120d_after_20: Optional[float] = 0.0
+    max_gain_30d_after_20: Optional[float] = 0.0
+    max_gain_45d_after_20: Optional[float] = 0.0
+    max_gain_60d_after_20: Optional[float] = 0.0
+    max_gain_90d_after_20: Optional[float] = 0.0
+    max_gain_120d_after_20: Optional[float] = 0.0
+    pnl_30d_after_exit: Optional[float] = None
+    pnl_60d_after_exit: Optional[float] = None
+    pnl_90d_after_exit: Optional[float] = None
+    pnl_120d_after_exit: Optional[float] = None
+    max_gain_30d_after_exit: Optional[float] = None
+    max_gain_60d_after_exit: Optional[float] = None
+    max_gain_90d_after_exit: Optional[float] = None
+    max_gain_120d_after_exit: Optional[float] = None
+    trade_ces: float = 0.0
+    partial_date: str = ""
+    partial_amt: float = 0.0
+    avg_exit: float = 0.0
+    avg_vol: float = 0.0
+    trigger_vol: float = 0.0
 
     def to_csv_row(self) -> str:
         piv = ["0"] * 12
@@ -232,16 +384,46 @@ class RLClosedRow:
             f"{self.open_on_close:.2f}",
             str(self.m10),
             str(self.m20),
+            str(self.m25),
             str(self.m30),
             str(self.m40),
             str(self.m50),
             str(self.m60),
             str(self.m10_to_close),
             str(self.m20_to_close),
+            str(self.m25_to_close),
             str(self.m30_to_close),
             str(self.m40_to_close),
             str(self.m50_to_close),
             str(self.m60_to_close),
+            _fmt_opt_float(self.pnl_30d_after_25),
+            _fmt_opt_float(self.pnl_45d_after_25),
+            _fmt_opt_float(self.pnl_60d_after_25),
+            _fmt_opt_float(self.pnl_90d_after_25),
+            _fmt_opt_float(self.pnl_120d_after_25),
+            _fmt_opt_float(self.max_gain_30d_after_25),
+            _fmt_opt_float(self.max_gain_45d_after_25),
+            _fmt_opt_float(self.max_gain_60d_after_25),
+            _fmt_opt_float(self.max_gain_90d_after_25),
+            _fmt_opt_float(self.max_gain_120d_after_25),
+            _fmt_opt_float(self.pnl_30d_after_20),
+            _fmt_opt_float(self.pnl_45d_after_20),
+            _fmt_opt_float(self.pnl_60d_after_20),
+            _fmt_opt_float(self.pnl_90d_after_20),
+            _fmt_opt_float(self.pnl_120d_after_20),
+            _fmt_opt_float(self.max_gain_30d_after_20),
+            _fmt_opt_float(self.max_gain_45d_after_20),
+            _fmt_opt_float(self.max_gain_60d_after_20),
+            _fmt_opt_float(self.max_gain_90d_after_20),
+            _fmt_opt_float(self.max_gain_120d_after_20),
+            _fmt_opt_float(self.pnl_30d_after_exit),
+            _fmt_opt_float(self.pnl_60d_after_exit),
+            _fmt_opt_float(self.pnl_90d_after_exit),
+            _fmt_opt_float(self.pnl_120d_after_exit),
+            _fmt_opt_float(self.max_gain_30d_after_exit),
+            _fmt_opt_float(self.max_gain_60d_after_exit),
+            _fmt_opt_float(self.max_gain_90d_after_exit),
+            _fmt_opt_float(self.max_gain_120d_after_exit),
             f"{self.trade_ces:.6f}",
             self.partial_date,
             f"{self.partial_amt:.2f}",
@@ -799,7 +981,9 @@ def run_symbol_rl(
     max_sym_dd = 0.0
     partial_date = ""
     partial_amt = 0.0
-    m_days = [0] * 6
+    m_days = [0] * len(MILESTONES)
+    m20_touch_idx = -1  # 0-based bar index of first High >= entry*1.20; -1 if never
+    m25_touch_idx = -1  # 0-based bar index of first High >= entry*1.25; -1 if never
     # Post-TARGET tighter stop: prior closed trade exit bar / whether it was TARGET.
     last_exit_idx = -1
     last_exit_was_target = False
@@ -916,7 +1100,11 @@ def run_symbol_rl(
                 and np.isfinite(sma50[y_idx])
                 and sma50[y_idx] > 0
             ):
-                rl_target = float(sma50[y_idx]) * cfg.rl_target_pct
+                if bool(getattr(cfg, "rl_sma_target_off", False)):
+                    # Expansion still uses rl_target_pct; exit TARGET race disabled.
+                    rl_target = 0.0
+                else:
+                    rl_target = float(sma50[y_idx]) * cfg.rl_target_pct
 
             execute_exit = 0
             exit_type = ""
@@ -947,6 +1135,10 @@ def run_symbol_rl(
             for mi, mp in enumerate(MILESTONES):
                 if curr_profit_pct >= mp and m_days[mi] == 0:
                     m_days[mi] = days_diff(entry_iso, iso) + 1
+                    if mi == 1:  # 0.20
+                        m20_touch_idx = idx
+                    elif mi == 2:  # 0.25
+                        m25_touch_idx = idx
 
             if h[idx] > rl_max_p:
                 rl_max_p = h[idx]
@@ -1120,6 +1312,45 @@ def run_symbol_rl(
                 trade_ces = ((trade_pnl / cfg.rl_cash) * 100) / hold_days if hold_days > 0 else (trade_pnl / cfg.rl_cash) * 100
                 m_to = [max(0, hold_days - m) if m > 0 else 0 for m in m_days]
 
+                if m25_touch_idx >= 0:
+                    pnl_post, mx_post = compute_post_milestone_path(
+                        highs=h,
+                        closes=c,
+                        touch_idx=m25_touch_idx,
+                        exit_idx=idx,
+                        entry_price=entry_price,
+                        exit_price=rl_sell,
+                        pnl_days=PNL_AFTER_25_DAYS,
+                        max_gain_days=MAX_GAIN_AFTER_25_DAYS,
+                    )
+                else:
+                    pnl_post = {d: 0.0 for d in PNL_AFTER_25_DAYS}
+                    mx_post = {d: 0.0 for d in MAX_GAIN_AFTER_25_DAYS}
+
+                if m20_touch_idx >= 0:
+                    pnl_post20, mx_post20 = compute_post_milestone_path(
+                        highs=h,
+                        closes=c,
+                        touch_idx=m20_touch_idx,
+                        exit_idx=idx,
+                        entry_price=entry_price,
+                        exit_price=rl_sell,
+                        pnl_days=PNL_AFTER_20_DAYS,
+                        max_gain_days=MAX_GAIN_AFTER_20_DAYS,
+                    )
+                else:
+                    pnl_post20 = {d: 0.0 for d in PNL_AFTER_20_DAYS}
+                    mx_post20 = {d: 0.0 for d in MAX_GAIN_AFTER_20_DAYS}
+
+                pnl_post_exit, mx_post_exit = compute_post_exit_path(
+                    highs=h,
+                    closes=c,
+                    exit_idx=idx,
+                    exit_price=rl_sell,
+                    pnl_days=PNL_AFTER_EXIT_DAYS,
+                    max_gain_days=MAX_GAIN_AFTER_EXIT_DAYS,
+                )
+
                 if record_closes:
                     closed.append(
                         RLClosedRow(
@@ -1172,16 +1403,46 @@ def run_symbol_rl(
                         open_on_close=o[idx],
                         m10=m_days[0],
                         m20=m_days[1],
-                        m30=m_days[2],
-                        m40=m_days[3],
-                        m50=m_days[4],
-                        m60=m_days[5],
+                        m25=m_days[2],
+                        m30=m_days[3],
+                        m40=m_days[4],
+                        m50=m_days[5],
+                        m60=m_days[6],
                         m10_to_close=m_to[0],
                         m20_to_close=m_to[1],
-                        m30_to_close=m_to[2],
-                        m40_to_close=m_to[3],
-                        m50_to_close=m_to[4],
-                        m60_to_close=m_to[5],
+                        m25_to_close=m_to[2],
+                        m30_to_close=m_to[3],
+                        m40_to_close=m_to[4],
+                        m50_to_close=m_to[5],
+                        m60_to_close=m_to[6],
+                        pnl_30d_after_25=pnl_post[30],
+                        pnl_45d_after_25=pnl_post[45],
+                        pnl_60d_after_25=pnl_post[60],
+                        pnl_90d_after_25=pnl_post[90],
+                        pnl_120d_after_25=pnl_post[120],
+                        max_gain_30d_after_25=mx_post[30],
+                        max_gain_45d_after_25=mx_post[45],
+                        max_gain_60d_after_25=mx_post[60],
+                        max_gain_90d_after_25=mx_post[90],
+                        max_gain_120d_after_25=mx_post[120],
+                        pnl_30d_after_20=pnl_post20[30],
+                        pnl_45d_after_20=pnl_post20[45],
+                        pnl_60d_after_20=pnl_post20[60],
+                        pnl_90d_after_20=pnl_post20[90],
+                        pnl_120d_after_20=pnl_post20[120],
+                        max_gain_30d_after_20=mx_post20[30],
+                        max_gain_45d_after_20=mx_post20[45],
+                        max_gain_60d_after_20=mx_post20[60],
+                        max_gain_90d_after_20=mx_post20[90],
+                        max_gain_120d_after_20=mx_post20[120],
+                        pnl_30d_after_exit=pnl_post_exit[30],
+                        pnl_60d_after_exit=pnl_post_exit[60],
+                        pnl_90d_after_exit=pnl_post_exit[90],
+                        pnl_120d_after_exit=pnl_post_exit[120],
+                        max_gain_30d_after_exit=mx_post_exit[30],
+                        max_gain_60d_after_exit=mx_post_exit[60],
+                        max_gain_90d_after_exit=mx_post_exit[90],
+                        max_gain_120d_after_exit=mx_post_exit[120],
                         trade_ces=trade_ces,
                         partial_date=partial_date,
                         partial_amt=partial_amt,
@@ -1204,7 +1465,9 @@ def run_symbol_rl(
                 max_sym_dd = 0.0
                 partial_date = ""
                 partial_amt = 0.0
-                m_days = [0] * 6
+                m_days = [0] * len(MILESTONES)
+                m20_touch_idx = -1
+                m25_touch_idx = -1
                 ladder_done = [False] * len(scale_ladder)
                 snap = {}
 
@@ -1437,7 +1700,9 @@ def run_symbol_rl(
                     rl_min_p = 0.0
                     partial_date = ""
                     partial_amt = 0.0
-                    m_days = [0] * 6
+                    m_days = [0] * len(MILESTONES)
+                    m20_touch_idx = -1
+                    m25_touch_idx = -1
                     ladder_done = [False] * len(scale_ladder)
                     hi_rng = h[idx] - l[idx]
                     close_to_high = 1 - ((h[idx] - c[idx]) / hi_rng) if hi_rng > 0 else 0.0

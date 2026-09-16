@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR / RS / SB / VZ systems.
+Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH / MTS / WPBR / RS / SB / VZ / RSI systems.
 
 Data sources:
   - Accounts_History full exports in Downloads (numbered or timestamped; recent-history sells merged in)
@@ -11,10 +11,11 @@ Data sources:
   - personal_holdings_exclude.csv — personal / non-system broker lots to keep off this report
   - sold_symbols_blocklist.csv — fully sold tickers; Open never resurrects them unless removed here
     and re-added to gettarget_positions.csv (prevents AU/POWL-style leaks from stub exports / legacy maps)
-  - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
+  - Latest IND/BRT/RL/YH/MTS/WPBR/RS/SB/VZ/RSI Closed & Open CSVs in Drive/ (per-entry DATE_OPENED)
   - Latest IND/BRT/RL/YH/MTS/WPBR/RS_Scanner_*.csv in Drive/ (matched to latest core run per engine)
   - Latest SB_Watchlist_*.csv when no Scanner (StockBee watchlist fallback)
-  - VZ: VZ_house_last_run_ts.txt / house-sized pin / latest house Summary (VZ_new56; not ALL)
+  - VZ: VZ_house_last_run_ts.txt / house-sized pin / latest house Summary (Paul78.142; not ALL)
+  - RSI: RSI_house_last_run_ts.txt / house-sized pin (Relative Strength Index; not RS vs SPY)
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
 
 Personal vs system (open book):
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html as html_mod
 import io
 import json
 import re
@@ -37,7 +39,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import matplotlib
@@ -101,14 +103,87 @@ CLOSED_SINCE = date(2026, 5, 25)
 MIN_POSITION_VALUE = 47_500.0
 # Still show smaller lots when (symbol, entry_date) is in the system map (registry/engine).
 MIN_REGISTRY_TRACKED_VALUE = 5_000.0
-REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ")
+REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI")
 REPORT_TITLE = f"{len(REPORT_SYSTEMS)}-System Investment Report"
 REPORT_SYSTEM_LABELS = {
     "IND": "IND (deprecated)",
     "SB": "SB",
     "VZ": "VZ",
+    "RSI": "RSI",
 }
 _SYSTEM_ALIASES = {"PBR": "WPBR"}
+
+_DAILYRUN_STATUS_CLASS = {
+    "RUN": "dr-run",
+    "SKIPPED": "dr-skipped",
+    "NOT WIRED": "dr-not-wired",
+    "STALE": "dr-stale",
+    "MISSING": "dr-missing",
+}
+
+
+def _dailyrun_status_rows(drive: Path) -> list[dict]:
+    """Resolve DailyRun RUN/SKIPPED/NOT WIRED/STALE/MISSING for each report system."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "dailyrun_system_status",
+        ROOT / "tools" / "dailyrun_system_status.py",
+    )
+    if spec is None or spec.loader is None:
+        return []
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.compute_report_statuses(drive, report_systems=REPORT_SYSTEMS)
+
+
+def _dailyrun_status_section_html(drive: Path) -> str:
+    rows = _dailyrun_status_rows(drive)
+    if not rows:
+        return ""
+    bad = [r for r in rows if r.get("status") != "RUN"]
+    if bad:
+        parts = ", ".join(f"{r['system']}={r['status']}" for r in bad)
+        banner = (
+            f'<div class="dr-banner dr-banner-warn" role="status">'
+            f"<strong>DailyRun attention:</strong> {parts}. "
+            f"Stale or skipped systems are not refreshing this report’s scanners / LatestRun book."
+            f"</div>"
+        )
+    else:
+        banner = (
+            '<div class="dr-banner dr-banner-ok" role="status">'
+            "<strong>DailyRun:</strong> all report systems show RUN for the current cohort."
+            "</div>"
+        )
+    table_rows = [
+        [
+            r["system"],
+            f'<span class="dr-pill {_DAILYRUN_STATUS_CLASS.get(r["status"], "")}">'
+            f'{r["status"]}</span>',
+            r.get("ts") or "—",
+            r.get("detail") or "",
+        ]
+        for r in rows
+    ]
+    table = _html_table(
+        ["System", "DailyRun", "Stamp", "Detail"],
+        table_rows,
+        ["text", "text", "text", "text"],
+        table_id="dailyrun-status-table",
+    )
+    return f"""
+<section class="dailyrun-status" aria-label="DailyRun system status">
+<h2>DailyRun system status</h2>
+<p class="small">Is each engine actually running in the nightly job? <strong>RUN</strong> =
+wired and stamp matches today’s cohort. <strong>SKIPPED</strong> = <code>SKIP_*=1</code> on the
+last DailyRun. <strong>NOT WIRED</strong> = not called from DailyRun.
+<strong>STALE</strong> = wired but Closed/last_run stamp is behind peer systems (e.g. VZ gap after 8/28).
+<strong>MISSING</strong> = no stamp. Click column headers to sort.</p>
+{banner}
+<div class="table-wrap">{table}</div>
+</section>
+"""
 
 
 def _normalize_report_system(system: str) -> str:
@@ -144,7 +219,7 @@ _RL_SYMBOLS = {
 _MTS_SYMBOLS = set(_MTS_SYMBOLS_LIST)
 
 _ENGINE_CSV_RE = re.compile(
-    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 
@@ -317,7 +392,7 @@ def _latest_engine_csvs(drive_dir: Path) -> dict[tuple[str, str], Path]:
 
 def _load_engine_trades_from_drive(drive_dir: Path) -> dict[tuple[str, str], str]:
     """
-    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR/RS/SB/VZ Closed and Open CSVs.
+    Map (symbol, entry_date) -> engine from latest BRT/IND/RL/YH/MTS/WPBR/RS/SB/VZ/RSI Closed and Open CSVs.
     Same symbol may have different systems on different entry dates.
     """
     out: dict[tuple[str, str], str] = {}
@@ -2073,7 +2148,7 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
 
 
 _RUN_TS_RE = re.compile(
-    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 _PIPELINE_TS_RE = re.compile(
@@ -2147,6 +2222,193 @@ def _vz_house_run_timestamp(drive: Path) -> Optional[str]:
         ts = m.group(1)
         n = _vz_summary_row_count(drive, ts)
         if n is not None and n <= house_max and _stamp_has_core("VZ", drive, ts):
+            house_stamps.append(ts)
+    return max(house_stamps) if house_stamps else None
+
+
+def _read_rsi_house_run_ts(drive: Path) -> Optional[str]:
+    """House pin from drive/RSI_house_last_run_ts.txt (not overwritten by ALL runs)."""
+    path = drive / "RSI_house_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def _rsi_house_summary_max(drive: Path) -> int:
+    """Upper bound on RSI_Summary row count for house / run_rsi.bat default universe."""
+    try:
+        from stock_analysis.rocket_rsi import RSI_HOUSE_SUMMARY_MAX
+
+        engine_max = int(RSI_HOUSE_SUMMARY_MAX)
+    except Exception:
+        engine_max = 200
+    univ = drive / "universes" / "rsi_universe.csv"
+    if univ.is_file():
+        try:
+            n = sum(1 for _ in univ.open(encoding="utf-8")) - 1
+            if n > 0:
+                return max(engine_max, int(n * 1.35), 100)
+        except OSError:
+            pass
+    return engine_max
+
+
+def _rsi_house_freeze() -> dict[str, Any]:
+    """Live DailyRun/house freeze from rocket_rsi.RsiConfig (not a nickname)."""
+    try:
+        from rocket_rsi import RsiConfig
+    except ImportError:
+        from stock_analysis.rocket_rsi import RsiConfig  # type: ignore
+    c = RsiConfig()
+    return {
+        "rsi_ob": float(c.rsi_ob),
+        "rsi_os": float(c.rsi_os),
+        "rsi_exit": float(c.rsi_exit),
+        "rsi_max_trigger": float(c.rsi_max_trigger),
+        "rsi_min_atr_pct": float(c.rsi_min_atr_pct),
+        "rsi_time_stop_days": int(c.rsi_time_stop_days or 0),
+        "rsi_entry_on": str(c.rsi_entry_on or "next_open"),
+    }
+
+
+def _rsi_freeze_from_book(scan: pd.DataFrame) -> dict[str, Any]:
+    """House freeze, overlaid with numbers printed on the live Watchlist/Open CSV."""
+    fz = _rsi_house_freeze()
+    if scan is None or getattr(scan, "empty", True):
+        return fz
+    cols = {str(c).upper(): c for c in scan.columns}
+
+    def _first_num(key: str, default: float) -> float:
+        col = cols.get(key)
+        if col is None:
+            return default
+        series = pd.to_numeric(scan[col], errors="coerce").dropna()
+        return float(series.iloc[0]) if not series.empty else default
+
+    fz["rsi_max_trigger"] = _first_num("MAX_RSI_TRIGGER", fz["rsi_max_trigger"])
+    fz["rsi_min_atr_pct"] = _first_num("MIN_ATR_PCT", fz["rsi_min_atr_pct"])
+    fz["rsi_exit"] = _first_num("EXIT_RSI_LEVEL", fz["rsi_exit"])
+    ts_days = _first_num("TIME_STOP_DAYS", float(fz["rsi_time_stop_days"]))
+    fz["rsi_time_stop_days"] = int(ts_days)
+    return fz
+
+
+def _rsi_watch_vs_scan_html(scan: pd.DataFrame) -> str:
+    """Watchlist-vs-Scanner + buy-range callout for the RSI section Paul reads."""
+    fz = _rsi_freeze_from_book(scan)
+    ob = f"{fz['rsi_ob']:g}"
+    os_ = f"{fz['rsi_os']:g}"
+    mx = f"{fz['rsi_max_trigger']:g}"
+    atr = f"{fz['rsi_min_atr_pct']:g}"
+    ex = f"{fz['rsi_exit']:g}"
+    ts = str(int(fz["rsi_time_stop_days"]))
+    entry_on = str(fz["rsi_entry_on"])
+    fill_plain = (
+        "the next session’s open"
+        if entry_on == "next_open"
+        else f"the {entry_on} (not the house default)"
+    )
+    freeze_rows = [
+        ["Arm (was hot)", f"RSI(14) ≥ {ob}", "Prior bar must print overbought before a buy can arm"],
+        [
+            "Neutral band",
+            f"{os_} < RSI(14) < {ob}",
+            "After the hot bar, today must close in this band (not still ≥ arm, not oversold)",
+        ],
+        [
+            "Buy gate (RSI)",
+            f"trigger RSI(14) < {mx}",
+            "Tighter than Neutral: still ≥ this number = no fill (Watchlist GATE_FAIL)",
+        ],
+        [
+            "Buy gate (ATR%)",
+            f"ATR% ≥ {atr}",
+            "14-bar Average True Range / close × 100 on the trigger bar",
+        ],
+        ["Fill", entry_on, f"House buys at {fill_plain} after the trigger close"],
+        [
+            "Sell",
+            f"RSI(14) ≥ {ex}, else {ts} calendar-day time stop",
+            "No price stop and no price target",
+        ],
+        [
+            "Not a buy",
+            f"RSI(14) ≤ {os_}",
+            "Oversold is the Neutral floor, not an entry signal on this sleeve",
+        ],
+    ]
+    freeze_table = _html_table(
+        ["Gate", "Live number", "Meaning"],
+        freeze_rows,
+        ["text", "text", "text"],
+        table_id="rsi-buy-range-table",
+    )
+    return f"""
+<div class="ask-callout" role="note">
+<h3>What you asked</h3>
+<p class="quote">“why does RSI result in a watchlist and not a scanner? are we only buying if they are in a range? if so, that range should be printed out in the investment report.”</p>
+<h4>In plain English</h4>
+<p>Relative Strength Index (RSI) is a 0–100 heat gauge (Wilder 14), not RS (Relative Strength vs SPY).
+This sleeve does <strong>not</strong> write a Scanner file. It lists names on a <strong>Watchlist</strong>
+because most rows are “armed / waiting / already held,” not a same-day buy slip. We
+<strong>do</strong> only buy when RSI has cooled into a numbered band after a hot reading.
+That band is in the table below (house freeze, not a nickname).</p>
+<h4>Watchlist vs Scanner in this shop</h4>
+<p>BRT / RL / YH / MTS / WPBR / RS write a <code>*_Scanner_*.csv</code> — last-bar names that
+cleared the engine’s buy gates (a same-run buy candidate). Their Watchlist, when they have one,
+is the near-miss / approaching list. RSI is like Volume Zone (VZ) and StockBee (SB): the engine
+never writes <code>RSI_Scanner_*.csv</code>. This page therefore loads
+<code>RSI_Watchlist_*</code> (or Open) and titles the section Watchlist.</p>
+<p>RSI Watchlist rows are not all “do not buy.” Status means:</p>
+<ul>
+<li><strong>BUY / PENDING_NEXT_OPEN</strong> — setup passed on today’s close; buy {fill_plain} (this is the RSI equivalent of a scanner fill).</li>
+<li><strong>NEAR / ARMED_OVERBOUGHT</strong> — RSI(14) ≥ {ob}; waiting to cool under {mx} with ATR% ≥ {atr}.</li>
+<li><strong>NEAR / GATE_FAIL</strong> — cooled into Neutral after overbought, but trigger RSI still ≥ {mx} or ATR% &lt; {atr}.</li>
+<li><strong>OPEN / IN_POSITION</strong> — already held; sell when RSI(14) ≥ {ex} or at the {ts}-day clock.</li>
+</ul>
+<h4>Buy range (live freeze)</h4>
+<p>Buy only if a prior bar was RSI(14) ≥ {ob}, then today’s close is {os_} &lt; RSI(14) &lt; {mx}
+(Neutral top is {ob}, but the entry gate cuts the top to {mx}) and ATR% ≥ {atr}. Fill at
+{entry_on}. Sell RSI(14) ≥ {ex} next open, else flatten at {ts} calendar days.</p>
+<p class="small">Click column headers to sort.</p>
+<div class="table-wrap">{freeze_table}</div>
+</div>
+"""
+
+
+def _rsi_summary_row_count(drive: Path, ts: str) -> Optional[int]:
+    path = drive / f"RSI_Summary_{ts}.csv"
+    if not path.is_file():
+        return None
+    try:
+        return sum(1 for _ in path.open(encoding="utf-8")) - 1
+    except OSError:
+        return None
+
+
+def _rsi_is_house_stamp(drive: Path, ts: str) -> bool:
+    n = _rsi_summary_row_count(drive, ts)
+    return n is not None and n <= _rsi_house_summary_max(drive)
+
+
+def _rsi_house_run_timestamp(drive: Path) -> Optional[str]:
+    """Public RSI book: house stamp only — never ALL / full-universe research runs."""
+    house_max = _rsi_house_summary_max(drive)
+    for ts in (_read_rsi_house_run_ts(drive), _read_engine_last_run_ts("RSI", drive)):
+        if ts and _stamp_has_core("RSI", drive, ts) and _rsi_is_house_stamp(drive, ts):
+            return ts
+    house_stamps: list[str] = []
+    for path in drive.glob("RSI_Summary_*.csv"):
+        m = re.match(r"RSI_Summary_(\d{12})\.csv$", path.name)
+        if not m:
+            continue
+        ts = m.group(1)
+        n = _rsi_summary_row_count(drive, ts)
+        if n is not None and n <= house_max and _stamp_has_core("RSI", drive, ts):
             house_stamps.append(ts)
     return max(house_stamps) if house_stamps else None
 
@@ -2267,23 +2529,72 @@ def _vz_open_lookup(drive: Path, run_ts: Optional[str]) -> dict[tuple[str, str],
     return out
 
 
+def _fmt_watchlist_num(val: Any, nd: int = 2) -> str:
+    if val is None:
+        return "—"
+    s = str(val).strip().replace(",", "").replace("%", "")
+    if not s or s in {"—", "-", "nan", "None"}:
+        return "—"
+    try:
+        x = float(s)
+    except (TypeError, ValueError):
+        return "—"
+    if not np.isfinite(x):
+        return "—"
+    return f"{x:.{nd}f}"
+
+
+def _fmt_watchlist_ymd(val: Any) -> str:
+    ts = pd.to_datetime(val, errors="coerce")
+    if pd.isna(ts):
+        s = str(val or "").strip().replace("-", "")[:8]
+        return s if len(s) == 8 and s.isdigit() else "—"
+    return ts.strftime("%Y%m%d")
+
+
 def _enrich_vz_watchlist_hvn(
     df: pd.DataFrame,
     drive: Path,
     run_ts: Optional[str],
     data_dir: Path = DEFAULT_OHLCV_DATA_DIR,
 ) -> pd.DataFrame:
-    """Add POC / HVN $ / HVN pass? using frozen daily VP at signal bar (research-only)."""
+    """Add POC / HVN $ / HVN pass? plus trigger ATR% / RSI14 / DIST52 (research-only)."""
     if df.empty:
         return df
+    try:
+        from rocket_tbn import _wilder_rsi14_arr
+    except ImportError:
+        from stock_analysis.rocket_tbn import _wilder_rsi14_arr  # type: ignore
     work = df.copy()
     open_by_key = _vz_open_lookup(drive, run_ts)
     ohlc_cache: dict[str, pd.DataFrame] = {}
+    rsi_cache: dict[str, np.ndarray] = {}
     poc_vals: list[str] = []
     hvn_vals: list[str] = []
     pass_vals: list[str] = []
+    atr_vals: list[str] = []
+    rsi_vals: list[str] = []
+    dist_vals: list[str] = []
+    trig_vals: list[str] = []
     for _, row in work.iterrows():
         sym = str(row.get("SYMBOL", "")).strip().upper()
+        zone_lo = str(row.get("ZONE_LO", "")).strip()
+        open_row = open_by_key.get((sym, zone_lo), {})
+        if not open_row:
+            try:
+                zone_key = f"{float(zone_lo):.4f}" if zone_lo else ""
+            except ValueError:
+                zone_key = zone_lo
+            open_row = open_by_key.get((sym, zone_key), {})
+        if not open_row:
+            open_row = next(
+                (v for (s, _), v in open_by_key.items() if s == sym),
+                {},
+            )
+        atr_vals.append(_fmt_watchlist_num(open_row.get("ATR_PCT_AT_TRIGGER"), 2))
+        dist_vals.append(
+            _fmt_watchlist_num(open_row.get("DIST_TO_52W_HIGH_PCT_AT_TRIGGER"), 2)
+        )
         if sym not in ohlc_cache:
             ohlc_cache[sym] = _load_symbol_ohlcv(sym, data_dir)
         ohlc = ohlc_cache.get(sym)
@@ -2291,27 +2602,44 @@ def _enrich_vz_watchlist_hvn(
             poc_vals.append("—")
             hvn_vals.append("—")
             pass_vals.append("—")
+            rsi_vals.append("—")
+            trig_vals.append(_fmt_watchlist_ymd(open_row.get("SIGNAL_DATE")))
             continue
         try:
-            zone_lo, zone_hi = _vz_zone_bounds(row, ohlc)
+            zone_lo_f, zone_hi = _vz_zone_bounds(row, ohlc)
             signal_idx = _vz_signal_bar_index(row, ohlc, open_by_key)
         except (TypeError, ValueError):
             poc_vals.append("—")
             hvn_vals.append("—")
             pass_vals.append("—")
+            rsi_vals.append("—")
+            trig_vals.append(_fmt_watchlist_ymd(open_row.get("SIGNAL_DATE")))
             continue
         if signal_idx is None or signal_idx < 0:
             poc_vals.append("—")
             hvn_vals.append("—")
             pass_vals.append("—")
+            rsi_vals.append("—")
+            trig_vals.append(_fmt_watchlist_ymd(open_row.get("SIGNAL_DATE")))
             continue
+        trig_vals.append(_fmt_watchlist_ymd(ohlc.iloc[signal_idx]["Date"]))
+        if sym not in rsi_cache:
+            rsi_cache[sym] = _wilder_rsi14_arr(
+                ohlc["Close"].to_numpy(dtype=np.float64)
+            )
+        rsi_arr = rsi_cache[sym]
+        rsi_vals.append(
+            _fmt_watchlist_num(rsi_arr[signal_idx], 1)
+            if 0 <= signal_idx < len(rsi_arr)
+            else "—"
+        )
         fields = hvn_gate_fields_at_bar(
             ohlc["High"].to_numpy(dtype=np.float64),
             ohlc["Low"].to_numpy(dtype=np.float64),
             ohlc["Close"].to_numpy(dtype=np.float64),
             ohlc["Volume"].to_numpy(dtype=np.float64),
             signal_idx,
-            zone_lo,
+            zone_lo_f,
             zone_hi,
         )
         if fields is None:
@@ -2325,6 +2653,10 @@ def _enrich_vz_watchlist_hvn(
     work["POC"] = poc_vals
     work["HVN $"] = hvn_vals
     work["HVN pass?"] = pass_vals
+    work["ATR_PCT_AT_TRIGGER"] = atr_vals
+    work["RSI14_AT_TRIGGER"] = rsi_vals
+    work["DIST52_AT_TRIGGER"] = dist_vals
+    work["TRIGGER_DATE"] = trig_vals
     return work
 
 
@@ -2366,10 +2698,14 @@ def _latest_run_timestamp(prefix: str, drive: Path) -> Optional[str]:
     VZ_Watchlist_<stamp>.csv and overwrite VZ_last_run_ts.txt — ignore those for the
     public book. Prefer VZ_house_last_run_ts.txt, else a house-sized VZ_last_run_ts pin,
     else the latest stamp whose VZ_Summary row count matches run_vz.bat house size.
+    RSI (Relative Strength Index) is likewise house-pinned via
+    RSI_house_last_run_ts.txt / house-sized Summary (not RS Relative Strength vs SPY).
     """
     pfx = prefix.upper()
     if pfx == "VZ":
         return _vz_house_run_timestamp(drive)
+    if pfx == "RSI":
+        return _rsi_house_run_timestamp(drive)
     aliases = [pfx]
     if pfx == "WPBR":
         aliases.append("PBR")  # legacy outputs
@@ -2395,6 +2731,8 @@ def _scanner_for_latest_run(
     SB (StockBee) has no Scanner — fall back to Watchlist for the same run stamp.
     VZ (Volume Zone) has no Scanner — Watchlist/Open for the pinned last-run stamp,
     else VZ_LatestRun_Watchlist.csv / Open (not the newest VZ_Watchlist_* on disk).
+    RSI (Relative Strength Index) has no Scanner — Watchlist/Open for
+    the house-pinned stamp (not RS Relative Strength vs SPY).
     """
     pfx = prefix.upper()
     if pfx == "VZ":
@@ -2410,6 +2748,19 @@ def _scanner_for_latest_run(
             return None, pd.DataFrame(), run_ts
         df = _dedupe_vz_watchlist(pd.read_csv(path))
         return path, df, run_ts
+
+    if pfx == "RSI":
+        run_ts = _latest_run_timestamp("RSI", drive)
+        candidates = []
+        if run_ts:
+            candidates.append(drive / f"RSI_Watchlist_{run_ts}.csv")
+            candidates.append(drive / f"RSI_Open_{run_ts}.csv")
+        candidates.append(drive / "RSI_LatestRun_Watchlist.csv")
+        candidates.append(drive / "RSI_LatestRun_Open.csv")
+        path = next((p for p in candidates if p.is_file()), None)
+        if path is None:
+            return None, pd.DataFrame(), run_ts
+        return path, pd.read_csv(path), run_ts
 
     run_ts = _latest_run_timestamp(prefix, drive)
     if not run_ts:
@@ -2440,6 +2791,8 @@ def _closed_avg_days_held_map(
             candidates.append(drive / f"PBR_Closed_{run_ts}.csv")
     if pfx == "VZ":
         candidates.append(drive / "VZ_LatestRun_Closed.csv")
+    if pfx == "RSI":
+        candidates.append(drive / "RSI_LatestRun_Closed.csv")
     if not candidates:
         return {}
     path = next((p for p in candidates if p.is_file()), None)
@@ -2870,6 +3223,29 @@ def _build_system_filter_bundles(
     return metrics_by_key, charts_by_key
 
 
+# Published investment.html lives next to docs/trendlines/index.html (GitHub Pages).
+# Chart sections use id="{SYMBOL}" (see tools/gen_trendlines_charts_html.py).
+TRENDLINES_CHART_HREF = "trendlines/index.html"
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
+_NON_TICKERS = frozenset({"TOTAL", "SYMBOL", "NAN", "NONE", "N/A", "NA"})
+
+
+def _symbol_link(symbol: str) -> str:
+    """Clickable ticker → trendlines chart anchor (sort still uses cell text)."""
+    raw = (symbol or "").strip()
+    if raw.startswith("<a"):
+        return raw
+    sym = raw.upper()
+    if sym in _NON_TICKERS or not _TICKER_RE.match(sym):
+        return html_mod.escape(raw)
+    esc = html_mod.escape(sym)
+    frag = html_mod.escape(sym, quote=True)
+    return (
+        f'<a class="sym" href="{TRENDLINES_CHART_HREF}#{frag}" '
+        f'title="Open {esc} trendline chart">{esc}</a>'
+    )
+
+
 def _html_table(
     headers: list[str],
     rows: list[list[str]],
@@ -3231,6 +3607,7 @@ def build_report(
     rs_scan_path, rs_scan, rs_run_ts = _scanner_for_latest_run("RS", drive_dir)
     sb_scan_path, sb_scan, sb_run_ts = _scanner_for_latest_run("SB", drive_dir)
     vz_scan_path, vz_scan, vz_run_ts = _scanner_for_latest_run("VZ", drive_dir)
+    rsi_scan_path, rsi_scan, rsi_run_ts = _scanner_for_latest_run("RSI", drive_dir)
 
     metrics_by_key, charts_by_key = _build_system_filter_bundles(
         closed,
@@ -3290,7 +3667,7 @@ def build_report(
             open_gain_total += pnl_d
             open_rows.append(
                 [
-                    lot.symbol,
+                    _symbol_link(lot.symbol),
                     lot.system,
                     lot.buy_date.strftime("%m/%d/%Y"),
                     f"${entry:.2f}",
@@ -3305,7 +3682,7 @@ def build_report(
         else:
             open_rows.append(
                 [
-                    lot.symbol,
+                    _symbol_link(lot.symbol),
                     lot.system,
                     lot.buy_date.strftime("%m/%d/%Y"),
                     f"${lot.buy_price:.2f}",
@@ -3355,6 +3732,26 @@ def build_report(
                 "POC",
                 "HVN $",
                 "HVN pass?",
+                "ATR_PCT_AT_TRIGGER",
+                "RSI14_AT_TRIGGER",
+                "DIST52_AT_TRIGGER",
+                "ROW_TYPE",
+                "STATUS",
+                "RSI14",
+                "RSI14_NOW",
+                "PRIOR_OB_RSI14",
+                "ATR_PCT",
+                "MAX_RSI_TRIGGER",
+                "MIN_ATR_PCT",
+                "EXIT_RSI_LEVEL",
+                "TIME_STOP_DAYS",
+                "DAYS_TO_TIME_STOP",
+                "DATE_OPENED",
+                "ENTRY_PRICE",
+                "CURRENT_PRICE",
+                "PNL_PCT",
+                "TRIGGER_HINT",
+                "EXIT_HINT",
                 "SIGNAL_DATE",
                 "PCT_DAY",
                 "DCR",
@@ -3368,13 +3765,21 @@ def build_report(
             ]
             if c in cols
         ]
+        if "TRIGGER_DATE" in pick and "ASOF_DATE" in pick:
+            pick = [c for c in pick if c != "ASOF_DATE"]
         if not pick:
             pick = cols[:8]
         sym_key = "SYMBOL" if "SYMBOL" in cols else ("Symbol" if "Symbol" in cols else None)
         avg_map = avg_days_by_symbol or {}
         out: list[list[str]] = []
         for _, r in df.head(limit).iterrows():
-            row = [str(r.get(c, "")) for c in pick]
+            row: list[str] = []
+            for c in pick:
+                val = str(r.get(c, ""))
+                if sym_key and c == sym_key:
+                    row.append(_symbol_link(val))
+                else:
+                    row.append(val)
             sym = str(r.get(sym_key, "")).strip().upper() if sym_key else ""
             row.append(_fmt_avg_days_held(avg_map.get(sym) if sym else None))
             out.append(row)
@@ -3402,6 +3807,21 @@ def build_report(
             "MUST_OPEN_AT_OR_BELOW",
             "MAX_RISK_PCT",
             "POC",
+            "ATR_PCT_AT_TRIGGER",
+            "RSI14_AT_TRIGGER",
+            "DIST52_AT_TRIGGER",
+            "RSI14",
+            "RSI14_NOW",
+            "PRIOR_OB_RSI14",
+            "ATR_PCT",
+            "MAX_RSI_TRIGGER",
+            "MIN_ATR_PCT",
+            "EXIT_RSI_LEVEL",
+            "TIME_STOP_DAYS",
+            "DAYS_TO_TIME_STOP",
+            "ENTRY_PRICE",
+            "CURRENT_PRICE",
+            "PNL_PCT",
         }
         date_like = {
             "DATE",
@@ -3409,6 +3829,7 @@ def build_report(
             "ENTRY_DATE",
             "ASOF_DATE",
             "SIGNAL_DATE",
+            "DATE_OPENED",
         }
         sort_types: list[str] = []
         for c in pick:
@@ -3449,6 +3870,9 @@ def build_report(
     vz_scan = _enrich_vz_watchlist_hvn(vz_scan, drive_dir, vz_run_ts)
     vz_rows, vz_cols, vz_sort = _scan_rows(
         vz_scan, _closed_avg_days_held_map("VZ", drive_dir, vz_run_ts)
+    )
+    rsi_rows, rsi_cols, rsi_sort = _scan_rows(
+        rsi_scan, _closed_avg_days_held_map("RSI", drive_dir, rsi_run_ts)
     )
 
     pending_sells, sell_thresholds, sell_time_params, sell_as_of = find_all_pending_sells(
@@ -3508,6 +3932,10 @@ def build_report(
         vz_scan_sub += (
             " · VP 60d / 0.5% bins / HVN≥50% POC @ signal bar (HVN pass? = "
             "vz_require_hvn_overlap; house default off — research only)"
+            " · ATR_PCT_AT_TRIGGER = 14-bar Average True Range / trigger close × 100"
+            " · RSI14_AT_TRIGGER = Wilder RSI(14) on the trigger-bar close"
+            " · DIST52_AT_TRIGGER = DIST_TO_52W_HIGH_PCT_AT_TRIGGER"
+            " (percent below the 52-week high at the trigger bar)"
         )
     vz_section_title = (
         "Watchlist — VZ"
@@ -3519,6 +3947,27 @@ def build_report(
         "No VZ open/watchlist rows for the latest run (Open lists live still_open positions; Watchlist mirrors them)."
         if vz_run_ts or vz_scan_path is not None
         else "No VZ run outputs found in Drive."
+    )
+    rsi_scan_sub = _scanner_subtitle(rsi_scan_path, rsi_run_ts, "RSI")
+    if rsi_scan_path is not None and rsi_run_ts is None:
+        rsi_scan_sub = f"{rsi_scan_path.name} (RSI_LatestRun alias; no RSI_last_run_ts.txt pin)"
+    rsi_scan_sub += (
+        " · Relative Strength Index (RSI) — not RS (Relative Strength vs SPY)."
+        " This sleeve writes Watchlist/Open only (no RSI_Scanner CSV)."
+        " Buy-range numbers are in the callout below."
+    )
+    rsi_section_title = (
+        "Watchlist — RSI"
+        if rsi_scan_path is None
+        or "Watchlist" in rsi_scan_path.name
+        or "Open" in rsi_scan_path.name
+        else "Scanner — RSI"
+    )
+    rsi_range_html = _rsi_watch_vs_scan_html(rsi_scan)
+    rsi_empty_msg = (
+        "No RSI open/watchlist rows for the latest run (Relative Strength Index; not RS vs SPY)."
+        if rsi_run_ts or rsi_scan_path is not None
+        else "No RSI run outputs found in Drive."
     )
 
     filter_buttons_html = "".join(
@@ -3565,6 +4014,8 @@ def build_report(
 </header>"""
     else:
         title_block = f"<h1>{REPORT_TITLE}</h1>\n<div class=\"sub\">{sub_line}</div>"
+
+    dailyrun_status_html = _dailyrun_status_section_html(drive_dir)
 
     filter_script = (
         _SYSTEM_FILTER_SCRIPT.replace("__METRICS_JSON__", json.dumps(metrics_by_key))
@@ -3630,8 +4081,28 @@ section {{ page-break-inside: avoid; margin-top:28px; }}
 .filter-hint {{ font-size:12px; color:#64748b; flex:1 1 100%; margin-top:4px; }}
 th.sortable-th {{ min-height:44px; padding:12px 8px; touch-action:manipulation; -webkit-tap-highlight-color:rgba(76,29,149,0.15); }}
 tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#f8fafc; }}
+a.sym {{ color:#1d4ed8; text-decoration:none; font-weight:600; }}
+a.sym:hover {{ text-decoration:underline; }}
+.dailyrun-status {{ margin:8px 0 20px; }}
+.dr-banner {{ padding:12px 16px; border-radius:10px; margin:8px 0 12px; font-size:14px; line-height:1.4; }}
+.dr-banner-warn {{ background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }}
+.dr-banner-ok {{ background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }}
+.dr-pill {{ display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; font-size:11px; letter-spacing:0.02em; }}
+.dr-run {{ background:#dcfce7; color:#166534; }}
+.dr-skipped {{ background:#fef3c7; color:#92400e; }}
+.dr-not-wired {{ background:#e2e8f0; color:#334155; }}
+.dr-stale {{ background:#fee2e2; color:#991b1b; }}
+.dr-missing {{ background:#ffe4e6; color:#9f1239; }}
+.ask-callout {{ background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:14px 18px; margin:8px 0 16px; font-size:14px; line-height:1.45; }}
+.ask-callout h3 {{ margin:0 0 8px; font-size:15px; color:#312e81; }}
+.ask-callout h4 {{ margin:14px 0 6px; font-size:13px; color:#3730a3; }}
+.ask-callout p {{ margin:0 0 8px; }}
+.ask-callout .quote {{ color:#334155; font-style:italic; }}
+.ask-callout ul {{ margin:6px 0 10px 18px; padding:0; }}
 {showcase_css}</style></head><body>
 {title_block}
+
+{dailyrun_status_html}
 
 <div id="system-filter" class="filter-bar" role="group" aria-label="Filter by trading system">
   <span class="filter-label">Show:</span>
@@ -3674,7 +4145,7 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 
 <section>
 <h2>Open Positions</h2>
-<p class="small">Open rows come from <code>gettarget_positions.csv</code> (system purchases; remove a row when sold) plus any other FIFO open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget.</p>
+<p class="small">Open rows come from <code>gettarget_positions.csv</code> (system purchases; remove a row when sold) plus any other FIFO open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
 <div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop"], open_rows, ["text","text","date","num","num","date","num","num","num","num"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
 </section>
 
@@ -3740,6 +4211,13 @@ tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#
 <h2>{vz_section_title}</h2>
 <p class="small">{vz_scan_sub}</p>
 <div class="table-wrap">{_html_table(vz_cols, vz_rows, vz_sort if vz_cols else None) if vz_rows else f'<p>{vz_empty_msg}</p>'}</div>
+</section>
+
+<section data-system-section="RSI">
+<h2>{rsi_section_title}</h2>
+{rsi_range_html}
+<p class="small">{rsi_scan_sub}</p>
+<div class="table-wrap">{_html_table(rsi_cols, rsi_rows, rsi_sort if rsi_cols else None) if rsi_rows else f'<p>{rsi_empty_msg}</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}

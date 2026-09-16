@@ -359,6 +359,8 @@ th.sort-asc .sort-ind::after{content:"▲";color:#1c1b19}
 th.sort-desc .sort-ind::after{content:"▼";color:#1c1b19}
 """
 
+# Already includes <script>…</script>. Emit with {SORTABLE_TABLE_SCRIPT} only —
+# do NOT wrap again in <script>…</script> (nested tags make JS a syntax error).
 SORTABLE_TABLE_SCRIPT = r"""
 <script>
 (function () {

@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
-Volume Zone (VZ) - break & retest research sleeve (TBN-hosted).
+Volume Zone (VZ) - break & retest DailyRun official TBN sleeve.
 
 TBN mode: ``rocket_tbn.py -v vz_mode=true`` (preferred; ``run_vz.bat``).
 Standalone: ``python stock_analysis/rocket_vz.py …`` still works and uses the same
 Closed / Audit / Report / equity / post_run writers as RS/SB peers.
 
 Engine logic: ``tools/vol_zone_break_retest.py``
-  House freeze (DualPaul78 / ``run_vz.bat`` / control ``260817212836``):
+  House freeze (Paul78.142 / ``run_vz.bat`` / PO adopt 2026-09-07):
   HL-only, first_retest, mt≥1, eps=0.005, lookback=126, rw=63, next_open,
-  EXIT_atr4_s025_r15 (stop 0.25·ATR, 1.5R, ts40), min_atr_pct=4, HVN off,
-  cooldown_after_target_days=10 (house adopt 20260821).
+  EXIT_atr4_s025_r15_ts20 — atr4 = 14-day ATR ≥ 4% of price
+  (``min_atr_pct_at_entry`` / ``VZ_MIN_ATR_PCT=4.0``; NOT a 4-ATR stop);
+  s025 = stop at zone.lo − 0.25×ATR; r15 = 1.5R target; ts20 = 20-bar time stop;
+  HVN off, cooldown_after_target_days=10
+  (house adopt 20260821; stop 0.25 PO adopt 20260907).
+  One open position per symbol: ``enrich_trade_rows`` will not fill a second
+  ticket while that name is still held (including same-day two-zone pile-ups).
+  Replay of older Closed books will drop those pyramid fills.
   Historical research object ``PRIMARY_EXIT=zone_atr05_ts40`` is not the house default.
 
 Outputs (prefix ``VZ_``):
@@ -18,10 +24,12 @@ Outputs (prefix ``VZ_``):
   EquityCurve (+ Aggressive) / EquityMeta / Correlation / Summary_Symbols
   Pipeline_Timings / checkpoint / LatestRun_* / last_run_ts
 
-Status: **research candidate only** - not production gold, not DailyRun-wired.
+Status: **DailyRun official TBN sleeve** — not walk-forward gold.
 Docs: drive/paul_experiments/VZ_System_Guide.html
       drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md
       drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html
+      drive/paul_experiments/vz_tbn_adopt_s025_paul78_20260907/
+      drive/paul_experiments/vz_atr_trigger_adopt_20260907/
 
 Examples:
   run_vz.bat
@@ -90,7 +98,10 @@ DEFAULT_DATA_DIR = REPO / "data" / "newdata" / "data"
 DEFAULT_OUT_DIR = REPO / "drive"
 DEFAULT_UNIVERSE = REPO / "drive" / "universes" / "VZ_universe.csv"
 STAMP_ROOT = REPO / "drive" / "paul_experiments"
-VZ_HOUSE_SUMMARY_MAX = 120
+# House sleeve is Paul78.142 (142 names, adopt 2026-09-07). TBN host labels
+# runs as "tbn vz_mode (N sym)" so pin detection falls back to Summary row count.
+# 120 was the DualPaul78 / new56-era cap and would miss a 142-name house pin.
+VZ_HOUSE_SUMMARY_MAX = 160
 
 
 def _is_vz_house_universe(universe_label: str, summary_path: Path) -> bool:
@@ -126,8 +137,12 @@ _VZ_DNA_CLOSED_COLS = (
     "VISIT_N",
     "EXIT_NAME",
     "PARAMS_TAG",
-    "R_MULT",
+    "R_MULT",  # realized R at exit; Closed only — excluded from correlation (CORRELATION_VAR_EXCLUDE)
     "ONE_LINER",
+    # Signal pile-up on this symbol's entry date, counted *before* one-position skip
+    # (GOLD 2020-05-06 still shows 2 even when only one lot is kept).
+    "N_SIGNALS_THAT_DAY",
+    "MULTI_SIGNAL_DAY",
 )
 
 CLOSED_HEADER = [
@@ -164,6 +179,8 @@ CLOSED_HEADER = [
     "EXIT_NAME",
     "PARAMS_TAG",
     "ONE_LINER",
+    "N_SIGNALS_THAT_DAY",
+    "MULTI_SIGNAL_DAY",
 ]
 
 OPEN_HEADER = [
@@ -176,6 +193,8 @@ OPEN_HEADER = [
     "STOP_LOSS",
     "TARGET",
     "ZONE_ID",
+    "N_SIGNALS_THAT_DAY",
+    "MULTI_SIGNAL_DAY",
     "NOTES",
 ]
 
@@ -282,14 +301,23 @@ class VzConfig:
     # House / TBN default: next open after signal bar (predictive). Prior AB freeze used close.
     entry_on: str = "next_open"
     zone_kinds: tuple[str, ...] = ("HL",)
-    exit_name: str = "EXIT_atr4_s025_r15"
-    exit_bars: int = 40
+    exit_name: str = "EXIT_atr4_s025_r15_ts20"
+    exit_bars: int = 20
     target_r: float = 1.5
     stop_atr_buffer: float = 0.25
-    min_atr_pct_at_entry: float = 4.0
+    min_atr_pct_at_entry: float = 0.0
+    # House DailyRun: ATR14/trigger_close*100 >= 4 (scanner-known). Entry gate OFF.
+    # Operational adopt 2026-09-07 after HOLD AB vs entry-priced 4% — not KEEP/gold.
+    min_atr_pct_at_trigger: float = 4.0
+    # Research-only (default OFF). RSI14_AT_ENTRY = Wilder RSI(14) on entry-date close.
+    # Keep if RSI < threshold when >0. Not a DailyRun / house pin lever.
+    max_rsi14_at_entry: float = 0.0
+    # Research-only (default OFF). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= this.
+    min_dist_to_52w_high_pct_at_trigger: float = 0.0
     require_hvn_overlap: bool = False  # Step C: default OFF (HOLD DualPaul78 + 764; not adopted)
     # Post-TARGET re-entry gate: block new entries on same symbol for N calendar days
     # after a TARGET exit (inclusive). House adopt 20260821 = 10 (0 = off).
+    # Separate from one-position-per-symbol in enrich_trade_rows (always on).
     cooldown_after_target_days: int = 10
     sheet_notional: float = SHEET_NOTIONAL
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
@@ -327,7 +355,7 @@ def exit_spec_from_cfg(cfg: VzConfig) -> ExitSpec:
     """Build exit from cfg knobs so -v vz_stop_atr_buffer / vz_target_r actually apply.
 
     Only reuse PRIMARY_EXIT identity when name + stop + target + bars all match
-    (legacy zone_atr05_ts40). House EXIT_atr4_s025_r15 always uses cfg knobs.
+    (legacy zone_atr05_ts40). House EXIT_atr4_s025_r15_ts20 always uses cfg knobs.
     """
     if (
         str(cfg.exit_name) == PRIMARY_EXIT.name
@@ -354,18 +382,31 @@ def filter_sigs_min_atr_pct(
     df: pd.DataFrame,
     atr: np.ndarray,
     min_atr_pct: float,
+    *,
+    at_trigger: bool = False,
 ) -> list:
-    """Keep signals with ATR14/entry_price*100 >= min_atr_pct (0 = no filter)."""
+    """Keep signals with ATR14/price*100 >= min_atr_pct (0 = no filter).
+
+    House (``at_trigger=True``): ATR14 at signal_idx / trigger close —
+    same identity as Closed ``ATR_PCT_AT_TRIGGER``; scanner-known at signal.
+    Legacy (``at_trigger=False``): ATR14 at entry_idx / entry_price (fill).
+    """
     thr = float(min_atr_pct or 0.0)
     if thr <= 0 or not sigs:
         return list(sigs)
     closes = df["Close"].to_numpy(dtype=np.float64)
     kept: list = []
     for s in sigs:
-        i = int(s.entry_idx)
-        px = float(s.entry_price) or (
-            float(closes[i]) if 0 <= i < len(closes) else 0.0
-        )
+        if at_trigger:
+            i = int(getattr(s, "signal_idx", -1))
+            if i < 0:
+                i = int(s.entry_idx) - 1 if int(s.entry_idx) > 0 else int(s.entry_idx)
+            px = float(closes[i]) if 0 <= i < len(closes) else 0.0
+        else:
+            i = int(s.entry_idx)
+            px = float(s.entry_price) or (
+                float(closes[i]) if 0 <= i < len(closes) else 0.0
+            )
         a = (
             float(atr[i])
             if 0 <= i < len(atr) and np.isfinite(atr[i])
@@ -373,6 +414,67 @@ def filter_sigs_min_atr_pct(
         )
         atr_pct = (a / px * 100.0) if px > 0 else 0.0
         if atr_pct >= thr:
+            kept.append(s)
+    return kept
+
+
+def filter_sigs_max_rsi14_at_entry(
+    sigs: list,
+    df: pd.DataFrame,
+    max_rsi: float,
+) -> list:
+    """Keep signals with Wilder RSI(14) on entry-date close < max_rsi (0 = off).
+
+    Same identity as Closed ``RSI14_AT_ENTRY`` / ``rocket_tbn._wilder_rsi14_arr``.
+    Uses the fill bar close (next_open = T+1), not the trigger-bar close.
+    """
+    thr = float(max_rsi or 0.0)
+    if thr <= 0 or not sigs:
+        return list(sigs)
+    try:
+        from rocket_tbn import _wilder_rsi14_arr
+    except ImportError:
+        from stock_analysis.rocket_tbn import _wilder_rsi14_arr  # type: ignore
+    closes = df["Close"].to_numpy(dtype=np.float64)
+    rsi_arr = _wilder_rsi14_arr(closes)
+    kept: list = []
+    for s in sigs:
+        i = int(s.entry_idx)
+        val = float(rsi_arr[i]) if 0 <= i < len(rsi_arr) else float("nan")
+        if np.isfinite(val) and val < thr:
+            kept.append(s)
+    return kept
+
+
+def filter_sigs_min_dist_52w_at_trigger(
+    sigs: list,
+    df: pd.DataFrame,
+    min_dist_pct: float,
+) -> list:
+    """Keep signals with DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= min_dist_pct (0 = off).
+
+    Same identity as Closed / ``rocket_tbn._high_52w_and_dist_pct`` on the
+    trigger bar (signal_idx) using that bar's close.
+    """
+    thr = float(min_dist_pct or 0.0)
+    if thr <= 0 or not sigs:
+        return list(sigs)
+    try:
+        from rocket_tbn import _high_52w_and_dist_pct
+    except ImportError:
+        from stock_analysis.rocket_tbn import _high_52w_and_dist_pct  # type: ignore
+    highs = df["High"].to_numpy(dtype=np.float64)
+    closes = df["Close"].to_numpy(dtype=np.float64)
+    kept: list = []
+    for s in sigs:
+        i = int(getattr(s, "signal_idx", -1))
+        if i < 0:
+            i = int(s.entry_idx) - 1 if int(s.entry_idx) > 0 else int(s.entry_idx)
+        if i < 0 or i >= len(closes):
+            continue
+        px = float(closes[i])
+        _hi, dist = _high_52w_and_dist_pct(highs, i, px)
+        if dist is not None and np.isfinite(float(dist)) and float(dist) >= thr:
             kept.append(s)
     return kept
 
@@ -408,6 +510,13 @@ def enrich_trade_rows(
     When ``cooldown_after_target_days`` > 0: per-symbol, skip entries whose entry date
     falls 0..N calendar days (inclusive) after a prior TARGET exit on that symbol.
     Matches Closed-overlay ``filter_cd_target10`` in ``tools/vz_improve_ab_20260821.py``.
+
+    One-position-per-symbol (operational, not a param A/B): after a fill is taken,
+    skip later signals whose ``entry_idx`` is still on or before that trade's exit
+    bar. Same-day two-zone tickets are dropped. Same-session re-entry after an
+    exit is also dropped (we still own the name at that day's open). Next session
+    after ``DATE_CLOSED`` is allowed. Replay of pre-fix Closed books will drop
+    pyramid / overlapping fills.
     """
     closed: list[dict[str, Any]] = []
     opens: list[dict[str, Any]] = []
@@ -419,9 +528,28 @@ def enrich_trade_rows(
     zone_hi_fallback = 0.0
     cd = int(cooldown_after_target_days or 0)
     last_target_exit: Optional[date] = None
-    # Chronological order required for cooldown (signals are usually bar-ordered already).
-    sigs_ordered = sorted(sigs, key=lambda s: (int(s.entry_idx), str(s.entry_date)))
+    held_until_idx = -1
+    # Count every incoming signal by fill date *before* one-position / cooldown skip
+    # so a two-zone day (GOLD 2020-05-06) still reports N=2 on the kept lot.
+    n_signals_by_entry: dict[str, int] = {}
+    for raw in sigs:
+        k = _ymd(getattr(raw, "entry_date", None))
+        if k:
+            n_signals_by_entry[k] = n_signals_by_entry.get(k, 0) + 1
+    # Chronological + stable: earlier break first when two zones share a fill bar.
+    sigs_ordered = sorted(
+        sigs,
+        key=lambda s: (
+            int(s.entry_idx),
+            int(getattr(s, "break_idx", 0) or 0),
+            str(getattr(s, "zone_id", "") or ""),
+            str(getattr(s, "side", "long") or "long"),
+        ),
+    )
     for s in sigs_ordered:
+        entry_i = int(s.entry_idx)
+        if entry_i <= held_until_idx:
+            continue
         entry_d = pd.Timestamp(s.entry_date).date()
         if cd > 0 and last_target_exit is not None:
             gap = (entry_d - last_target_exit).days
@@ -430,6 +558,9 @@ def enrich_trade_rows(
         sim = simulate_exit_spec(df, s, exit_spec, atr=atr)
         bars = int(sim["bars_held"])
         exit_idx = min(len(df) - 1, int(s.entry_idx) + bars)
+        # Occupy the symbol through the exit (or as-of) bar so a later zone
+        # cannot open a second lot while this one is still held.
+        held_until_idx = int(exit_idx)
         entry = float(s.entry_price)
         pnl_pct = float(sim["pnl_pct"])
         exit_px = _exit_price_from_pnl(entry, pnl_pct)
@@ -458,6 +589,8 @@ def enrich_trade_rows(
             exit_type = exit_reason
         d_open = _ymd(s.entry_date)
         d_signal = _ymd(getattr(s, "signal_date", None) or s.entry_date)
+        n_sig_day = int(n_signals_by_entry.get(d_open, 1) or 1)
+        multi_sig_day = "YES" if n_sig_day >= 2 else "NO"
         # Predictive smoke: signal known on signal bar; entry never before signal.
         try:
             assert_predictive_entry(s, str(params.entry_on))  # type: ignore[arg-type]
@@ -528,6 +661,8 @@ def enrich_trade_rows(
             "EXIT_NAME": exit_spec.name,
             "PARAMS_TAG": s.params_tag,
             "ENTRY_BAR_INDEX": int(s.entry_idx),
+            "N_SIGNALS_THAT_DAY": n_sig_day,
+            "MULTI_SIGNAL_DAY": multi_sig_day,
             "_signal": signal_dict,
         }
         if raw_reason in _STILL_OPEN_REASONS:
@@ -642,6 +777,23 @@ def _process_one_symbol(
         # and could diverge if first_retest_only were false. ATR remains post-signal.
         sigs = filter_sigs_min_atr_pct(
             sigs, df, atr, float(getattr(cfg, "min_atr_pct_at_entry", 0.0) or 0.0)
+        )
+        sigs = filter_sigs_min_atr_pct(
+            sigs,
+            df,
+            atr,
+            float(getattr(cfg, "min_atr_pct_at_trigger", 0.0) or 0.0),
+            at_trigger=True,
+        )
+        sigs = filter_sigs_min_dist_52w_at_trigger(
+            sigs,
+            df,
+            float(getattr(cfg, "min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0),
+        )
+        sigs = filter_sigs_max_rsi14_at_entry(
+            sigs,
+            df,
+            float(getattr(cfg, "max_rsi14_at_entry", 0.0) or 0.0),
         )
         rows_closed, rows_open = enrich_trade_rows(
             sym,
@@ -874,7 +1026,7 @@ def write_equity(
                 "Aggressive": bool(aggressive),
                 "Curve_Kind": "realized_sheet_notional_by_exit_date",
                 "Sheet_Notional": SHEET_NOTIONAL,
-                "Note": "VZ research sleeve - sheet $45k/trade; not host dollar-scale",
+                "Note": "VZ DailyRun TBN sleeve - sheet $45k/trade; not host dollar-scale",
             }
         ]
     ).to_csv(meta_path, index=False)
@@ -947,6 +1099,11 @@ def brt_config_from_vz(cfg: VzConfig, host_cfg: Any = None) -> Any:
         vz_target_r=float(cfg.target_r),
         vz_stop_atr_buffer=float(cfg.stop_atr_buffer),
         vz_min_atr_pct_at_entry=float(cfg.min_atr_pct_at_entry),
+        vz_min_atr_pct_at_trigger=float(getattr(cfg, "min_atr_pct_at_trigger", 0.0) or 0.0),
+        vz_max_rsi14_at_entry=float(getattr(cfg, "max_rsi14_at_entry", 0.0) or 0.0),
+        vz_min_dist_to_52w_high_pct_at_trigger=float(
+            getattr(cfg, "min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0
+        ),
         vz_require_hvn_overlap=bool(getattr(cfg, "require_hvn_overlap", False)),
         vz_sheet_notional=float(cfg.sheet_notional),
         vz_trade_side=str(getattr(cfg, "trade_side", "long") or "long"),
@@ -973,11 +1130,16 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         min_touches_before_entry=int(getattr(cfg, "vz_min_touches_before_entry", 1)),
         entry_on=str(getattr(cfg, "vz_entry_on", "next_open") or "next_open"),
         zone_kinds=zone_kinds,  # type: ignore[arg-type]
-        exit_name=str(getattr(cfg, "vz_exit_name", "EXIT_atr4_s025_r15")),
-        exit_bars=int(getattr(cfg, "vz_exit_bars", 40)),
+        exit_name=str(getattr(cfg, "vz_exit_name", "EXIT_atr4_s025_r15_ts20")),
+        exit_bars=int(getattr(cfg, "vz_exit_bars", 20)),
         target_r=float(getattr(cfg, "vz_target_r", 1.5)),
         stop_atr_buffer=float(getattr(cfg, "vz_stop_atr_buffer", 0.25)),
-        min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 4.0) or 0.0),
+        min_atr_pct_at_entry=float(getattr(cfg, "vz_min_atr_pct_at_entry", 0.0) or 0.0),
+        min_atr_pct_at_trigger=float(getattr(cfg, "vz_min_atr_pct_at_trigger", 4.0) or 0.0),
+        max_rsi14_at_entry=float(getattr(cfg, "vz_max_rsi14_at_entry", 0.0) or 0.0),
+        min_dist_to_52w_high_pct_at_trigger=float(
+            getattr(cfg, "vz_min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0
+        ),
         require_hvn_overlap=bool(getattr(cfg, "vz_require_hvn_overlap", False)),
         sheet_notional=float(getattr(cfg, "vz_sheet_notional", SHEET_NOTIONAL)),
         initial_capital=float(getattr(cfg, "initial_capital", DEFAULT_INITIAL_CAPITAL) or DEFAULT_INITIAL_CAPITAL),
@@ -994,9 +1156,34 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
     )
 
 
+def _vz_stop_key(v: Any) -> str:
+    """Normalize STOP so in-memory 4-dec floats match BRT CSV ``.2f`` writes."""
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    try:
+        return f"{float(s):.2f}"
+    except ValueError:
+        return s
+
+
+def _vz_dna_row_key(r: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Match Closed DNA without collapsing same-day two-zone tickets.
+
+    Historical books keyed only (SYMBOL, DATE_OPENED, DATE_CLOSED), so two GOLD
+    fills on 20200506 both inherited the last zone's ZONE_ID. Include STOP.
+    """
+    return (
+        str(r.get("SYMBOL", "") or "").strip().upper(),
+        str(r.get("DATE_OPENED", "") or "").strip(),
+        str(r.get("DATE_CLOSED", "") or "").strip(),
+        _vz_stop_key(r.get("STOP_PRICE", "")),
+    )
+
+
 def _splice_vz_dna_columns(
     path: Path,
-    dna_by_key: dict[tuple[str, str, str], dict[str, str]],
+    dna_by_key: dict[tuple[str, str, str, str], dict[str, str]],
     dna_cols: tuple[str, ...],
 ) -> None:
     if not path.is_file():
@@ -1011,10 +1198,7 @@ def _splice_vz_dna_columns(
         if c not in fieldnames:
             fieldnames.append(c)
     for row in rows:
-        sym = str(row.get("SYMBOL", "") or "").strip().upper()
-        opened = str(row.get("DATE_OPENED", "") or "").strip()
-        closed = str(row.get("DATE_CLOSED", "") or "").strip()
-        dna = dna_by_key.get((sym, opened, closed)) or {}
+        dna = dna_by_key.get(_vz_dna_row_key(row)) or {}
         for c in dna_cols:
             row[c] = dna.get(c, row.get(c, ""))
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -1042,7 +1226,7 @@ def write_report(path: Path, stamp: str, cfg: VzConfig, meta: dict[str, Any]) ->
     params: SysParams = meta["params"]
     lines = [
         f"VZ Volume Zone report {stamp}",
-        "STATUS=RESEARCH_CANDIDATE (not gold / not DailyRun)",
+        "STATUS=DAILYRUN_TBN_OFFICIAL (not walk-forward gold)",
         "ENGINE=rocket_tbn vz_mode / rocket_vz (TBN Closed+Audit DNA)",
         f"freeze=RESEARCH_CANDIDATE_V2_RW63 exit={exit_spec.name}",
         f"lookback={params.lookback_days} rw={params.retest_window} eps={params.retest_eps_pct} "
@@ -1106,7 +1290,7 @@ code{{background:#f4f4f5;padding:1px 5px;border-radius:3px;font-size:12px}}
 </style></head><body>
 <h1>VZ - Volume Zone run summary</h1>
 <p class="meta">Stamp <code>{html_mod.escape(stamp)}</code> · Universe <code>{html_mod.escape(universe_label)}</code></p>
-<div class="bad"><strong>Research candidate only.</strong> Not production gold. Not DailyRun-wired.
+<div class="callout"><strong>DailyRun official TBN sleeve.</strong> Not walk-forward gold.
 Frozen knobs from <code>RESEARCH_CANDIDATE_V2_RW63</code> + <code>{html_mod.escape(exit_spec.name)}</code>.
 OOS is report-only - do not retune.</div>
 <div class="callout"><strong>Predictive timing:</strong> signal bar = retest known at close
@@ -1149,10 +1333,10 @@ elapsed {meta.get('elapsed_sec'):.1f}s · artifacts under <code>drive/VZ_*_{html
 
 
 def write_baseline_md(path: Path, *, stamp: str, universe_label: str, n_symbols: int, cfg: VzConfig) -> None:
-    md = f"""# VZ run stamp - RESEARCH (not gold)
+    md = f"""# VZ run stamp - DailyRun official TBN (not walk-forward gold)
 
 **Stamp:** `{stamp}`  
-**Status:** Research sleeve via `run_vz.bat` -> `rocket_tbn -v vz_mode=true` / `rocket_vz.py` - **not** production gold, **not** DailyRun-wired.
+**Status:** DailyRun official Twin Beacon Networks (TBN) sleeve via `run_vz.bat` -> `rocket_tbn -v vz_mode=true` / `rocket_vz.py` — **not** walk-forward gold.
 
 ## Freeze (default knobs - do not retune on OOS)
 
@@ -1165,7 +1349,11 @@ def write_baseline_md(path: Path, *, stamp: str, universe_label: str, n_symbols:
 | retest_eps_pct | {cfg.retest_eps_pct} |
 | retest_window | {cfg.retest_window} |
 | entry_on | {cfg.entry_on} (house default next_open; prior AB freeze used close) |
-| Primary exit | `{cfg.exit_name}` (stop = zone.lo − {cfg.stop_atr_buffer}·ATR; target {cfg.target_r}R; time stop {cfg.exit_bars}d) |
+| Primary exit | `{cfg.exit_name}` (atr4 = 14-day ATR ≥ {float(getattr(cfg, "min_atr_pct_at_trigger", 4.0) or 0.0)}% of trigger close, not a 4-ATR stop; s025 = zone.lo − {cfg.stop_atr_buffer}·ATR; r15 = {cfg.target_r}R; ts20 = {cfg.exit_bars}d) |
+| min_atr_pct_at_entry | {cfg.min_atr_pct_at_entry} (house 0 = off; do not also apply entry gate) |
+| min_atr_pct_at_trigger | {float(getattr(cfg, "min_atr_pct_at_trigger", 4.0) or 0.0)} (house 4.0; ATR14/trigger_close; the atr4 token — not a 4-ATR stop) |
+| max_rsi14_at_entry | {float(getattr(cfg, "max_rsi14_at_entry", 0.0) or 0.0)} (research-only; 0=off; keep if RSI14_AT_ENTRY < this) |
+| min_dist_to_52w_high_pct_at_trigger | {float(getattr(cfg, "min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)} (research-only; 0=off; keep if DIST >= this) |
 | require_hvn_overlap | {cfg.require_hvn_overlap} (default false; VP at signal_idx) |
 | cooldown_after_target_days | {int(getattr(cfg, "cooldown_after_target_days", 10) or 0)} (house 10; calendar days after TARGET exit; 0=off) |
 | trade_side | {cfg.trade_side} (long = house HL break-up retest; short = break-down mirror) |
@@ -1179,7 +1367,7 @@ Fill: next open (T+1) by default, or T close. **Forbidden:** buy T open using T'
 
 - Label: `{universe_label}`
 - Symbols requested: {n_symbols}
-- Default research univ: `drive/universes/VZ_universe.csv` (DualPaul78 83-name set)
+- Default house univ: `drive/universes/VZ_universe.csv` (Paul78.142, 142 names)
 
 ## Chronologic split
 
@@ -1303,13 +1491,16 @@ def write_outputs(
     except Exception as e:  # noqa: BLE001
         print(f"[VZ] post_entry enrich skipped: {e}", flush=True)
 
-    write_brt_closed(brt_closed, str(closed_path), cfg=report_cfg)
+    write_brt_closed(
+        brt_closed,
+        str(closed_path),
+        cfg=report_cfg,
+        tickers=tickers_mtm,
+        data_dir=data_dir,
+    )
     _splice_vz_dna_columns(
         closed_path,
-        {
-            (str(r["SYMBOL"]).upper(), str(r["DATE_OPENED"]), str(r["DATE_CLOSED"])): _vz_dna_from_closed_row(r)
-            for r in closed
-        },
+        {_vz_dna_row_key(r): _vz_dna_from_closed_row(r) for r in closed},
         _VZ_DNA_CLOSED_COLS,
     )
     write_brt_open(
@@ -1319,6 +1510,11 @@ def write_outputs(
         brt_cash=float(cfg.brt_cash or cfg.sheet_notional),
         closed=brt_closed,
         cfg=report_cfg,
+    )
+    _splice_vz_dna_columns(
+        open_path,
+        {_vz_dna_row_key(r): _vz_dna_from_closed_row(r) for r in opens},
+        ("N_SIGNALS_THAT_DAY", "MULTI_SIGNAL_DAY"),
     )
     with watch_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -1635,31 +1831,41 @@ def write_outputs(
             shutil.copy2(paths["audit"], stamp_dir / paths["audit"].name)
         paths["stamp_dir"] = stamp_dir
 
-    for label, src in [
-        ("Closed", closed_path),
-        ("Open", open_path),
-        ("Summary", summary_path),
-        ("Watchlist", watch_path),
-        ("Audit_Report", paths.get("audit", audit_path)),
-        ("EquityCurve", paths.get("equity", equity_path)),
-    ]:
-        if src is None or not Path(src).exists():
-            continue
-        dst = output_dir / f"{FILE_PREFIX}_LatestRun_{label}.csv"
-        shutil.copy2(src, dst)
-        paths[f"latest_{label}"] = dst
-    if "summary_symbols" in paths:
-        shutil.copy2(
-            paths["summary_symbols"],
-            output_dir / f"{FILE_PREFIX}_LatestRun_Summary_Symbols.csv",
+    # LatestRun + house pin are the DailyRun regression baseline. ALL / research
+    # stamps must not overwrite them (Copy-LatestRunOutputs.ps1 also prefers the pin).
+    is_house = _is_vz_house_universe(universe_label, summary_path)
+    if is_house:
+        for label, src in [
+            ("Closed", closed_path),
+            ("Open", open_path),
+            ("Summary", summary_path),
+            ("Watchlist", watch_path),
+            ("Audit_Report", paths.get("audit", audit_path)),
+            ("EquityCurve", paths.get("equity", equity_path)),
+        ]:
+            if src is None or not Path(src).exists():
+                continue
+            dst = output_dir / f"{FILE_PREFIX}_LatestRun_{label}.csv"
+            shutil.copy2(src, dst)
+            paths[f"latest_{label}"] = dst
+        if "summary_symbols" in paths:
+            shutil.copy2(
+                paths["summary_symbols"],
+                output_dir / f"{FILE_PREFIX}_LatestRun_Summary_Symbols.csv",
+            )
+        if "correlation" in paths:
+            shutil.copy2(paths["correlation"], output_dir / f"{FILE_PREFIX}_LatestRun_Correlation.csv")
+        shutil.copy2(run_html, output_dir / f"{FILE_PREFIX}_LatestRun_Run_Summary.html")
+        (output_dir / f"{FILE_PREFIX}_house_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
+        print(f"[VZ] House pin + LatestRun -> {stamp} (regression baseline)", flush=True)
+    else:
+        print(
+            f"[VZ] Non-house run {stamp} ({universe_label!r}): "
+            f"left {FILE_PREFIX}_LatestRun_* and house pin unchanged",
+            flush=True,
         )
-    if "correlation" in paths:
-        shutil.copy2(paths["correlation"], output_dir / f"{FILE_PREFIX}_LatestRun_Correlation.csv")
-    shutil.copy2(run_html, output_dir / f"{FILE_PREFIX}_LatestRun_Run_Summary.html")
     (output_dir / f"{FILE_PREFIX}_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
     (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
-    if _is_vz_house_universe(universe_label, summary_path):
-        (output_dir / f"{FILE_PREFIX}_house_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
     paths["closed"] = closed_path
     paths["open"] = open_path
     paths["watchlist"] = watch_path
@@ -1760,7 +1966,7 @@ def run_vz_from_brt_main(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="VZ Volume Zone research sleeve (VZ_* house artifacts)"
+        description="VZ Volume Zone DailyRun official TBN sleeve (VZ_* house artifacts)"
     )
     p.add_argument("data_dir", nargs="?", default=str(DEFAULT_DATA_DIR))
     p.add_argument("-o", "--output-dir", default=str(DEFAULT_OUT_DIR))
@@ -1773,11 +1979,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--first-retest-only", type=_as_bool, default=True)
     p.add_argument("--min-touches", type=int, default=1)
     p.add_argument("--entry-on", default="next_open", choices=["close", "next_open"])
-    p.add_argument("--exit-name", default="EXIT_atr4_s025_r15")
-    p.add_argument("--exit-bars", type=int, default=40)
+    p.add_argument("--exit-name", default="EXIT_atr4_s025_r15_ts20")
+    p.add_argument("--exit-bars", type=int, default=20)
     p.add_argument("--target-r", type=float, default=1.5)
     p.add_argument("--stop-atr-buffer", type=float, default=0.25)
-    p.add_argument("--min-atr-pct-at-entry", type=float, default=4.0)
+    p.add_argument(
+        "--min-atr-pct-at-entry",
+        type=float,
+        default=0.0,
+        help="ATR14/entry_price*100 floor (0=off). House DailyRun leaves this off.",
+    )
+    p.add_argument(
+        "--min-atr-pct-at-trigger",
+        type=float,
+        default=4.0,
+        help="ATR14/trigger_close*100 floor (house 4.0; the atr4 token).",
+    )
     p.add_argument(
         "--require-hvn-overlap",
         type=_as_bool,
@@ -1819,7 +2036,13 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
                 "min_touches_before_entry": "min_touches_before_entry",
                 "min_touches": "min_touches_before_entry",
                 "vz_min_atr_pct_at_entry": "min_atr_pct_at_entry",
-                "min_atr_pct": "min_atr_pct_at_entry",
+                "min_atr_pct": "min_atr_pct_at_trigger",
+                "vz_min_atr_pct_at_trigger": "min_atr_pct_at_trigger",
+                "min_atr_pct_at_trigger": "min_atr_pct_at_trigger",
+                "vz_max_rsi14_at_entry": "max_rsi14_at_entry",
+                "max_rsi14_at_entry": "max_rsi14_at_entry",
+                "vz_min_dist_to_52w_high_pct_at_trigger": "min_dist_to_52w_high_pct_at_trigger",
+                "min_dist_to_52w_high_pct_at_trigger": "min_dist_to_52w_high_pct_at_trigger",
                 "vz_require_hvn_overlap": "require_hvn_overlap",
                 "vz_trade_side": "trade_side",
                 "trade_side": "trade_side",
@@ -1857,7 +2080,8 @@ def cfg_from_args(ns: argparse.Namespace) -> VzConfig:
         exit_bars=int(ns.exit_bars),
         target_r=float(ns.target_r),
         stop_atr_buffer=float(ns.stop_atr_buffer),
-        min_atr_pct_at_entry=float(getattr(ns, "min_atr_pct_at_entry", 4.0) or 0.0),
+        min_atr_pct_at_entry=float(getattr(ns, "min_atr_pct_at_entry", 0.0) or 0.0),
+        min_atr_pct_at_trigger=float(getattr(ns, "min_atr_pct_at_trigger", 4.0) or 0.0),
         require_hvn_overlap=bool(getattr(ns, "require_hvn_overlap", False)),
         cooldown_after_target_days=int(
             getattr(ns, "cooldown_after_target_days", 10) or 0

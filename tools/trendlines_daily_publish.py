@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""DailyRun hook: regenerate trendline + VZ 6m charts for opens universe.
+"""DailyRun hook: trendline + VZ 6m charts, buy-low B score, holdings sells.
 
-Universe = gettarget_positions.csv ∪ drive/*_LatestRun_Open.csv ∪ investment-report
-scanners (stamped to latest core run) ∪ always-include extras (SPY, APP, …) — deduped.
-Writes stable output under drive/paul_studies/trendlines_opens_latest/ for GitHub Pages.
+Universe = gettarget helds/opens ∪ live DailyRun Open ∪ Watchlist ∪ Scanner
+∪ always-include (PaulTwenty ∪ SPY/APP/…) — deduped. Live sleeves come from
+``dailyrun_system_status.live_trendline_systems`` (wired registry).
+
+If a live-list name has no chart, generate it then score (no silent skip).
+``buy_today.html`` always includes a Sell / caution holdings section (inverse
+of buy-low B: weekly support DOWN and/or close through support).
+
+Writes ``drive/paul_studies/trendlines_opens_latest/`` (charts + buy_today.html)
+and copies ``drive/Trendlines_BuyToday_Latest.html`` + mobile inbox.
 
 Skip: SKIP_TRENDLINES=1
 """
@@ -22,6 +29,7 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 from trendlines_opens_universe import collect_opens_universe, meta_to_jsonable  # noqa: E402
+from trendlines_score_live import run_daily_score  # noqa: E402
 
 DEFAULT_OUT = _REPO / "drive" / "paul_studies" / "trendlines_opens_latest"
 STAMP_DOC = _REPO / "drive" / "paul_experiments" / "trendlines_daily_publish_20260902"
@@ -40,6 +48,7 @@ def main() -> int:
     ap.add_argument("--positions-csv", type=Path, default=_REPO / "gettarget_positions.csv")
     ap.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--skip-ntfy", action="store_true")
+    ap.add_argument("--skip-score", action="store_true", help="Charts only (tests)")
     ap.add_argument("--limit", type=int, default=0, help="Smoke: cap symbol count")
     args = ap.parse_args()
 
@@ -56,22 +65,23 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    sym_csv = ",".join(syms)
     py = sys.executable
+    sym_file = out_dir / "_daily_symbols.txt"
+    sym_file.write_text("\n".join(syms) + "\n", encoding="utf-8")
 
     _run(
         [
             py,
             str(_TOOLS / "gen_trendlines_tos_studies.py"),
-            "--symbols",
-            sym_csv,
+            "--symbols-file",
+            str(sym_file),
             "--stamp",
             "trendlines_opens_latest",
             "--stamp-dir",
             str(out_dir),
             "--intro",
-            "Daily opens+scanner universe: gettarget_positions + LatestRun opens + "
-            "investment-report scanners + extras (SPY, APP, durable watchlist).",
+            "Daily opens+helds+watch+scan universe: gettarget_positions + live DailyRun "
+            "Open/Watchlist/Scanner + PaulTwenty + extras. Missing charts are generated, then scored.",
         ]
     )
 
@@ -106,19 +116,30 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    if not args.skip_ntfy:
-        _run(
-            [
-                py,
-                str(_TOOLS / "ntfy_job_done.py"),
-                "--path",
-                str(charts_index),
-                "-t",
-                "Trendlines charts",
-                "-m",
-                f"Daily trendlines+VZ charts — {len(syms)} symbols",
-            ]
+    if not args.skip_score:
+        print("[trendlines_daily] scoring buy-low B + holdings sells (ensure missing charts first)")
+        run_daily_score(
+            args.drive,
+            args.positions_csv,
+            out_dir,
+            skip_ntfy=True,
         )
+
+    if not args.skip_ntfy:
+        ntfy = [
+            py,
+            str(_TOOLS / "ntfy_job_done.py"),
+            "--path",
+            str(charts_index),
+            "-t",
+            "Trendlines charts + score",
+            "-m",
+            f"Daily trendlines+VZ+score — {len(syms)} symbols",
+        ]
+        score_html = out_dir / "buy_today.html"
+        if score_html.is_file():
+            ntfy[4:4] = ["--path", str(score_html)]
+        _run(ntfy)
 
     print(f"[trendlines_daily] Done — {charts_index}")
     return 0

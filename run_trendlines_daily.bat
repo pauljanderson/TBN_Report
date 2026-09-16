@@ -1,6 +1,6 @@
 @echo off
 
-rem Daily trendline + VZ charts for opens + scanner universe (DailyRun step 13c)
+rem Daily trendline + VZ charts + buy-low B score + holdings sells (DailyRun step 13c)
 
 rem Skip: set SKIP_TRENDLINES=1
 

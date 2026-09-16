@@ -12,8 +12,8 @@ SIGNAL_LOW, RISK_PCT, MM_RATIO, T1_*) is included automatically after
 SIGNAL_DATE is on Closed but excluded here (date stamp in BASE_EXCLUDE).
 Note: VOL_RATIO = V[T]/V[T−1]; VOL_VS_50 = V[T]/mean(prior 50d volume).
 
-Predictor rows exclude look-ahead labels, date stamps, and entry-bar-only fields
-(see BASE_EXCLUDE / CORRELATION_VAR_EXCLUDE).
+Predictor rows exclude look-ahead labels, date stamps, entry-bar-only fields,
+and realized-outcome R_MULT / R_MULTIPLE (see BASE_EXCLUDE / CORRELATION_VAR_EXCLUDE).
 Usage: python correlate_brt_closed.py <BRT_Closed_*.csv> [output.csv]
 Or call run_correlation_report(closed_csv_path, output_csv_path) from rocket_brt / SB after each run.
 """
@@ -53,6 +53,10 @@ CORRELATION_VAR_EXCLUDE = frozenset({
     "ENTRY_PIVOT_WAS_STRONG",
     "VOLUME_AT_ENTRY",
     "REALTIME_SCORE",
+    # Realized R at exit (STOP ~ -1, TARGET +1.5, TIME = (exit-entry)/risk).
+    # Outcome leak spliced onto Closed DNA — not a trigger-time / pre-trade correlate.
+    "R_MULT",
+    "R_MULTIPLE",
 })
 
 CORRELATION_TARGETS = ("PNL_PCT", "ANN_ROR_PCT", "POST_ENTRY_GAIN_HIT")

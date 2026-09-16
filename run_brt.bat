@@ -1,5 +1,7 @@
 @echo off
 rem BRT zone backtest (whitelist) — outputs BRT_Closed|Open|Scanner|Watchlist_<ts>.csv in drive\
+rem Kelly size A/Bs (research only, house sheet ~$47.5k unchanged):
+rem   drive\paul_experiments\kelly_size_ab_20260915\
 rem Standalone: double-click or call from DailyRun.
 rem Universe: drive\universes\BRT_universe.csv (one ticker per line)
 rem Override: run_brt.bat path\to\test_universe.csv

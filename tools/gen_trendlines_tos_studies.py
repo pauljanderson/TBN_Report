@@ -1270,12 +1270,38 @@ def resolve_symbol(
     return u, u, df, note
 
 
+def _parse_symbol_args(symbols: str, symbols_file: Path | None) -> list[str]:
+    raw: list[str] = []
+    if symbols_file is not None:
+        text = Path(symbols_file).read_text(encoding="utf-8")
+        for part in text.replace(",", "\n").splitlines():
+            tok = part.strip().upper()
+            if tok:
+                raw.append(tok)
+    for part in str(symbols or "").split(","):
+        tok = part.strip().upper()
+        if tok:
+            raw.append(tok)
+    return list(dict.fromkeys(raw))
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--symbols", default="NVDA,AU,BTC")
+    ap.add_argument(
+        "--symbols-file",
+        type=Path,
+        default=None,
+        help="Optional newline- or comma-separated symbol list (avoids Windows cmd length).",
+    )
     ap.add_argument("--data-dir", type=Path, default=DEFAULT_DATA)
     ap.add_argument("--stamp", default=DEFAULT_STAMP)
     ap.add_argument("--stamp-dir", type=Path, default=None)
+    ap.add_argument(
+        "--merge",
+        action="store_true",
+        help="Keep existing segments.json symbols and overwrite only the requested ones.",
+    )
     ap.add_argument(
         "--intro",
         default="",
@@ -1312,7 +1338,21 @@ def main(argv: Iterable[str] | None = None) -> int:
         ],
     }
 
-    for raw in str(args.symbols).split(","):
+    requested = _parse_symbol_args(args.symbols if not args.symbols_file else "", args.symbols_file)
+    if not requested and not args.symbols_file:
+        requested = _parse_symbol_args(args.symbols, None)
+
+    existing_meta: dict = {}
+    existing_path = stamp_dir / "segments.json"
+    if args.merge and existing_path.is_file():
+        try:
+            existing_meta = json.loads(existing_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing_meta = {}
+        if isinstance(existing_meta.get("symbols"), dict):
+            meta["symbols"] = dict(existing_meta["symbols"])
+
+    for raw in requested:
         if not raw.strip():
             continue
         try:
@@ -1433,6 +1473,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             )
         print(f"[ok] {key}: {len(segs)} lines; {hv_note}; {vz_note} -> {ts_path}")
 
+    (stamp_dir / "segments.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    if args.merge:
+        print(f"[ok] merged {len(requested)} symbol(s) into {existing_path}")
+        return 0
     write_readme(
         stamp_dir,
         stamp=args.stamp,
@@ -1449,7 +1493,6 @@ def main(argv: Iterable[str] | None = None) -> int:
         vz_rows=vz_rows,
         notes=notes,
     )
-    (stamp_dir / "segments.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"[ok] HTML {html_path}")
     return 0
 

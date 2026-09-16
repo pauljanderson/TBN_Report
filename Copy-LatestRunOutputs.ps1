@@ -17,8 +17,11 @@
              Override with -SbTimestamp when an explicit research stamp must be copied.
     MVCP run: latest yyMMddHHmmss from MVCP_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
              (Minervini VCP; also writes MVCP_LatestRun_* itself).
-    VZ run: latest yyMMddHHmmss from VZ_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
-             (Volume Zone research sleeve; also writes VZ_LatestRun_* itself).
+    VZ run: prefer VZ_house_last_run_ts.txt so ALL / research stamps do not steal LatestRun.
+             VZ_LatestRun_* is the DailyRun regression baseline (one position per symbol, lock 2026-09-15).
+    RSI run: latest yyMMddHHmmss from RSI_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
+             (Relative Strength Index DailyRun TBN sleeve; also writes RSI_LatestRun_* itself).
+             Prefer RSI_house_last_run_ts.txt so ALL / research stamps do not steal LatestRun.
     WRL run: latest yyMMddHHmmss from WRL_Closed|Open|Watchlist|Scanner|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<ts>.csv
              (Weekly Range / Swing research sleeve; also writes WRL_LatestRun_* itself).
 
@@ -35,6 +38,7 @@
       SB_Closed|Open|Watchlist|Summary|RejectedFills|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<sbTs>.csv -> SB_LatestRun_*.csv
       MVCP_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<mvcpTs>.csv -> MVCP_LatestRun_*.csv
       VZ_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<vzTs>.csv -> VZ_LatestRun_*.csv
+      RSI_Closed|Open|Watchlist|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<rsiTs>.csv -> RSI_LatestRun_*.csv
       WRL_Closed|Open|Watchlist|Scanner|Summary|Audit_Report|EquityCurve|Correlation|Correlation_Pairs_<wrlTs>.csv -> WRL_LatestRun_*.csv
       RL_Closed|Open|Scanner|Watchlist|Summary_<rlTs>.csv    -> RL_LatestRun_*.csv
 
@@ -74,6 +78,9 @@
 .PARAMETER VzTimestamp
     Force VZ yyMMddHHmmss (optional).
 
+.PARAMETER RsiTimestamp
+    Force RSI yyMMddHHmmss (optional).
+
 .PARAMETER WrlTimestamp
     Force WRL yyMMddHHmmss (optional).
 #>
@@ -91,6 +98,7 @@ param(
     [string] $SbTimestamp = "",
     [string] $MvcpTimestamp = "",
     [string] $VzTimestamp = "",
+    [string] $RsiTimestamp = "",
     [string] $WrlTimestamp = ""
 )
 
@@ -113,6 +121,7 @@ $RsStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
 $SbStems = @("Closed", "Open", "Watchlist", "Summary", "RejectedFills", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $MvcpStems = @("Closed", "Open", "Watchlist", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $VzStems = @("Closed", "Open", "Watchlist", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
+$RsiStems = @("Closed", "Open", "Watchlist", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $WrlStems = @("Closed", "Open", "Watchlist", "Scanner", "Summary", "Audit_Report", "EquityCurve", "Correlation", "Correlation_Pairs")
 $IndStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary", "indicators_while_held", "EquityCurve_Aggressive")
 $RlStems = @("Closed", "Open", "Scanner", "Watchlist", "Summary")
@@ -264,7 +273,41 @@ function Get-LatestMvcpCoreTimestamp([string]$dir, [string]$override, [string[]]
 }
 
 function Get-LatestVzCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
-    return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "VZ" -Stems $stems -Override $override
+    if ($override) { return $override.Trim() }
+    # Prefer house pin (run_vz.bat default univ) so ALL / research stamps do not steal LatestRun.
+    $housePin = Join-Path $dir "VZ_house_last_run_ts.txt"
+    if (Test-Path -LiteralPath $housePin) {
+        $raw = (Get-Content -LiteralPath $housePin -Raw).Trim()
+        $ts = ($raw -split "[\r\n]+")[0].Trim()
+        if ($ts -match '^\d{12}$') {
+            $closed = Join-Path $dir ("VZ_Closed_{0}.csv" -f $ts)
+            if (Test-Path -LiteralPath $closed) {
+                Write-Host ("VZ LatestRun: preferring house pin {0}" -f $ts) -ForegroundColor Yellow
+                return $ts
+            }
+            Write-Warning ("VZ house pin {0} missing Closed CSV; falling back to newest stamp." -f $ts)
+        }
+    }
+    return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "VZ" -Stems $stems -Override ""
+}
+
+function Get-LatestRsiCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
+    if ($override) { return $override.Trim() }
+    # Prefer house pin (run_rsi.bat default univ) so ALL / research stamps do not steal LatestRun.
+    $housePin = Join-Path $dir "RSI_house_last_run_ts.txt"
+    if (Test-Path -LiteralPath $housePin) {
+        $raw = (Get-Content -LiteralPath $housePin -Raw).Trim()
+        $ts = ($raw -split "[\r\n]+")[0].Trim()
+        if ($ts -match '^\d{12}$') {
+            $closed = Join-Path $dir ("RSI_Closed_{0}.csv" -f $ts)
+            if (Test-Path -LiteralPath $closed) {
+                Write-Host ("RSI LatestRun: preferring house pin {0}" -f $ts) -ForegroundColor Yellow
+                return $ts
+            }
+            Write-Warning ("RSI house pin {0} missing Closed CSV; falling back to newest stamp." -f $ts)
+        }
+    }
+    return Get-LatestTimestampFromStems -Dir $dir -NamePrefix "RSI" -Stems $stems -Override ""
 }
 
 function Get-LatestWrlCoreTimestamp([string]$dir, [string]$override, [string[]]$stems) {
@@ -368,6 +411,12 @@ try {
 } catch {
     Write-Warning $_.Exception.Message
 }
+$rsiTs = $null
+try {
+    $rsiTs = Get-LatestRsiCoreTimestamp $OutputDir $RsiTimestamp $RsiStems
+} catch {
+    Write-Warning $_.Exception.Message
+}
 $wrlTs = $null
 try {
     $wrlTs = Get-LatestWrlCoreTimestamp $OutputDir $WrlTimestamp $WrlStems
@@ -386,6 +435,7 @@ if ($rsTs) { Write-Host "RS core ts:  $rsTs" -ForegroundColor Yellow }
 if ($sbTs) { Write-Host "SB core ts:  $sbTs" -ForegroundColor Yellow }
 if ($mvcpTs) { Write-Host "MVCP core ts: $mvcpTs" -ForegroundColor Yellow }
 if ($vzTs) { Write-Host "VZ core ts:  $vzTs" -ForegroundColor Yellow }
+if ($rsiTs) { Write-Host "RSI core ts: $rsiTs" -ForegroundColor Yellow }
 if ($wrlTs) { Write-Host "WRL core ts: $wrlTs" -ForegroundColor Yellow }
 Write-Host "RL audit ts: $rlTs" -ForegroundColor Yellow
 
@@ -447,6 +497,13 @@ if ($vzTs) {
     Write-Host "VZ_LatestRun:" -ForegroundColor Cyan
     foreach ($stem in $VzStems) {
         Copy-RunCsv -SourcePrefix "VZ" -Stem $stem -Timestamp $vzTs -DestPrefix "VZ_LatestRun" -Dir $OutputDir
+    }
+}
+
+if ($rsiTs) {
+    Write-Host "RSI_LatestRun:" -ForegroundColor Cyan
+    foreach ($stem in $RsiStems) {
+        Copy-RunCsv -SourcePrefix "RSI" -Stem $stem -Timestamp $rsiTs -DestPrefix "RSI_LatestRun" -Dir $OutputDir
     }
 }
 

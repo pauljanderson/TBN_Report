@@ -985,26 +985,41 @@ def mts() -> str:
 def vz() -> str:
     return page(
         title="VZ — Volume Zone",
-        eyebrow="Research · Volume Zone (VZ) Break and Retest",
+        eyebrow="Production · Volume Zone (VZ) Break and Retest",
         lede=(
-            "<strong>VZ</strong> (Volume Zone) is a research prototype: rolling max-volume days become "
-            "High–Low (HL) price zones; after an upside break, the system buys a support retest. "
-            "It is not Break and ReTest (BRT) production and is not DailyRun-wired."
+            "<strong>VZ</strong> (Volume Zone) is a DailyRun official Twin Beacon Networks (TBN) sleeve: "
+            "rolling max-volume days become High–Low (HL) price zones; after an upside break, the system "
+            "buys a support retest. It is not Break and ReTest (BRT). "
+            "<strong>TBN production sleeve / DailyRun official — not walk-forward gold.</strong>"
         ),
-        badge_class="badge-bad",
-        badge_text="Research candidate — not DailyRun",
+        badge_class="badge-ok",
+        badge_text="DailyRun / TBN official",
         meta=(
             "<span>Mode <code>vz_mode=true</code></span>"
             "<span>Runner <code>run_vz.bat</code></span>"
             "<span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span>"
-            "<span>Freeze <code>vol_zone_v2_rw63_20260810</code></span>"
+            "<span>Freeze <code>EXIT_atr4_s025_r15_ts20</code> · atr4=4% floor at trigger · s025 · r15 · ts20 · Paul78.142</span>"
         ),
         body="""
-<div class="callout bad">
-  <strong>Not production gold. Not DailyRun-wired.</strong>
-  House artifacts: <code>drive/VZ_*_&lt;ts&gt;.*</code> via the TBN host.
-  Adopted freeze: entry gates <code>RESEARCH_CANDIDATE_V2_RW63</code> · exit <code>zone_atr05_ts40</code> ·
-  house fill <code>entry_on=next_open</code>.
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10b/13] · reconcile-gated (PO adopt 2026-09-07).
+  Universe <code>drive/universes/VZ_universe.csv</code> — <strong>Paul78.142 (142)</strong>.
+  House label <code>EXIT_atr4_s025_r15_ts20</code>:
+  <strong>atr4</strong> = 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+  (quiet names never enter — <em>not</em> a 4-ATR stop; scanner-known on the trigger date);
+  <strong>s025</strong> = stop at zone low − 0.25×ATR;
+  <strong>r15</strong> = 1.5R target;
+  <strong>ts20</strong> = 20-bar time stop.
+  <strong>Not walk-forward gold.</strong>
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> Paul78.142 is a user Paul Score list (likely in-sample / IS-aware).
+  4-arm universe AB vs old house56 was <strong>HOLD</strong> on IS annualized rate of return (Ann ROR) —
+  product choice. Stop 0.25 was chosen after seeing the ImprovePriority AB table on the same 142 book
+  → <strong>in-sample selection</strong>. Out-of-sample (OOS) is report-only; do not retune.
+  The 4% ATR floor moved from entry fill to trigger close on 2026-09-07
+  (<span class="path">vz_atr_trigger_adopt_20260907</span>) after a
+  <strong>HOLD</strong> quality A/B — operational / scanner-live override, not KEEP, not gold.
 </div>
 <div class="callout ok">
   <strong>Predictive timing:</strong> signal known at retest-bar <em>close</em> (uses that bar’s Low/High/Close).
@@ -1014,7 +1029,7 @@ def vz() -> str:
 <h2>1. What it is</h2>
 <p>
   Hypothesis: high-volume nodes act as support after acceptance above them.
-  Default research universe is DualPaul78 (<code>drive/universes/VZ_universe.csv</code>).
+  Default DailyRun universe is Paul78.142 (<code>drive/universes/VZ_universe.csv</code>).
 </p>
 
 <h2>2. Entry logic</h2>
@@ -1024,20 +1039,52 @@ def vz() -> str:
   <li><strong>Retest clock:</strong> within <code>retest_window</code> bars after break (adopted <strong>63</strong>).</li>
   <li><strong>Signal bar T:</strong> bar intersects the zone band (or near-miss within <code>retest_eps_pct</code> of zone.hi), approach from_above, close still ≥ zone.lo. Known only at/after T’s close.</li>
   <li><strong>Quality gates (v2):</strong> <code>first_retest_only=True</code>; <code>min_touches_before_entry ≥ 1</code>.</li>
+  <li><strong>Volatility floor (atr4):</strong> 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger=4.0</code> / <code>VZ_MIN_ATR_PCT=4.0</code>;
+      <code>min_atr_pct_at_entry=0</code>). Quiet names fail and never enter.
+      This is <strong>not</strong> a 4-ATR stop — it is a “is this name moving enough?” screen
+      the scanner can apply on the trigger date (next-open fill is not known yet).</li>
   <li><strong>Fill:</strong> <code>entry_on=next_open</code> → Open of T+1. Alternate research: close of T. Forbidden: Open of T using T’s range.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
-<p>Exit recipe <code>zone_atr05_ts40</code> (chosen in-sample on PaulTwenty — label selection bias).</p>
+<p>
+  The house freeze name is <code>EXIT_atr4_s025_r15_ts20</code> (PO adopt 2026-09-07; stop 0.25 chosen after
+  ImprovePriority AB on the same 142 book — in-sample selection).
+  Read the tokens left to right — <code>atr4</code> is a volatility floor, not the stop:
+</p>
+<ul>
+  <li><strong>atr4</strong> — 14-day ATR must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger</code> / <code>VZ_MIN_ATR_PCT=4.0</code>).
+      Quiet names fail this gate and never enter. <strong>Not a 4-ATR stop.</strong>
+      The same <code>atr4</code> prefix sat on the older <code>EXIT_atr4_s05_r15_ts20</code>
+      (0.5 ATR stop) — the 4 did not change when the stop did.
+      House used entry-priced 4% until 2026-09-07; trigger-priced 4% is now the DailyRun identity
+      (one gate only — entry gate off).</li>
+  <li><strong>s025</strong> — stop at zone low − 0.25×ATR (<code>stop_atr_buffer=0.25</code>).</li>
+  <li><strong>r15</strong> — 1.5R target (<code>target_r=1.5</code>): take profit at 1.5 times the entry-to-stop distance.</li>
+  <li><strong>ts20</strong> — 20-bar time stop (<code>exit_bars=20</code>).</li>
+</ul>
+<p>
+  House now measures that 4% ATR floor at <strong>trigger close</strong>
+  (<code>ATR14 / trigger_close ≥ 4%</code>) so the scanner can decide on the signal date.
+  The prior house used entry fill price (lookahead vs a live scanner). Quality A/B
+  (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>) was <strong>HOLD</strong>
+  (IS WR 60.5% vs 60.9%, AvgR 0.489 vs 0.535; OOS also slightly softer). Adopted as a
+  product / scanner-live choice — <strong>not KEEP, not gold</strong>. Do not also apply
+  the entry gate (that would be a tighter two-gate system).
+</p>
 """
         + kv([
-            ("Stop", "<code>zone.lo − 0.5 · ATR14[entry]</code>"),
-            ("Target", "<strong>2.0R</strong> from entry vs stop distance"),
-            ("Time stop", "<strong>40</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)"),
+            ("Stop", "<code>zone.lo − 0.25 · ATR14[entry]</code> — this is the <code>s025</code> token, not <code>atr4</code>"),
+            ("Target", "<strong>1.5R</strong> from entry vs stop distance (<code>r15</code>)"),
+            ("Time stop", "<strong>20</strong> trading bars (<code>ts20</code>; end-of-data truncation stays Open, not Closed TIME)"),
+            ("Volatility floor", "14-day ATR ≥ <strong>4%</strong> of trigger close (<code>atr4</code> / <code>min_atr_pct_at_trigger</code>) — not a stop"),
+            ("Cooldown", "<strong>10</strong> calendar days after a TARGET exit (same symbol)"),
         ])
         + """
 <div class="callout warn">
-  <strong>Fidelity:</strong> zone stop and 2R target can sit in the broker. The <strong>40-day time stop</strong>
+  <strong>Fidelity:</strong> zone stop and 1.5R target can sit in the broker. The <strong>20-day time stop</strong>
   is not a broker order.
 </div>
 
@@ -1051,36 +1098,54 @@ def vz() -> str:
             ("<code>first_retest_only</code>", "One entry per zone after break", "<strong>True</strong>", "False → later visits / more signals"),
             ("<code>min_touches_before_entry</code>", "Min prior intersections", "<strong>1</strong>", "mt0 dismissed"),
             ("<code>entry_on</code>", "Fill at retest close vs next open", "<strong>next_open</strong> (house)", "Prior AB freeze used close"),
-            ("Exit <code>zone_atr05_ts40</code>", "ATR buffer / 2R / 40d", "<strong>0.5 / 2.0 / 40</strong>", "In-sample exit compare winner — selection bias labeled"),
+            ("<code>min_atr_pct_at_trigger</code>", "14-day ATR must be ≥ this % of trigger close or the name never enters (the <code>atr4</code> token — not a 4-ATR stop). House / scanner identity.", "<strong>4.0</strong>", "Lower → more quiet names enter. Replaced entry-priced 4% on 2026-09-07 after HOLD AB."),
+            ("<code>min_atr_pct_at_entry</code>", "Optional fill-priced ATR% floor. House leaves this off so only the trigger gate applies.", "<strong>0</strong> (off)", "Do not turn on together with trigger 4% — that is a two-gate system."),
+            ("Exit <code>EXIT_atr4_s025_r15_ts20</code>", "<code>atr4</code>=4% ATR floor <em>at trigger</em> (not a 4-ATR stop); <code>s025</code>=zone.lo−0.25×ATR; <code>r15</code>=1.5R; <code>ts20</code>=20 bars", "<strong>4% trigger / 0.25 / 1.5 / 20</strong>", "PO adopt 2026-09-07 vs prior house stop 0.5; in-sample selection. The atr4 prefix did not change when the stop did, nor when the measurement point moved from entry to trigger."),
+            ("<code>vz_require_hvn_overlap</code>", "Require High Volume Node overlap", "<strong>false</strong>", "HOLD DualPaul78 + 764 — do not default-on"),
+            ("<code>cooldown_after_target_days</code>", "Block re-entry after TARGET", "<strong>10</strong>", "Higher → fewer re-entries after winners"),
+            ("One position per symbol", "Skip a later signal while that name is still held (including same-day two-zone pile-ups). Always on in <code>enrich_trade_rows</code> — no flag re-enables pyramids.", "<strong>on</strong> (DailyRun lock 2026-09-15)", "Older pyramid books (N=2708 / GOLD 20200506 doubles) are not the regression baseline. Compare to <code>VZ_LatestRun_Closed.csv</code> / house pin."),
         ])
         + """
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Research candidate only</strong> — not gold, not DailyRun"),
+            ("Status", "<strong>DailyRun official TBN sleeve</strong> — not walk-forward gold"),
             ("TBN mode", "<code>vz_mode=true</code> (early dispatch in rocket_tbn)"),
-            ("Default univ", "<code>drive/universes/VZ_universe.csv</code> (DualPaul78)"),
+            ("Default univ", "<code>drive/universes/VZ_universe.csv</code> (Paul78.142, 142 names)"),
+            ("Reconcile freeze", "<code>drive/paul_experiments/vz_baseline_260915223353/</code> (one-position DailyRun lock <code>vz_one_position_dailyrun_20260915</code>; latest = <code>VZ_LatestRun_Closed.csv</code>; prior trigger-gate <code>vz_baseline_260907175402</code>)"),
             ("PaulTwenty", "<code>run_vz.bat drive\\\\universes\\\\PaulTwenty_universe.csv</code>"),
             ("IS / OOS", "IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only"),
         ])
         + """
 <h2>6. Caveats</h2>
 <ul>
-  <li><strong>Selection bias:</strong> HL / first_retest / mt≥1 / eps / rw63 / <code>zone_atr05_ts40</code> were chosen on overlapping PaulTwenty history.</li>
+  <li><strong>Universe:</strong> Paul78.142 is a user Paul Score list (likely IS-aware). 4-arm AB vs old house56 was HOLD on IS Ann ROR — product choice, not a process KEEP.</li>
+  <li><strong>Stop 0.25:</strong> chosen after seeing ImprovePriority AB on the same 142 book → in-sample selection. Re-score IS/OOS under the adopted freeze; do not retune OOS.</li>
   <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> — do not silently retune other freeze knobs on OOS.</li>
-  <li>Promotion bar: wider/walk-forward + process PO — research stamps alone do not wire DailyRun.</li>
-  <li>OOS softened under the toy exit on <code>vol_zone_hl_quality_20260810</code> — HOLD, not a retune trigger.</li>
+  <li><strong>ATR% at trigger:</strong> operational adopt after HOLD quality A/B
+      (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>). Slightly worse IS/OOS
+      quality vs entry-priced 4%. Adopted so the scanner can decide on the trigger date.
+      Not KEEP. Not walk-forward gold. Do not retune the 4% floor on OOS.</li>
+  <li>Not walk-forward gold. DailyRun official ≠ gold promotion bar.</li>
+  <li>High Volume Node (HVN) overlap stays <strong>off</strong>.</li>
+  <li><strong>One position per symbol</strong> (DailyRun lock 2026-09-15): do not buy a name we already hold.
+      Always on in <code>enrich_trade_rows</code>. Older pyramid books (N=2708 / GOLD 20200506 doubles)
+      are not the regression baseline — compare to <code>VZ_LatestRun_Closed.csv</code> / house pin.
+      Research extras were better quality; operational lock is still one position. Not walk-forward gold.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/vol_zone_v2_rw63_20260810/BASELINE.md</span></li>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_adopt_20260907/</span> (ATR% at trigger operational adopt)</li>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_vs_entry_ab_20260907/</span> (HOLD quality A/B)</li>
+  <li><span class="path">drive/paul_experiments/vz_tbn_adopt_s025_paul78_20260907/</span></li>
+  <li><span class="path">drive/paul_experiments/vz_paul78_142_adopt_20260907/BASELINE.md</span> (universe adopt)</li>
   <li><span class="path">drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html</span></li>
   <li><code>run_vz.bat</code> / <span class="path">stock_analysis/rocket_vz.py</span> / <span class="path">tools/vol_zone_break_retest.py</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md</span></li>
 </ul>
 """,
-        footer="Canonical VZ write-up · Twin Beacon Networks (TBN) · research only",
+        footer="Canonical VZ write-up · Twin Beacon Networks (TBN) · DailyRun official",
     )
 
 
@@ -1556,7 +1621,7 @@ INDEX_CARDS = [
     ("brt.html", "gold", "Production", "BRT — Break and ReTest", "Daily pivot-zone break → support retest on the TBN host."),
     ("wpbr.html", "gold", "Production", "WPBR — Pivot Break and Retest", "Weekly pivot zones, weekly breakout + confirm, daily hold-above retest."),
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
-    ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
+    ("vz.html", "gold", "Production", "VZ — Volume Zone", "Max-volume HL zones; break → retest. DailyRun official TBN (Paul78.142; 4% Average True Range (ATR) floor at trigger; stop at zone low − 0.25×ATR)."),
     ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
     ("mom.html", "research", "Research", "MOM — Momentum (Clenow)", "Weekly vol-adjusted momentum rank + ATR sizing. Research candidate — not DailyRun."),
     ("mvcp.html", "retired", "Retired", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21)."),

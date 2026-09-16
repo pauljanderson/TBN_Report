@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTML chart pack: M/W/D trendlines + HV6m + house VZ HL zone.
+"""HTML chart pack: M/W/D trendlines + HV6m + house VZ HL zone + RSI(14) OB/OS.
 
 Reads a frozen trendline stamp (segments.json from gen_trendlines_tos_studies.py)
 and writes per-symbol PNGs + an index HTML under stamp/charts/.
@@ -8,6 +8,7 @@ VZ zone drawn = house Vol Zone HL: rolling 126-bar max-volume day's High–Low
 for the *current* winner (tools/vol_zone_break_retest.build_zones, HL-only as in
 rocket_vz). OC of the same day drawn lightly for dual-zone context.
 HV6m gold box comes from segments.json (calendar 6m max-vol High–Low).
+Bottom panel: Wilder RSI(14) with classic 70/30 overbought/oversold bands.
 
 Examples:
   python tools/gen_trendlines_charts_html.py
@@ -40,8 +41,14 @@ sys.path.insert(0, str(_REPO / "tools"))
 from vol_zone_break_retest import Zone, build_zones, load_ohlcv  # noqa: E402
 
 DEFAULT_STAMP = _REPO / "drive" / "paul_studies" / "trendlines_opens_latest"
+# Durable company-name cache (yfinance shortName/longName). Survives DailyRun;
+# only new symbols hit the network.
+COMPANY_NAMES_CACHE = _REPO / "drive" / "company_names_cache.json"
 LOOKBACK_DAYS = 126  # house VZ HL
 CHART_MONTHS = 6
+RSI_PERIOD = 14
+RSI_OVERBOUGHT = 70.0
+RSI_OVERSOLD = 30.0
 
 SMA_STYLE = {
     20: {"color": "#ec407a", "lw": 0.9, "label": "SMA20"},
@@ -131,6 +138,135 @@ def _sortable_th(label: str, sort_type: str) -> str:
 
 def _parse_ymd(s: str) -> date:
     return datetime.strptime(s[:10], "%Y-%m-%d").date()
+
+
+def wilder_rsi(close: np.ndarray, period: int = RSI_PERIOD) -> np.ndarray:
+    """Wilder RSI on closes (same seed/update as house MR helpers)."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    delta = np.diff(close.astype(float), prepend=np.nan)
+    gain = np.where(np.isfinite(delta) & (delta > 0), delta, 0.0)
+    loss = np.where(np.isfinite(delta) & (delta < 0), -delta, 0.0)
+    avg_g = float(np.nanmean(gain[1 : period + 1]))
+    avg_l = float(np.nanmean(loss[1 : period + 1]))
+    if avg_l == 0:
+        out[period] = 100.0
+    else:
+        out[period] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    for i in range(period + 1, n):
+        avg_g = (avg_g * (period - 1) + gain[i]) / period
+        avg_l = (avg_l * (period - 1) + loss[i]) / period
+        if avg_l == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    return out
+
+
+def rsi_ob_os_label(rsi: float | None) -> str:
+    if rsi is None or not np.isfinite(rsi):
+        return "—"
+    if rsi >= RSI_OVERBOUGHT:
+        return "Overbought"
+    if rsi <= RSI_OVERSOLD:
+        return "Oversold"
+    return "Neutral"
+
+
+def _pick_company_name(info: dict[str, Any]) -> str:
+    """Prefer shortName, then longName / displayName; skip blank / ticker-only."""
+    for key in ("shortName", "longName", "displayName"):
+        raw = info.get(key)
+        if raw is None:
+            continue
+        name = str(raw).strip()
+        if not name:
+            continue
+        return name
+    return ""
+
+
+def _load_company_names_cache(path: Path = COMPANY_NAMES_CACHE) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        sym = str(k).strip().upper()
+        name = str(v or "").strip()
+        if sym and name:
+            out[sym] = name
+    return out
+
+
+def _save_company_names_cache(
+    names: dict[str, str], path: Path = COMPANY_NAMES_CACHE
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ordered = {k: names[k] for k in sorted(names)}
+    path.write_text(json.dumps(ordered, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _fetch_company_name_yfinance(symbol: str) -> str:
+    try:
+        import yfinance as yf  # local import: optional at module load
+    except ImportError:
+        return ""
+    try:
+        info = dict(getattr(yf.Ticker(symbol), "info", None) or {})
+    except Exception:  # noqa: BLE001 — batch resilience
+        return ""
+    return _pick_company_name(info)
+
+
+def resolve_company_names(
+    symbols: list[str],
+    *,
+    cache_path: Path = COMPANY_NAMES_CACHE,
+    fetch_missing: bool = True,
+) -> dict[str, str]:
+    """Map SYMBOL -> company name. Cache first; yfinance fill for misses."""
+    cache = _load_company_names_cache(cache_path)
+    out: dict[str, str] = {}
+    missing: list[str] = []
+    for sym in symbols:
+        key = str(sym).strip().upper()
+        if not key:
+            continue
+        if key in cache and cache[key]:
+            out[key] = cache[key]
+        else:
+            missing.append(key)
+    if fetch_missing and missing:
+        print(f"[company] fetching {len(missing)} names via yfinance ...")
+        for i, sym in enumerate(missing, 1):
+            name = _fetch_company_name_yfinance(sym)
+            if name:
+                out[sym] = name
+                cache[sym] = name
+                print(f"[company] [{i}/{len(missing)}] {sym} -> {name}")
+            else:
+                print(f"[company] [{i}/{len(missing)}] {sym} -> (missing)")
+        _save_company_names_cache(cache, cache_path)
+    return out
+
+
+def symbol_display(symbol: str, company_name: str | None = None) -> str:
+    """``NVDA — NVIDIA Corporation`` or bare symbol when name unknown."""
+    name = (company_name or "").strip()
+    if not name:
+        return symbol
+    # Avoid "AAPL — AAPL" style noise
+    if name.upper() == symbol.upper():
+        return symbol
+    return f"{symbol} — {name}"
 
 
 def nearest_hl_zones(zones: list[Zone], price: float) -> tuple[Zone | None, Zone | None]:
@@ -242,6 +378,7 @@ def plot_symbol_chart(
     all_zones: list[Zone],
     sym_info: dict[str, Any] | None,
     out_png: Path,
+    company_name: str | None = None,
 ) -> dict[str, Any]:
     """Plot last ~6 calendar months; return summary fields for HTML."""
     end_ts = pd.Timestamp(df["Date"].iloc[-1]).normalize()
@@ -268,7 +405,21 @@ def plot_symbol_chart(
     win_start = dates.iloc[0].date()
     win_end = dates.iloc[-1].date()
 
-    fig, ax = plt.subplots(figsize=(11.5, 6.2), dpi=110)
+    rsi_full = wilder_rsi(close_full.to_numpy(float), RSI_PERIOD)
+    rsi_plot = rsi_full[plot_mask.to_numpy()]
+    last_rsi_raw = float(rsi_full[-1]) if len(rsi_full) and np.isfinite(rsi_full[-1]) else float("nan")
+    last_rsi: float | None = last_rsi_raw if np.isfinite(last_rsi_raw) else None
+    rsi_state = rsi_ob_os_label(last_rsi)
+
+    fig, (ax, ax_rsi) = plt.subplots(
+        2,
+        1,
+        figsize=(11.5, 7.6),
+        dpi=110,
+        sharex=True,
+        gridspec_kw={"height_ratios": [3.15, 1.0], "hspace": 0.08},
+        layout="constrained",
+    )
     _draw_candles(ax, dates, o, h, l, c)
 
     y_extra: list[float] = []
@@ -415,6 +566,7 @@ def plot_symbol_chart(
     ax.set_xlim(dates.iloc[0] - pd.Timedelta(days=2), dates.iloc[-1] + pd.Timedelta(days=3))
     ax.grid(True, alpha=0.25)
     ax.set_ylabel("Price")
+    ax.tick_params(labelbottom=False)
     last = float(c[-1])
     ax.axhline(last, color="#546e7a", ls=":", lw=0.7, alpha=0.6)
 
@@ -425,6 +577,40 @@ def plot_symbol_chart(
     if zone_below is not None:
         ax.axhspan(zone_below.lo, zone_below.hi, color="#2e7d32", alpha=0.08, zorder=0)
         ax.axhline(zone_below.hi, color="#2e7d32", ls="--", lw=0.8, alpha=0.55)
+
+    # --- RSI(14) panel: numbers + classic 70/30 OB/OS ---
+    ax_rsi.plot(dates, rsi_plot, color="#5c6bc0", lw=1.15, zorder=3, label=f"RSI({RSI_PERIOD})")
+    ax_rsi.axhspan(RSI_OVERBOUGHT, 100, color="#c62828", alpha=0.12, zorder=0)
+    ax_rsi.axhspan(0, RSI_OVERSOLD, color="#2e7d32", alpha=0.12, zorder=0)
+    ax_rsi.axhline(RSI_OVERBOUGHT, color="#c62828", ls="--", lw=0.85, alpha=0.75)
+    ax_rsi.axhline(RSI_OVERSOLD, color="#2e7d32", ls="--", lw=0.85, alpha=0.75)
+    ax_rsi.axhline(50, color="#90a4ae", ls=":", lw=0.7, alpha=0.55)
+    ax_rsi.set_ylim(0, 100)
+    ax_rsi.set_ylabel(f"RSI({RSI_PERIOD})")
+    ax_rsi.grid(True, alpha=0.25)
+    ax_rsi.xaxis.set_major_locator(mdates.MonthLocator())
+    ax_rsi.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    if last_rsi is not None:
+        ax_rsi.scatter(
+            [dates.iloc[-1]],
+            [last_rsi],
+            s=28,
+            color="#5c6bc0",
+            zorder=5,
+            edgecolors="white",
+            linewidths=0.5,
+        )
+        ax_rsi.annotate(
+            f"{last_rsi:.1f} {rsi_state}",
+            xy=(dates.iloc[-1], last_rsi),
+            xytext=(-4, 8),
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="#37474f",
+            bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85, "edgecolor": "#cfd8dc"},
+        )
 
     vz_note = "—"
     if vz_hl is not None:
@@ -441,8 +627,14 @@ def plot_symbol_chart(
         f"Nearest HL above: {_zone_band_label(zone_above)}   ·   "
         f"Nearest HL below: {_zone_band_label(zone_below)}"
     )
+    rsi_note = (
+        f"RSI({RSI_PERIOD})={last_rsi:.1f} ({rsi_state})"
+        if last_rsi is not None
+        else f"RSI({RSI_PERIOD})=—"
+    )
+    label = symbol_display(symbol, company_name)
     title_lines = [
-        f"{symbol}  |  last 6m through {win_end}  |  last={last:.2f}",
+        f"{label}  |  last 6m through {win_end}  |  last={last:.2f}  |  {rsi_note}",
     ]
     if header:
         title_lines.append(header)
@@ -464,18 +656,23 @@ def plot_symbol_chart(
         Line2D([0], [0], color="#c62828", lw=1.2, ls="--", label="Nearest HL above"),
         Line2D([0], [0], color="#2e7d32", lw=1.2, ls="--", label="Nearest HL below"),
         Line2D([0], [0], color="#78909c", lw=1.5, ls="-", label="Support solid / Res dashed"),
+        Line2D([0], [0], color="#5c6bc0", lw=1.2, label=f"RSI({RSI_PERIOD}) panel"),
     ]
     ax.legend(handles=handles, loc="upper left", fontsize=6.5, framealpha=0.9, ncol=2)
 
     fig.autofmt_xdate(rotation=30, ha="right")
-    fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, bbox_inches="tight")
     plt.close(fig)
 
+    cname = (company_name or "").strip()
     return {
         "symbol": symbol,
+        "company_name": cname,
+        "display": symbol_display(symbol, cname),
         "last": last,
+        "rsi14": last_rsi,
+        "rsi_state": rsi_state,
         "win_start": str(win_start),
         "win_end": str(win_end),
         "n_bars": int(len(plot_df)),
@@ -506,7 +703,8 @@ def write_index_html(
 ) -> Path:
     rows_sorted = sorted(rows, key=lambda r: r["symbol"])
     nav_links = " · ".join(
-        f'<a href="#{html_mod.escape(r["symbol"])}">{html_mod.escape(r["symbol"])}</a>'
+        f'<a href="#{html_mod.escape(r["symbol"])}" title="{html_mod.escape(r.get("display") or r["symbol"])}">'
+        f'{html_mod.escape(r["symbol"])}</a>'
         for r in rows_sorted
     )
     table_rows = []
@@ -527,15 +725,20 @@ def write_index_html(
                 buy += " (our book)"
             elif r.get("price_source"):
                 buy += f' ({html_mod.escape(r["price_source"])})'
+        company = r.get("company_name") or "—"
+        rsi_cell = f'{float(r["rsi14"]):.1f}' if r.get("rsi14") is not None else "—"
         table_rows.append(
             "<tr>"
             f'<td><a href="#{html_mod.escape(r["symbol"])}">{html_mod.escape(r["symbol"])}</a></td>'
+            f"<td>{html_mod.escape(company)}</td>"
             f'<td>{html_mod.escape(r.get("systems") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("scanner_systems") or "—")}</td>'
             f"<td>{buy}</td>"
             f'<td>{html_mod.escape(r["win_start"])}</td>'
             f'<td>{html_mod.escape(r["win_end"])}</td>'
             f'<td>{r["last"]:.2f}</td>'
+            f"<td>{rsi_cell}</td>"
+            f'<td>{html_mod.escape(r.get("rsi_state") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("zone_above") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("zone_below") or "—")}</td>'
             f'<td>{r["n_segs"]}</td>'
@@ -549,18 +752,25 @@ def write_index_html(
     for r in rows_sorted:
         hdr = html_mod.escape(r.get("header_line") or "")
         hdr_p = f'<p class="meta">{hdr}</p>' if hdr else ""
+        display = r.get("display") or r["symbol"]
+        rsi_txt = (
+            f'{r["rsi14"]:.1f} ({html_mod.escape(r.get("rsi_state") or "—")})'
+            if r.get("rsi14") is not None
+            else "—"
+        )
         chart_blocks.append(
             f'<section class="chart" id="{html_mod.escape(r["symbol"])}">'
-            f'<h2>{html_mod.escape(r["symbol"])}</h2>'
+            f"<h2>{html_mod.escape(display)}</h2>"
             f"{hdr_p}"
             f'<p class="meta">Window {html_mod.escape(r["win_start"])} → '
             f'{html_mod.escape(r["win_end"])} · last={r["last"]:.2f} · '
+            f'RSI(14)={rsi_txt} · '
             f'Nearest HL above={html_mod.escape(r.get("zone_above") or "—")} · '
             f'below={html_mod.escape(r.get("zone_below") or "—")} · '
             f'segs={r["n_segs"]} · HV6m={html_mod.escape(r.get("hv6m_day") or "—")} · '
             f'VZ HL={html_mod.escape(r.get("vz_hl_day") or "—")}</p>'
             f'<a href="{html_mod.escape(r["png"])}">'
-            f'<img src="{html_mod.escape(r["png"])}" alt="{html_mod.escape(r["symbol"])} chart" loading="lazy"/>'
+            f'<img src="{html_mod.escape(r["png"])}" alt="{html_mod.escape(display)} chart" loading="lazy"/>'
             f"</a></section>"
         )
 
@@ -638,6 +848,15 @@ generated {datetime.now().strftime("%Y-%m-%d %H:%M")} · offline PNGs ·
 Click column headers to sort · <a class="top" href="#charts">Jump to charts</a></p>
 
 <div class="defs">
+<strong>What you asked</strong>
+<pre style="white-space:pre-wrap;margin:0.4rem 0 0;font-size:0.85rem;">is there a way you Can add oversold overbought, either numbers or indicators on the daily trend charts. And can you rerun it and then publish it, please?</pre>
+<p style="margin:0.55rem 0 0;"><strong>In plain English:</strong>
+Add a daily “too hot / too cold” read on each chart (Relative Strength Index, RSI(14):
+≥70 overbought, ≤30 oversold), show the latest number on the chart and in the table,
+then regenerate and publish the opens trendline pack.</p>
+</div>
+
+<div class="defs">
 <strong>Overlays</strong>
 <ul>
 <li><b>M / W / D trendlines</b> — frozen fractal support (solid) &amp; resistance (dashed) from
@@ -649,6 +868,8 @@ drawn from HV day through last bar.</li>
 <code>tools/vol_zone_break_retest.py</code>; house <code>rocket_vz</code> is HL-only).
 Light blue = same day's <b>OC</b> band for dual-zone context (not the house entry filter).</li>
 <li><b>SMA20 / SMA50 / SMA100</b> — simple moving averages on daily close (pink / orange / brown).</li>
+<li><b>RSI(14)</b> — bottom panel Wilder RSI; red band ≥{int(RSI_OVERBOUGHT)} overbought,
+green band ≤{int(RSI_OVERSOLD)} oversold; last value annotated on the panel and listed in the table.</li>
 <li><b>Nearest HL above / below</b> — closest house Vol Zone <b>HL</b> band (126d history via
 <code>build_zones</code>) with zone low above last close (above) or zone high below last close (below).
 Dashed red/green guides on chart.</li>
@@ -661,12 +882,15 @@ Dashed red/green guides on chart.</li>
 <table class="sortable">
 <thead><tr>
 {_sortable_th("Symbol", "text")}
+{_sortable_th("Company", "text")}
 {_sortable_th("Systems", "text")}
 {_sortable_th("Scanner", "text")}
 {_sortable_th("Buy", "text")}
 {_sortable_th("Window start", "date")}
 {_sortable_th("Window end", "date")}
 {_sortable_th("Last", "num")}
+{_sortable_th("RSI(14)", "num")}
+{_sortable_th("OB/OS", "text")}
 {_sortable_th("HL above", "text")}
 {_sortable_th("HL below", "text")}
 {_sortable_th("Segs", "num")}
@@ -714,6 +938,16 @@ def main() -> int:
         default=None,
         help="JSON from trendlines_opens_universe (systems, buy date/price)",
     )
+    ap.add_argument(
+        "--only-missing",
+        action="store_true",
+        help="Reuse existing PNGs; only plot symbols that have no chart yet. Still rebuilds index.",
+    )
+    ap.add_argument(
+        "--symbols",
+        default="",
+        help="Optional comma list to restrict plotting (index still includes all segments).",
+    )
     args = ap.parse_args()
 
     stamp_dir = args.stamp_dir if args.stamp_dir.is_absolute() else _REPO / args.stamp_dir
@@ -739,6 +973,17 @@ def main() -> int:
     if args.limit and args.limit > 0:
         syms = syms[: args.limit]
 
+    company_names = resolve_company_names(syms)
+    missing_names = [s for s in syms if s not in company_names]
+    if missing_names:
+        print(f"[company] no name for {len(missing_names)}: {', '.join(missing_names[:20])}"
+              + (" …" if len(missing_names) > 20 else ""))
+
+    only_syms = {
+        s.strip().upper()
+        for s in str(args.symbols or "").split(",")
+        if s.strip()
+    }
     rows: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     t0 = time.time()
@@ -754,16 +999,67 @@ def main() -> int:
                 skipped.append({"symbol": sym, "reason": f"missing OHLC {csv_path}"})
                 print(f"[skip] {sym}: missing OHLC")
                 continue
+        png = out_dir / f"{sym}_tl_vz_6m.png"
+        if args.only_missing and png.is_file() and (not only_syms or sym not in only_syms):
+            vz_meta = meta.get("vz") or {}
+            last_close = vz_meta.get("last_close")
+            try:
+                last_f = float(last_close) if last_close is not None else 0.0
+            except (TypeError, ValueError):
+                last_f = 0.0
+            hv = meta.get("hv6m") or {}
+            sym_info = open_meta.get(sym) or {}
+            rows.append(
+                {
+                    "symbol": sym,
+                    "company_name": "",
+                    "display": sym,
+                    "last": last_f,
+                    "rsi14": None,
+                    "rsi_state": "",
+                    "win_start": "",
+                    "win_end": str(meta.get("last_date") or ""),
+                    "n_bars": int(meta.get("n_bars") or 0),
+                    "n_segs": int(len(meta.get("segments") or [])),
+                    "hv6m_day": str(hv.get("day") or ""),
+                    "vz_hl_day": "",
+                    "vz_hl_lo": None,
+                    "vz_hl_hi": None,
+                    "vz_oc_day": "",
+                    "systems": ", ".join(sym_info.get("systems") or []),
+                    "scanner_systems": ", ".join(sym_info.get("scanner_systems") or []),
+                    "purchase_date": str(sym_info.get("purchase_date") or ""),
+                    "entry_price": sym_info.get("entry_price"),
+                    "price_source": str(sym_info.get("price_source") or ""),
+                    "in_portfolio": bool(sym_info.get("in_portfolio")),
+                    "zone_above": "",
+                    "zone_below": "",
+                    "header_line": "",
+                    "png": png.name,
+                }
+            )
+            print(f"[{i}/{len(syms)}] {sym}  reuse {png.name}")
+            continue
+        if only_syms and sym not in only_syms and png.is_file():
+            continue
         try:
             df = load_ohlcv(csv_path)
             vz = current_vz_zones(df, LOOKBACK_DAYS)
             all_zones = build_zones(df, LOOKBACK_DAYS) if len(df) > LOOKBACK_DAYS else []
             sym_info = open_meta.get(sym)
-            png = out_dir / f"{sym}_tl_vz_6m.png"
-            info = plot_symbol_chart(sym, df, meta, vz, all_zones, sym_info, png)
+            info = plot_symbol_chart(
+                sym,
+                df,
+                meta,
+                vz,
+                all_zones,
+                sym_info,
+                png,
+                company_name=company_names.get(sym),
+            )
             rows.append(info)
             print(
-                f"[{i}/{len(syms)}] {sym}  bars={info['n_bars']}  "
+                f"[{i}/{len(syms)}] {info.get('display') or sym}  bars={info['n_bars']}  "
                 f"vz_hl={info.get('vz_hl_day') or '—'}  "
                 f"above={info.get('zone_above') or '—'}  -> {png.name}"
             )

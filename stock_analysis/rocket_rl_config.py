@@ -117,6 +117,7 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_POST_TARGET_MIN_STACK": "rl_post_target_min_stack",
     "RL_POST_TARGET_UNDER_SMA20": "rl_post_target_under_sma20",
     "RL_TARGET_PCT": "rl_target_pct",
+    "RL_SMA_TARGET_OFF": "rl_sma_target_off",
     "RL_TOO_HIGH": "rl_too_high",
     "RL_EXPANSION": "rl_expansion",
     "RL_ACC_MIN": "rl_acc_min",
@@ -354,6 +355,9 @@ class RLConfig:
     rl_post_target_min_stack: float = 0.05
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
+    # When true: keep rl_target_pct for expansion-hit counting, but disable SMA50×target EXIT
+    # (TARGET never races; rl_target forced to 0). Research knob — default off.
+    rl_sma_target_off: bool = False
     # Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default off).
     rl_too_high: float = 0.0
     rl_expansion: float = 1.163

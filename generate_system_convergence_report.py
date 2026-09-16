@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-Cross-system convergence report: symbols appearing on 2+ of IND / BRT / RL / YH
+Cross-system convergence report: symbols appearing on 2+ live-system
 watchlist and scanner outputs from the latest run of each engine, plus tickers
 that are open in 2+ systems simultaneously.
+
+Live systems come from ``tools/dailyrun_system_status.py`` (DAILYRUN_REGISTRY +
+LatestRun discovery) — not a frozen IND/BRT/RL/YH tuple. Adding a new DailyRun
+sleeve to that registry is enough for it to show up here.
 
 Writes:
   Drive/System_Convergence_<stamp>.csv
@@ -18,6 +22,7 @@ import argparse
 import html
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,13 +38,57 @@ from generate_investment_report import (
 )
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
+from dailyrun_system_status import live_convergence_systems  # noqa: E402
+
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
 
+# Kept as fallbacks only. Prefer live_convergence_systems(drive).
 SYSTEMS = ("IND", "BRT", "RL", "YH")
 LIST_KINDS = ("Watchlist", "Scanner")
-# Engine Open books used for multi-system open positions (matches investment systems + IND).
-OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL")
+OPEN_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
+
+ORIGINAL_REQUEST = (
+    "if there are ever symbols you are looking for but can't score them, "
+    "go ahead and generate the chart so you can. also, let's make the trend "
+    "analysis of all open positions, held positions, and watchlist and scanner "
+    "positions part of dailyrun. Also our convergence report should be ALL "
+    "systems not just the ones we had when we created that report. any time "
+    "we add a new system, we should add it to the convergence report."
+)
+LAYMAN = (
+    "1) If a ticker is on a live list but has no trendline chart, build the "
+    "chart instead of saying NO CHART. "
+    "2) Every DailyRun should automatically score trendlines for opens, helds, "
+    "watchlists, and scanners — not a one-off ask. "
+    "3) The convergence report must include every live system, including ones "
+    "added after that report was first written."
+)
+
+# Optional per-system detail columns when those fields exist on the list CSV.
+_DETAIL_SPECS: list[tuple[str, str, str, list[str]]] = [
+    ("IND", "IND_SCORE", "IND_SCORE", []),
+    ("IND", "IND_DIFF", "IND_DIFF", []),
+    ("IND", "IND_STATUS", "STATUS", []),
+    ("RL", "RL_SCORE", "SETUP_SCORE", []),
+    ("RL", "RL_TIER", "WATCH_TIER", []),
+    ("BRT", "BRT_ZONE", "ZONE_CENTER", []),
+    ("BRT", "BRT_STATUS", "STATUS", []),
+    ("YH", "YH_ZONE", "ZONE_CENTER", []),
+    ("YH", "YH_STATUS", "STATUS", []),
+]
+
+
+def _active_systems(drive: Path) -> list[str]:
+    try:
+        found = live_convergence_systems(drive)
+        if found:
+            return found
+    except Exception:
+        pass
+    return list(SYSTEMS)
 
 _ENTRY_DATE_COLS = ["DATE_OPENED", "DATE OPENED", "ENTRY_DATE", "DATE"]
 _ENTRY_PRICE_COLS = ["ENTRY_PRICE", "ENTRY PRICE", "BUY_PRICE", "OPEN_PRICE"]
@@ -212,7 +261,7 @@ def _load_list_csv(drive: Path, system: str, kind: str) -> tuple[Optional[Path],
 
 
 def _stamp_from_open_name(name: str) -> Optional[str]:
-    m = re.match(r"^(?:BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ)_Open_(\d{12})\.csv$", name, re.I)
+    m = re.match(r"^[A-Za-z]+_Open_(\d{12})\.csv$", name, re.I)
     return m.group(1) if m else None
 
 
@@ -259,8 +308,9 @@ def _collect_hits(drive: Path) -> tuple[dict[str, SymbolConvergence], dict[str, 
     """Return symbol map and metadata about source files."""
     meta: dict[str, dict] = {}
     by_symbol: dict[str, SymbolConvergence] = {}
+    systems = _active_systems(drive)
 
-    for system in SYSTEMS:
+    for system in systems:
         for kind in LIST_KINDS:
             key = f"{system}_{kind}"
             path, df, run_ts = _load_list_csv(drive, system, kind)
@@ -298,7 +348,7 @@ def _collect_opens(drive: Path) -> tuple[dict[str, list[OpenHit]], dict[str, dic
     meta: dict[str, dict] = {}
     by_symbol: dict[str, list[OpenHit]] = {}
 
-    for system in OPEN_SYSTEMS:
+    for system in _active_systems(drive):
         key = f"{system}_Open"
         path, df, run_ts = _load_open_csv(drive, system)
         meta[key] = {
@@ -442,7 +492,7 @@ def _build_row(conv: SymbolConvergence) -> dict:
     if current and stop and current > 0:
         risk = f"{(stop / current - 1) * 100:+.1f}%"
 
-    return {
+    row = {
         "SYMBOL": conv.symbol,
         "SYSTEMS": ", ".join(sorted(conv.systems)),
         "N_SYSTEMS": conv.n_systems,
@@ -467,6 +517,11 @@ def _build_row(conv: SymbolConvergence) -> dict:
         "RL_TOO_HIGH": _system_detail(conv, "RL", "TOO_HIGH_LINE", []),
         "RL_ENTRY_OK": _system_detail(conv, "RL", "ENTRY_ALLOWED", []),
     }
+    for sys in sorted(conv.systems):
+        key = f"{sys}_STATUS"
+        if key not in row:
+            row[key] = _system_detail(conv, sys, "STATUS", [])
+    return row
 
 
 def build_convergence_df(
@@ -556,16 +611,8 @@ _MULTI_OPEN_SORT = [
 ]
 
 
-def build_html(
-    cross: pd.DataFrame,
-    same: pd.DataFrame,
-    multi_open: pd.DataFrame,
-    meta: dict[str, dict],
-    open_meta: dict[str, dict],
-    *,
-    generated: datetime,
-) -> str:
-    cross_cols = [
+def _cross_columns(systems: list[str]) -> list[str]:
+    cols = [
         "SYMBOL",
         "SYSTEMS",
         "N_SYSTEMS",
@@ -575,37 +622,54 @@ def build_html(
         "STOP",
         "UPSIDE_TO_TARGET",
         "RISK_TO_STOP",
-        "IND_SCORE",
-        "IND_DIFF",
-        "RL_SCORE",
-        "RL_TIER",
-        "BRT_ZONE",
-        "YH_ZONE",
         "ENTRY_BAND",
-        "IND_STATUS",
-        "BRT_STATUS",
-        "YH_STATUS",
     ]
+    sys_set = {s.upper() for s in systems}
+    for sys, col, _field, _extra in _DETAIL_SPECS:
+        if sys in sys_set and col not in cols:
+            cols.append(col)
+    for sys in systems:
+        key = f"{sys}_STATUS"
+        if key not in cols:
+            cols.append(key)
+    return cols
+
+
+def build_html(
+    cross: pd.DataFrame,
+    same: pd.DataFrame,
+    multi_open: pd.DataFrame,
+    meta: dict[str, dict],
+    open_meta: dict[str, dict],
+    *,
+    generated: datetime,
+    systems: Optional[list[str]] = None,
+) -> str:
+    systems = systems or list(SYSTEMS)
+    sys_label = " / ".join(systems)
+    cross_cols = _cross_columns(systems)
     same_cols = [
-        "SYMBOL",
-        "SYSTEMS",
-        "LISTS",
-        "CURRENT_PRICE",
-        "TARGET",
-        "STOP",
-        "ENTRY_BAND",
-        "IND_STATUS",
-        "BRT_STATUS",
-        "YH_STATUS",
-        "RL_TIER",
+        c
+        for c in (
+            "SYMBOL",
+            "SYSTEMS",
+            "LISTS",
+            "CURRENT_PRICE",
+            "TARGET",
+            "STOP",
+            "ENTRY_BAND",
+            *cross_cols[10:],
+        )
+        if c != "N_SYSTEMS"
     ]
 
     cross_rows = _df_to_table_rows(cross, cross_cols)
     same_rows = _df_to_table_rows(same, same_cols)
     multi_rows = _df_to_table_rows(multi_open, _MULTI_OPEN_COLS)
-    three_way = 0
+    n_sys = max(len(systems), 1)
+    all_engine = 0
     if not cross.empty:
-        three_way = int((cross["N_SYSTEMS"] >= 4).sum())
+        all_engine = int((cross["N_SYSTEMS"] >= n_sys).sum())
     multi_tickers = 0
     if not multi_open.empty:
         multi_tickers = int(multi_open["SYMBOL"].nunique())
@@ -619,7 +683,7 @@ def build_html(
     cross_table = (
         _html_table(cross_cols, cross_rows, ["text"] * len(cross_cols))
         if cross_rows
-        else "<p>No cross-system overlaps (symbol on 2+ of IND/BRT/RL/YH).</p>"
+        else f"<p>No cross-system overlaps (symbol on 2+ of {html.escape(sys_label)}).</p>"
     )
     same_table = (
         _html_table(same_cols, same_rows, ["text"] * len(same_cols))
@@ -657,13 +721,26 @@ th.sortable-th:hover {{ background:#e2e8f0; }}
 th.sort-asc .sort-ind::after {{ content:"▲"; color:#4c1d95; }}
 th.sort-desc .sort-ind::after {{ content:"▼"; color:#4c1d95; }}
 ul.sources {{ font-size:12px; color:#475569; line-height:1.5; }}
+.callout {{ background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin:12px 0 16px; }}
+.callout h2 {{ margin:0 0 6px; font-size:1rem; }}
+.ask {{ border-left:4px solid #2563eb; }}
+.plain {{ border-left:4px solid #047857; }}
 </style></head><body>
-<h1>IND / BRT / RL / YH — Watchlist &amp; Scanner Convergence</h1>
-<p class="sub">Generated {html.escape(gen_s)} · Symbols listed when they appear on <strong>2+ lists</strong> across the latest IND, BRT, RL, and YH watchlist/scanner outputs, plus tickers open in <strong>2+ systems</strong> at once.</p>
+<h1>All live systems — Watchlist &amp; Scanner Convergence</h1>
+<p class="sub">Generated {html.escape(gen_s)} · Symbols listed when they appear on <strong>2+ lists</strong> across the latest <strong>{html.escape(sys_label)}</strong> watchlist/scanner outputs, plus tickers open in <strong>2+ systems</strong> at once. Systems come from the DailyRun registry (not the original frozen IND/BRT/RL/YH-only set).</p>
+<div class="callout ask">
+<h2>What you asked</h2>
+<p>“{html.escape(ORIGINAL_REQUEST)}”</p>
+</div>
+<div class="callout plain">
+<h2>In plain English</h2>
+<p>{html.escape(LAYMAN)}</p>
+<p>This page is the overlap view: names that show up on more than one live system’s watchlist, scanner, or open book. Relative Strength Index (RSI) is included when it has a house book. Adding a new DailyRun sleeve to <code>tools/dailyrun_system_status.py</code> (<code>DAILYRUN_REGISTRY</code>) is enough for the next run to pick it up.</p>
+</div>
 <div class="cards">
-  <div class="card"><h3>Multi-system opens</h3><div class="metric">{multi_tickers}</div><div class="small">{len(multi_open)} rows · open in 2+ of {"/".join(OPEN_SYSTEMS)}</div></div>
-  <div class="card"><h3>Cross-system overlaps</h3><div class="metric">{len(cross)}</div><div class="small">2+ engines (IND/BRT/RL/YH)</div></div>
-  <div class="card"><h3>4-engine overlaps</h3><div class="metric">{three_way}</div><div class="small">On all four systems</div></div>
+  <div class="card"><h3>Multi-system opens</h3><div class="metric">{multi_tickers}</div><div class="small">{len(multi_open)} rows · open in 2+ of {html.escape("/".join(systems))}</div></div>
+  <div class="card"><h3>Cross-system overlaps</h3><div class="metric">{len(cross)}</div><div class="small">2+ engines ({html.escape(sys_label)})</div></div>
+  <div class="card"><h3>All-list-system overlaps</h3><div class="metric">{all_engine}</div><div class="small">On all {n_sys} list systems</div></div>
   <div class="card"><h3>Same-system only</h3><div class="metric">{len(same)}</div><div class="small">Watchlist + scanner, one engine</div></div>
 </div>
 <section>
@@ -678,7 +755,7 @@ ul.sources {{ font-size:12px; color:#475569; line-height:1.5; }}
 </section>
 <section>
 <h2>Cross-system convergence</h2>
-<p class="small">Example: symbol on both IND Watchlist and BRT Watchlist. W=watchlist, S=scanner in per-system detail columns. Click column headers to sort.</p>
+<p class="small">Example: symbol on both a Relative Strength Index (RSI) watchlist and a Break and ReTest (BRT) watchlist. W=watchlist, S=scanner in per-system detail columns. Click column headers to sort.</p>
 <div class="table-wrap">{cross_table}</div>
 </section>
 <section>
@@ -698,6 +775,7 @@ def build_report(
     min_systems: int = 2,
 ) -> tuple[Path, Path, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     drive = _resolve_drive(drive_dir)
+    systems = _active_systems(drive)
     by_symbol, meta = _collect_hits(drive)
     cross, same = build_convergence_df(by_symbol, min_systems=min_systems)
     opens_by_symbol, open_meta = _collect_opens(drive)
@@ -721,7 +799,7 @@ def build_report(
         multi_open.to_csv(multi_path, index=False)
 
     html_text = build_html(
-        cross, same, multi_open, meta, open_meta, generated=now
+        cross, same, multi_open, meta, open_meta, generated=now, systems=systems
     )
     out_html.write_text(html_text, encoding="utf-8")
 
@@ -739,7 +817,7 @@ def build_report(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="IND/BRT/RL/YH watchlist & scanner convergence report")
+    p = argparse.ArgumentParser(description="All live-system watchlist & scanner convergence report")
     p.add_argument("--drive", type=Path, default=DRIVE)
     p.add_argument("-o", "--output", type=Path, default=None)
     p.add_argument(

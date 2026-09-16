@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Symbol universe for daily trendline charts.
+"""Symbol universe for daily trendline charts + score.
 
 Union (deduped):
-  gettarget_positions.csv
-  ∪ drive/*_LatestRun_Open.csv
+  gettarget_positions.csv (held / open book)
+  ∪ LatestRun Open for live DailyRun sleeves
+  ∪ LatestRun / stamped Watchlist for those sleeves
   ∪ investment-report scanners (stamped to latest core run)
-  ∪ always-include extras (SPY, APP, + durable extras list)
+  ∪ always-include (PaulTwenty ∪ SPY/APP/durable extras)
 
-Scanner source matches ``generate_investment_report._scanner_for_latest_run``:
-stamped ``{SYS}_Scanner_{core_ts}.csv`` for BRT/IND/RL/YH/MTS/WPBR/RS (WPBR
-also checks legacy PBR_), plus SB Watchlist for the same core stamp (SB has no
-Scanner). Does **not** use stale ``*_LatestRun_Scanner.csv`` alone — those can
-linger after a DailyRun that wrote no Scanner candidates.
+Live sleeves come from ``dailyrun_system_status.live_trendline_systems``
+(wired DailyRun registry) — not a frozen tuple. RSI (Relative Strength Index)
+prefers the house-pinned stamp (``RSI_house_last_run_ts.txt``) so ALL/research
+runs do not steal the book. Does **not** use stale ``*_LatestRun_Scanner.csv``
+alone — those can linger after a DailyRun that wrote no Scanner candidates.
 """
 from __future__ import annotations
 
@@ -26,36 +27,97 @@ _REPO = Path(__file__).resolve().parent.parent
 _ENTRY_DATE_COLS = ("DATE_OPENED", "DATE OPENED", "ENTRY_DATE", "DATE")
 _ENTRY_PRICE_COLS = ("ENTRY_PRICE", "ENTRY PRICE", "BUY_PRICE", "OPEN_PRICE")
 
-# Always chart these even if not in portfolio / LatestRun opens / scanners.
-# Durable extras (kept across DailyRun); SPY = market reference, APP + watchlist below.
-ALWAYS_INCLUDE_SYMBOLS: tuple[str, ...] = (
-    "SPY",
-    "APP",
-    "GFI",
-    "AIZ",
-    "COP",
-    "PNRG",
-    "CVI",
-    "REPX",
-    "EQNR",
-    "CF",
-    "UAN",
-    "HPQ",
-    "PDEX",
+# Official PaulTwenty — keep in sync with drive/universes/PaulTwenty_universe.csv
+# (top-20 mcap with local OHLC; user list 2026-09-05 matches CSV exactly).
+PAUL_TWENTY: tuple[str, ...] = (
+    "NVDA",
+    "GOOG",
+    "GOOGL",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "TSM",
+    "AVGO",
+    "META",
+    "TSLA",
+    "LLY",
+    "JPM",
+    "MU",
+    "WMT",
+    "AMD",
+    "V",
+    "ASML",
+    "XOM",
+    "JNJ",
+    "MA",
 )
 
-# Same systems as investment-report scanner sections (excl. VZ watchlist fallback —
-# VZ has no Scanner file; watchlist is not "came up on a scanner").
+# Durable extras beyond PaulTwenty (SPY = market ref, APP + energy/watchlist).
+_ALWAYS_INCLUDE_EXTRAS: tuple[str, ...] = (
+    "SPY",
+    "APP",
+    "AGX",
+    "AIZ",
+    "CF",
+    "COP",
+    "CORT",
+    "CRWD",
+    "CVI",
+    "CVX",
+    "EQNR",
+    "ETSY",
+    "EXEL",
+    "FNV",
+    "GFI",
+    "HPQ",
+    "INTC",
+    "KGC",
+    "NFLX",
+    "PDEX",
+    "PLTR",
+    "PNRG",
+    "REPX",
+    "STRL",
+    "STX",
+    "TXN",
+    "UAN",
+    "UTHR",
+    "VRSN",
+    "W",
+)
+
+# Always chart these even if not in portfolio / LatestRun opens / scanners.
+# Union PaulTwenty ∪ extras, order-preserving dedupe.
+ALWAYS_INCLUDE_SYMBOLS: tuple[str, ...] = tuple(
+    dict.fromkeys((*PAUL_TWENTY, *_ALWAYS_INCLUDE_EXTRAS))
+)
+
+# Fallback if the DailyRun registry cannot be imported. Prefer live_list_systems().
 SCANNER_SYSTEMS: tuple[str, ...] = (
     "BRT",
-    "IND",
     "RL",
     "YH",
     "MTS",
     "WPBR",
     "RS",
     "SB",
+    "VZ",
+    "RSI",
 )
+
+
+def live_list_systems(drive: Path | None = None) -> tuple[str, ...]:
+    """Wired DailyRun sleeves for opens / watch / scan (registry, not a frozen report set)."""
+    drive = drive or (_REPO / "drive")
+    try:
+        from dailyrun_system_status import live_trendline_systems
+
+        ids = live_trendline_systems(drive)
+        if ids:
+            return tuple(ids)
+    except Exception:
+        pass
+    return SCANNER_SYSTEMS
 
 _RUN_TS_RE = re.compile(
     r"^(?P<prefix>[A-Za-z]+)_(?:Closed|Open|Watchlist|Summary)_(?P<ts>\d{12})\.csv$",
@@ -77,6 +139,8 @@ class SymbolOpenInfo:
     in_portfolio: bool = False
     primary_system: str = ""
     scanner_systems: list[str] = field(default_factory=list)
+    watchlist_systems: list[str] = field(default_factory=list)
+    list_kinds: list[str] = field(default_factory=list)  # held / open / watch / scan
 
 
 def _norm_date(s: str) -> str:
@@ -135,6 +199,62 @@ def latest_core_run_timestamp(prefix: str, drive: Path) -> str | None:
     return max(stamps) if stamps else None
 
 
+def _read_rsi_house_run_ts(drive: Path) -> str | None:
+    """House pin from drive/RSI_house_last_run_ts.txt (not overwritten by ALL runs)."""
+    path = drive / "RSI_house_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def rsi_core_run_timestamp(drive: Path) -> str | None:
+    """House-pinned RSI stamp when present; else latest Closed/Open/Watchlist/Summary."""
+    house = _read_rsi_house_run_ts(drive)
+    if house:
+        return house
+    return latest_core_run_timestamp("RSI", drive)
+
+
+def _read_house_run_ts(drive: Path, prefix: str) -> str | None:
+    path = drive / f"{prefix.upper()}_house_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def vz_core_run_timestamp(drive: Path) -> str | None:
+    """House-pinned Volume Zone (VZ) stamp when present; else latest core stamp."""
+    house = _read_house_run_ts(drive, "VZ")
+    if house:
+        return house
+    return latest_core_run_timestamp("VZ", drive)
+
+
+def core_run_timestamp(prefix: str, drive: Path) -> str | None:
+    pfx = prefix.upper()
+    if pfx == "RSI":
+        return rsi_core_run_timestamp(drive)
+    if pfx == "VZ":
+        return vz_core_run_timestamp(drive)
+    return latest_core_run_timestamp(pfx, drive)
+
+
+def _watch_scan_kinds(prefix: str) -> list[str]:
+    """File stems a live sleeve publishes for watch/scan (SB/VZ/RSI: watchlist only)."""
+    pfx = prefix.upper()
+    if pfx in ("SB", "VZ", "RSI"):
+        return ["Watchlist"]
+    return ["Watchlist", "Scanner"]
+
+
 def _symbols_from_csv(path: Path) -> list[str]:
     try:
         import pandas as pd
@@ -159,28 +279,72 @@ def _symbols_from_csv(path: Path) -> list[str]:
     return out
 
 
-def resolve_scanner_csv(prefix: str, drive: Path) -> tuple[Path | None, str | None]:
-    """Stamped scanner (or SB watchlist) for the latest core run — investment-report parity."""
+def resolve_list_csv(
+    prefix: str,
+    drive: Path,
+    kind: str,
+) -> tuple[Path | None, str | None]:
+    """Stamped Watchlist/Scanner for the latest core run — house pin for RSI/VZ."""
     pfx = prefix.upper()
-    run_ts = latest_core_run_timestamp(pfx, drive)
-    if not run_ts:
-        return None, None
+    kind_title = kind[:1].upper() + kind[1:].lower()
+    if kind_title not in ("Watchlist", "Scanner"):
+        kind_title = kind
+    run_ts = core_run_timestamp(pfx, drive)
     candidates: list[Path] = []
-    if pfx == "SB":
-        candidates.append(drive / f"SB_Watchlist_{run_ts}.csv")
-    else:
-        candidates.append(drive / f"{pfx}_Scanner_{run_ts}.csv")
+    if run_ts:
+        candidates.append(drive / f"{pfx}_{kind_title}_{run_ts}.csv")
         if pfx == "WPBR":
-            candidates.append(drive / f"PBR_Scanner_{run_ts}.csv")
+            candidates.append(drive / f"PBR_{kind_title}_{run_ts}.csv")
+    # LatestRun fallback only when a stamped file for this core run is absent.
+    candidates.append(drive / f"{pfx}_LatestRun_{kind_title}.csv")
     path = next((p for p in candidates if p.is_file()), None)
+    if (
+        path is not None
+        and kind_title == "Scanner"
+        and run_ts
+        and path.name.endswith(f"_LatestRun_{kind_title}.csv")
+        and not (drive / f"{pfx}_{kind_title}_{run_ts}.csv").is_file()
+        and not (pfx == "WPBR" and (drive / f"PBR_{kind_title}_{run_ts}.csv").is_file())
+    ):
+        # Stale LatestRun Scanner after a run that wrote no Scanner candidates.
+        return None, run_ts
     return path, run_ts
+
+
+def resolve_scanner_csv(prefix: str, drive: Path) -> tuple[Path | None, str | None]:
+    """Stamped scanner (or SB/RSI/VZ watchlist) for the latest core run."""
+    pfx = prefix.upper()
+    if pfx in ("SB", "RSI", "VZ"):
+        return resolve_list_csv(pfx, drive, "Watchlist")
+    return resolve_list_csv(pfx, drive, "Scanner")
+
+
+def resolve_watchlist_csv(prefix: str, drive: Path) -> tuple[Path | None, str | None]:
+    return resolve_list_csv(prefix, drive, "Watchlist")
 
 
 def load_latest_scanners(drive: Path) -> dict[str, list[str]]:
     """symbol -> sorted scanner system prefixes (investment-report latest-run stamps)."""
     by_sym: dict[str, list[str]] = {}
-    for prefix in SCANNER_SYSTEMS:
+    for prefix in live_list_systems(drive):
+        kinds = _watch_scan_kinds(prefix)
+        if "Scanner" not in kinds:
+            continue
         path, _run_ts = resolve_scanner_csv(prefix, drive)
+        if path is None:
+            continue
+        for sym in _symbols_from_csv(path):
+            by_sym.setdefault(sym, []).append(prefix.upper())
+    for sym, systems in by_sym.items():
+        by_sym[sym] = sorted(set(systems))
+    return by_sym
+
+
+def load_latest_watchlists(drive: Path) -> dict[str, list[str]]:
+    """symbol -> sorted watchlist system prefixes (house pin for RSI / VZ)."""
+    by_sym: dict[str, list[str]] = {}
+    for prefix in live_list_systems(drive):
+        path, _run_ts = resolve_watchlist_csv(prefix, drive)
         if path is None:
             continue
         for sym in _symbols_from_csv(path):
@@ -220,10 +384,13 @@ def load_gettarget_positions(path: Path) -> dict[str, SymbolOpenInfo]:
 
 
 def load_latest_run_opens(drive: Path) -> dict[str, list[tuple[str, dict[str, Any]]]]:
-    """symbol -> [(system, row_dict), ...]"""
+    """symbol -> [(system, row_dict), ...] for live DailyRun sleeves only."""
+    allowed = {s.upper() for s in live_list_systems(drive)}
     by_sym: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for path in sorted(drive.glob("*_LatestRun_Open.csv")):
         sys_name = _system_from_open_filename(path.name)
+        if allowed and sys_name not in allowed:
+            continue
         try:
             import pandas as pd
 
@@ -250,14 +417,15 @@ def collect_opens_universe(
     include_scanners: bool = True,
     extra_symbols: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict[str, SymbolOpenInfo]]:
-    """Return sorted symbols and per-symbol open metadata.
+    """Return sorted symbols and per-symbol open / watch / scan metadata.
 
-    Always unions ``ALWAYS_INCLUDE_SYMBOLS`` (SPY, APP, durable watchlist extras)
-    unless ``include_spy`` is False (then SPY is dropped; other extras still apply).
-    Pass ``extra_symbols`` to override the default extras tuple.
+    Always unions ``ALWAYS_INCLUDE_SYMBOLS`` (``PAUL_TWENTY`` ∪ SPY/APP/durable
+    extras) unless ``include_spy`` is False (then SPY is dropped; other extras
+    still apply). Pass ``extra_symbols`` to override the default extras tuple.
 
     When ``include_scanners`` is True (default), also unions symbols from the
-    latest investment-report scanner artifacts (see ``load_latest_scanners``).
+    latest investment-report scanner **and watchlist** artifacts for live
+    DailyRun sleeves (see ``load_latest_scanners`` / ``load_latest_watchlists``).
     """
     drive = drive or (_REPO / "drive")
     positions_csv = positions_csv or (_REPO / "gettarget_positions.csv")
@@ -265,8 +433,9 @@ def collect_opens_universe(
     portfolio = load_gettarget_positions(positions_csv)
     engine = load_latest_run_opens(drive)
     scanners = load_latest_scanners(drive) if include_scanners else {}
+    watchlists = load_latest_watchlists(drive) if include_scanners else {}
 
-    symbols: set[str] = set(portfolio) | set(engine) | set(scanners)
+    symbols: set[str] = set(portfolio) | set(engine) | set(scanners) | set(watchlists)
     extras = list(ALWAYS_INCLUDE_SYMBOLS if extra_symbols is None else extra_symbols)
     if not include_spy:
         extras = [s for s in extras if s.upper() != "SPY"]
@@ -289,9 +458,24 @@ def collect_opens_universe(
 
         scan_sys = scanners.get(sym, [])
         info.scanner_systems = list(scan_sys)
+        watch_sys = watchlists.get(sym, [])
+        info.watchlist_systems = list(watch_sys)
+
+        kinds: list[str] = []
+        if info.in_portfolio:
+            kinds.append("held")
+        if eng_hits:
+            kinds.append("open")
+        if watch_sys:
+            kinds.append("watch")
+        if scan_sys:
+            kinds.append("scan")
+        info.list_kinds = kinds
 
         if not info.primary_system and info.systems:
             info.primary_system = info.systems[0]
+        if not info.primary_system and info.watchlist_systems:
+            info.primary_system = info.watchlist_systems[0]
         if not info.primary_system and info.scanner_systems:
             info.primary_system = info.scanner_systems[0]
 
@@ -334,6 +518,8 @@ def meta_to_jsonable(meta: dict[str, SymbolOpenInfo]) -> dict[str, Any]:
             "in_portfolio": info.in_portfolio,
             "primary_system": info.primary_system,
             "scanner_systems": info.scanner_systems,
+            "watchlist_systems": info.watchlist_systems,
+            "list_kinds": info.list_kinds,
         }
         for sym, info in meta.items()
     }

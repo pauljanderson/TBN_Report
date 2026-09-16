@@ -332,7 +332,13 @@ def book_stats(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "exp_d": sheet / n,
         "lose_streak": max_streak,
         "tpy": tpy,
-        "sharpe": float("nan"),
+        "sharpe": (
+            float(cap["sharpe"])
+            if isinstance(cap.get("sharpe"), (int, float))
+            and math.isfinite(float(cap["sharpe"]))
+            else float("nan")
+        ),
+        "sharpe_source": str(cap.get("sharpe_source") or ""),
         "exits": dict(Counter(str(t.get("exit") or "?").strip().upper() for t in trades)),
     }
 
@@ -575,21 +581,30 @@ def _attach_split_sharpes(
     equity_curve: Optional[Path],
     eq_meta: dict[str, Any],
 ) -> None:
-    """Fill book Sharpe from EquityMeta (FULL) and EquityCurve date slices (IS/OOS).
+    """Fill book Sharpe from EquityMeta / EquityCurve; keep Closed overlay fallback.
 
-    Host daily curve (prefer Equity_Regular) — same definition as Report / EquityMeta.
-    Overlay Ann ROR / Max DD remain Closed-replay; Sharpe is host-curve descriptive.
+    Prefer host daily curve (Equity_Regular) when present — same definition as
+    Report / EquityMeta. If the curve is missing, leave Sharpe already set by
+    ``book_stats`` via ``overlay_ann_ror_max_dd`` (Closed exit-date equity).
+    Overlay Ann ROR / Max DD remain Closed-replay either way.
     """
     meta_s = eq_meta.get("sharpe", float("nan"))
     if isinstance(meta_s, (int, float)) and math.isfinite(float(meta_s)):
         m_full["sharpe"] = float(meta_s)
+        m_full["sharpe_source"] = "equity_meta"
     else:
         s_full = sharpe_from_equity_curve_csv(equity_curve)
-        m_full["sharpe"] = float(s_full) if s_full is not None else float("nan")
+        if s_full is not None:
+            m_full["sharpe"] = float(s_full)
+            m_full["sharpe_source"] = "equity_curve:rf0:sqrt252"
     s_is = sharpe_from_equity_curve_csv(equity_curve, end_date_exclusive=IS_CUT)
+    if s_is is not None:
+        m_is["sharpe"] = float(s_is)
+        m_is["sharpe_source"] = "equity_curve:rf0:sqrt252"
     s_oos = sharpe_from_equity_curve_csv(equity_curve, start_date=IS_CUT)
-    m_is["sharpe"] = float(s_is) if s_is is not None else float("nan")
-    m_oos["sharpe"] = float(s_oos) if s_oos is not None else float("nan")
+    if s_oos is not None:
+        m_oos["sharpe"] = float(s_oos)
+        m_oos["sharpe_source"] = "equity_curve:rf0:sqrt252"
 
 
 def pack_result(run: dict[str, Any]) -> dict[str, Any]:
@@ -769,11 +784,11 @@ def write_compare_html(
             compare_row(p, split_key, baseline, is_pick, CONTROL_ID) for p in packed
         )
         note = (
-            "Paul/FIT/UW from host Summary + EquityMeta. Sharpe from host EquityCurve "
-            "(Equity_Regular when present; IS/OOS = calendar slices)."
+            "Paul/FIT/UW from host Summary + EquityMeta. Sharpe: prefer host EquityCurve "
+            "(Equity_Regular when present; IS/OOS = calendar slices); else Closed exit-date equity."
             if split_key == "m_full"
-            else "Closed overlay at $47,500 cash / $500k initial. Sharpe from host EquityCurve "
-            "calendar slice. Paul/FIT N/A on slices."
+            else "Closed overlay at $47,500 cash / $500k initial. Sharpe: EquityCurve calendar "
+            "slice when available, else Closed exit-date equity. Paul/FIT N/A on slices."
         )
         sections.append(
             f'<section><h2>RL universe compare — {title}</h2>'

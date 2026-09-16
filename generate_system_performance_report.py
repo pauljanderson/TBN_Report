@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the historical system and $500k allocation GitHub Pages report."""
+"""Generate the historical system and $500k allocation GitHub Pages report.
+
+Live sleeve list comes from tools/dailyrun_system_status.live_wired_systems()
+(DailyRun registry), not a frozen tuple. RSI (Relative Strength Index) is the
+house pin / LatestRun / rsi_universe.csv book — never RSIN_PaulScore5_IS.
+"""
 from __future__ import annotations
 
 import argparse
@@ -18,13 +23,18 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DRIVE = ROOT / "Drive"
 DEFAULT_OUTPUT = ROOT / "docs" / "system_performance.html"
+DRIVE_LATEST_NAME = "System_Performance_Latest.html"
 ET = ZoneInfo("America/New_York")
 
-ACTIVE_SYSTEMS = ("BRT", "RL", "MTS", "WPBR", "YH", "RS", "SB", "VZ")
+# Fallback only if the DailyRun registry helper cannot be imported.
+# Keep RSI here so a missing import cannot drop the sleeve again.
+_FALLBACK_ACTIVE_SYSTEMS = ("BRT", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI")
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
+    "RS": "RS (Relative Strength vs SPY)",
     "SB": "SB (StockBee)",
     "VZ": "VZ (Volume Zone)",
+    "RSI": "RSI (Relative Strength Index)",
     "WRL": "WRL (Weekly Range / Swing)",
 }
 COLORS = {
@@ -36,18 +46,79 @@ COLORS = {
     "RS": "#db2777",
     "SB": "#0d9488",
     "VZ": "#64748b",
+    "RSI": "#ea580c",
     "WRL": "#0f766e",
     "Equal capital": "#2563eb",
     "Risk-balanced": "#d97706",
     "Recommended": "#0f766e",
     "SPY": "#111827",
 }
+_AUTO_COLORS = ("#4f46e5", "#be123c", "#65a30d", "#0284c7", "#a21caf", "#ca8a04")
 RL_CASH = 47_500.0
 PORTFOLIO_CAPITAL = 500_000.0
 SPY_PATH = ROOT / "data" / "newdata" / "data" / "SPY.csv"
 # Standalone systems-chart overlay: first trading session on/after this date.
 # Allocation-scenario chart stays on the common overlap window (aligned $500k).
 SPY_ORIGIN = date(2010, 1, 1)
+
+
+def _dailyrun_status_mod():
+    """Load tools/dailyrun_system_status.py (tools is not a package)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "dailyrun_system_status",
+        ROOT / "tools" / "dailyrun_system_status.py",
+    )
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def live_performance_systems() -> tuple[str, ...]:
+    """Wired DailyRun sleeves in report order.
+
+    Source of truth: tools/dailyrun_system_status.live_wired_systems().
+    To put a new system on this page: wire it in DailyRun.bat and
+    DAILYRUN_REGISTRY / REPORT_ORDER. Deprecated IND and research-only
+    stamps (RSIN, WRL, MVCP) stay out until they are wired.
+    """
+    try:
+        mod = _dailyrun_status_mod()
+        if mod is not None and hasattr(mod, "live_wired_systems"):
+            systems = tuple(str(s).upper() for s in mod.live_wired_systems())
+            if systems:
+                return systems
+        if mod is not None and hasattr(mod, "wired_system_ids"):
+            systems = tuple(str(s).upper() for s in mod.wired_system_ids())
+            if systems:
+                return systems
+    except Exception:
+        pass
+    return _FALLBACK_ACTIVE_SYSTEMS
+
+
+# Snapshot for helpers; build_report always refreshes via live_performance_systems().
+ACTIVE_SYSTEMS = live_performance_systems()
+
+
+def _system_color(label: str) -> str:
+    if label in COLORS:
+        return COLORS[label]
+    idx = sum(ord(c) for c in label) % len(_AUTO_COLORS)
+    return _AUTO_COLORS[idx]
+
+
+def _read_ts_file(path: Path) -> Optional[str]:
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
 
 
 @dataclass(frozen=True)
@@ -110,29 +181,48 @@ def _date(raw: object) -> Optional[date]:
         return None
 
 
-def resolve_sources(drive: Path) -> dict[str, Optional[Path]]:
-    """Select one closed file per logical system, avoiding PBR/WPBR alias duplication."""
-    out: dict[str, Optional[Path]] = {}
-    for system in ("BRT", "MTS", "YH", "RS", "SB", "VZ", "WRL"):
-        path = drive / f"{system}_LatestRun_Closed.csv"
-        out[system] = path if path.is_file() else None
+def _house_closed(drive: Path, system: str) -> Optional[Path]:
+    """House-pin Closed CSV for VZ / RSI so ALL / research stamps never win."""
+    sys = system.upper()
+    if sys not in {"VZ", "RSI"}:
+        return None
+    ts = _read_ts_file(drive / f"{sys}_house_last_run_ts.txt")
+    if not ts:
+        return None
+    path = drive / f"{sys}_Closed_{ts}.csv"
+    return path if path.is_file() else None
 
-    wpbr = drive / "WPBR_LatestRun_Closed.csv"
-    legacy = drive / "PBR_LatestRun_Closed.csv"
-    out["WPBR"] = wpbr if wpbr.is_file() else legacy if legacy.is_file() else None
 
-    # Prefer the canonical LatestRun copy.  Fall back to the newest RL mirror.
-    rl = drive / "RL_LatestRun_Closed.csv"
-    if rl.is_file():
-        out["RL"] = rl
-    else:
+def resolve_closed_path(drive: Path, system: str) -> Optional[Path]:
+    """One closed book per sleeve. House pin first for VZ / RSI; no newest-glob."""
+    sys = system.upper()
+    house = _house_closed(drive, sys)
+    if house is not None:
+        return house
+    latest = drive / f"{sys}_LatestRun_Closed.csv"
+    if latest.is_file():
+        return latest
+    if sys == "WPBR":
+        legacy = drive / "PBR_LatestRun_Closed.csv"
+        if legacy.is_file():
+            return legacy
+    if sys == "RL":
         mirrors = sorted(
             drive.glob("BRT_Closed_RL_*.csv"),
             key=lambda p: (p.stat().st_mtime_ns, p.name),
             reverse=True,
         )
-        out["RL"] = mirrors[0] if mirrors else None
-    return out
+        if mirrors:
+            return mirrors[0]
+    return None
+
+
+def resolve_sources(
+    drive: Path, systems: Optional[Iterable[str]] = None
+) -> dict[str, Optional[Path]]:
+    """Select one closed file per live system, avoiding PBR/WPBR alias duplication."""
+    wanted = tuple(systems) if systems is not None else live_performance_systems()
+    return {system: resolve_closed_path(drive, system) for system in wanted}
 
 
 def load_trades(path: Path, system: str) -> tuple[list[Trade], int]:
@@ -239,12 +329,12 @@ def _equity_candidates(drive: Path, system: str) -> list[Path]:
     for prefix in prefixes:
         candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve_Regular.csv"))
         candidates.extend(drive.glob(f"{prefix}_EquityCurve_Regular_*.csv"))
-        if system in ("SB", "VZ", "WRL"):
+        if system in ("SB", "VZ", "WRL", "RSI"):
             # Copy-latest uses {SYS}_LatestRun_EquityCurve.csv; stamp also has EquityCurve_Regular_*.
             candidates.extend(drive.glob(f"{prefix}_LatestRun_EquityCurve.csv"))
             candidates.extend(drive.glob(f"{prefix}_EquityCurve_*.csv"))
     unique = {p.resolve(): p for p in candidates if p.is_file()}
-    if system in ("SB", "VZ", "WRL"):
+    if system in ("SB", "VZ", "WRL", "RSI"):
         return sorted(
             unique.values(),
             key=lambda p: (
@@ -433,9 +523,13 @@ def yearly_metrics(trades: list[Trade], capital_basis: float) -> list[dict[str, 
     return output
 
 
-def _common_period(trades_by_system: dict[str, list[Trade]]) -> tuple[date, date]:
-    start = max(min(t.opened for t in trades_by_system[s]) for s in ACTIVE_SYSTEMS)
-    end = min(max(t.closed for t in trades_by_system[s]) for s in ACTIVE_SYSTEMS)
+def _common_period(
+    trades_by_system: dict[str, list[Trade]],
+    systems: Optional[tuple[str, ...]] = None,
+) -> tuple[date, date]:
+    keys = systems or tuple(trades_by_system)
+    start = max(min(t.opened for t in trades_by_system[s]) for s in keys)
+    end = min(max(t.closed for t in trades_by_system[s]) for s in keys)
     if start >= end:
         raise ValueError("Active systems do not have an overlapping comparison period")
     return start, end
@@ -485,8 +579,14 @@ def _load_spy(start: date, end: date) -> tuple[pd.DataFrame, str, Path]:
     return frame[["date", "equity", "pnl"]], label, SPY_PATH
 
 
-def _bounded_weights(raw: dict[str, float], floor: float = 0.10, cap: float = 0.30) -> dict[str, float]:
-    weights = {s: max(0.0, float(raw.get(s, 0.0))) for s in ACTIVE_SYSTEMS}
+def _bounded_weights(
+    raw: dict[str, float],
+    floor: float = 0.10,
+    cap: float = 0.30,
+    systems: Optional[tuple[str, ...]] = None,
+) -> dict[str, float]:
+    keys = systems or tuple(raw)
+    weights = {s: max(0.0, float(raw.get(s, 0.0))) for s in keys}
     total = sum(weights.values())
     weights = {s: (weights[s] / total if total else 1.0 / len(weights)) for s in weights}
     for _ in range(20):
@@ -512,10 +612,13 @@ def _bounded_weights(raw: dict[str, float], floor: float = 0.10, cap: float = 0.
 
 
 def _portfolio_curve(
-    streams: dict[str, pd.Series], weights: dict[str, float]
+    streams: dict[str, pd.Series],
+    weights: dict[str, float],
+    systems: Optional[tuple[str, ...]] = None,
 ) -> pd.DataFrame:
+    keys = systems or tuple(weights)
     daily_pnl = sum(
-        (streams[s] * (PORTFOLIO_CAPITAL * weights[s]) for s in ACTIVE_SYSTEMS),
+        (streams[s] * (PORTFOLIO_CAPITAL * weights[s]) for s in keys),
         start=pd.Series(0.0, index=next(iter(streams.values())).index),
     )
     return pd.DataFrame(
@@ -533,9 +636,10 @@ def _portfolio_usage(
     weights: dict[str, float],
     start: date,
     end: date,
+    systems: Optional[tuple[str, ...]] = None,
 ) -> tuple[float, float]:
     events: dict[date, float] = {}
-    for system in ACTIVE_SYSTEMS:
+    for system in (systems or tuple(weights)):
         scale = PORTFOLIO_CAPITAL * weights[system] / bases[system] if bases[system] else 0.0
         notionals = [t.notional for t in trades_by_system[system] if t.notional > 0]
         fallback = float(pd.Series(notionals).median()) if notionals else 0.0
@@ -585,9 +689,10 @@ def _scaled_profit_factor(
     weights: dict[str, float],
     start: date,
     end: date,
+    systems: Optional[tuple[str, ...]] = None,
 ) -> float:
     values: list[float] = []
-    for system in ACTIVE_SYSTEMS:
+    for system in (systems or tuple(weights)):
         scale = PORTFOLIO_CAPITAL * weights[system] / bases[system] if bases[system] else 0.0
         values.extend(t.pnl * scale for t in _period_trades(trades_by_system[system], start, end))
     gross_profit = sum(v for v in values if v > 0)
@@ -801,7 +906,7 @@ def _svg_line(
             ("M" if idx == 0 else "L") + f"{xy(day, val)[0]:.1f},{xy(day, val)[1]:.1f}"
             for idx, (day, val) in enumerate(points)
         )
-        color = COLORS.get(label, "#334155")
+        color = _system_color(label)
         parts.append(f"<path d='{path}' fill='none' stroke='{color}' stroke-width='2.5'/>")
     parts.extend(
         (
@@ -815,7 +920,7 @@ def _svg_line(
         if legend_suffix and label in legend_suffix:
             suffix = f" · {legend_suffix[label]}"
         parts.append(
-            f"<span><i style='background:{COLORS.get(label, '#334155')}'></i>"
+            f"<span><i style='background:{_system_color(label)}'></i>"
             f"{html.escape(LABELS.get(label, label))}{html.escape(suffix)}</span>"
         )
     parts.append("</div>")
@@ -854,55 +959,76 @@ def _system_section(
 
 def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict[str, object]]:
     drive = _resolve_drive(drive)
-    sources = resolve_sources(drive)
+    wanted = live_performance_systems()
+    sources = resolve_sources(drive, wanted)
     trades_by_system: dict[str, list[Trade]] = {}
     duplicates: dict[str, int] = {}
-    for system in ACTIVE_SYSTEMS:
+    missing_systems: list[str] = []
+    for system in wanted:
         path = sources.get(system)
         if path is None:
-            raise FileNotFoundError(f"{system} closed data missing")
-        trades_by_system[system], duplicates[system] = load_trades(path, system)
-        if not trades_by_system[system]:
-            raise ValueError(f"{system} has no usable closed trades")
+            missing_systems.append(system)
+            continue
+        loaded, dup_n = load_trades(path, system)
+        if not loaded:
+            missing_systems.append(system)
+            continue
+        trades_by_system[system] = loaded
+        duplicates[system] = dup_n
 
-    common_start, common_end = _common_period(trades_by_system)
-    bases = {s: _capital_stats(trades_by_system[s])[0] for s in ACTIVE_SYSTEMS}
+    systems = tuple(s for s in wanted if s in trades_by_system)
+    if len(systems) < 2:
+        raise ValueError(
+            "Need at least two live systems with closed trades; "
+            f"loaded={list(systems)} missing={missing_systems}"
+        )
+    sources = {s: sources[s] for s in systems}
+
+    common_start, common_end = _common_period(trades_by_system, systems)
+    bases = {s: _capital_stats(trades_by_system[s])[0] for s in systems}
     period_trades = {
         s: _period_trades(trades_by_system[s], common_start, common_end)
-        for s in ACTIVE_SYSTEMS
+        for s in systems
     }
     streams = {
         s: _daily_normalized_pnl(period_trades[s], bases[s], common_start, common_end)
-        for s in ACTIVE_SYSTEMS
+        for s in systems
     }
 
-    equal = {s: 1.0 / len(ACTIVE_SYSTEMS) for s in ACTIVE_SYSTEMS}
+    equal = {s: 1.0 / len(systems) for s in systems}
     sleeve_dd: dict[str, float] = {}
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         sleeve_curve = pd.DataFrame(
             {"equity": 1.0 + streams[system].cumsum().values}
         )
         sleeve_dd[system] = max(0.01, abs(_max_drawdown(sleeve_curve)[1]) / 100.0)
-    risk_balanced = _bounded_weights({s: 1.0 / sleeve_dd[s] for s in ACTIVE_SYSTEMS})
+    weight_floor = min(0.10, 1.0 / max(len(systems), 1))
+    risk_balanced = _bounded_weights(
+        {s: 1.0 / sleeve_dd[s] for s in systems},
+        floor=weight_floor,
+        systems=systems,
+    )
 
     monthly = pd.DataFrame(streams).resample("ME").sum()
     correlations = monthly.corr().fillna(0.0)
     avg_corr = {
-        s: float(correlations.loc[s, [x for x in ACTIVE_SYSTEMS if x != s]].mean())
-        for s in ACTIVE_SYSTEMS
+        s: float(correlations.loc[s, [x for x in systems if x != s]].mean())
+        for s in systems
     }
     robustness = {}
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         m = metrics(period_trades[system])
         robustness[system] = min(1.0, max(0.0, (m["profit_factor"] - 1.0) / 1.5))
-    diversification = {s: max(0.25, 1.0 - max(0.0, avg_corr[s])) for s in ACTIVE_SYSTEMS}
+    diversification = {s: max(0.25, 1.0 - max(0.0, avg_corr[s])) for s in systems}
     recommended = _bounded_weights(
         {
             s: 0.55 * risk_balanced[s]
             + 0.25 * equal[s] * diversification[s]
             + 0.20 * equal[s] * (0.5 + robustness[s])
-            for s in ACTIVE_SYSTEMS
-        }
+            for s in systems
+        },
+        floor=weight_floor,
+        systems=systems,
     )
     scenario_weights = {
         "Equal capital": equal,
@@ -911,12 +1037,15 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
     }
     allocation_dollars: dict[str, dict[str, int]] = {}
     for name, weights in scenario_weights.items():
-        dollars = {s: int(round(PORTFOLIO_CAPITAL * weights[s])) for s in ACTIVE_SYSTEMS}
-        dollars[max(ACTIVE_SYSTEMS, key=lambda s: weights[s])] += (
+        dollars = {s: int(round(PORTFOLIO_CAPITAL * weights[s])) for s in systems}
+        dollars[max(systems, key=lambda s: weights[s])] += (
             int(PORTFOLIO_CAPITAL) - sum(dollars.values())
         )
         allocation_dollars[name] = dollars
-    scenario_curves = {name: _portfolio_curve(streams, w) for name, w in scenario_weights.items()}
+    scenario_curves = {
+        name: _portfolio_curve(streams, w, systems=systems)
+        for name, w in scenario_weights.items()
+    }
     spy_curve, spy_label, spy_source = _load_spy(common_start, common_end)
     spy_overlay, _, _ = _load_spy(SPY_ORIGIN, common_end)
     spy_overlay_start = spy_overlay["date"].iloc[0]
@@ -926,18 +1055,18 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
     for name, weights in scenario_weights.items():
         stats = _curve_stats(scenario_curves[name], common_start, common_end)
         stats["profit_factor"] = _scaled_profit_factor(
-            trades_by_system, bases, weights, common_start, common_end
+            trades_by_system, bases, weights, common_start, common_end, systems=systems
         )
         stats["peak_usage"], stats["utilization"] = _portfolio_usage(
-            trades_by_system, bases, weights, common_start, common_end
+            trades_by_system, bases, weights, common_start, common_end, systems=systems
         )
         scenario_stats[name] = stats
     spy_stats = _curve_stats(spy_curve, common_start, common_end)
 
-    available_equity, available_equity_sources = _compatible_equity_curves(drive, ACTIVE_SYSTEMS)
+    available_equity, available_equity_sources = _compatible_equity_curves(drive, systems)
     system_curves: dict[str, pd.DataFrame] = {}
     system_curve_labels: dict[str, str] = {}
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         if system in available_equity:
             system_curves[system] = available_equity[system]
             system_curve_labels[system] = f"daily mark-to-market regular equity ({available_equity_sources[system].name})"
@@ -948,7 +1077,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
     generated = datetime.now(ET)
     standalone_metrics = {
         system: metrics(trades_by_system[system], system_curves[system], system=system)
-        for system in ACTIVE_SYSTEMS
+        for system in systems
     }
     # Allocation chart: aligned $500k series on the common overlap window.
     # Systems chart: native equity starts; SPY overlay is 2010-origin (not retuned to first trade).
@@ -961,7 +1090,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         f"Raw standalone cumulative P&L by system (+ SPY $500k from {spy_overlay_start})",
         legend_suffix={
             system: f"Ann ROR {_pct(standalone_metrics[system]['ann_ror'], sign=True)}"
-            for system in ACTIVE_SYSTEMS
+            for system in systems
         },
     )
 
@@ -982,7 +1111,7 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         f"<td>{int(spy_stats['worst_year_label'])}: {_pct(spy_stats['worst_year'], sign=True)}</td><td>100% invested</td></tr>"
     )
     allocation_rows = []
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         allocation_rows.append(
             "<tr><td>" + system + "</td>"
             + "".join(
@@ -993,13 +1122,13 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         )
 
     summary_rows = []
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         m = standalone_metrics[system]
         summary_rows.append(
             f"<tr><td><a href='#{system.lower()}'>{system}</a></td>" + _metric_cells(m) + "</tr>"
         )
     source_items = []
-    for system in ACTIVE_SYSTEMS:
+    for system in systems:
         duplicate_note = f"; {duplicates[system]} duplicate rows removed" if duplicates[system] else ""
         source_items.append(
             f"<li><strong>{system}:</strong> {html.escape(sources[system].name)}{duplicate_note}; "
@@ -1007,12 +1136,22 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
         )
     sections = "".join(
         _system_section(system, trades_by_system[system], system_curves[system], system_curve_labels[system])
-        for system in ACTIVE_SYSTEMS
+        for system in systems
     )
     rec = scenario_stats["Recommended"]
+    rsi_house_ts = _read_ts_file(drive / "RSI_house_last_run_ts.txt") if "RSI" in systems else None
+    missing_note = (
+        f"<div class='notice'><strong>Wired but not on this page yet:</strong> "
+        f"{html.escape(', '.join(missing_systems))} (no LatestRun / house Closed book). "
+        "They will appear after the first DailyRun copy.</div>"
+        if missing_systems
+        else ""
+    )
     payload = {
         "generated": generated.isoformat(),
-        "systems": list(ACTIVE_SYSTEMS),
+        "systems": list(systems),
+        "missing_systems": missing_systems,
+        "rsi_house_ts": rsi_house_ts,
         "common_period": {"start": common_start, "end": common_end},
         "capital_bases": bases,
         "weights": scenario_weights,
@@ -1041,23 +1180,25 @@ section{{padding:22px;margin:18px 0}} .chart{{padding:16px;margin:18px 0}} .char
 .table-wrap{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}} th{{background:#f1f5f9;color:#475569;font-size:11px;text-transform:uppercase}} th:first-child,td:first-child{{text-align:left}}
 th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable-th:hover{{background:#e2e8f0}} .sort-ind{{display:inline-block;width:0.9em;margin-left:4px;color:#94a3b8;font-size:10px}} th.sort-asc .sort-ind::after{{content:"▲";color:#334155}} th.sort-desc .sort-ind::after{{content:"▼";color:#334155}}
 .combined{{font-weight:700;background:#ecfdf5}} .pos{{color:#15803d;font-weight:650}} .neg{{color:#b91c1c;font-weight:650}} .detail-grid{{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin:16px 0}} .detail-grid div{{background:#f8fafc;border:1px solid var(--line);padding:10px;border-radius:9px}}
-.notice{{padding:13px 15px;border-radius:10px;margin:16px 0;background:#ecfeff;border:1px solid #a5f3fc}} .recommend{{background:#ecfdf5;border-color:#86efac}} details{{margin-top:12px}} footer{{color:var(--muted);font-size:12px;padding:20px 4px 36px}} a{{color:#0f766e}}
+.notice{{padding:13px 15px;border-radius:10px;margin:16px 0;background:#ecfeff;border:1px solid #a5f3fc}} .recommend{{background:#ecfdf5;border-color:#86efac}} .ask{{background:#fff7ed;border-color:#fdba74}} details{{margin-top:12px}} footer{{color:var(--muted);font-size:12px;padding:20px 4px 36px}} a{{color:#0f766e}}
 @media(max-width:900px){{.cards{{grid-template-columns:repeat(2,1fr)}}.detail-grid{{grid-template-columns:repeat(2,1fr)}}.shell{{padding:12px}}}}
 </style></head><body><div class="shell">
 <header><h1>Historical System Performance</h1><div class="sub">$500,000 allocation model · generated {generated.strftime("%Y-%m-%d %H:%M %Z")}</div>
 <nav><a href="index.html">Scanner</a><a href="investment.html">Investment</a><a href="convergence.html">Convergence</a><a href="monthly.html">Monthly</a><a href="#allocation">Allocation</a><a href="#systems">Systems</a><a href="#method">Methodology</a></nav></header>
-<div class="notice"><strong>Common comparison period:</strong> {common_start} through {common_end}. Allocation sleeves and the SPY line on the $500k chart below use exactly these endpoints (aligned series). The standalone systems chart overlays SPY from {spy_overlay_start} (first session on/after {SPY_ORIGIN}). SPY uses {html.escape(spy_label)}.</div>
+<div class="notice ask"><p><strong>What you asked</strong></p><p>“along those lines RSI should be added to historical performance report as well”</p><p><strong>In plain English</strong></p><p>The historical performance page was built before RSI (Relative Strength Index) was a DailyRun sleeve. It should show RSI next to the other systems, and it should not forget the next system we add.</p></div>
+{missing_note}
+<div class="notice"><strong>Common comparison period:</strong> {common_start} through {common_end}. Allocation sleeves and the SPY line on the $500k chart below use exactly these endpoints (aligned series). The standalone systems chart overlays SPY from {spy_overlay_start} (first session on/after {SPY_ORIGIN}). SPY uses {html.escape(spy_label)}. Live sleeves on this page: {', '.join(systems)}.</div>
 <div class="cards">
 <div class="card"><span>Portfolio</span><strong>{_money(PORTFOLIO_CAPITAL)}</strong></div><div class="card"><span>Recommended ending equity</span><strong>{_money(rec['ending_equity'])}</strong></div>
 <div class="card"><span>Total return</span><strong>{_pct(rec['total_return'], sign=True)}</strong></div><div class="card"><span>CAGR</span><strong>{_pct(rec['cagr'], sign=True)}</strong></div>
 <div class="card"><span>Max drawdown</span><strong>{_pct(rec['max_dd_pct'])}</strong></div><div class="card"><span>SPY return</span><strong>{_pct(spy_stats['total_return'], sign=True)}</strong></div>
 </div>
 <section id="allocation"><h2>Allocation scenarios</h2>
-<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of full standalone accounts is not used as a portfolio result. Click column headers to sort.</p>
+<p>These are investable-scale models: each system's complete historical return stream is scaled from its observed peak concurrent gross-notional basis to its assigned sleeve. The old sum of full standalone accounts is not used as a portfolio result. Compound Annual Growth Rate (CAGR) and Profit Factor (PF) are in the table. Click column headers to sort.</p>
 <div class="table-wrap"><table class="sortable"><thead>{_header_row([("Scenario", "text"), ("Ending equity", "num"), ("Total return", "num"), ("CAGR", "num"), ("Max DD", "num"), ("PF", "num"), ("Ann. vol", "num"), ("Sharpe", "num"), ("Worst year", "text"), ("Peak usage", "num")])}</thead><tbody>{''.join(scenario_rows)}</tbody></table></div>
 <div class="chart">{benchmark_chart}</div>
 <h3>Dollar allocations</h3><p class="muted">Click column headers to sort.</p><div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text"), ("Equal capital", "num"), ("Risk-balanced", "num"), ("Recommended", "num"), ("Standalone basis", "num"), ("Avg monthly corr.", "num")])}</thead><tbody>{''.join(allocation_rows)}</tbody></table></div>
-<div class="notice recommend"><strong>Recommendation:</strong> {', '.join(f"{s} {_pct(recommended[s] * 100)} ({_money(allocation_dollars['Recommended'][s])})" for s in ACTIVE_SYSTEMS)}. Rounded dollar targets sum to exactly $500,000. Start from inverse-drawdown risk balance, then apply modest diversification and profit-factor robustness adjustments. All sleeves remain within 10%–30%. Review annually and rebalance to target when a sleeve drifts by more than 5 percentage points.</div>
+<div class="notice recommend"><strong>Recommendation:</strong> {', '.join(f"{s} {_pct(recommended[s] * 100)} ({_money(allocation_dollars['Recommended'][s])})" for s in systems)}. Rounded dollar targets sum to exactly $500,000. Start from inverse-drawdown risk balance, then apply modest diversification and profit-factor robustness adjustments. Sleeves stay within {_pct(weight_floor * 100)}–30%. Review annually and rebalance to target when a sleeve drifts by more than 5 percentage points.</div>
 <p class="muted">This recommendation is a backtest allocation model, not guaranteed performance or personalized financial advice.</p></section>
 <section id="systems"><h2>Raw standalone system results</h2><p>These retain each engine's native historical sizing and full available period. They are diagnostic standalone results—not amounts simultaneously investable with $500,000. <strong>Ann ROR</strong> (Annualized Rate of Return) uses the canonical book formula from Report / EquityMeta: ((1 + Total PnL ÷ (sheet cash × trades)) ^ (365 ÷ avg days held) − 1) × 100. Click column headers to sort.</p>
 <div class="table-wrap"><table class="sortable"><thead>{_header_row([("System", "text")] + _standalone_metric_headers())}</thead><tbody>{''.join(summary_rows)}</tbody></table></div></section>
@@ -1065,8 +1206,10 @@ th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable
 <div class="notice"><strong>SPY on this chart:</strong> buy-and-hold equity starting at {_money(PORTFOLIO_CAPITAL)} on {spy_overlay_start} (requested origin {SPY_ORIGIN}; first available session), through {spy_overlay_end}, using {html.escape(spy_label)}. System lines keep their native capital bases (~{_money(min(bases.values()))}–{_money(max(bases.values()))}) and native start dates; they are not truncated to 2010. For like-for-like $500k scaling over {common_start}–{common_end}, see the allocation chart above.</div>
 {sections}
 <section id="method"><h2>Methodology &amp; caveats</h2><ul>
+<li><strong>Live systems:</strong> sleeves come from <code>tools/dailyrun_system_status.live_wired_systems()</code> (DailyRun registry). Add a new system there and in DailyRun.bat — this page picks it up on the next generate. Deprecated IND and research-only stamps (including RSIN_PaulScore5_IS) stay off until they are DailyRun-wired.</li>
+<li><strong>RSI (Relative Strength Index):</strong> house book only — <code>RSI_house_last_run_ts.txt</code>{f" ({rsi_house_ts})" if rsi_house_ts else ""} / <code>RSI_LatestRun_Closed.csv</code> / <code>drive/universes/rsi_universe.csv</code> (149 names). Not RS (Relative Strength vs SPY). Not a research ALL-universe replay.</li>
 <li><strong>Capital basis:</strong> position notional is inferred as |dollar P&amp;L ÷ percentage P&amp;L|; RL uses its native $47,500 sizing. Each denominator is that system's observed peak overlapping gross notional. Scaling allocation ÷ basis preserves trade economics and proportionally reduces all simultaneous positions when a sleeve is smaller than its standalone basis.</li>
-<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(ACTIVE_SYSTEMS)}. Only trades opened and closed inside it are used. The $500k allocation chart is a single aligned series: sleeves and SPY on that chart share {common_start}–{common_end}.</li>
+<li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(systems)}. Only trades opened and closed inside it are used. The $500k allocation chart is a single aligned series: sleeves and SPY on that chart share {common_start}–{common_end}.</li>
 <li><strong>Benchmark:</strong> local <code>{html.escape(str(spy_source.relative_to(ROOT)))}</code>, using {html.escape(spy_label)}. SPY equity is normalized to the same $500,000. On the standalone systems chart, SPY starts at the first trading session on/after {SPY_ORIGIN} (actual {spy_overlay_start}) and is not shifted to a system's first trade. System equity curves keep their native starts even when they begin before or after 2010.</li>
 <li><strong>Risk-balanced:</strong> inverse realized drawdown by sleeve in the common period, constrained to 10% minimum and 30% maximum. <strong>Recommended:</strong> 55% risk-balance anchor, 25% low-correlation diversification, and 20% capped PF robustness; the same guardrails apply.</li>
 <li><strong>Drawdown/volatility limitation:</strong> portfolio P&amp;L is recorded on trade exit dates because compatible mark-to-market curves are not available for every sleeve over the common period. This can materially understate intratrade drawdown and makes volatility/Sharpe lumpy; Sharpe is descriptive, zero risk-free rate, and not a forecast.</li>
@@ -1080,6 +1223,10 @@ th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report, encoding="utf-8")
+    drive_copy = (drive / DRIVE_LATEST_NAME).resolve()
+    if drive_copy != output:
+        drive_copy.write_text(report, encoding="utf-8")
+        payload["drive_html"] = str(drive_copy)
     return output, payload
 
 
@@ -1091,6 +1238,13 @@ def main() -> int:
     output, payload = build_report(args.drive, args.output)
     recommended = payload["scenario_metrics"]["Recommended"]
     print(f"[performance] Wrote {output}")
+    if payload.get("drive_html"):
+        print(f"[performance] Drive copy {payload['drive_html']}")
+    print(f"[performance] Systems: {', '.join(payload['systems'])}")
+    if payload.get("rsi_house_ts"):
+        print(f"[performance] RSI house stamp {payload['rsi_house_ts']}")
+    if payload.get("missing_systems"):
+        print(f"[performance] Missing wired: {', '.join(payload['missing_systems'])}")
     print(
         "[performance] Recommended $500k: "
         f"${recommended['ending_equity']:,.2f} ending equity, "

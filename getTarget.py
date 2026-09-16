@@ -173,12 +173,12 @@ class PercentProfile:
 
 @dataclass
 class VzProfile:
-    """Volume Zone live stop/target (research freeze EXIT_atr4_s025_r15 / ts40)."""
+    """Volume Zone live stop/target (research freeze EXIT_atr4_s05_r15_ts20)."""
 
-    exit_name: str = "EXIT_atr4_s025_r15"
-    exit_bars: int = 40
+    exit_name: str = "EXIT_atr4_s05_r15_ts20"
+    exit_bars: int = 20
     target_r: float = 1.5
-    stop_atr_buffer: float = 0.25
+    stop_atr_buffer: float = 0.5
     lookback_days: int = 126
     retest_window: int = 63
     retest_eps_pct: float = 0.005
@@ -1326,16 +1326,16 @@ def main() -> None:
     parser.add_argument(
         "--vz-exit-name",
         type=str,
-        default="EXIT_atr4_s025_r15",
-        help="VZ exit stamp name (research freeze: zone.lo-0.25*ATR, 1.5R, ts40).",
+        default="EXIT_atr4_s025_r15_ts20",
+        help="VZ exit stamp name (house freeze: zone.lo-0.25*ATR, 1.5R, ts20).",
     )
-    parser.add_argument("--vz-exit-bars", type=int, default=40, help="VZ time-stop bars.")
+    parser.add_argument("--vz-exit-bars", type=int, default=20, help="VZ time-stop bars.")
     parser.add_argument("--vz-target-r", type=float, default=1.5, help="VZ target R multiple.")
     parser.add_argument(
         "--vz-stop-atr-buffer",
         type=float,
         default=0.25,
-        help="VZ stop = zone.lo − buffer·ATR14 (default 0.25).",
+        help="VZ stop = zone.lo − buffer·ATR14 (house default 0.25).",
     )
     parser.add_argument("--vz-lookback-days", type=int, default=126)
     parser.add_argument("--vz-retest-window", type=int, default=63)

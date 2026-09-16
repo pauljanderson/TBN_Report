@@ -1632,7 +1632,7 @@ def _collect_improve_hints(
 
 
 _IMPROVE_HINTS_HTML_CSS = """
-th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; }
+th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; touch-action:manipulation; -webkit-tap-highlight-color:rgba(0,0,0,.08); }
 th.sortable-th:hover { background:#e2e8f0; }
 th.sortable-th .sort-ind::after { content:" \\2195"; opacity:0.35; font-size:0.85em; }
 th.sortable-th.sort-asc .sort-ind::after { content:" \\2191"; opacity:0.9; }
@@ -1679,7 +1679,8 @@ _IMPROVE_HINTS_SORT_SCRIPT = """
   function bind(table) {
     var ths = table.querySelectorAll("th.sortable-th");
     ths.forEach(function (th, idx) {
-      function activate() {
+      function activate(e) {
+        if (e && e.type === "touchend") e.preventDefault();
         var type = th.getAttribute("data-sort") || "text";
         var asc = !th.classList.contains("sort-asc");
         ths.forEach(function (x) { x.classList.remove("sort-asc", "sort-desc"); x.setAttribute("aria-sort", "none"); });
@@ -1689,8 +1690,9 @@ _IMPROVE_HINTS_SORT_SCRIPT = """
       }
       th.addEventListener("click", activate);
       th.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(e); }
       });
+      th.addEventListener("touchend", activate, { passive: false });
     });
   }
   document.querySelectorAll("table.sortable").forEach(bind);

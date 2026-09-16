@@ -326,12 +326,18 @@ class BRTConfig:
     # Default next_open = predictive (signal at T close → buy T+1 open). close = EOD fill on signal bar.
     vz_entry_on: str = "next_open"
     vz_zone_kinds: str = "HL"  # comma list; freeze is HL-only
-    vz_exit_name: str = "EXIT_atr4_s025_r15"
-    vz_exit_bars: int = 40
+    vz_exit_name: str = "EXIT_atr4_s025_r15_ts20"
+    vz_exit_bars: int = 20
     vz_target_r: float = 1.5
     vz_stop_atr_buffer: float = 0.25
     # ATR14/entry*100 gate (FILTER_atr_pct_*); 0 = off. House freeze = 4.0.
     vz_min_atr_pct_at_entry: float = 4.0
+    # Research-only: ATR14/trigger_close*100 gate (0 = off). DailyRun stays on entry.
+    vz_min_atr_pct_at_trigger: float = 0.0
+    # Research-only (0 = off). Wilder RSI(14) on entry-date close; keep if RSI < threshold.
+    vz_max_rsi14_at_entry: float = 0.0
+    # Research-only (0 = off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= this.
+    vz_min_dist_to_52w_high_pct_at_trigger: float = 0.0
     vz_require_hvn_overlap: bool = False  # Step C: knob exists, default OFF (HOLD not adopted)
     vz_sheet_notional: float = 45_000.0
     vz_trade_side: str = "long"  # long | short | both (house default long)
@@ -343,6 +349,17 @@ class BRTConfig:
     wrl_scale_frac: float = 0.50
     wrl_min_zone_pct: float = 0.0
     wrl_time_stop_bars: int = 0
+    # RSI — Relative Strength Index (rocket_rsi.py). true → RSI_ prefix.
+    # Not RS (Relative Strength vs SPY). House freeze: ob=70/os=30/exit=70/max_trigger=60/min_atr%=5/ts=20/next_open.
+    rsi_mode: bool = False
+    rsi_ob: float = 70.0
+    rsi_os: float = 30.0
+    rsi_exit: float = 70.0
+    rsi_max_trigger: float = 60.0
+    rsi_min_atr_pct: float = 5.0
+    rsi_time_stop_days: int = 20
+    rsi_entry_on: str = "next_open"
+    rsi_sheet_notional: float = 10_000.0
     # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
     sb_mode: bool = False
     burst_min_pct: float = 0.04
@@ -404,6 +421,8 @@ class BRTConfig:
     rl_post_target_min_stack: float = 0.05
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
+    # Research: keep expansion hits at rl_target_pct, but disable SMA50 envelope EXIT (TARGET).
+    rl_sma_target_off: bool = False
     # Fill: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default 0 = off).
     rl_too_high: float = 0.0
     rl_expansion: float = 1.163
@@ -1238,6 +1257,8 @@ def _output_file_prefix(cfg: "BRTConfig") -> str:
         return "MTS"
     if bool(getattr(cfg, "vz_mode", False)):
         return "VZ"
+    if bool(getattr(cfg, "rsi_mode", False)):
+        return "RSI"
     if bool(getattr(cfg, "wrl_mode", False)):
         return "WRL"
     if bool(getattr(cfg, "sb_mode", False)):
@@ -3599,6 +3620,14 @@ class BRTTrade:
     # Backtest-only: bar index of entry (open); ATR schedule exits use with atr_pct_at_entry
     entry_bar_index: int = -1
     atr_pct_at_entry: Optional[float] = None  # ATR_14/entry*100 at entry; used when atr_progress>0
+    # Wilder RSI(14) on the entry-date daily close (DATE_OPENED / fill bar, or last bar on/before).
+    # Used by research gates such as vz_max_rsi14_at_entry — keep as fill-bar RSI.
+    rsi14_at_entry: Optional[float] = None
+    # Wilder RSI(14) on the trigger / signal bar (prior bar when entry_on=next_open).
+    rsi14_at_trigger: Optional[float] = None
+    # Overbought / Oversold / Neutral from trigger-bar RSI (not the fill bar).
+    # Thresholds match trendline charts: Overbought >= 70, Oversold <= 30, else Neutral.
+    rsi14_ob_os: str = ""
     # Per-trigger-bar technical metrics (computed without future bars, for correlation analysis)
     z_score_at_trigger: float = 0.0
     upper_wick_atr_at_trigger: float = 0.0
@@ -6824,6 +6853,9 @@ def _brt_closed_from_open(
         atr_14_at_entry=getattr(open_trade, "atr_14_at_entry", None),
         entry_bar_index=int(getattr(open_trade, "entry_bar_index", -1) or -1),
         atr_pct_at_entry=getattr(open_trade, "atr_pct_at_entry", None),
+        rsi14_at_entry=getattr(open_trade, "rsi14_at_entry", None),
+        rsi14_at_trigger=getattr(open_trade, "rsi14_at_trigger", None),
+        rsi14_ob_os=str(getattr(open_trade, "rsi14_ob_os", "") or ""),
         market_cap=getattr(open_trade, "market_cap", None),
         market_cap_current=getattr(open_trade, "market_cap_current", None),
         sector=getattr(open_trade, "sector", None),
@@ -12680,13 +12712,269 @@ def _wpbr_strength_kwargs_from_trade(trade: "BRTTrade") -> dict[str, float]:
     return out
 
 
+_RSI14_PERIOD = 14
+_RSI14_OVERBOUGHT = 70.0
+_RSI14_OVERSOLD = 30.0
+
+
+def _default_ohlc_data_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "newdata" / "data"
+
+
+def _wilder_rsi14_arr(close: np.ndarray, period: int = _RSI14_PERIOD) -> np.ndarray:
+    """Wilder RSI on closes (same seed/update as trendline charts)."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    delta = np.diff(close.astype(float), prepend=np.nan)
+    gain = np.where(np.isfinite(delta) & (delta > 0), delta, 0.0)
+    loss = np.where(np.isfinite(delta) & (delta < 0), -delta, 0.0)
+    avg_g = float(np.nanmean(gain[1 : period + 1]))
+    avg_l = float(np.nanmean(loss[1 : period + 1]))
+    if avg_l == 0:
+        out[period] = 100.0
+    else:
+        out[period] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    for i in range(period + 1, n):
+        avg_g = (avg_g * (period - 1) + gain[i]) / period
+        avg_l = (avg_l * (period - 1) + loss[i]) / period
+        if avg_l == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    return out
+
+
+def _rsi14_ob_os_label(rsi: Optional[float]) -> str:
+    if rsi is None:
+        return ""
+    try:
+        v = float(rsi)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    if v >= _RSI14_OVERBOUGHT:
+        return "Overbought"
+    if v <= _RSI14_OVERSOLD:
+        return "Oversold"
+    return "Neutral"
+
+
+def _bar_index_on_or_before(index_iso: list[str], date_s: str) -> Optional[int]:
+    """Exact DATE_OPENED match, else last trading bar on or before that date."""
+    exact = _trade_ymd_to_bar_index(index_iso, date_s)
+    if exact is not None:
+        return exact
+    if not date_s or not str(date_s).strip():
+        return None
+    s = str(date_s).strip()
+    if len(s) >= 10 and s[4] == "-":
+        ymd = s[:10].replace("-", "")
+    else:
+        ymd = "".join(ch for ch in s if ch.isdigit())[:8]
+    if len(ymd) != 8:
+        return None
+    last: Optional[int] = None
+    for i, iso in enumerate(index_iso):
+        if len(iso) >= 8 and iso[:8] <= ymd:
+            last = i
+        elif last is not None:
+            break
+    return last
+
+
+def _fmt_rsi14_at_entry(val: Optional[float]) -> str:
+    if val is None:
+        return ""
+    try:
+        fv = float(val)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(fv):
+        return ""
+    return f"{fv:.2f}"
+
+
+def _resolve_rsi_trigger_bar(t: BRTTrade, index_iso: list[str], entry_bar: int) -> int:
+    """Trigger / signal bar for RSI sentiment (not the next-open fill bar).
+
+    Prefer SIGNAL_DATE / close_above_date when present; otherwise the prior
+    trading bar (house entry_on=next_open).
+    """
+    n = len(index_iso)
+    sig_raw = str(getattr(t, "signal_date", "") or "").strip()
+    if not sig_raw:
+        sig_raw = str(getattr(t, "close_above_date", "") or "").strip()
+    trigger_bar = -1
+    if sig_raw:
+        mapped_sig = _trade_ymd_to_bar_index(index_iso, sig_raw)
+        if mapped_sig is None:
+            mapped_sig = _bar_index_on_or_before(index_iso, sig_raw)
+        if mapped_sig is not None:
+            trigger_bar = int(mapped_sig)
+    if trigger_bar < 0:
+        trigger_bar = entry_bar - 1 if entry_bar > 0 else entry_bar
+    if trigger_bar < 0 or trigger_bar >= n:
+        trigger_bar = entry_bar
+    return trigger_bar
+
+
+def _enrich_trades_rsi14_ob_os(
+    trades: list[BRTTrade],
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+    data_dir: Optional[Path | str] = None,
+) -> None:
+    """Fill Wilder RSI(14) at fill bar and trigger bar.
+
+    RSI14_AT_ENTRY stays on DATE_OPENED (fill). RSI14_OB_OS uses trigger-bar RSI
+    (SIGNAL_DATE / close_above_date, else prior bar when entry is next open).
+    """
+    if not trades:
+        return
+    need = list(trades)
+    cache = dict(tickers or {})
+    resolved_dir = Path(data_dir) if data_dir else _default_ohlc_data_dir()
+    missing = {
+        (t.symbol or "").strip().upper()
+        for t in need
+        if (t.symbol or "").strip() and (t.symbol or "").strip().upper() not in cache
+    }
+    if missing and resolved_dir.is_dir():
+        try:
+            loaded = load_all_tickers(str(resolved_dir), symbols_filter=missing, max_workers=8)
+            cache.update(loaded)
+        except Exception:
+            loaded = {}
+        still = missing - set(loaded)
+        for sym in still:
+            try:
+                df_one = _load_symbol_data(sym, resolved_dir)
+            except Exception:
+                df_one = None
+            if df_one is not None and not df_one.empty:
+                cache[sym] = df_one
+
+    by_sym: dict[str, list[BRTTrade]] = {}
+    for t in need:
+        by_sym.setdefault((t.symbol or "").strip().upper(), []).append(t)
+    for sym, tlist in by_sym.items():
+        if not sym:
+            continue
+        df = cache.get(sym)
+        if df is None or df.empty or "Close" not in df.columns:
+            continue
+        close_arr = df["Close"].to_numpy(dtype=np.float64)
+        rsi_arr = _wilder_rsi14_arr(close_arr)
+        index_iso = [
+            (d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d)[:10].replace("-", ""))
+            for d in df.index
+        ]
+        n = len(close_arr)
+        for t in tlist:
+            entry_bar = int(getattr(t, "entry_bar_index", -1) or -1)
+            if entry_bar < 0:
+                mapped = _bar_index_on_or_before(index_iso, str(getattr(t, "date_opened", "") or ""))
+                entry_bar = int(mapped) if mapped is not None else -1
+            if entry_bar < 0 or entry_bar >= n:
+                continue
+            entry_val = float(rsi_arr[entry_bar])
+            if np.isfinite(entry_val):
+                t.rsi14_at_entry = entry_val
+            trigger_bar = _resolve_rsi_trigger_bar(t, index_iso, entry_bar)
+            if trigger_bar < 0 or trigger_bar >= n:
+                trigger_bar = entry_bar
+            trig_val = float(rsi_arr[trigger_bar])
+            if np.isfinite(trig_val):
+                t.rsi14_at_trigger = trig_val
+                t.rsi14_ob_os = _rsi14_ob_os_label(trig_val)
+            elif np.isfinite(entry_val):
+                t.rsi14_ob_os = _rsi14_ob_os_label(entry_val)
+
+
+def enrich_closed_csv_rsi14_ob_os(
+    path: str | Path,
+    *,
+    data_dir: Optional[Path | str] = None,
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+) -> dict[str, int]:
+    """Add/refresh RSI14_AT_ENTRY, RSI14_AT_TRIGGER, RSI14_OB_OS on a Closed CSV.
+
+    RSI14_OB_OS is labeled from the trigger bar, not the fill/entry bar.
+    """
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not fieldnames:
+        return {"rows": 0, "filled": 0}
+    stubs: list[BRTTrade] = []
+    for row in rows:
+        sym = str(
+            row.get("SYMBOL") or row.get("Symbol") or row.get("TICKER") or ""
+        ).strip().upper()
+        opened = str(
+            row.get("DATE_OPENED") or row.get("DATE OPENED") or row.get("Date Opened") or ""
+        ).strip()
+        stub = BRTTrade(
+            symbol=sym,
+            date_opened=opened,
+            entry_price=0.0,
+            stop_price=0.0,
+            target_price=0.0,
+            close_above_date=str(
+                row.get("CLOSE_ABOVE_DATE") or row.get("CLOSE ABOVE DATE") or ""
+            ).strip(),
+        )
+        sig = str(
+            row.get("SIGNAL_DATE") or row.get("SIGNAL DATE") or row.get("TRIGGER DATE") or ""
+        ).strip()
+        if sig:
+            stub.signal_date = sig
+        stubs.append(stub)
+    _enrich_trades_rsi14_ob_os(stubs, tickers=tickers, data_dir=data_dir)
+    if "RSI14_AT_ENTRY" in fieldnames:
+        insert_at = fieldnames.index("RSI14_AT_ENTRY") + 1
+    elif "ATR_PCT_AT_ENTRY" in fieldnames:
+        insert_at = fieldnames.index("ATR_PCT_AT_ENTRY") + 1
+    else:
+        insert_at = len(fieldnames)
+    for col in ("RSI14_AT_ENTRY", "RSI14_AT_TRIGGER", "RSI14_OB_OS"):
+        if col not in fieldnames:
+            fieldnames.insert(insert_at, col)
+        insert_at = fieldnames.index(col) + 1
+    filled = 0
+    for row, t in zip(rows, stubs):
+        rsi_e = _fmt_rsi14_at_entry(getattr(t, "rsi14_at_entry", None))
+        rsi_t = _fmt_rsi14_at_entry(getattr(t, "rsi14_at_trigger", None))
+        label = str(getattr(t, "rsi14_ob_os", "") or "") or _rsi14_ob_os_label(
+            getattr(t, "rsi14_at_trigger", None)
+        )
+        row["RSI14_AT_ENTRY"] = rsi_e
+        row["RSI14_AT_TRIGGER"] = rsi_t
+        row["RSI14_OB_OS"] = label
+        if rsi_t or rsi_e:
+            filled += 1
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return {"rows": len(rows), "filled": filled}
+
+
 def write_brt_closed(
     closed: list[BRTTrade],
     path: str,
     reference_stats: Optional[dict[str, tuple[float, float]]] = None,
     cfg: Optional[BRTConfig] = None,
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+    data_dir: Optional[Path | str] = None,
 ) -> None:
     DAYS_PER_YEAR = 365.0
+    if closed:
+        _enrich_trades_rsi14_ob_os(closed, tickers=tickers, data_dir=data_dir)
     include_zscore_cols = reference_stats is not None and len(reference_stats) > 0
     z_cols = [f"Z_{ref_name}" for ref_name in _REF_VAR_TO_ATTR] if include_zscore_cols else []
     if include_zscore_cols and cfg is not None:
@@ -12721,6 +13009,7 @@ def write_brt_closed(
             "VOLUME_AT_ENTRY", "AVG_VOLUME_10D_AT_ENTRY", "REL_VOL_AT_ENTRY", "REL_VOL_ON_TRIGGER",
             "REJECTION_COUNT_PRIOR", "OVERLAPPING_MATURE_ZONES_COUNT", "REL_VOL_AT_BREAKOUT",
             "ATR_14_AT_ENTRY", "ATR_PCT_AT_ENTRY",
+            "RSI14_AT_ENTRY", "RSI14_AT_TRIGGER", "RSI14_OB_OS",
             "MARKET_CAP", "SECTOR", "INDUSTRY", "BETA", "BETA_AT_ENTRY",
             "LAST_ATH_DATE_AT_ENTRY", "TRADING_DAYS_SINCE_LAST_ATH_AT_ENTRY",
             "HIGH_52W_AT_ENTRY", "DIST_TO_52W_HIGH_PCT",
@@ -12806,6 +13095,11 @@ def write_brt_closed(
                 int(getattr(t, "overlapping_mature_zones_count", 0) or 0),
                 f"{getattr(t, 'rel_vol_at_breakout', None):.4f}" if getattr(t, "rel_vol_at_breakout", None) is not None else "",
                 atr_str, atr_pct_str,
+                _fmt_rsi14_at_entry(getattr(t, "rsi14_at_entry", None)),
+                _fmt_rsi14_at_entry(getattr(t, "rsi14_at_trigger", None)),
+                str(getattr(t, "rsi14_ob_os", "") or "") or _rsi14_ob_os_label(
+                    getattr(t, "rsi14_at_trigger", None)
+                ),
                 f"{getattr(t, 'market_cap', None):.0f}" if getattr(t, "market_cap", None) is not None else "",
                 (getattr(t, "sector", None) or "").replace(",", " "),
                 (getattr(t, "industry", None) or "").replace(",", " "),
@@ -16292,6 +16586,7 @@ _AUDIT_CFG_COLS = [
     "rl_post_target_min_stack",
     "rl_post_target_under_sma20",
     "rl_target_pct",
+    "rl_sma_target_off",
     "rl_trail_profit",
     "rl_trail_stop",
     "rl_trail_profit2",
@@ -16506,6 +16801,9 @@ _AUDIT_CFG_COLS = [
     "vz_target_r",
     "vz_stop_atr_buffer",
     "vz_min_atr_pct_at_entry",
+    "vz_min_atr_pct_at_trigger",
+    "vz_max_rsi14_at_entry",
+    "vz_min_dist_to_52w_high_pct_at_trigger",
     "vz_require_hvn_overlap",
     "vz_sheet_notional",
     "vz_trade_side",
@@ -16672,6 +16970,10 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "reject if close < SMA20 × (1 − limit), i.e. (SMA20−close)/SMA20 > limit (default 0.03)."
     ),
     "rl_target_pct": "Target = prior-day SMA50 × this, recomputed daily (AWK RL_TARGET_PCT, default 1.20).",
+    "rl_sma_target_off": (
+        "When true/1: keep rl_target_pct for expansion-hit counting, but disable SMA50 envelope EXIT "
+        "(TARGET never fires; research). Default false."
+    ),
     "rl_trail_profit": "Tier-1 trail arm gain fraction (AWK RL_TRAIL_PROFIT; 0=off).",
     "rl_trail_stop": "Tier-1 locked stop gain fraction once armed (AWK RL_TRAIL_STOP).",
     "rl_trail_profit2": "Tier-2 trail arm gain fraction (AWK RL_TRAIL_PROFIT2; 0=off).",
@@ -19470,6 +19772,16 @@ def main() -> int:
             "by default; never signal-bar open). Engine tools/vol_zone_break_retest.py via "
             "rocket_vz.py; outputs VZ_* prefix. Isolate peers (see run_vz.bat)."
         )
+    elif bool(getattr(cfg, "rsi_mode", False)):
+        print(
+            "[TBN] Relative Strength Index (rsi_mode=true): "
+            "Wilder RSI(14) cool-off — not RS (Relative Strength vs SPY). "
+            f"ob={getattr(cfg, 'rsi_ob', 70)} os={getattr(cfg, 'rsi_os', 30)} "
+            f"exit={getattr(cfg, 'rsi_exit', 70)} max_trigger={getattr(cfg, 'rsi_max_trigger', 60)} "
+            f"min_atr%={getattr(cfg, 'rsi_min_atr_pct', 5)} ts={getattr(cfg, 'rsi_time_stop_days', 20)}d "
+            f"entry_on={getattr(cfg, 'rsi_entry_on', 'next_open')}. "
+            "Engine stock_analysis/rocket_rsi.py; outputs RSI_* prefix. Isolate peers (see run_rsi.bat)."
+        )
     elif bool(getattr(cfg, "wrl_mode", False)):
         print(
             "[TBN] Weekly Range / Swing (wrl_mode=true): previous-week range + walk-back swing "
@@ -19873,6 +20185,29 @@ def main() -> int:
         )
         _maybe_play_completion_sound(args.play_sound)
         return _vz_rc
+
+    if not skip_backtest and bool(getattr(cfg, "rsi_mode", False)):
+        try:
+            from rocket_rsi import run_rsi_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_rsi import run_rsi_from_brt_main  # type: ignore
+
+        _rsi_rc = run_rsi_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _rsi_rc
 
     if not skip_backtest and bool(getattr(cfg, "wrl_mode", False)):
         try:
@@ -20862,7 +21197,13 @@ def main() -> int:
     _t_write_start = time.time()
     closed_path = str(output_dir / f"{_file_prefix}_Closed_{ts}.csv")
     with (pipeline.phase("write_closed") if pipeline is not None else contextlib.nullcontext()):
-        write_brt_closed(all_closed, closed_path, reference_stats=ref_stats, cfg=cfg)
+        write_brt_closed(
+            all_closed,
+            closed_path,
+            reference_stats=ref_stats,
+            cfg=cfg,
+            tickers=tickers,
+        )
     if pipeline is not None:
         pipeline.complete_phase_units("write_closed")
     if args.profile:

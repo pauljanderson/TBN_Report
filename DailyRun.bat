@@ -18,10 +18,23 @@ rem     set SB_SYMBOLS=NVDA,TSLA  override gold list
 rem     set SB_SYMBOLS=*          (or ALL / SB_ALL_CSV=1) = all data\newdata\data\*.csv (no -s)
 rem     Prefer set "SB_SYMBOLS=*" — bare set SB_SYMBOLS=* && leaves a trailing space (bat trims)
 rem     set SKIP_SB=1             skip StockBee step
-rem     VZ (Volume Zone) — RESEARCH sleeve only; NOT in DailyRun step list.
-rem       Standalone: run_vz.bat  (drive\universes\VZ_universe.csv VZ_new56 research default; DualPaul78 backup kept)
-rem       Optional later: call run_vz.bat behind SKIP_VZ — do not treat as gold from wiring alone.
-rem       If that step is added, carry VZ_REQUIRE_HVN_OVERLAP (house freeze is false; do not default-on).
+rem     VZ (Volume Zone) step [10b/13]: call run_vz.bat — house univ drive\universes\VZ_universe.csv
+rem       DailyRun official TBN sleeve 2026-09-07: Paul78.142 + EXIT_atr4_s025_r15_ts20
+rem         (atr4=4% ATR floor at trigger close, NOT a 4-ATR stop; s025=zone.lo-0.25*ATR; r15=1.5R; ts20=20 bars).
+rem         Operational adopt 2026-09-07: trigger-priced 4% replaced entry-priced 4% (HOLD AB;
+rem         scanner-live identity — not KEEP/gold). Entry gate off.
+rem       One position per symbol (DailyRun lock 2026-09-15): do not buy a name we already hold.
+rem         Always on in rocket_vz.enrich_trade_rows — no flag re-enables pyramids.
+rem         Regression baseline = VZ_LatestRun_* / VZ_house_last_run_ts.txt (not an old pyramid stamp).
+rem       Not walk-forward gold. Skip: set SKIP_VZ=1
+rem       Freeze note: drive\paul_experiments\vz_tbn_adopt_s025_paul78_20260907\
+rem       ATR% at trigger adopt: drive\paul_experiments\vz_atr_trigger_adopt_20260907\
+rem       Keep VZ_REQUIRE_HVN_OVERLAP=false (house freeze; do not default-on).
+rem     RSI (Relative Strength Index) step [10c/13]: call run_rsi.bat
+rem       House univ drive\universes\rsi_universe.csv (149 HighFIT/ISgood). Not RS (vs SPY).
+rem       Freeze: ob=70 os=30 exit=70 max_trigger=60 min_atr%=5 ts=20 next_open.
+rem       Preference-adopt / DailyRun sleeve — not walk-forward gold. Skip: set SKIP_RSI=1
+rem       Adopt note: drive\paul_experiments\rsi_atr5_dailyrun_20260914\
 rem     WRL (Weekly Range / Swing) — RESEARCH sleeve; runner lives at this root:
 rem       C:\Users\songg\Downloads\stockresearch\run_wrl.bat
 rem       Standalone: run_wrl.bat  (Mag10 default; run_wrl.bat ALL = full universe)
@@ -124,6 +137,12 @@ if errorlevel 1 (
   )
   echo Python packages OK after pip install.>>"%LOG%"
 )
+
+rem --- DailyRun system status session (investment report RUN/SKIPPED/STALE banner) ---
+rem New live sleeve: add run_*.bat step above AND add the prefix to
+rem tools\dailyrun_system_status.py DAILYRUN_REGISTRY (+ REPORT_ORDER).
+rem Convergence report and trendline universe read that registry — one add.
+"%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" begin --stamp "%STAMP%" >>"%LOG%" 2>&1
 
 rem --- 1) Update data (pygetallMore via run_update_data) ---
 rem Disable: set SKIP_GET=1  or  DailyRun --noGet / --no-get
@@ -256,6 +275,7 @@ rem Docs: drive\paul_experiments\tbn_new_systems\stockbee_momentum_burst\HOW_TO_
 if /i "%SKIP_SB%"=="1" (
   echo [10/13] SKIPPED - run_sb ^(SKIP_SB=1^)
   echo [10/13] SKIPPED - run_sb ^(SKIP_SB=1^)>>"%LOG%"
+  "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" set SB SKIPPED --reason "SKIP_SB=1" >>"%LOG%" 2>&1
 ) else (
   rem Loud WARN if console left full-universe overrides set (do not block)
   if /i "%SB_SYMBOLS%"=="*" (
@@ -276,12 +296,48 @@ if /i "%SKIP_SB%"=="1" (
   if errorlevel 1 goto :fail
 )
 
+rem --- 10b) VZ (Volume Zone) ----------------------------------------------------
+rem Default: run_vz.bat with no args loads drive\universes\VZ_universe.csv (Paul78.142, 142-name house)
+rem Combined freeze: exit_bars=20 (ts20), stop atr 0.25 (EXIT_atr4_s025_r15_ts20;
+rem   atr4=4% ATR floor at trigger close, not a 4-ATR stop; entry gate off)
+rem One position per symbol (DailyRun lock 2026-09-15): skip a later signal while still held.
+rem   Always on — no env flag re-enables pyramids. LatestRun / house pin = regression baseline.
+rem Disable: set SKIP_VZ=1
+if /i "%SKIP_VZ%"=="1" (
+  echo [10b/13] SKIPPED - run_vz ^(SKIP_VZ=1^)
+  echo [10b/13] SKIPPED - run_vz ^(SKIP_VZ=1^)>>"%LOG%"
+  "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" set VZ SKIPPED --reason "SKIP_VZ=1" >>"%LOG%" 2>&1
+) else (
+  echo [10b/13] run_vz ^(house VZ_universe.csv; exit_bars=20 stop_atr=0.25; one position per symbol^)
+  echo [10b/13] run_vz ^(house VZ_universe.csv; exit_bars=20 stop_atr=0.25; one position per symbol^)>>"%LOG%"
+  call "%~dp0run_vz.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+
+rem --- 10c) RSI (Relative Strength Index) ----------------
+rem Default: run_rsi.bat loads drive\universes\rsi_universe.csv (149-name house)
+rem Freeze: rsi_ob=70 rsi_os=30 rsi_exit=70 max_trigger=60 min_atr%=5 ts=20 next_open
+rem Not RS (Relative Strength vs SPY). Disable: set SKIP_RSI=1
+if /i "%SKIP_RSI%"=="1" (
+  echo [10c/13] SKIPPED - run_rsi ^(SKIP_RSI=1^)
+  echo [10c/13] SKIPPED - run_rsi ^(SKIP_RSI=1^)>>"%LOG%"
+  "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" set RSI SKIPPED --reason "SKIP_RSI=1" >>"%LOG%" 2>&1
+) else (
+  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr5/ts20^)
+  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr5/ts20^)>>"%LOG%"
+  call "%~dp0run_rsi.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+
+rem --- Status snapshot (RUN / SKIPPED / NOT WIRED) before LatestRun promotion ---
+"%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" finalize >>"%LOG%" 2>&1
+
 rem --- 11) Copy latest run outputs ---
 echo [11/13] run_copy_latest>>"%LOG%"
 call "%~dp0run_copy_latest.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 12) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB; MVCP retired/disabled)
+rem --- 12) Reconcile gate (frozen engine Closed vs latest; YH/BRT/WPBR/RS/SB/RL/VZ; MVCP retired)
 rem Disable: set SKIP_RECONCILE_GATE=1  or  set RECONCILE_GATE=0
 rem Docs: drive\paul_experiments\yh_baseline_20260731\RECONCILE_GATE.md
 echo [12/13] run_reconcile_gate>>"%LOG%"
@@ -293,11 +349,16 @@ echo [13/13] run_gettarget>>"%LOG%"
 call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 13c) Trendline + VZ 6m charts (opens + scanners universe) ---
+rem --- 13c) Trendline + VZ 6m charts + buy-low B score + holdings sells ---
 rem Runs after getTarget so gettarget_positions.csv is current; before GitHub Pages publish.
-rem Universe: gettarget opens U LatestRun opens U investment-report scanners U SPY/APP extras
+rem Universe: gettarget helds/opens U live DailyRun Open/Watchlist/Scanner U SPY/APP extras
+rem Live sleeves from tools\dailyrun_system_status.py DAILYRUN_REGISTRY (wired=True).
+rem Missing charts are generated then scored — no silent NO CHART skip.
+rem Holdings SELL = weekly support DOWN and/or close through support (inverse of buy-low B).
 rem Skip: set SKIP_TRENDLINES=1
 rem Output: drive\paul_studies\trendlines_opens_latest\charts\index.html
+rem         drive\paul_studies\trendlines_opens_latest\buy_today.html
+rem         drive\Trendlines_BuyToday_Latest.html + mobile_inbox\results\
 if /i "%SKIP_TRENDLINES%"=="1" (
   echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)
   echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)>>"%LOG%"

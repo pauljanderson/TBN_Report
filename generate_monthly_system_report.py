@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / VZ).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / VZ / RSI).
 
 Uses paper-trading Closed/Open CSVs pinned to production stamps (same policy as investment.html):
   - BRT / IND / YH / MTS / WPBR / RS / SB: max stamped Closed/Open on Drive (DailyRun production)
   - VZ: DualPaul78 house only — VZ_house_last_run_ts.txt / house-sized Summary (never ALL / research)
+  - RSI: Relative Strength Index house only — RSI_house_last_run_ts.txt (not RS vs SPY)
   - WRL: {PREFIX}_last_run_ts.txt when present, else LatestRun
   - RL: newest BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv mirror (not RL_LatestRun)
   - MVCP: retired 2026-08-21 — omitted from this report (historical Closed stamps retained on Drive)
@@ -32,7 +33,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL")
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 
 try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
@@ -46,7 +47,13 @@ except Exception:
 
         def _normalize_exit_type(exit_type: str | None) -> str:
             return (exit_type or "").strip().upper()
-SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "VZ": "VZ", "WRL": "WRL"}
+SYSTEM_LABELS = {
+    "IND": "IND (deprecated)",
+    "SB": "SB",
+    "VZ": "VZ",
+    "RSI": "RSI",
+    "WRL": "WRL",
+}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -230,7 +237,7 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "WRL"):
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL"):
         closed: Optional[Path] = None
         open_p: Optional[Path] = None
         run_ts = _production_run_stamp(sys, drive)
@@ -420,6 +427,22 @@ def _month_label(year: int, month: int) -> str:
     return f"{MONTH_NAMES[month - 1]} {year}"
 
 
+# Published monthly.html lives next to docs/trendlines/index.html (GitHub Pages).
+# Chart sections use id="{SYMBOL}" (see tools/gen_trendlines_charts_html.py).
+TRENDLINES_CHART_HREF = "trendlines/index.html"
+
+
+def _symbol_link(symbol: str) -> str:
+    """Clickable ticker → trendlines chart anchor (sort still uses cell text)."""
+    sym = (symbol or "").strip().upper()
+    esc = html_mod.escape(sym)
+    frag = html_mod.escape(sym, quote=True)
+    return (
+        f'<a class="sym" href="{TRENDLINES_CHART_HREF}#{frag}" '
+        f'title="Open {esc} trendline chart">{esc}</a>'
+    )
+
+
 def _sortable_th(label: str, sort_type: str) -> str:
     return (
         f'<th class="sortable-th" data-sort="{sort_type}" tabindex="0" '
@@ -511,7 +534,7 @@ def _trade_detail_table(trades: list[TradeRow]) -> str:
         d_open = t.date_opened.strftime("%Y-%m-%d")
         body += (
             "<tr>"
-            f"<td>{html_mod.escape(t.symbol)}</td>"
+            f"<td>{_symbol_link(t.symbol)}</td>"
             f"<td>{d_open}</td>"
             f"<td>{d_close}</td>"
             f"<td>{html_mod.escape(t.exit_type)}</td>"
@@ -547,7 +570,7 @@ def _open_table(trades: list[TradeRow]) -> str:
     for t in rows:
         body += (
             "<tr>"
-            f"<td>{html_mod.escape(t.symbol)}</td>"
+            f"<td>{_symbol_link(t.symbol)}</td>"
             f"<td>{t.date_opened.strftime('%Y-%m-%d')}</td>"
             f"<td>{_fmt_price(t.entry_price)}</td>"
             f"<td>{_fmt_price(t.exit_price or 0.0)}</td>"
@@ -769,11 +792,14 @@ th.sort-asc .sort-ind::after {{ content:"▲"; color:#334155; }}
 th.sort-desc .sort-ind::after {{ content:"▼"; color:#334155; }}
 tr.total-row th, tr.total-row td {{ background:#f8fafc; border-top:2px solid #334155; }}
 ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
+a.sym {{ color:#1d4ed8; text-decoration:none; font-weight:600; }}
+a.sym:hover {{ text-decoration:underline; }}
 </style></head><body>
 <h1>Monthly Backtest Report — {year}</h1>
 <p class="sub">
   Paper-trading P&amp;L from latest {SYSTEMS_LABEL} backtest runs (not live broker accounts).<br>
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
+  Tickers link to that symbol’s chart in <a href="{TRENDLINES_CHART_HREF}">Trendlines + VZ charts</a>.<br>
   Generated {html_mod.escape(gen_s)}.
 </p>
 <div class="cards">{cards}</div>

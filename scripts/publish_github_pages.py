@@ -179,6 +179,40 @@ def _write_text_resilient(dst: Path, text: str, *, encoding: str = "utf-8", retr
     raise OSError(last_err.errno, hint, str(dst)) from last_err
 
 
+def _copy_file_resilient(src: Path, dst: Path, *, retries: int = 5) -> None:
+    """Copy binary/text files via temp+replace with retries (same lock class as HTML).
+
+    ``shutil.copy2`` opens the destination with ``'wb'`` and hits OSError
+    Errno 22 on Windows when docs/ PNGs are locked by a browser preview,
+    IDE, OneDrive, or AV — same failure mode as non-resilient HTML writes.
+    """
+    if src.resolve() == dst.resolve():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+    last_err: OSError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
+            return
+        except OSError as exc:
+            last_err = exc
+            try:
+                if tmp.is_file():
+                    tmp.unlink()
+            except OSError:
+                pass
+            if attempt < retries:
+                time.sleep(0.4 * attempt)
+    assert last_err is not None
+    hint = (
+        f"Could not copy {src.name} -> {dst} after {retries} attempts ({last_err}). "
+        "Close any IDE/browser tab previewing this file (and pause OneDrive sync if needed), then retry."
+    )
+    raise OSError(last_err.errno, hint, str(dst)) from last_err
+
+
 def prepare_html_for_pages(src: Path, dst: Path, *, show_nav: bool = False) -> None:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -340,7 +374,7 @@ def publish_trendlines_charts(*, drive: Path, docs_dir: Path, show_nav: bool) ->
         if path.name == "index.html":
             continue
         if path.suffix.lower() in (".png", ".md"):
-            shutil.copy2(path, dst_dir / path.name)
+            _copy_file_resilient(path, dst_dir / path.name)
     return dst_index
 
 
@@ -368,7 +402,7 @@ def ensure_logo_in_docs(docs_dir: Path) -> None:
             return
         dst = docs_dir / LOGO_FILENAME
         if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
+            _copy_file_resilient(src, dst)
 
 
 def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
@@ -383,7 +417,7 @@ def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
             if img_src.is_file():
                 img_dst = docs_dir / img_name
                 if img_src.resolve() != img_dst.resolve():
-                    shutil.copy2(img_src, img_dst)
+                    _copy_file_resilient(img_src, img_dst)
                 break
     return dst
 

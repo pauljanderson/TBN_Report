@@ -2352,7 +2352,13 @@ def write_outputs(
     except Exception as e:
         print(f"[SB] post_entry enrich skipped: {e}", flush=True)
 
-    write_brt_closed(brt_closed, str(closed_path), cfg=report_cfg)
+    write_brt_closed(
+        brt_closed,
+        str(closed_path),
+        cfg=report_cfg,
+        tickers=tickers or {},
+        data_dir=data_dir,
+    )
     _splice_burst_dna_columns(
         closed_path,
         {
