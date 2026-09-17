@@ -153,10 +153,24 @@
   <a class="card" href="systems/wpbr.html"><span class="tag gold">Production</span><strong>WPBR — Pivot Break and Retest</strong><span class="blurb">Weekly pivot zones, weekly breakout + confirm, daily hold-above retest.</span></a>
   <a class="card" href="systems/mts.html"><span class="tag gold">Production</span><strong>MTS — Magic Touch</strong><span class="blurb">STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline).</span></a>
   <a class="card" href="systems/vz.html"><span class="tag gold">Production</span><strong>VZ — Volume Zone</strong><span class="blurb">Max-volume HL zones; break → retest. DailyRun official TBN (Paul78.142, stop 0.25).</span></a>
+  <a class="card" href="#rsi"><span class="tag gold">Production</span><strong>RSI — Relative Strength Index</strong><span class="blurb">Wilder RSI(14) heat gauge (not RS vs SPY); cool-off buy after a hot run. DailyRun sleeve — not walk-forward gold.</span></a>
   <a class="card" href="systems/wrl.html"><span class="tag research">Research</span><strong>WRL — Weekly Range / Swing</strong><span class="blurb">Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break.</span></a>
   <a class="card" href="systems/mvcp.html"><span class="tag retired">Retired</span><strong>MVCP — Minervini VCP</strong><span class="blurb">Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21).</span></a>
   <a class="card" href="systems/ind.html"><span class="tag deprecated">Deprecated</span><strong>IND — Indicator / TC</strong><span class="blurb">Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve.</span></a>
 </div>
+
+<h2 id="rsi">RSI — Relative Strength Index</h2>
+<p>
+  <strong>RSI</strong> (Relative Strength Index) here is Wilder's 14-period heat gauge —
+  how stretched a name is on its own tape — not <strong>RS</strong> (Relative Strength vs SPY).
+  DailyRun sleeve (step 10c); preference-adopt, not walk-forward gold.
+</p>
+<ul>
+  <li><strong>Buy:</strong> prior bar RSI(14) ≥ 70 (was hot), then a close with 30 &lt; RSI &lt; 60 and trigger RSI &lt; 60, Average True Range (ATR)% ≥ 2.93. Fill at the next open.</li>
+  <li><strong>Sell:</strong> RSI(14) ≥ 70 (next open), or roll-8 (in-trade max RSI − now ≥ 8, next open), or a 20 calendar-day clock.</li>
+  <li><strong>No price stop / no dollar target.</strong> Implied getTarget prices are what-if closes, not live exits.</li>
+  <li><strong>Book:</strong> dummy $10k sheet notional. Live surface is Watchlist, not Scanner.</li>
+</ul>
 
 <div class="callout warn">
   Research pages (e.g. WRL, MOM) and retired notes (MVCP) are for process transparency — not live allocation advice.
