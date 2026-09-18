@@ -2,7 +2,9 @@
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live-style compound growth — official</title>
 <style>
-body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; max-width: 1100px; color: #0f172a; }
+body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; max-width: none; width: auto; color: #0f172a; }
+.table-wrap { overflow: visible !important; max-height: none !important; }
+table { width: 100%; }
 h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
 .sub { color: #64748b; margin-bottom: 1rem; }
 .ask { background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px; padding: 14px 16px; margin: 16px 0; }
@@ -17,22 +19,18 @@ th { background: #f8fafc; }
 a { color: #1d4ed8; }
 </style></head><body>
 <h1>Official live-style freeze — compound growth</h1>
-<p class="sub">Generated 2026-09-18 07:42 EDT. Stamp <code>risk_1pct_50k_adv_17name_20260917</code>.
+<p class="sub">Generated 2026-09-18 08:14 EDT. Stamp <code>risk_1pct_50k_adv_17name_20260917</code>.
 Not DailyRun Closed identity — wallet overlay for live sizing + historical compound path.</p>
 
 <div class="ask">
-  <h2>What you asked</h2>
-  <blockquote>make this part of our system officially … investment report scanner and watchlist
-  should specify shares … monthly report should be rerun … historical data should show
-  compound growth</blockquote>
-  <h2>In plain English</h2>
   <p>When the five live sleeves flash a buy (StockBee / Relative Strength Index / Volume Zone /
-  Magic Touch / Rocket Launcher), we now print how many shares to buy using one recipe:
+  Magic Touch / Rocket Launcher), we print how many shares to buy using one recipe:
   risk the smaller of 1% of the month-start account and $50,000; never more than 1% of that
   name’s recent average daily volume; never more than 17.5% of the account in one ticker.
-  The chart below is the same recipe run as a paper wallet from 2010 — that is the compound
-  growth story. Engine scorecards still use old fixed dollar sizes so we do not break
-  reconcile.</p>
+  Watchlist Suggested shares are a <strong>range until fill</strong>; getTarget locks the exact
+  count after the paid price. The path below is the same recipe as a paper wallet from 2010.
+  Engine scorecards still use house dummy dollar sizes so we do not break reconcile.
+  Name cap is <strong>17.5%</strong> (10% was the prior research freeze).</p>
 </div>
 
 <div class="cards">

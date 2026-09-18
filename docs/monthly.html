@@ -33,7 +33,17 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monthly Backtest Report — 2026</title>
 <style>
-body { font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:1200px; }
+body { font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:none; width:auto; }
+
+/* table-uncap: fill the window; no 1200/1280/1420 body cap; no inner scroll box when wide. */
+body { max-width: none !important; width: auto; }
+.shell { max-width: none !important; }
+.table-wrap { max-height: none !important; overflow: visible !important; width: 100%; }
+table, table.sortable { width: 100%; min-width: 0; }
+@media (max-width: 720px) {
+  .table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+}
+
 h1 { font-size:1.5rem; margin-bottom:4px; }
 h2 { font-size:1.15rem; margin-top:28px; }
 h3 { font-size:1rem; margin:16px 0 8px; color:#334155; }
@@ -49,8 +59,8 @@ h3 { font-size:1rem; margin:16px 0 8px; color:#334155; }
 section { margin-top:24px; }
 .month-section { border-top:1px solid #e2e8f0; padding-top:8px; }
 .sys-block { margin:12px 0 20px; }
-.table-wrap { overflow-x:auto; margin:8px 0; }
-table { border-collapse:collapse; font-size:12px; width:100%; min-width:640px; }
+.table-wrap { overflow:visible; margin:8px 0; }
+table { border-collapse:collapse; font-size:12px; width:100%; min-width:0; }
 th, td { border:1px solid #e2e8f0; padding:7px 8px; text-align:left; vertical-align:top; }
 th { background:#f1f5f9; }
 th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; }
@@ -63,25 +73,60 @@ ul.sources { font-size:12px; color:#475569; line-height:1.6; }
 a.sym { color:#1d4ed8; text-decoration:none; font-weight:600; }
 a.sym:hover { text-decoration:underline; }
 </style></head><body>
-<div class="ask live-style-official" style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;">
-  <h2 style="margin:0 0 8px;font-size:1.05rem;color:#166534;">Official live-style sizing + compound growth</h2>
-  <p style="margin:0 0 8px;font-size:14px;line-height:1.45;">
-    Live buy size (SB / RSI / VZ / MTS / RL): risk = min(1% beginning-of-month equity, $50k),
-    shares ≤ 1% ADV20, notional ≤ 17.5% of current equity.
-    See <a href="live_style.html"><strong>compound growth (live-style)</strong></a>
-    · <a href="live_style_monthly.html">wallet monthly</a>
-    · <a href="investment.html">investment report Suggested shares</a>.
-    Engine Closed rows on this page still use house dummy notionals for reconcile.
-  </p>
-</div>
-
+<div class="ask live-style-official" style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;"><h2 style="margin:0 0 8px;font-size:1.05rem;color:#166534;">Official live-style sizing + compound growth</h2><p style="margin:0 0 8px;font-size:14px;line-height:1.45;">Live buy size (SB / RSI / VZ / MTS / RL): risk = min(1% beginning-of-month equity, $50k), shares ≤ 1% ADV20, notional ≤ 17.5% of current equity. See <a href="live_style.html"><strong>compound growth (live-style)</strong></a> · <a href="live_style_monthly.html">wallet monthly</a> · <a href="investment.html">investment report Suggested shares</a>. Engine Closed rows on this page still use house dummy notionals for reconcile.</p></div>
 <h1>Monthly Backtest Report — 2026</h1>
 <p class="sub">
   Paper-trading P&amp;L from latest BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / VZ / RSI / WRL backtest runs (not live broker accounts).<br>
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
   Tickers link to that symbol’s chart in <a href="trendlines/index.html">Trendlines + VZ charts</a>.<br>
-  Generated 2026-09-18 07:42 EDT.
+  Dollar tables below are <strong>house dummy Closed reconcile</strong> unless labeled live-style.<br>
+  Generated 2026-09-18 08:14 EDT.
 </p>
+
+<section id="live-style-250k">
+<h2>If we started with $250k — official live-style size</h2>
+<p class="small">
+  Same recipe as Suggested shares: risk = min(1% beginning-of-month equity, $50k),
+  shares ≤ 1% ADV20, notional ≤ 17.5% of current equity
+  (freeze <code>risk_1pct_50k_adv_17name_20260917</code>).
+  Start $250,000. Path is the official compound wallet
+  (already includes the freeze’s $7,500/mo withdraw + 10.5% margin on borrowed cash —
+  not added here as a new wire).
+  <strong>Does not replace</strong> the house dummy Closed tables below.
+  Full ledger: <a href="live_style_monthly.html">live_style_monthly.html</a>
+  · compound story: <a href="live_style.html">live_style.html</a>.
+</p>
+<div class="cards">
+  <div class="card">
+    <h3>Start</h3>
+    <div class="metric">$250,000</div>
+    <div class="small">One wallet · SB / RSI / VZ / MTS / RL</div>
+  </div>
+  <div class="card">
+    <h3>YE2012</h3>
+    <div class="metric">$422,475</div>
+    <div class="small">vs SPY $334,288</div>
+  </div>
+  <div class="card">
+    <h3>As-of equity</h3>
+    <div class="metric">$58,700,021</div>
+    <div class="small">Max DD 20.59% · name cap 17.5%</div>
+  </div>
+  <div class="card">
+    <h3>2026 realized (wallet)</h3>
+    <div class="metric">$9,041,555</div>
+    <div class="small">Sum of live-style month Realized $ · withdraws separate</div>
+  </div>
+</div>
+<p class="small">Click column headers to sort. 2026 months from the locked 17.5% wallet ledger.</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr><th class="sortable-th" data-sort="month" tabindex="0" role="columnheader" aria-sort="none">Month<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">BOM equity<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Realized $<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Withdrawn $<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">EOM equity<span class="sort-ind"></span></th></tr></thead>
+  <tbody><tr><td>2026-01</td><td>$49,718,465.66</td><td>+$2,105,403</td><td>$7,500.00</td><td>$51,823,868.79</td></tr><tr><td>2026-02</td><td>$51,816,368.79</td><td>+$1,738,909</td><td>$7,500.00</td><td>$53,555,277.90</td></tr><tr><td>2026-03</td><td>$53,547,777.90</td><td>-$2,675</td><td>$7,500.00</td><td>$53,545,102.80</td></tr><tr><td>2026-04</td><td>$53,537,602.80</td><td>+$2,369,312</td><td>$7,500.00</td><td>$55,906,914.54</td></tr><tr><td>2026-05</td><td>$55,899,414.54</td><td>+$2,127,538</td><td>$7,500.00</td><td>$58,026,952.14</td></tr><tr><td>2026-06</td><td>$58,019,452.14</td><td>+$492,555</td><td>$7,500.00</td><td>$58,512,007.25</td></tr><tr><td>2026-07</td><td>$58,504,507.25</td><td>-$40,431</td><td>$7,500.00</td><td>$58,464,076.55</td></tr><tr><td>2026-08</td><td>$58,456,576.55</td><td>+$698,836</td><td>$7,500.00</td><td>$59,155,412.43</td></tr><tr><td>2026-09</td><td>$59,147,912.43</td><td>-$447,892</td><td>$7,500.00</td><td>$58,700,020.87</td></tr></tbody>
+</table>
+</div>
+</section>
+
 <div class="cards">
   <div class="card">
     <h3>BRT</h3>
@@ -180,8 +225,8 @@ a.sym:hover { text-decoration:underline; }
   </div></div>
 
 <section>
-<h2>Monthly realized P&amp;L by system</h2>
-<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's position sizing. Click column headers to sort.</p>
+<h2>Monthly realized P&amp;L by system (house dummy Closed)</h2>
+<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's <strong>house dummy</strong> position sizing for reconcile — not the $250k live-style book above. Click column headers to sort.</p>
 <div class="table-wrap">
 <table class="sortable">
   <thead><tr><th class="sortable-th" data-sort="month" tabindex="0" role="columnheader" aria-sort="none">Month<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">BRT<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IND (deprecated)<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">RL<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">YH<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">MTS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">WPBR<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">RS<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">SB<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">VZ<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">RSI<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">WRL<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Total<span class="sort-ind"></span></th></tr></thead>
