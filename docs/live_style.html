@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live-style compound growth — official</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; max-width: 1100px; color: #0f172a; }
+h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+.sub { color: #64748b; margin-bottom: 1rem; }
+.ask { background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px; padding: 14px 16px; margin: 16px 0; }
+.ask h2 { margin: 0 0 8px; font-size: 1.05rem; color: #166534; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
+th { background: #f8fafc; }
+.metric { font-size: 1.5rem; font-weight: 700; }
+.cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.card { flex: 1 1 200px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; background: #fff; }
+.small { color: #64748b; font-size: 12px; }
+a { color: #1d4ed8; }
+</style></head><body>
+<h1>Official live-style freeze — compound growth</h1>
+<p class="sub">Generated 2026-09-18 02:51 EDT. Stamp <code>risk_1pct_50k_adv_17name_20260917</code>.
+Not DailyRun Closed identity — wallet overlay for live sizing + historical compound path.</p>
+
+<div class="ask">
+  <h2>What you asked</h2>
+  <blockquote>make this part of our system officially … investment report scanner and watchlist
+  should specify shares … monthly report should be rerun … historical data should show
+  compound growth</blockquote>
+  <h2>In plain English</h2>
+  <p>When the five live sleeves flash a buy (StockBee / Relative Strength Index / Volume Zone /
+  Magic Touch / Rocket Launcher), we now print how many shares to buy using one recipe:
+  risk the smaller of 1% of the month-start account and $50,000; never more than 1% of that
+  name’s recent average daily volume; never more than 17.5% of the account in one ticker.
+  The chart below is the same recipe run as a paper wallet from 2010 — that is the compound
+  growth story. Engine scorecards still use old fixed dollar sizes so we do not break
+  reconcile.</p>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <h3>YE2012</h3>
+    <div class="metric">$422,474.98</div>
+    <div class="small">vs SPY $334,287.97</div>
+  </div>
+  <div class="card">
+    <h3>As-of</h3>
+    <div class="metric">$58,700,020.87</div>
+    <div class="small">Max DD 20.59%</div>
+  </div>
+  <div class="card">
+    <h3>Name cap</h3>
+    <div class="metric">17.5%</div>
+    <div class="small">+ min(1% BOM, $50k) + 1% ADV20</div>
+  </div>
+</div>
+
+<section>
+<h2>Locked freeze</h2>
+<ul>
+  <li>risk = min(1% beginning-of-month equity, $50,000)</li>
+  <li>shares ≤ 1% ADV20</li>
+  <li>notional ≤ 17.5% current equity</li>
+  <li>5-sys: SB, RSI, VZ, MTS, RL · start $250,000.00 · RSI ÷ 0.0651</li>
+  <li>Live equity inputs: <code>drive/live_style_account.json</code> — BOM $250,000 · current $250,000</li>
+</ul>
+<pre class="small">{
+  &quot;stamp&quot;: &quot;risk_1pct_50k_adv_17name_20260917&quot;,
+  &quot;risk&quot;: &quot;min(1% BOM equity, $50000)&quot;,
+  &quot;risk_frac&quot;: 0.01,
+  &quot;max_risk_dollar&quot;: 50000.0,
+  &quot;adv_frac&quot;: 0.01,
+  &quot;adv_window&quot;: 20,
+  &quot;name_cap_frac&quot;: 0.175,
+  &quot;rsi_avg_loss_frac&quot;: 0.06509607046979868,
+  &quot;rsi_avg_loss_pct_freeze&quot;: 6.509607046979868,
+  &quot;systems&quot;: [
+    &quot;MTS&quot;,
+    &quot;RL&quot;,
+    &quot;RSI&quot;,
+    &quot;SB&quot;,
+    &quot;VZ&quot;
+  ],
+  &quot;account_start&quot;: 250000.0,
+  &quot;withdraw_monthly&quot;: 7500.0,
+  &quot;margin_rate&quot;: 0.105,
+  &quot;leverage&quot;: 2.0,
+  &quot;official&quot;: true,
+  &quot;engine_closed_unchanged&quot;: true
+}</pre>
+</section>
+
+<section>
+<h2>Compound path (wallet)</h2>
+<p class="small">Click through for full month ledger and canonical compares.</p>
+<table>
+<thead><tr>
+<th>Book</th><th>2010</th><th>2011</th><th>2012</th><th>As-of</th><th>Max DD%</th>
+</tr></thead>
+<tbody><tr><td>Locked 17.5% live-style (compound wallet)</td><td>$284,646.36</td><td>$392,517.79</td><td>$422,474.98</td><td>$58,700,020.87</td><td>20.59%</td></tr><tr><td>Prior 10% name freeze (history)</td><td>$247,849.75</td><td>$266,502.61</td><td>$238,607.36</td><td>$46,721,908.65</td><td>25.66%</td></tr><tr><td>SPY $250k total return</td><td>—</td><td>—</td><td>$334,287.97</td><td>$2,254,118.95</td><td>—</td></tr></tbody>
+</table>
+<p>
+  <a href="live_style_monthly.html">Full wallet monthly</a> ·
+  <a href="live_style_compare.html">Compare vs prior 10%</a> ·
+  <a href="investment.html">Investment report (Suggested shares)</a> ·
+  <a href="monthly.html">House monthly (engine dollars)</a> ·
+  <a href="system_performance.html">Historical performance</a>
+</p>
+</section>
+
+<p style="margin-top:2rem;color:#666;font-size:0.85rem;">
+  <a href="index.html">Scanner open report</a>
+  · <a href="investment.html">Investment report</a>
+  · <a href="convergence.html">System convergence</a>
+  · <a href="trendlines/index.html">Trendlines + VZ charts</a>
+  · <a href="monthly.html">Monthly report (all systems)</a>
+  · <a href="live_style.html">Live-style compound growth</a>
+  · <a href="system_performance.html">Historical performance</a>
+  · <a href="system_setup_process.html">System setup process</a>
+  · <a href="tbn_philosophy.html">TBN Philosophy</a>
+  · Refresh this page for the latest copy.
+</p>
+
+</body></html>
