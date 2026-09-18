@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>H1 rvol≥4 vs rw126 / rw63 — vz_h1_rvol4_vs_rw63_20260813</title>
+<style>
+  body { font-family: Segoe UI, Helvetica, sans-serif; margin: 24px; color: #1c1b19; background: #f7f6f2; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.05rem; border-bottom: 1px solid #d4d0c4; padding-bottom: 4px; }
+  .muted { color: #5a574f; }
+  .callout { background: #e8eef2; border-left: 4px solid #2a4a5c; padding: 10px 12px; margin: 12px 0; }
+  .callout.warn { background: #f7efe0; border-left-color: #8a5a12; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; background: #fff; }
+  th, td { border: 1px solid #d4d0c4; padding: 6px 8px; text-align: left; }
+  thead th { background: #f0eee6; }
+  
+th.sortable-th{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable-th:hover{background:#e2e8f0}
+th.sortable-th .sort-ind::after{content:" \2195";opacity:.35;font-size:.85em}
+th.sortable-th.sort-asc .sort-ind::after{content:" \2191";opacity:.9}
+th.sortable-th.sort-desc .sort-ind::after{content:" \2193";opacity:.9}
+
+  code { background: #f0eee6; padding: 0.05em 0.3em; }
+</style></head><body>
+<h1>H1 origin rvol ≥4 vs rw126 control and adopted rw63</h1>
+<p class="muted">Research only · vz_h1_rvol4_vs_rw63_20260813 · DualPaul78 · same closed trades as playbook AB</p>
+<div class="callout warn">
+<strong>Not gold. Not DailyRun.</strong> One comparison: the H1 rvol≥4 sleeve vs the control
+<em>before</em> the rw63 cut and the control <em>after</em> that cut. Stacked arm is both knobs.
+Do not retune on OOS.
+</div>
+<p>rw63 filter = <code>bars_after_break ≤ 64</code> (house next_open).
+Late trades dropped vs rw126: 487.
+H1 is 31% of rw126 N and 34% of rw63 N.
+Stack is 31% of rw63 N.</p>
+<h2>Results</h2>
+<div class='table-wrap'><table class='sortable'><caption>BEFORE = rw126 control. AFTER = adopted rw63. H1 lean is vs BEFORE. Stack lean is vs AFTER.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Arm<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Knob<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lean<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">N<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">WR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Avg PnL%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Avg R<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Med PnL%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Book Ann ROR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Max DD%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">Calmar<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IS N<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IS WR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IS Avg PnL%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IS Ann ROR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">IS Max DD%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">OOS N<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">OOS WR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">OOS Avg PnL%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">OOS Ann ROR%<span class="sort-ind"></span></th><th class="sortable-th" data-sort="num" tabindex="0" role="columnheader" aria-sort="none">OOS Max DD%<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>BEFORE CONTROL rw126</td><td>retest_window=126 (playbook control)</td><td>control</td><td>5313</td><td>50.7%</td><td>2.76</td><td>0.34</td><td>0.43</td><td>64.25</td><td>38.45</td><td>1.67</td><td>4486</td><td>49.0%</td><td>2.31</td><td>50.63</td><td>39.02</td><td>827</td><td>60.0%</td><td>5.22</td><td>173.77</td><td>5.18</td></tr><tr><td>AFTER CONTROL rw63</td><td>retest_window=63 (adopted freeze)</td><td>DISMISS (no change)</td><td>4826</td><td>50.8%</td><td>2.85</td><td>0.35</td><td>0.52</td><td>66.92</td><td>38.21</td><td>1.75</td><td>4051</td><td>49.0%</td><td>2.36</td><td>52.03</td><td>38.92</td><td>775</td><td>60.6%</td><td>5.42</td><td>182.89</td><td>5.23</td></tr><tr><td>H1 ORIGIN_RVOL&gt;=4 on rw126</td><td>origin_rvol &gt;= 4.0 on rw126</td><td>HOLD (weak)</td><td>1655</td><td>50.4%</td><td>3.08</td><td>0.33</td><td>0.27</td><td>69.39</td><td>17.66</td><td>3.93</td><td>1455</td><td>49.5%</td><td>2.71</td><td>58.93</td><td>17.67</td><td>200</td><td>57.0%</td><td>5.74</td><td>171.65</td><td>5.42</td></tr><tr><td>H1 rvol&gt;=4 + rw63</td><td>origin_rvol &gt;= 4.0 and rw63</td><td>HOLD (weak)</td><td>1520</td><td>50.5%</td><td>3.16</td><td>0.32</td><td>0.32</td><td>71.28</td><td>20.59</td><td>3.46</td><td>1329</td><td>49.4%</td><td>2.79</td><td>60.68</td><td>20.65</td><td>191</td><td>58.1%</td><td>5.69</td><td>170.87</td><td>5.71</td></tr></tbody></table></div>
+<p class="muted">Max DD is the house passive book path (fixed notional, PnL at exit, no OHLC MTM).
+Init capital is sized to average concurrent slots.</p>
+<footer class="muted">Twin Beacon Networks · VZ research · vz_h1_rvol4_vs_rw63_20260813</footer>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "-" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "date") {
+      var iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bind(table) {
+    var ths = table.querySelectorAll("th.sortable-th");
+    ths.forEach(function (th, idx) {
+      function activate() {
+        var type = th.getAttribute("data-sort") || "text";
+        var asc = !th.classList.contains("sort-asc");
+        ths.forEach(function (x) {
+          x.classList.remove("sort-asc", "sort-desc");
+          x.setAttribute("aria-sort", "none");
+        });
+        th.classList.add(asc ? "sort-asc" : "sort-desc");
+        th.setAttribute("aria-sort", asc ? "ascending" : "descending");
+        sortTable(table, idx, type, asc ? 1 : -1);
+      }
+      th.addEventListener("click", activate);
+      th.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+      });
+    });
+  }
+  document.querySelectorAll("table.sortable").forEach(bind);
+})();
+</script>
+
+</body></html>
