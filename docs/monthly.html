@@ -35,14 +35,22 @@
 <style>
 body { font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:none; width:auto; }
 
-/* table-uncap: fill the window; no 1200/1280/1420 body cap; no inner scroll box when wide. */
+/* table-uncap: fill the window; no 1200/1280/1420 body cap.
+   Tables grow with column content (min-width: max-content) and scroll
+   horizontally inside .table-wrap so nowrap header click targets stay intact.
+   overflow:visible + min-width:0 squeezed <th> boxes while painting overflow
+   text — header clicks then missed the real cell. */
 body { max-width: none !important; width: auto; }
 .shell { max-width: none !important; }
-.table-wrap { max-height: none !important; overflow: visible !important; width: 100%; }
-table, table.sortable { width: 100%; min-width: 0; }
-@media (max-width: 720px) {
-  .table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+.table-wrap {
+  width: 100%;
+  max-height: none !important;
+  overflow-x: auto !important;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
 }
+table, table.sortable { width: max-content; min-width: 100%; }
+th.sortable-th { position: relative; z-index: 3; pointer-events: auto; }
 
 h1 { font-size:1.5rem; margin-bottom:4px; }
 h2 { font-size:1.15rem; margin-top:28px; }
@@ -59,11 +67,11 @@ h3 { font-size:1rem; margin:16px 0 8px; color:#334155; }
 section { margin-top:24px; }
 .month-section { border-top:1px solid #e2e8f0; padding-top:8px; }
 .sys-block { margin:12px 0 20px; }
-.table-wrap { overflow:visible; margin:8px 0; }
-table { border-collapse:collapse; font-size:12px; width:100%; min-width:0; }
+.table-wrap { overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:8px 0; }
+table { border-collapse:collapse; font-size:12px; width:max-content; min-width:100%; }
 th, td { border:1px solid #e2e8f0; padding:7px 8px; text-align:left; vertical-align:top; }
 th { background:#f1f5f9; }
-th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; }
+th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; position:relative; z-index:3; pointer-events:auto; }
 th.sortable-th:hover { background:#e2e8f0; }
 .sort-ind { display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }
 th.sort-asc .sort-ind::after { content:"▲"; color:#334155; }
@@ -72,6 +80,10 @@ tr.total-row th, tr.total-row td { background:#f8fafc; border-top:2px solid #334
 ul.sources { font-size:12px; color:#475569; line-height:1.6; }
 a.sym { color:#1d4ed8; text-decoration:none; font-weight:600; }
 a.sym:hover { text-decoration:underline; }
+
+th.sortable-th { position: relative; z-index: 3; pointer-events: auto; }
+thead { position: relative; z-index: 3; }
+
 </style></head><body>
 <div class="ask live-style-official" style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;"><h2 style="margin:0 0 8px;font-size:1.05rem;color:#166534;">Official live-style sizing + compound growth</h2><p style="margin:0 0 8px;font-size:14px;line-height:1.45;">Live buy size (every getTarget system, including RS / BRT / YH / WPBR — not only 5-sys): risk = min(1% beginning-of-month equity, $50k), shares ≤ 1% ADV20, notional ≤ 17.5% of current equity. The $250k vs S&amp;P 500 (SPY) wallet below is the five-sleeve compound book (StockBee, Relative Strength Index, Volume Zone, Magic Touch, Rocket Launcher; Indicators out) using official shares × house Closed fill prices — not dummy $10k / $47.5k notionals. See <a href="live_style.html"><strong>compound growth (live-style)</strong></a> · <a href="live_style_monthly.html">wallet monthly</a> · <a href="investment.html">investment report Suggested shares / avg-cost lots</a>. Engine Closed rows further down still use house dummy notionals for reconcile.</p></div>
 <h1>Monthly Backtest Report — 2026</h1>
@@ -80,7 +92,7 @@ a.sym:hover { text-decoration:underline; }
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
   Tickers link to that symbol’s chart in <a href="trendlines/index.html">Trendlines + VZ charts</a>.<br>
   Dollar tables below are <strong>house dummy Closed reconcile</strong> unless labeled live-style.<br>
-  Generated 2026-09-21 12:17 EDT.
+  Generated 2026-09-21 14:46 EDT.
 </p>
 
 <section id="live-style-250k">
@@ -697,7 +709,7 @@ a.sym:hover { text-decoration:underline; }
 
 <section>
 <h2>Data sources</h2>
-<ul class="sources"><li>BRT closed: BRT_Closed_260921120343.csv</li><li>BRT open: BRT_Open_260921120343.csv</li><li>IND closed: IND_Closed_260916123848.csv</li><li>IND open: IND_Open_260916123848.csv</li><li>RL closed: BRT_Closed_RL_260921120312.csv</li><li>RL open: BRT_Open_RL_260921120312.csv</li><li>YH closed: YH_Closed_260921120416.csv</li><li>YH open: YH_Open_260921120416.csv</li><li>MTS closed: MTS_Closed_260921120434.csv</li><li>MTS open: MTS_Open_260921120434.csv</li><li>WPBR closed: WPBR_Closed_260921120826.csv</li><li>WPBR open: WPBR_Open_260921120826.csv</li><li>RS closed: RS_Closed_260921120957.csv</li><li>RS open: RS_Open_260921120957.csv</li><li>SB closed: SB_Closed_260921121020.csv</li><li>SB open: SB_Open_260921121020.csv</li><li>VZ closed: VZ_Closed_260921121029.csv</li><li>VZ open: VZ_Open_260921121029.csv</li><li>RSI closed: RSI_Closed_260921121051.csv</li><li>RSI open: RSI_Open_260921121051.csv</li><li>WRL closed: WRL_Closed_260906140457.csv</li><li>WRL open: WRL_Open_260906140457.csv</li></ul>
+<ul class="sources"><li>BRT closed: BRT_Closed_260921143322.csv</li><li>BRT open: BRT_Open_260921143322.csv</li><li>IND closed: IND_Closed_260916123848.csv</li><li>IND open: IND_Open_260916123848.csv</li><li>RL closed: BRT_Closed_RL_260921143301.csv</li><li>RL open: BRT_Open_RL_260921143301.csv</li><li>YH closed: YH_Closed_260921143352.csv</li><li>YH open: YH_Open_260921143352.csv</li><li>MTS closed: MTS_Closed_260921143405.csv</li><li>MTS open: MTS_Open_260921143405.csv</li><li>WPBR closed: WPBR_Closed_260921143756.csv</li><li>WPBR open: WPBR_Open_260921143756.csv</li><li>RS closed: RS_Closed_260921143934.csv</li><li>RS open: RS_Open_260921143934.csv</li><li>SB closed: SB_Closed_260921143954.csv</li><li>SB open: SB_Open_260921143954.csv</li><li>VZ closed: VZ_Closed_260921144002.csv</li><li>VZ open: VZ_Open_260921144002.csv</li><li>RSI closed: RSI_Closed_260921144021.csv</li><li>RSI open: RSI_Open_260921144021.csv</li><li>WRL closed: WRL_Closed_260906140457.csv</li><li>WRL open: WRL_Open_260906140457.csv</li></ul>
 </section>
 
 <script>
@@ -729,8 +741,12 @@ a.sym:hover { text-decoration:underline; }
     var tbody = table.tBodies[0];
     if (!tbody) return;
     var rows = Array.from(tbody.querySelectorAll("tr"));
-    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
-    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    var pinned = rows.filter(function (r) {
+      return r.classList.contains("total-row") || r.classList.contains("table-total");
+    });
+    var movable = rows.filter(function (r) {
+      return !r.classList.contains("total-row") && !r.classList.contains("table-total");
+    });
     movable.sort(function (a, b) {
       var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
       var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
@@ -741,31 +757,50 @@ a.sym:hover { text-decoration:underline; }
     });
     movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
   }
-  function bindSortHeader(table, th, col) {
-    function onActivate(e) {
-      if (e.type === "touchend") e.preventDefault();
-      var type = th.dataset.sort || "text";
-      var dir = th.dataset.dir === "asc" ? -1 : 1;
-      table.querySelectorAll("th.sortable-th").forEach(function (h) {
-        h.dataset.dir = "";
-        h.classList.remove("sort-asc", "sort-desc");
-        h.setAttribute("aria-sort", "none");
-      });
-      th.dataset.dir = dir === 1 ? "asc" : "desc";
-      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
-      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
-      sortTable(table, col, type, dir);
-    }
-    th.addEventListener("click", onActivate);
-    th.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
-    });
-    th.addEventListener("touchend", onActivate, { passive: false });
+  function headerCol(th) {
+    if (typeof th.cellIndex === "number" && th.cellIndex >= 0) return th.cellIndex;
+    var tr = th.parentElement;
+    if (!tr) return 0;
+    return Array.prototype.indexOf.call(tr.children, th);
   }
-  document.querySelectorAll("table.sortable").forEach(function (table) {
-    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
-      bindSortHeader(table, th, col);
+  var lastAt = 0;
+  var lastTh = null;
+  function onActivate(th) {
+    var table = th.closest("table.sortable");
+    if (!table) return;
+    var now = Date.now();
+    if (lastTh === th && now - lastAt < 400) return;
+    lastTh = th;
+    lastAt = now;
+    var col = headerCol(th);
+    var type = th.getAttribute("data-sort") || "text";
+    var dir = th.getAttribute("data-dir") === "asc" ? -1 : 1;
+    table.querySelectorAll("th.sortable-th").forEach(function (h) {
+      h.setAttribute("data-dir", "");
+      h.classList.remove("sort-asc", "sort-desc");
+      h.setAttribute("aria-sort", "none");
     });
+    th.setAttribute("data-dir", dir === 1 ? "asc" : "desc");
+    th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+    th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+    sortTable(table, col, type, dir);
+  }
+  function headerFromEvent(e) {
+    var t = e.target;
+    if (!t || !t.closest) return null;
+    return t.closest("th.sortable-th");
+  }
+  document.addEventListener("click", function (e) {
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var th = headerFromEvent(e);
+    if (!th) return;
+    e.preventDefault();
+    onActivate(th);
   });
 })();
 </script>
