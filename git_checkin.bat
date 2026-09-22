@@ -1,9 +1,12 @@
 @echo off
 rem Stage project source code, commit, optionally push.
+rem Always pulls origin/main first so this PC is not behind the cloud agent.
 rem   git_checkin.bat
 rem   git_checkin.bat --push
 rem   git_checkin.bat -m "describe your changes"
 rem   git_checkin.bat --push -m "describe your changes"
+rem
+rem To sync without committing, double-click git_pull.bat instead.
 rem
 rem Stages: .py .bat .ps1 .awk .md .json (settings) scripts/ tools/*.py docs/ .github/
 rem Skips: data/, CSV/TSV run outputs, charts, temp debug dirs, optimizer timestamp artifacts.
@@ -38,6 +41,19 @@ exit /b 1
 
 :args_done
 echo === Git check-in: staging source code ===
+echo.
+
+echo Pulling origin/main first so this PC is not behind the agent...
+git checkout main
+if errorlevel 1 (
+  echo Could not switch to main.
+  exit /b 1
+)
+git pull origin main
+if errorlevel 1 (
+  echo git pull failed. Fix conflicts or uncommitted edits, then retry.
+  exit /b 1
+)
 echo.
 
 rem --- repo metadata ---

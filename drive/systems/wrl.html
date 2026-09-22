@@ -176,6 +176,7 @@
 <p>
   Fill = Open if already <code>≥ range_low</code>, else range low (buy-stop fill).
   Skip if <code>stop ≥ fill</code> or primary target <code>≤ fill</code>.
+  Optional: skip unless structural reward/risk ≥ <code>wrl_min_rr</code> (default 0 = off).
 </p>
 
 <h2>5. Watchlist / Scanner / Open / Closed</h2>
@@ -205,6 +206,7 @@
   <p><code>run_wrl.bat</code> — Mag10 if <code>drive\universes\WRL_universe.csv</code> is missing.</p>
   <p><code>run_wrl.bat drive\universes\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
   <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p>Research RR gate (off by default): <code>set WRL_MIN_RR=2</code>.</p>
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 

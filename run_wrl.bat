@@ -24,6 +24,8 @@ if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 if not defined WRL_TARGET_MODE set "WRL_TARGET_MODE=scale"
 if not defined WRL_STOP set "WRL_STOP=1.0"
+if not defined WRL_MIN_RR set "WRL_MIN_RR=0"
+if not defined WRL_MIN_RR_TARGET set "WRL_MIN_RR_TARGET=range"
 if not defined WRL_MAX_POSITIONS set "WRL_MAX_POSITIONS=0"
 if not defined WRL_AGGRESSIVE set "WRL_AGGRESSIVE=true"
 if not defined WRL_WORKERS set "WRL_WORKERS=12"
@@ -50,6 +52,7 @@ if "%WRL_PASS_SYMBOLS%"=="1" (
     -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^
     -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v vz_mode=false ^
     -v wrl_target_mode=%WRL_TARGET_MODE% -v stop_pct=%WRL_STOP% -v stop_pct_is_multiplier=true ^
+    -v wrl_min_rr=%WRL_MIN_RR% -v wrl_min_rr_target=%WRL_MIN_RR_TARGET% ^
     -v max_positions=%WRL_MAX_POSITIONS% ^
     -s "!WRL_SYMBOLS!" ^
     !WRL_FORWARD!
@@ -60,6 +63,7 @@ if "%WRL_PASS_SYMBOLS%"=="1" (
     -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^
     -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v vz_mode=false ^
     -v wrl_target_mode=%WRL_TARGET_MODE% -v stop_pct=%WRL_STOP% -v stop_pct_is_multiplier=true ^
+    -v wrl_min_rr=%WRL_MIN_RR% -v wrl_min_rr_target=%WRL_MIN_RR_TARGET% ^
     -v max_positions=%WRL_MAX_POSITIONS% ^
     !WRL_FORWARD!
 )
