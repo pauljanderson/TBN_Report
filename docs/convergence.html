@@ -60,7 +60,7 @@ ul.sources { font-size:12px; color:#475569; line-height:1.5; }
 .plain { border-left:4px solid #047857; }
 </style></head><body>
 <h1>All live systems — Watchlist &amp; Scanner Convergence</h1>
-<p class="sub">Generated 2026-09-23 10:46 ET · Symbols listed when they appear on <strong>2+ lists</strong> across the latest <strong>BRT / IND / RL / YH / MTS / WPBR / RS / SB / VZ / RSI / WRL</strong> watchlist/scanner outputs, plus tickers open in <strong>2+ systems</strong> at once. Systems come from the DailyRun registry (not the original frozen IND/BRT/RL/YH-only set).</p>
+<p class="sub">Generated 2026-09-23 11:44 ET · Symbols listed when they appear on <strong>2+ lists</strong> across the latest <strong>BRT / IND / RL / YH / MTS / WPBR / RS / SB / VZ / RSI / WRL</strong> watchlist/scanner outputs, plus tickers open in <strong>2+ systems</strong> at once. Systems come from the DailyRun registry (not the original frozen IND/BRT/RL/YH-only set).</p>
 <div class="callout">
 <p>This page is the overlap view: names that show up on more than one live system’s watchlist, scanner, or open book. Relative Strength Index (RSI) is included when it has a house book. Adding a new DailyRun sleeve to <code>tools/dailyrun_system_status.py</code> (<code>DAILYRUN_REGISTRY</code>) is enough for the next run to pick it up.</p>
 </div>
@@ -109,6 +109,9 @@ ul.sources { font-size:12px; color:#475569; line-height:1.5; }
     if (type === "date") {
       var iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
       if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      // Compact YYYYMMDD (VZ TRIGGER_DATE, RS/BRT DATE, RSI ASOF_DATE, etc.)
+      var ymd = s.match(/^(\d{8})$/);
+      if (ymd) return parseInt(ymd[1], 10);
       var mdy = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
       if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
       return 0;
