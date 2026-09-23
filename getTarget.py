@@ -6,13 +6,17 @@ BRT (backtest percent or ATR live params), IND (deprecated; manual/historical su
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
 WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
 MVCP (Minervini Volatility Contraction Pattern; retired sleeve — still supported if Open lots remain), CS (CAN SLIM price-legs),
-WRL (Weekly Range / Swing structural targets), or VZ (Volume Zone break/retest).
+WRL (Weekly Range / Swing — house target = swing high full exit), VZ (Volume Zone break/retest),
+or RSI (Relative Strength Index 14 — implied what-if closes for RSI≥70 and roll-from-max; fill next open).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
+  That is the input book — DailyRun/publish must not drop rows you added.
+  getTarget writes getTarget_output.csv only (never overwrites the positions file).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP (retired), CS, WRL, or VZ (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP (retired), CS, WRL, VZ, or RSI (case-insensitive).
   Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
-  RANGE/SWING/WEEKLY_RANGE→WRL, VOLUME_ZONE/VOL_ZONE→VZ.
+  RANGE/SWING/WEEKLY_RANGE→WRL, VOLUME_ZONE/VOL_ZONE→VZ,
+  RSINDEX/WILDER_RSI/RELATIVE_STRENGTH_INDEX→RSI (not RS — that is vs-SPY).
 
 Qull / Kell use EMA trails (not fixed target_pct); they are not mapped here yet.
 
@@ -57,9 +61,12 @@ _SYSTEM_ALIASES = {
     "VOLUME_ZONE": "VZ",
     "VOL_ZONE": "VZ",
     "VOLZONE": "VZ",
+    "RSINDEX": "RSI",
+    "WILDER_RSI": "RSI",
+    "RELATIVE_STRENGTH_INDEX": "RSI",
 }
 
-# Percent/ATR live systems (RL, VZ, and WRL are separate). Order matches help text.
+# Percent/ATR live systems (RL, VZ, WRL, and RSI are separate). Order matches help text.
 PERCENT_ATR_SYSTEMS = ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS")
 
 # Dollar fields written to CSV / console (ceil to nearest cent at output time).
@@ -121,6 +128,107 @@ def _apply_dollar_rounding(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _live_style_share_fields(
+    *,
+    symbol: str,
+    system: str,
+    paid_fill: bool,
+    entry_price: Optional[float],
+    stop: Any,
+    payload: dict[str, Any],
+    current_price: Any,
+    df: Optional[pd.DataFrame],
+    as_of_effective: Optional[pd.Timestamp],
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Official live-style size: exact NNN after paid fill, range if fill unknown."""
+    try:
+        from stock_analysis.live_style_sizing import (
+            ensure_account_json,
+            size_share_range,
+            size_trade,
+        )
+    except ImportError:
+        from live_style_sizing import (  # type: ignore
+            ensure_account_json,
+            size_share_range,
+            size_trade,
+        )
+
+    acct = ensure_account_json()
+    asof = as_of_effective.date() if as_of_effective is not None else None
+    stop_f: Optional[float]
+    try:
+        stop_f = float(stop) if stop is not None and pd.notna(stop) else None
+    except (TypeError, ValueError):
+        stop_f = None
+
+    if paid_fill and entry_price:
+        sz = size_trade(
+            symbol=symbol,
+            system=str(system or ""),
+            entry=float(entry_price),
+            stop=stop_f,
+            bom_equity=acct.bom_equity,
+            current_equity=acct.current_equity,
+            open_notional_same_name=0.0,
+            asof=asof,
+            data_dir=data_dir,
+        )
+        return {
+            "SuggestedShares": int(round(sz.shares)) if sz.sized and sz.shares > 0 else None,
+            "SuggestedNotional": round(sz.notional, 2) if sz.sized else None,
+            "RiskDollar": round(sz.risk_dollar, 2),
+            "SizeLid": sz.binding_lid or sz.skip_reason or None,
+            "SuggestedSharesKind": "exact" if sz.sized else None,
+            "FillBand": _format_dollar(entry_price),
+        }
+
+    size_row: dict[str, Any] = {
+        "STOP_LOSS": stop_f,
+        "SIGNAL_LOW": payload.get("SignalLow"),
+        "ZONE_LO": payload.get("vz_zone_lo"),
+        "SWING_LOW": payload.get("SwingLow"),
+        "CLOSE": current_price,
+        "CURRENT_PRICE": current_price,
+        "ATR": payload.get("ATR"),
+        "ENTRY_OPEN_REF": entry_price,
+    }
+    if df is not None and as_of_effective is not None and as_of_effective in df.index:
+        bar = df.loc[as_of_effective]
+        if "High" in df.columns:
+            size_row["HIGH"] = bar.get("High")
+        if "Low" in df.columns:
+            size_row["LOW"] = bar.get("Low")
+        if "Open" in df.columns and size_row.get("ENTRY_OPEN_REF") is None:
+            size_row["ENTRY_OPEN_REF"] = bar.get("Open")
+    packed = size_share_range(
+        symbol=symbol,
+        system=str(system or ""),
+        row=size_row,
+        bom_equity=acct.bom_equity,
+        current_equity=acct.current_equity,
+        open_notional_same_name=0.0,
+        asof=asof,
+        data_dir=data_dir,
+    )
+    shares_txt = packed.get("SUGGESTED_SHARES")
+    notional_txt = packed.get("SUGGESTED_NOTIONAL")
+    risk_raw = packed.get("RISK_DOLLAR")
+    try:
+        risk_f = float(str(risk_raw).replace(",", "").replace("$", "")) if risk_raw else None
+    except (TypeError, ValueError):
+        risk_f = None
+    return {
+        "SuggestedShares": shares_txt if shares_txt and shares_txt != "—" else None,
+        "SuggestedNotional": notional_txt if notional_txt and notional_txt != "—" else None,
+        "RiskDollar": round(risk_f, 2) if risk_f is not None else None,
+        "SizeLid": packed.get("SIZE_LID") or packed.get("skip_reason") or None,
+        "SuggestedSharesKind": "range" if shares_txt and shares_txt != "—" else None,
+        "FillBand": packed.get("FILL_BAND"),
+    }
+
+
 def _normalize_system(system: str) -> str:
     s = str(system).strip().upper().replace(" ", "_")
     return _SYSTEM_ALIASES.get(s, s)
@@ -131,7 +239,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, VZ
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, VZ, RSI
 
 
 @dataclass
@@ -189,6 +297,21 @@ class VzProfile:
     trade_side: str = "long"  # long | short | both
     # House adopt 20260821: skip new entries ≤N calendar days after TARGET exit (parity with run_vz).
     cooldown_after_target_days: int = 10
+
+
+@dataclass
+class RsiProfile:
+    """Relative Strength Index live exit (house DailyRun freeze). No $ stop/target."""
+
+    rsi_ob: float = 70.0
+    rsi_os: float = 30.0
+    rsi_exit: float = 70.0
+    rsi_max_trigger: float = 60.0
+    rsi_min_atr_pct: float = 2.93
+    rsi_time_stop_days: int = 20
+    rsi_roll_from_max: float = 8.0
+    rsi_entry_on: str = "next_open"
+    rsi_min_dist_to_52w_high_pct_at_trigger: float = 0.0  # off
 
 
 @dataclass
@@ -942,6 +1065,216 @@ def compute_vz_system(
     }
 
 
+def _rsi_finite(value: Any) -> Optional[float]:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(x) or not math.isfinite(x):
+        return None
+    return x
+
+
+def _rsi_target_note(profile: RsiProfile, hint: str = "ok") -> str:
+    exit_lvl = float(profile.rsi_exit)
+    if hint == "already":
+        return f"already RSI>={exit_lvl:g}; fill next open"
+    if hint == "ok":
+        return f"what-if close RSI>={exit_lvl:g}; fill next open"
+    if hint == "need_ohlc":
+        return f"need OHLC to invert RSI>={exit_lvl:g}"
+    return f"target {hint}"
+
+
+def _rsi_stop_note(profile: RsiProfile, hint: str) -> str:
+    roll = float(profile.rsi_roll_from_max or 0.0)
+    if hint == "ok":
+        return f"what-if close roll{roll:g}; fill next open"
+    if hint == "already":
+        return f"already roll{roll:g}; fill next open"
+    if hint == "need_ohlc":
+        return "need OHLC to invert roll stop"
+    return hint
+
+
+def compute_rsi_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    profile: RsiProfile,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """RSI live book: implied what-if closes for RSI>=exit and roll-from-max."""
+    try:
+        import sys
+
+        _repo = Path(__file__).resolve().parent
+        if str(_repo) not in sys.path:
+            sys.path.insert(0, str(_repo))
+        from stock_analysis.rocket_rsi import (  # type: ignore
+            _asof_session_complete,
+            _wilder_rsi14_avg_state,
+            invert_close_for_rsi_at_or_above,
+            invert_close_for_rsi_at_or_below,
+        )
+    except ImportError as e:
+        return {"error": f"RSI helpers unavailable: {e}"}
+
+    hist = df.loc[:as_of_effective] if as_of_effective is not None else df
+    if hist is None or hist.empty or "Close" not in hist.columns:
+        return {"error": "RSI requires Close history"}
+
+    close = hist["Close"].to_numpy(dtype=float)
+    rsi_arr, avg_g, avg_l = _wilder_rsi14_avg_state(close)
+    rsi_s = pd.Series(rsi_arr, index=hist.index)
+    rsi_now = _rsi_finite(rsi_s.iloc[-1]) if len(rsi_s) else None
+    last_close = _rsi_finite(close[-1]) if len(close) else None
+
+    if entry_ts in hist.index:
+        loc = hist.index.get_loc(entry_ts)
+        entry_i = int(loc.start if isinstance(loc, slice) else loc)
+    else:
+        later = hist.index[hist.index >= entry_ts]
+        if len(later):
+            loc = hist.index.get_loc(later[0])
+            entry_i = int(loc.start if isinstance(loc, slice) else loc)
+        else:
+            entry_i = 0
+
+    in_trade = rsi_s.iloc[entry_i:]
+    max_rsi = _rsi_finite(in_trade.max()) if len(in_trade) else None
+    roll_pts = None
+    if rsi_now is not None and max_rsi is not None:
+        roll_pts = max_rsi - rsi_now
+
+    days_held = max(
+        0,
+        int((pd.Timestamp(as_of_effective).normalize() - pd.Timestamp(entry_ts).normalize()).days),
+    )
+    ts_days = int(profile.rsi_time_stop_days or 0)
+    days_to_ts = max(0, ts_days - days_held) if ts_days > 0 else None
+    time_stop_date = (
+        str((pd.Timestamp(entry_ts).normalize() + pd.Timedelta(days=ts_days)).date())
+        if ts_days > 0
+        else None
+    )
+
+    roll_thr = float(profile.rsi_roll_from_max or 0.0)
+    exit_lvl = float(profile.rsi_exit)
+    armed = ""
+    if roll_thr > 0 and roll_pts is not None and roll_pts >= roll_thr:
+        armed = "ROLL8" if roll_thr == 8.0 else f"ROLL{roll_thr:g}"
+    elif rsi_now is not None and rsi_now >= exit_lvl:
+        armed = "RSI70" if exit_lvl == 70.0 else f"RSI{exit_lvl:g}"
+    elif ts_days > 0 and days_held >= ts_days:
+        armed = "TIMESTOP"
+
+    last = len(close) - 1
+    asof_d = pd.Timestamp(hist.index[-1]).date()
+    complete = _asof_session_complete(asof_d)
+    state_i = last if complete else max(0, last - 1)
+    prev_c = _rsi_finite(close[state_i])
+    ag = _rsi_finite(avg_g[state_i]) if state_i < len(avg_g) else None
+    al = _rsi_finite(avg_l[state_i]) if state_i < len(avg_l) else None
+
+    target_px: Optional[float] = None
+    target_hint = "rsi_not_ready"
+    if rsi_now is not None and rsi_now >= exit_lvl and last_close is not None:
+        target_px = last_close
+        target_hint = "already"
+    elif prev_c is not None and ag is not None and al is not None:
+        target_px, target_hint = invert_close_for_rsi_at_or_above(prev_c, ag, al, exit_lvl)
+
+    stop_px: Optional[float] = None
+    stop_hint = "n/a"
+    roll_floor = None
+    if roll_thr <= 0:
+        stop_hint = "roll_off"
+    elif max_rsi is None:
+        stop_hint = "no_max"
+    else:
+        roll_floor = max_rsi - roll_thr
+        if roll_floor <= 0:
+            stop_hint = "max_low"
+        elif rsi_now is not None and rsi_now <= roll_floor and last_close is not None:
+            stop_px = last_close
+            stop_hint = "already"
+        elif prev_c is not None and ag is not None and al is not None:
+            stop_px, stop_hint = invert_close_for_rsi_at_or_below(prev_c, ag, al, roll_floor)
+        else:
+            stop_hint = "rsi_not_ready"
+
+    return {
+        "System": "RSI",
+        "EntrySource": entry_src,
+        "EntryInData": entry_in_data,
+        "TargetPrice": target_px,
+        "TargetNote": _rsi_target_note(profile, target_hint),
+        "StopInitial": stop_px,
+        "StopTrailing": stop_px,
+        "StopNote": _rsi_stop_note(profile, stop_hint),
+        "ATR": None,
+        "ATRPct": None,
+        "SMA20": None,
+        "SMA50": None,
+        "RsiMode": "implied_close",
+        "rsi_ob": float(profile.rsi_ob),
+        "rsi_os": float(profile.rsi_os),
+        "rsi_exit": exit_lvl,
+        "rsi_max_trigger": float(profile.rsi_max_trigger),
+        "rsi_min_atr_pct": float(profile.rsi_min_atr_pct),
+        "rsi_time_stop_days": ts_days,
+        "rsi_roll_from_max": roll_thr,
+        "rsi_entry_on": str(profile.rsi_entry_on or "next_open"),
+        "Rsi14Now": round(rsi_now, 2) if rsi_now is not None else None,
+        "Rsi14MaxInTrade": round(max_rsi, 2) if max_rsi is not None else None,
+        "RsiRollPts": round(roll_pts, 2) if roll_pts is not None else None,
+        "RsiRollFloor": round(roll_floor, 2) if roll_floor is not None else None,
+        "RsiDaysHeld": days_held,
+        "RsiDaysToTimeStop": days_to_ts,
+        "RsiTimeStopDate": time_stop_date,
+        "RsiExitArmed": armed or None,
+        "RsiTargetHint": target_hint,
+        "RsiStopHint": stop_hint,
+        "AsOfUsed": str(pd.Timestamp(as_of_effective).date()) if as_of_effective is not None else None,
+    }
+
+
+def _rsi_price_only_payload(
+    entry_src: str,
+    profile: RsiProfile,
+) -> dict[str, Any]:
+    return {
+        "System": "RSI",
+        "EntrySource": entry_src,
+        "EntryInData": False,
+        "TargetPrice": None,
+        "TargetNote": _rsi_target_note(profile, "need_ohlc"),
+        "StopInitial": None,
+        "StopTrailing": None,
+        "StopNote": _rsi_stop_note(profile, "need_ohlc"),
+        "ATR": None,
+        "ATRPct": None,
+        "SMA20": None,
+        "SMA50": None,
+        "RsiMode": "implied_close",
+        "rsi_ob": float(profile.rsi_ob),
+        "rsi_os": float(profile.rsi_os),
+        "rsi_exit": float(profile.rsi_exit),
+        "rsi_max_trigger": float(profile.rsi_max_trigger),
+        "rsi_min_atr_pct": float(profile.rsi_min_atr_pct),
+        "rsi_time_stop_days": int(profile.rsi_time_stop_days or 0),
+        "rsi_roll_from_max": float(profile.rsi_roll_from_max or 0.0),
+        "rsi_entry_on": str(profile.rsi_entry_on or "next_open"),
+        "RsiTargetHint": "need_ohlc",
+        "RsiStopHint": "need_ohlc",
+    }
+
+
 def compute_price_only_payload(
     system: str,
     entry_price: float,
@@ -951,8 +1284,11 @@ def compute_price_only_payload(
     exit_configs: dict[str, SystemExitConfig],
     default_atr_pct: float,
     vz_profile: Optional[VzProfile] = None,
+    rsi_profile: Optional[RsiProfile] = None,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
+    if system == "RSI":
+        return _rsi_price_only_payload(entry_src, rsi_profile or RsiProfile())
     if system == "VZ":
         return {"error": "VZ requires OHLC CSV to resolve zone.lo stop/target"}
     if system == "RL":
@@ -1031,7 +1367,12 @@ def compute_wrl_system(
     *,
     entry_in_data: bool = True,
 ) -> dict[str, Any]:
-    """Structural WRL targets frozen from the completed-week structure as of entry."""
+    """Weekly Range / Swing (WRL) levels frozen from the completed-week structure as of entry.
+
+    House default 2026-09-22: TargetPrice = swing high (sell 100%). Stop = swing low.
+    Target2Price is unused on the live swing book. RangeHigh stays on the row so a
+    leftover scale lot can still see last week's high.
+    """
     try:
         from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
     except ImportError:
@@ -1045,8 +1386,7 @@ def compute_wrl_system(
     lv = levels_for_bar(swings, week_idx, bar)
     if lv is None:
         return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
-    target_price = float(lv.range_high)
-    target2 = float(lv.swing_high)
+    target_price = float(lv.swing_high)
     stop_initial = float(lv.swing_low)
     return {
         "System": "WRL",
@@ -1055,7 +1395,7 @@ def compute_wrl_system(
         "ATR": None,
         "ATRPct": None,
         "TargetPrice": target_price,
-        "Target2Price": target2,
+        "Target2Price": None,
         "StopInitial": stop_initial,
         "StopTrailing": stop_initial,
         "RangeHigh": float(lv.range_high),
@@ -1089,12 +1429,24 @@ def compute_position_payload(
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
     vz_profile: Optional[VzProfile] = None,
+    rsi_profile: Optional[RsiProfile] = None,
 ) -> dict[str, Any]:
-    """Dispatch to RL, VZ, WRL, or percent/ATR calculator for a given as-of date."""
+    """Dispatch to RL, VZ, WRL, RSI, or percent/ATR calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, rl_profile, entry_in_data=entry_in_data
+        )
+    if system == "RSI":
+        return compute_rsi_system(
+            sym,
+            df,
+            entry_ts,
+            entry_price,
+            entry_src,
+            as_of_effective,
+            rsi_profile or RsiProfile(),
+            entry_in_data=entry_in_data,
         )
     if system == "VZ":
         if vz_profile is None:
@@ -1161,7 +1513,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL / VZ; "
+            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL / VZ / RSI; "
             "deprecated IND remains available manually)."
         )
     )
@@ -1372,6 +1724,45 @@ def main() -> None:
         default=10,
         help="VZ: calendar days after TARGET exit before re-entry (house adopt 10; 0=off).",
     )
+    parser.add_argument("--rsi-ob", type=float, default=70.0, help="RSI overbought arm (house 70).")
+    parser.add_argument("--rsi-os", type=float, default=30.0, help="RSI oversold floor (house 30).")
+    parser.add_argument(
+        "--rsi-exit",
+        type=float,
+        default=70.0,
+        help="RSI14 exit level; flatten next open (house 70). No $ target.",
+    )
+    parser.add_argument(
+        "--rsi-max-trigger",
+        type=float,
+        default=60.0,
+        help="RSI trigger gate (house 60). Informational on live lots.",
+    )
+    parser.add_argument(
+        "--rsi-min-atr-pct",
+        type=float,
+        default=2.93,
+        help="RSI ATR%% gate (house 2.93). Informational on live lots.",
+    )
+    parser.add_argument(
+        "--rsi-time-stop-days",
+        type=int,
+        default=20,
+        help="RSI calendar time stop (house 20). Flatten next open when due.",
+    )
+    parser.add_argument(
+        "--rsi-roll-from-max",
+        type=float,
+        default=8.0,
+        help="RSI roll: in-trade max RSI - now >= this, next open (house 8; 0=off).",
+    )
+    parser.add_argument(
+        "--rsi-entry-on",
+        type=str,
+        default="next_open",
+        choices=("next_open", "close"),
+        help="RSI fill timing (house next_open).",
+    )
     parser.add_argument(
         "--per-symbol-settings",
         default="",
@@ -1382,8 +1773,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.list_systems:
-        print("Supported systems:", ", ".join(("RL", "WRL", "VZ") + PERCENT_ATR_SYSTEMS))
+        print("Supported systems:", ", ".join(("RL", "WRL", "VZ", "RSI") + PERCENT_ATR_SYSTEMS))
         print("Aliases:", ", ".join(f"{k}->{v}" for k, v in sorted(_SYSTEM_ALIASES.items())))
+        print("RSI: implied what-if closes (Target=RSI>=70, Stop=roll8); fill still next open.")
         print("Not mapped (EMA trail): QULL, KELL")
         return
 
@@ -1465,6 +1857,25 @@ def main() -> None:
         f"min_atr={vz_profile.min_atr_pct_at_entry}, "
         f"hvn={vz_profile.require_hvn_overlap}, trade_side={vz_profile.trade_side}, "
         f"cd_target={vz_profile.cooldown_after_target_days})."
+    )
+
+    rsi_profile = RsiProfile(
+        rsi_ob=float(args.rsi_ob),
+        rsi_os=float(args.rsi_os),
+        rsi_exit=float(args.rsi_exit),
+        rsi_max_trigger=float(args.rsi_max_trigger),
+        rsi_min_atr_pct=float(args.rsi_min_atr_pct),
+        rsi_time_stop_days=int(args.rsi_time_stop_days),
+        rsi_roll_from_max=float(args.rsi_roll_from_max),
+        rsi_entry_on=str(args.rsi_entry_on),
+    )
+    print(
+        f"[INFO] RSI using implied what-if closes (Target=RSI>=exit, Stop=roll-from-max; fill next open) "
+        f"(ob={rsi_profile.rsi_ob:g}, os={rsi_profile.rsi_os:g}, "
+        f"exit={rsi_profile.rsi_exit:g}, max_trigger={rsi_profile.rsi_max_trigger:g}, "
+        f"min_atr={rsi_profile.rsi_min_atr_pct:g}, ts={rsi_profile.rsi_time_stop_days}d, "
+        f"roll_from_max={rsi_profile.rsi_roll_from_max:g}, "
+        f"entry_on={rsi_profile.rsi_entry_on})."
     )
 
     def _pct(
@@ -1566,15 +1977,31 @@ def main() -> None:
     data_dir = Path(args.data_dir)
     as_of_ts = pd.to_datetime(args.as_of_date) if args.as_of_date else None
     out_path = Path(args.out_csv)
+    positions_path = Path(args.positions_csv) if str(args.positions_csv).strip() else DEFAULT_POSITIONS_CSV
+    try:
+        if out_path.resolve() == positions_path.resolve():
+            out_path = Path("getTarget_output.csv")
+            print(
+                f"[getTarget] --out-csv was the positions file; writing {out_path.resolve()} instead "
+                "so edited input rows are not overwritten."
+            )
+    except OSError:
+        pass
     stop_floor_by_key: dict[tuple[str, str], float] = {}
-    if (not args.no_stop_floor) and out_path.exists():
+    prev_output_by_key: dict[tuple[str, str], dict] = {}
+    if out_path.exists():
         try:
-            prev = pd.read_csv(out_path)
-            if "Symbol" in prev.columns and "StopTrailing" in prev.columns:
-                cols = ["Symbol", "StopTrailing"]
-                if "System" in prev.columns:
-                    cols.insert(1, "System")
-                prev = prev[cols].copy()
+            prev_full = pd.read_csv(out_path)
+            if "Symbol" in prev_full.columns:
+                for _, pr in prev_full.iterrows():
+                    psym = str(pr.get("Symbol", "")).strip().upper()
+                    psys = str(pr.get("System", "")).strip().upper()
+                    if psym:
+                        prev_output_by_key[(psym, psys)] = pr.to_dict()
+            if (not args.no_stop_floor) and "StopTrailing" in prev_full.columns:
+                prev = prev_full[["Symbol", "StopTrailing"] + (
+                    ["System"] if "System" in prev_full.columns else []
+                )].copy()
                 prev["StopTrailing"] = pd.to_numeric(prev["StopTrailing"], errors="coerce")
                 prev = prev.dropna(subset=["StopTrailing"])
                 if "System" in prev.columns:
@@ -1592,9 +2019,31 @@ def main() -> None:
                     ):
                         stop_floor_by_key[(str(sym), "")] = float(_ceil_cent(float(st)))
         except Exception as e:
-            print(f"[WARN] Could not read prior stop floor from {out_path}: {e}")
+            print(f"[WARN] Could not read prior output from {out_path}: {e}")
 
     results: list[dict] = []
+
+    def _keep_input_row(sym: str, pos: PositionSpec, system: str, reason: str) -> None:
+        """Never drop a positions-file symbol just because stop/size/data failed."""
+        prior = prev_output_by_key.get((sym, system)) or prev_output_by_key.get((sym, ""))
+        if prior:
+            kept = dict(prior)
+            kept["Symbol"] = sym
+            kept["System"] = system or kept.get("System")
+            kept["SizeLid"] = reason
+            results.append(kept)
+            print(f"[getTarget] kept {sym} [{system}] from prior output ({reason})")
+            return
+        results.append(
+            {
+                "Symbol": sym,
+                "System": system,
+                "PurchaseDate": str(pos.purchase_date)[:10],
+                "EntryPrice": pos.entry_price,
+                "SizeLid": reason,
+            }
+        )
+        print(f"[getTarget] kept {sym} [{system}] input row ({reason})")
 
     for sym, pos in sorted(positions.items()):
         csv_path = data_dir / f"{sym}.csv"
@@ -1617,6 +2066,7 @@ def main() -> None:
                 sma20 = float(sma20_series.loc[as_of_effective])
         elif not args.allow_missing_csv:
             print(sym, pos.purchase_date, "CSV not found:", csv_path)
+            _keep_input_row(sym, pos, system, "csv_missing")
             continue
 
         entry_ts, entry_in_data, entry_hint = resolve_entry(
@@ -1628,6 +2078,7 @@ def main() -> None:
         )
         if entry_ts is None:
             print(sym, pos.purchase_date, "entry date not found in data (set entry_price for synthetic entry)")
+            _keep_input_row(sym, pos, system, "entry_missing")
             continue
 
         if pos.entry_price is not None:
@@ -1636,11 +2087,13 @@ def main() -> None:
         elif df is not None and entry_in_data:
             if args.entry_price_col not in df.columns:
                 print(sym, "entry-price column not found:", args.entry_price_col)
+                _keep_input_row(sym, pos, system, "entry_col_missing")
                 continue
             entry_price = float(df.loc[entry_ts][args.entry_price_col])
             entry_src = f"csv:{args.entry_price_col}"
         else:
             print(sym, pos.purchase_date, "entry_price required when CSV missing or entry not in file")
+            _keep_input_row(sym, pos, system, "entry_price_required")
             continue
 
         if not entry_in_data:
@@ -1669,6 +2122,7 @@ def main() -> None:
             exit_configs=sym_exit_configs,
             default_atr_pct=float(args.default_atr_pct),
             vz_profile=vz_profile,
+            rsi_profile=rsi_profile,
         )
 
         if df is None:
@@ -1693,10 +2147,12 @@ def main() -> None:
                 **_payload_kw,
             )
         if payload.get("error"):
-            if payload.get("error", "").startswith("unknown system"):
-                print(sym, payload["error"])
+            err = str(payload.get("error") or "compute_error")
+            if err.startswith("unknown system"):
+                print(sym, err)
             else:
-                print(sym, entry_ts.date(), payload["error"])
+                print(sym, entry_ts.date(), err)
+            _keep_input_row(sym, pos, system, err)
             continue
 
         target_price_yesterday = None
@@ -1730,7 +2186,12 @@ def main() -> None:
         stop_trailing = payload.get("StopTrailing")
         floor_key = (sym, system)
         prev_floor = stop_floor_by_key.get(floor_key)
-        if stop_trailing is not None and pd.notna(stop_trailing):
+        if system == "RSI":
+            # Implied what-if close, not a ratcheting price stop.
+            stop_floor_applied = False
+            requires_stop_increase = False
+            prev_floor = None
+        elif stop_trailing is not None and pd.notna(stop_trailing):
             floor_map = {sym: prev_floor} if prev_floor is not None else {}
             stop_trailing, stop_floor_applied, requires_stop_increase, prev_floor = _apply_stop_floor(
                 sym, float(stop_trailing), floor_map
@@ -1774,8 +2235,9 @@ def main() -> None:
             "RsMode": mode_col if system == "RS" else None,
             "SbMode": mode_col if system == "SB" else None,
             "MvcpMode": mode_col if system == "MVCP" else None,
-            "WrlMode": "structural" if system == "WRL" else None,
+            "WrlMode": "swing" if system == "WRL" else None,
             "VzMode": payload.get("VzMode") if system == "VZ" else None,
+            "RsiMode": payload.get("RsiMode") if system == "RSI" else None,
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,
@@ -1792,6 +2254,23 @@ def main() -> None:
                 )
             },
         }
+        # Official live-style size for every system (not only 5-sys).
+        # Paid fill in gettarget_positions → exact NNN; blank entry_price → fill-band range.
+        _stop_for_size = payload.get("StopInitial") or stop_trailing
+        row_out.update(
+            _live_style_share_fields(
+                symbol=sym,
+                system=str(system or ""),
+                paid_fill=pos.entry_price is not None,
+                entry_price=float(entry_price) if entry_price else None,
+                stop=_stop_for_size,
+                payload=payload,
+                current_price=current_price,
+                df=df,
+                as_of_effective=as_of_effective,
+                data_dir=data_dir,
+            )
+        )
         row_out = _apply_dollar_rounding(row_out)
         results.append(row_out)
 
@@ -1817,13 +2296,40 @@ def main() -> None:
                 f" sig_entry={payload.get('vz_signal_entry_date')}"
                 f" exit={payload.get('vz_exit_name')}]"
             )
+        if system == "RSI":
+            extra += (
+                f" [{payload.get('TargetNote')}"
+                f" stop={payload.get('StopNote')}"
+                f" rsi14={payload.get('Rsi14Now')}"
+                f" max={payload.get('Rsi14MaxInTrade')}"
+                f" roll={payload.get('RsiRollPts')}"
+                f" held={payload.get('RsiDaysHeld')}d"
+                f" to_ts={payload.get('RsiDaysToTimeStop')}"
+                f" armed={payload.get('RsiExitArmed') or 'none'}]"
+            )
 
+        tgt_disp = _format_dollar(tgt)
+        shares_out = row_out.get("SuggestedShares")
+        shares_kind = row_out.get("SuggestedSharesKind")
+        if shares_out is not None and shares_kind == "exact":
+            extra += (
+                f" [shares={int(round(float(shares_out)))} paid_fill"
+                f" lid={row_out.get('SizeLid') or '—'}]"
+            )
+        elif shares_out is not None:
+            extra += (
+                f" [shares={shares_out} fill_unknown"
+                f" band={row_out.get('FillBand') or '—'}"
+                f" lid={row_out.get('SizeLid') or '—'}]"
+            )
+        elif row_out.get("SizeLid"):
+            extra += f" [shares=n/a lid={row_out.get('SizeLid')}]"
         print(
             f"{sym} [{system}] {entry_ts.date()} | "
             f"Entry={_format_dollar(entry_price)} ({entry_src}) | "
             f"Current={_format_dollar(current_price)} | "
             f"SMA20={_format_dollar(sma20)} | "
-            f"Target={_format_dollar(tgt)} | "
+            f"Target={tgt_disp} | "
             f"Target_yday={_format_dollar(row_out.get('TargetPriceYesterday'))}"
             f"{' *CHANGED*' if target_changed else ''} | "
             f"Limit={_format_dollar(limit_out)} | "
@@ -1831,6 +2337,16 @@ def main() -> None:
             f"Stop_trailing={_format_dollar(st)} | "
             f"as_of={as_of_effective.date() if as_of_effective is not None else requested_ts.date()}{extra}"
         )
+        if shares_out is not None and shares_kind == "exact" and entry_price:
+            print(
+                f"  -> recommended shares (paid fill {_format_dollar(entry_price)}): "
+                f"{int(round(float(shares_out)))}"
+            )
+        elif shares_out is not None:
+            print(
+                f"  -> recommended shares (fill unknown"
+                f" {row_out.get('FillBand') or 'band'}): {shares_out}"
+            )
 
     if results:
         pd.DataFrame(results).to_csv(out_path, index=False)

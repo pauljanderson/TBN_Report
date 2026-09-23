@@ -14,6 +14,7 @@ backtest; charts/deep HTML are **not** part of DailyRun.
 | **BRT** / WPBR / YH / VEC / PBR | Zone systems | Close + SMA50 + zone bands from Closed `ZONE_CENTER` + IN/OUT/stop |
 | **IND** / MTS / RS / ADX | Other | Close + SMA50 + IN/OUT/stop |
 | **SB** | StockBee (standalone writer) | Close + SMA50 + IN/OUT/stop |
+| **WRL** | Weekly Range / Swing (research sleeve; not DailyRun) | Close + SMA50 + IN/OUT/stop (demand zone = swing low → range low) |
 | **MVCP** (retired) | Minervini VCP — not DailyRun; historical stamps only | Close + SMA50 + IN/OUT/stop |
 
 Auto-detect: scan `drive/{PREFIX}_Closed_{stamp}.csv`, or pass `--system` / `--closed`.

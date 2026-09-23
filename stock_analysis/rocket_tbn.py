@@ -345,21 +345,31 @@ class BRTConfig:
     vz_cooldown_after_target_days: int = 10
     # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
     wrl_mode: bool = False
-    wrl_target_mode: str = "scale"  # range | swing | scale
+    wrl_target_mode: str = "swing"  # swing (house: 100% at swing high) | range | scale (leftover 50/50)
     wrl_scale_frac: float = 0.50
     wrl_min_zone_pct: float = 0.0
     wrl_time_stop_bars: int = 0
     # RSI — Relative Strength Index (rocket_rsi.py). true → RSI_ prefix.
-    # Not RS (Relative Strength vs SPY). House freeze: ob=70/os=30/exit=70/max_trigger=60/min_atr%=5/ts=20/next_open.
+    # Not RS (Relative Strength vs SPY). House freeze: ob=70/os=30/exit=70/max_trigger=60/min_atr%=2.93/ts=20/roll_from_max=8/next_open. min_dist52=off.
     rsi_mode: bool = False
     rsi_ob: float = 70.0
     rsi_os: float = 30.0
     rsi_exit: float = 70.0
     rsi_max_trigger: float = 60.0
-    rsi_min_atr_pct: float = 5.0
+    rsi_min_atr_pct: float = 2.93
     rsi_time_stop_days: int = 20
+    # EXIT: flatten next open when (in-trade max RSI14 − current) >= this. 0 = off.
+    # DailyRun / run_rsi.bat default 8 (preference adopt rsi_roll_ab_20260916).
+    rsi_roll_from_max: float = 0.0
     rsi_entry_on: str = "next_open"
     rsi_sheet_notional: float = 10_000.0
+    # Optional RSI play-around trigger gates (0 = off). DNA aliases in rocket_rl_config.
+    # Column-name -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= → min (keep if dist >= X).
+    # Opposite near-high cap: explicit rsi_max_dist_to_52w_high_pct_at_trigger only.
+    rsi_max_dist_to_52w_high_pct_at_trigger: float = 0.0
+    rsi_min_dist_to_52w_high_pct_at_trigger: float = 0.0
+    rsi_min_rel_vol_on_trigger: float = 0.0
+    rsi_min_rsi14_drop_from_ob: float = 0.0
     # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
     sb_mode: bool = False
     burst_min_pct: float = 0.04
@@ -17066,7 +17076,31 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "indicator_diff": "Minimum trade-aligned (bull−bear) IND count at trigger bar close when indicator_buy is only or both (default 10). Negative values allowed (e.g. -100). LONG: bullish-aligned; SHORT: bearish-aligned.",
     "max_ind_diff_at_trigger": "Upper-bound gate: require trade-aligned IND_DIFF <= N at trigger bar close (None = off). Independent of indicator_buy; enables low-DIFF overlays on YH/BRT/etc.",
     "entry_start_date": "Inclusive earliest strategy date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries before this date; for WPBR also excludes pivots/zones with pivot Monday before this date (no BO/retest/rocket from those pivots). OHLC warmup/history before this date still loads for weekly/indicator calc. Engine-wide alias: -v start_date= (also data_start / history_start) maps here across BRT/WPBR/PBR/RL/MTS/VEC.",
-    "entry_end_date": "Inclusive latest entry eval date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries after this date; open positions may still exit later.",
+    "entry_end_date": "Inclusive latest entry eval date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries after this date; open positions may still exit later. RSI house: this is the fill / DATE_OPENED (next_open), not the signal date.",
+    "rsi_max_dist_to_52w_high_pct_at_trigger": (
+        "RSI play-around (0=off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER <= this "
+        "(% below 52w high at trigger close; near-high cap). No column-name alias — "
+        "use this explicit key so -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= stays a min."
+    ),
+    "rsi_min_dist_to_52w_high_pct_at_trigger": (
+        "RSI play-around (0=off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= this "
+        "(% below 52w high; don't buy names hugging the high). "
+        "Alias: -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= (one number = min)."
+    ),
+    "rsi_min_rel_vol_on_trigger": (
+        "RSI play-around (0=off). Keep if REL_VOL_ON_TRIGGER >= this "
+        "(trigger volume / 10-session avg). Alias: -v REL_VOL_ON_TRIGGER=."
+    ),
+    "rsi_min_rsi14_drop_from_ob": (
+        "RSI play-around (0=off). Keep if RSI14_DROP_FROM_OB >= this "
+        "(prior >=rsi_ob RSI − trigger RSI). Alias: -v RSI14_DROP_FROM_OB=."
+    ),
+    "rsi_roll_from_max": (
+        "RSI EXIT (0=off). Sell next open when (in-trade max RSI14 − current RSI14) "
+        ">= this, else RSI14 >= rsi_exit, else the calendar time stop. "
+        "DailyRun / run_rsi.bat house default 8 (preference; not gold). "
+        "Override: -v rsi_roll_from_max=0 to disable, or 6/7/9/10 to neighbor-test."
+    ),
     "min_rel_vol_at_entry": "Require REL_VOL_AT_ENTRY (entry-day volume / 10d avg) >= this at entry (-2 = off). Knowable only after entry day closes; not a pre-entry scanner filter.",
     "sell_on_low_vol": "Exit at next session open when REL_VOL_AT_ENTRY < this (0 = off). Uses entry-day volume stored at open; e.g. 0.8592 sells if rel vol was below 0.8592 on the fill day.",
     "sell_ind_diff_below": "Exit at next session open when trade-aligned IND_DIFF on the prior held session is below N (None = off).",
@@ -19773,14 +19807,29 @@ def main() -> int:
             "rocket_vz.py; outputs VZ_* prefix. Isolate peers (see run_vz.bat)."
         )
     elif bool(getattr(cfg, "rsi_mode", False)):
+        _rsi_extra = []
+        _rsi_max_d = float(getattr(cfg, "rsi_max_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+        _rsi_min_d = float(getattr(cfg, "rsi_min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+        _rsi_min_rv = float(getattr(cfg, "rsi_min_rel_vol_on_trigger", 0.0) or 0.0)
+        _rsi_min_drop = float(getattr(cfg, "rsi_min_rsi14_drop_from_ob", 0.0) or 0.0)
+        if _rsi_max_d > 0:
+            _rsi_extra.append(f"max_dist52={_rsi_max_d:g}")
+        if _rsi_min_d > 0:
+            _rsi_extra.append(f"min_dist52={_rsi_min_d:g}")
+        if _rsi_min_rv > 0:
+            _rsi_extra.append(f"min_rel_vol={_rsi_min_rv:g}")
+        if _rsi_min_drop > 0:
+            _rsi_extra.append(f"min_rsi_drop={_rsi_min_drop:g}")
         print(
             "[TBN] Relative Strength Index (rsi_mode=true): "
             "Wilder RSI(14) cool-off — not RS (Relative Strength vs SPY). "
             f"ob={getattr(cfg, 'rsi_ob', 70)} os={getattr(cfg, 'rsi_os', 30)} "
             f"exit={getattr(cfg, 'rsi_exit', 70)} max_trigger={getattr(cfg, 'rsi_max_trigger', 60)} "
             f"min_atr%={getattr(cfg, 'rsi_min_atr_pct', 5)} ts={getattr(cfg, 'rsi_time_stop_days', 20)}d "
-            f"entry_on={getattr(cfg, 'rsi_entry_on', 'next_open')}. "
-            "Engine stock_analysis/rocket_rsi.py; outputs RSI_* prefix. Isolate peers (see run_rsi.bat)."
+            f"roll_from_max={getattr(cfg, 'rsi_roll_from_max', 0)} "
+            f"entry_on={getattr(cfg, 'rsi_entry_on', 'next_open')}"
+            + (f"; extra gates {', '.join(_rsi_extra)}" if _rsi_extra else "")
+            + ". Engine stock_analysis/rocket_rsi.py; outputs RSI_* prefix. Isolate peers (see run_rsi.bat)."
         )
     elif bool(getattr(cfg, "wrl_mode", False)):
         print(

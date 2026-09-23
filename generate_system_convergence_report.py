@@ -702,7 +702,7 @@ def build_html(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>System Convergence Report</title>
 <style>
-body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:24px; color:#0f172a; max-width:1200px; }}
+body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:24px; color:#0f172a; max-width:none; width:auto; }}
 h1 {{ font-size:1.5rem; margin:0 0 8px; }}
 .sub {{ color:#64748b; margin-bottom:20px; font-size:0.95rem; line-height:1.45; }}
 .cards {{ display:flex; flex-wrap:wrap; gap:12px; margin:16px 0 24px; }}
@@ -711,8 +711,8 @@ h1 {{ font-size:1.5rem; margin:0 0 8px; }}
 .metric {{ font-size:1.5rem; font-weight:700; }}
 .small {{ font-size:12px; color:#64748b; }}
 section {{ margin-top:28px; }}
-.table-wrap {{ overflow-x:auto; margin:12px 0; }}
-table {{ width:100%; border-collapse:collapse; font-size:12px; min-width:720px; }}
+.table-wrap {{ overflow:visible; margin:12px 0; width:100%; }}
+table {{ width:100%; border-collapse:collapse; font-size:12px; min-width:0; }}
 th, td {{ border:1px solid #e2e8f0; padding:8px; text-align:left; vertical-align:top; }}
 th {{ background:#f1f5f9; }}
 th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; }}
@@ -728,13 +728,7 @@ ul.sources {{ font-size:12px; color:#475569; line-height:1.5; }}
 </style></head><body>
 <h1>All live systems — Watchlist &amp; Scanner Convergence</h1>
 <p class="sub">Generated {html.escape(gen_s)} · Symbols listed when they appear on <strong>2+ lists</strong> across the latest <strong>{html.escape(sys_label)}</strong> watchlist/scanner outputs, plus tickers open in <strong>2+ systems</strong> at once. Systems come from the DailyRun registry (not the original frozen IND/BRT/RL/YH-only set).</p>
-<div class="callout ask">
-<h2>What you asked</h2>
-<p>“{html.escape(ORIGINAL_REQUEST)}”</p>
-</div>
-<div class="callout plain">
-<h2>In plain English</h2>
-<p>{html.escape(LAYMAN)}</p>
+<div class="callout">
 <p>This page is the overlap view: names that show up on more than one live system’s watchlist, scanner, or open book. Relative Strength Index (RSI) is included when it has a house book. Adding a new DailyRun sleeve to <code>tools/dailyrun_system_status.py</code> (<code>DAILYRUN_REGISTRY</code>) is enough for the next run to pick it up.</p>
 </div>
 <div class="cards">

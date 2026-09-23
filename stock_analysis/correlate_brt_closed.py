@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Analyze Closed CSV (BRT/YH/SB/…): correlation of each numeric column with PNL_PCT,
+Analyze Closed CSV (BRT/YH/SB/RSI/…): correlation of each numeric column with PNL_PCT,
 ANN_ROR_PCT, and POST_ENTRY_GAIN_HIT (when present).
 
 Output: CSV with one row per variable and columns:
 Variable, R_PNL_PCT, R_ANN_ROR_PCT, R_POST_ENTRY_GAIN_HIT, R_Total.
+
+Purpose: find features known at **trigger** (or at worst **entry**) that
+correlate with entering a winning trade. Outcome columns stay Y-only
+(PNL_PCT / ANN_ROR_PCT / POST_ENTRY_GAIN_HIT). Lagging X — exit-bar,
+hold-path, after-the-fill — are dropped (e.g. RSI14_AT_EXIT, MAE/MFE,
+DAYS_HELD, EXIT_TYPE, realized R).
 
 For SB, burst DNA on Closed (PCT_DAY, DCR, RANGE_EXP, VOL_RATIO, VOL_VS_50,
 SIGNAL_LOW, RISK_PCT, MM_RATIO, T1_*) is included automatically after
@@ -12,8 +18,7 @@ SIGNAL_LOW, RISK_PCT, MM_RATIO, T1_*) is included automatically after
 SIGNAL_DATE is on Closed but excluded here (date stamp in BASE_EXCLUDE).
 Note: VOL_RATIO = V[T]/V[T−1]; VOL_VS_50 = V[T]/mean(prior 50d volume).
 
-Predictor rows exclude look-ahead labels, date stamps, entry-bar-only fields,
-and realized-outcome R_MULT / R_MULTIPLE (see BASE_EXCLUDE / CORRELATION_VAR_EXCLUDE).
+See BASE_EXCLUDE / CORRELATION_VAR_EXCLUDE / is_correlation_var_excluded.
 Usage: python correlate_brt_closed.py <BRT_Closed_*.csv> [output.csv]
 Or call run_correlation_report(closed_csv_path, output_csv_path) from rocket_brt / SB after each run.
 """
@@ -36,6 +41,8 @@ def parse_pct(s):
 
 
 # Omit from single- and pair-correlation sweeps (outcome-adjacent, look-ahead, or entry-bar-only).
+# Prefer *_AT_TRIGGER. Entry-bar peers stay listed here when the house already
+# chose trigger snapshots (purchase is D+1).
 CORRELATION_VAR_EXCLUDE = frozenset({
     "DAYS_HELD_FIRST_UP_10PCT",
     "ATR_PCT_AT_ENTRY",
@@ -57,6 +64,33 @@ CORRELATION_VAR_EXCLUDE = frozenset({
     # Outcome leak spliced onto Closed DNA — not a trigger-time / pre-trade correlate.
     "R_MULT",
     "R_MULTIPLE",
+    # Exit-bar / hold-path (also caught by suffix / pattern rules below).
+    "RSI14_AT_EXIT",
+})
+
+# Hold-path / after-fill outcome fields. Known only after the trade starts
+# (or ends). Used as X they leak the result. Spaces in RL headers normalize
+# to these names (DAYS HELD → DAYS_HELD, MAX DRAW DOWN → MAX_DRAW_DOWN).
+_LAGGING_CORR_EXACT = frozenset({
+    "MAE",
+    "MFE",
+    "MAE_PCT",
+    "MFE_PCT",
+    "MAX_PRICE",
+    "MIN_PRICE",
+    "DAYS_HELD",
+    "EXIT_PRICE",
+    "EXIT_TYPE",
+    "PNL_DOLLARS",
+    "DATE_CLOSED",
+    "WIN",
+    "WIN_FLAG",
+    "IS_WIN",
+    "MAX_DRAW_DOWN",
+    "MAX_DRAWDOWN",
+    "MAX_DD",
+    "DRAW_DOWN",
+    "DRAWDOWN",
 })
 
 CORRELATION_TARGETS = ("PNL_PCT", "ANN_ROR_PCT", "POST_ENTRY_GAIN_HIT")
@@ -76,13 +110,64 @@ BASE_EXCLUDE = {
 _IND_CORR_NUMERIC = frozenset({"IND_DIFF", "IND_SCORE"})
 
 
-def is_correlation_var_excluded(name: str) -> bool:
-    u = str(name).upper()
-    if u in CORRELATION_VAR_EXCLUDE:
+def _corr_norm_name(name: str) -> str:
+    """Uppercase identifier: spaces/hyphens → underscore (RL 'DAYS HELD' → DAYS_HELD)."""
+    return str(name).strip().upper().replace(" ", "_").replace("-", "_")
+
+
+def _is_lagging_corr_name(u: str) -> bool:
+    """True when *u* (already normalized) is not knowable at trigger / entry."""
+    if u in CORRELATION_VAR_EXCLUDE or u in _LAGGING_CORR_EXACT:
         return True
-    if u.startswith("Z_") and u[2:] in CORRELATION_VAR_EXCLUDE:
+    if u.endswith("_AT_EXIT") or u.endswith("_ON_EXIT"):
+        return True
+    if u.startswith("MAE_") or u.startswith("MFE_"):
+        return True
+    if u.startswith("DAYS_HELD"):
+        return True
+    if u.startswith("DATE_FIRST_UP"):
+        return True
+    # Path-to-target after fill (DAYS_TO_10 …). DAYS_TO_TIME_STOP is the
+    # remaining calendar to the frozen time-stop — known at entry.
+    if u.startswith("DAYS_TO_") and u != "DAYS_TO_TIME_STOP":
+        return True
+    if u.endswith("_TO_CLOSE"):
+        return True
+    # Peak/trough RSI along the hold — not the freeze gate MAX_RSI_TRIGGER.
+    if "MAX_RSI" in u and "TRIGGER" not in u:
+        return True
+    if "MIN_RSI" in u and "TRIGGER" not in u:
+        return True
+    if u.endswith("_IN_TRADE") or u.endswith("_DURING_TRADE") or u.endswith("_IN_HOLD"):
         return True
     return False
+
+
+def is_correlation_var_excluded(name: str) -> bool:
+    u = _corr_norm_name(name)
+    if _is_lagging_corr_name(u):
+        return True
+    if u.startswith("Z_") and _is_lagging_corr_name(u[2:]):
+        return True
+    return False
+
+
+def correlation_pairs_path(correlation_csv_path: str | Path) -> Path:
+    """Sibling Pairs CSV for a singles correlation file.
+
+    Stamped ``*_Correlation_<ts>.csv`` → ``*_Correlation_Pairs_<ts>.csv``.
+    Alias ``*_LatestRun_Correlation.csv`` has no ``_Correlation_`` infix —
+    map that to ``*_LatestRun_Correlation_Pairs.csv`` (do not overwrite singles).
+    """
+    out = Path(correlation_csv_path)
+    name = out.name
+    if "_Correlation_Pairs_" in name or name.endswith("_Correlation_Pairs.csv"):
+        return out
+    if "_Correlation_" in name:
+        return out.with_name(name.replace("_Correlation_", "_Correlation_Pairs_", 1))
+    if name.endswith("_Correlation.csv"):
+        return out.with_name(name[: -len(".csv")] + "_Pairs.csv")
+    return out.with_name(out.stem + "_Pairs.csv")
 
 
 def corr_skip_col(name: str) -> bool:
@@ -183,7 +268,7 @@ def run_correlation_report(closed_csv_path: str, output_csv_path: str) -> None:
     ref_df = pd.DataFrame(ref_stats_rows)
     ref_df.to_csv(ref_path, index=False, float_format="%.6f", na_rep="")
 
-    pairs_path = out.with_name(out.name.replace("_Correlation_", "_Correlation_Pairs_", 1))
+    pairs_path = correlation_pairs_path(out)
     _sa = Path(__file__).resolve().parent
     if str(_sa) not in sys.path:
         sys.path.insert(0, str(_sa))

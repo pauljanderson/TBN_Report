@@ -36,6 +36,49 @@ ET = ZoneInfo("America/New_York")
 SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 
 try:
+    from stock_analysis.live_style_sizing import (
+        official_live_style_callout_html as _live_style_callout,
+        parse_live_style_month_ledger as _live_style_months,
+        load_freeze_summary as _live_style_summary,
+        NAME_CAP_FRAC as _LIVE_NAME_CAP,
+        ACCOUNT_START as _LIVE_START,
+        FREEZE_STAMP as _LIVE_STAMP,
+        TABLE_UNCAP_CSS as _TABLE_UNCAP_CSS,
+    )
+except Exception:
+    try:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "stock_analysis"))
+        from live_style_sizing import (  # type: ignore
+            official_live_style_callout_html as _live_style_callout,
+            parse_live_style_month_ledger as _live_style_months,
+            load_freeze_summary as _live_style_summary,
+            NAME_CAP_FRAC as _LIVE_NAME_CAP,
+            ACCOUNT_START as _LIVE_START,
+            FREEZE_STAMP as _LIVE_STAMP,
+            TABLE_UNCAP_CSS as _TABLE_UNCAP_CSS,
+        )
+    except Exception:
+        def _live_style_callout() -> str:
+            return ""
+
+        def _live_style_months(_year: int) -> list:
+            return []
+
+        def _live_style_summary() -> dict:
+            return {}
+
+        _LIVE_NAME_CAP = 0.175
+        _LIVE_START = 250_000.0
+        _LIVE_STAMP = "risk_1pct_50k_adv_17name_20260917"
+        _TABLE_UNCAP_CSS = (
+            "body { max-width: none !important; } "
+            ".table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; } "
+            "table, table.sortable { width: max-content; min-width: 100%; }"
+        )
+
+try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
 except Exception:
     try:
@@ -451,77 +494,8 @@ def _sortable_th(label: str, sort_type: str) -> str:
     )
 
 
-_SORTABLE_TABLE_SCRIPT = """
-<script>
-(function () {
-  var MONTHS = {
-    january:1, february:2, march:3, april:4, may:5, june:6,
-    july:7, august:8, september:9, october:10, november:11, december:12
-  };
-  function parseSortValue(text, type) {
-    var s = String(text || "").trim();
-    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
-    if (type === "text") return s.toUpperCase();
-    if (type === "month") {
-      var key = s.toLowerCase().split(/\\s/)[0];
-      return MONTHS[key] || 0;
-    }
-    if (type === "date") {
-      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
-      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
-      var mdy = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
-      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
-      return 0;
-    }
-    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
-    var v = parseFloat(n);
-    return Number.isFinite(v) ? v : 0;
-  }
-  function sortTable(table, col, type, dir) {
-    var tbody = table.tBodies[0];
-    if (!tbody) return;
-    var rows = Array.from(tbody.querySelectorAll("tr"));
-    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
-    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
-    movable.sort(function (a, b) {
-      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
-      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
-      if (typeof av === "string" || typeof bv === "string") {
-        return dir * String(av).localeCompare(String(bv));
-      }
-      return dir * (av - bv);
-    });
-    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
-  }
-  function bindSortHeader(table, th, col) {
-    function onActivate(e) {
-      if (e.type === "touchend") e.preventDefault();
-      var type = th.dataset.sort || "text";
-      var dir = th.dataset.dir === "asc" ? -1 : 1;
-      table.querySelectorAll("th.sortable-th").forEach(function (h) {
-        h.dataset.dir = "";
-        h.classList.remove("sort-asc", "sort-desc");
-        h.setAttribute("aria-sort", "none");
-      });
-      th.dataset.dir = dir === 1 ? "asc" : "desc";
-      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
-      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
-      sortTable(table, col, type, dir);
-    }
-    th.addEventListener("click", onActivate);
-    th.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
-    });
-    th.addEventListener("touchend", onActivate, { passive: false });
-  }
-  document.querySelectorAll("table.sortable").forEach(function (table) {
-    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
-      bindSortHeader(table, th, col);
-    });
-  });
-})();
-</script>
-"""
+from report_page_extras import SORTABLE_TABLE_SCRIPT as _SORTABLE_TABLE_SCRIPT
+from report_page_extras import SORTABLE_TH_CSS as _SORTABLE_TH_CSS
 
 
 def _trade_detail_table(trades: list[TradeRow]) -> str:
@@ -596,6 +570,118 @@ def _open_table(trades: list[TradeRow]) -> str:
         + body
         + "</tbody></table>"
     )
+
+
+def _live_style_250k_section(year: int) -> str:
+    """Official $250k live-style wallet for the report year. Not house dummy Closed."""
+    summ = _live_style_summary() or {}
+    live = summ.get("live175") or {}
+    rows = _live_style_months(year)
+    cap_pct = f"{float(_LIVE_NAME_CAP) * 100:.1f}".rstrip("0").rstrip(".")
+    start = float(live.get("start") or _LIVE_START)
+    asof = live.get("end")
+    ye2012 = live.get("eq_2012")
+    dd = live.get("max_dd_pct")
+
+    def _m(v: object) -> str:
+        try:
+            return f"${float(v):,.0f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    def _p(v: object) -> str:
+        try:
+            return f"{float(v):.2f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    ytd_realized = 0.0
+    realized_ok = True
+    body = ""
+    for r in rows:
+        realized = str(r.get("Realized $") or "—")
+        eom = str(r.get("EOM equity") or "—")
+        bom = str(r.get("BOM equity") or "—")
+        wd = str(r.get("Withdrawn $") or "—")
+        month = str(r.get("Month") or "—")
+        body += (
+            f"<tr><td>{html_mod.escape(month)}</td>"
+            f"<td>{html_mod.escape(bom)}</td>"
+            f"<td>{html_mod.escape(realized)}</td>"
+            f"<td>{html_mod.escape(wd)}</td>"
+            f"<td>{html_mod.escape(eom)}</td></tr>"
+        )
+        raw = realized.replace("$", "").replace(",", "").replace("+", "").replace("—", "").strip()
+        if raw:
+            try:
+                ytd_realized += float(raw)
+            except ValueError:
+                realized_ok = False
+        else:
+            realized_ok = False
+    if not rows:
+        body = (
+            "<tr><td colspan='5'>Live-style month ledger not on disk — "
+            "see <a href='live_style_monthly.html'>wallet monthly</a>.</td></tr>"
+        )
+    ytd_txt = f"${ytd_realized:,.0f}" if rows and realized_ok else "—"
+    head = "".join(
+        _sortable_th(label, sort_type)
+        for label, sort_type in (
+            ("Month", "month"),
+            ("BOM equity", "num"),
+            ("Realized $", "num"),
+            ("Withdrawn $", "num"),
+            ("EOM equity", "num"),
+        )
+    )
+    return f"""
+<section id="live-style-250k">
+<h2>If we started with $250k — official live-style size</h2>
+<p class="small">
+  Same recipe as Suggested shares: risk = min(1% beginning-of-month equity, $50k),
+  shares ≤ 1% ADV20, notional ≤ {cap_pct}% of current equity
+  (freeze <code>{html_mod.escape(str(_LIVE_STAMP))}</code>).
+  Start {_m(start)}. Path is the official <strong>6-sys</strong> compound wallet
+  (SB / RSI / VZ / MTS / RL / WRL; DailyRun wire — not gold).
+  Already includes the freeze’s $7,500/mo withdraw + 10.5% margin on borrowed cash —
+  not added here as a new wire.
+  Leftover 5-sys pin stays on <a href="system_performance.html">historical performance</a>.
+  <strong>Does not replace</strong> the house dummy Closed tables below.
+  Full ledger: <a href="live_style_monthly.html">live_style_monthly.html</a>
+  · compound story: <a href="live_style.html">live_style.html</a>.
+</p>
+<div class="cards">
+  <div class="card">
+    <h3>Start</h3>
+    <div class="metric">{_m(start)}</div>
+    <div class="small">Official 6-sys · SB / RSI / VZ / MTS / RL / WRL · leftover 5-sys pin on system_performance</div>
+  </div>
+  <div class="card">
+    <h3>YE2012</h3>
+    <div class="metric">{_m(ye2012)}</div>
+    <div class="small">vs SPY {_m(summ.get('spy_2012'))}</div>
+  </div>
+  <div class="card">
+    <h3>As-of equity</h3>
+    <div class="metric">{_m(asof)}</div>
+    <div class="small">Max DD {_p(dd)} · name cap {cap_pct}%</div>
+  </div>
+  <div class="card">
+    <h3>{year} realized (wallet)</h3>
+    <div class="metric">{ytd_txt}</div>
+    <div class="small">Sum of live-style month Realized $ · withdraws separate</div>
+  </div>
+</div>
+<p class="small">Click column headers to sort. {year} months from the locked 17.5% wallet ledger.</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr>{head}</tr></thead>
+  <tbody>{body}</tbody>
+</table>
+</div>
+</section>
+"""
 
 
 def build_html(
@@ -760,12 +846,15 @@ def build_html(
 
     sources_html = "".join(f"<li>{html_mod.escape(s)}</li>" for s in sources)
     gen_s = now.strftime("%Y-%m-%d %H:%M %Z")
+    live_section = _live_style_250k_section(year)
+    live_callout = _live_style_callout()
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monthly Backtest Report — {year}</title>
 <style>
-body {{ font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:1200px; }}
+body {{ font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:none; width:auto; }}
+{_TABLE_UNCAP_CSS}
 h1 {{ font-size:1.5rem; margin-bottom:4px; }}
 h2 {{ font-size:1.15rem; margin-top:28px; }}
 h3 {{ font-size:1rem; margin:16px 0 8px; color:#334155; }}
@@ -781,11 +870,11 @@ h3 {{ font-size:1rem; margin:16px 0 8px; color:#334155; }}
 section {{ margin-top:24px; }}
 .month-section {{ border-top:1px solid #e2e8f0; padding-top:8px; }}
 .sys-block {{ margin:12px 0 20px; }}
-.table-wrap {{ overflow-x:auto; margin:8px 0; }}
-table {{ border-collapse:collapse; font-size:12px; width:100%; min-width:640px; }}
+.table-wrap {{ overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:8px 0; }}
+table {{ border-collapse:collapse; font-size:12px; width:max-content; min-width:100%; }}
 th, td {{ border:1px solid #e2e8f0; padding:7px 8px; text-align:left; vertical-align:top; }}
 th {{ background:#f1f5f9; }}
-th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; }}
+th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; position:relative; z-index:3; pointer-events:auto; }}
 th.sortable-th:hover {{ background:#e2e8f0; }}
 .sort-ind {{ display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }}
 th.sort-asc .sort-ind::after {{ content:"▲"; color:#334155; }}
@@ -794,19 +883,23 @@ tr.total-row th, tr.total-row td {{ background:#f8fafc; border-top:2px solid #33
 ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
 a.sym {{ color:#1d4ed8; text-decoration:none; font-weight:600; }}
 a.sym:hover {{ text-decoration:underline; }}
+{_SORTABLE_TH_CSS}
 </style></head><body>
+{live_callout}
 <h1>Monthly Backtest Report — {year}</h1>
 <p class="sub">
   Paper-trading P&amp;L from latest {SYSTEMS_LABEL} backtest runs (not live broker accounts).<br>
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
   Tickers link to that symbol’s chart in <a href="{TRENDLINES_CHART_HREF}">Trendlines + VZ charts</a>.<br>
+  Dollar tables below are <strong>house dummy Closed reconcile</strong> unless labeled live-style.<br>
   Generated {html_mod.escape(gen_s)}.
 </p>
+{live_section}
 <div class="cards">{cards}</div>
 
 <section>
-<h2>Monthly realized P&amp;L by system</h2>
-<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's position sizing. Click column headers to sort.</p>
+<h2>Monthly realized P&amp;L by system (house dummy Closed)</h2>
+<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's <strong>house dummy</strong> position sizing for reconcile — not the $250k live-style book above. Click column headers to sort.</p>
 <div class="table-wrap">
 <table class="sortable">
   <thead><tr>{pivot_head}</tr></thead>

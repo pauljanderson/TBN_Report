@@ -28,7 +28,7 @@ ET = ZoneInfo("America/New_York")
 
 # Fallback only if the DailyRun registry helper cannot be imported.
 # Keep RSI here so a missing import cannot drop the sleeve again.
-_FALLBACK_ACTIVE_SYSTEMS = ("BRT", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI")
+_FALLBACK_ACTIVE_SYSTEMS = ("BRT", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
     "RS": "RS (Relative Strength vs SPY)",
@@ -36,6 +36,9 @@ LABELS: dict[str, str] = {
     "VZ": "VZ (Volume Zone)",
     "RSI": "RSI (Relative Strength Index)",
     "WRL": "WRL (Weekly Range / Swing)",
+    "Live-style (no wires)": "Live-style $250k (no $7,500/mo wires)",
+    "Official live-style (with wires)": "Official live-style $250k (includes $7,500/mo wires)",
+    "S&P 500 (SPY) $250k": "S&P 500 (SPY) $250k buy-and-hold",
 }
 COLORS = {
     "BRT": "#2563eb",
@@ -52,6 +55,9 @@ COLORS = {
     "Risk-balanced": "#d97706",
     "Recommended": "#0f766e",
     "SPY": "#111827",
+    "Live-style (no wires)": "#0f766e",
+    "Official live-style (with wires)": "#d97706",
+    "S&P 500 (SPY) $250k": "#111827",
 }
 _AUTO_COLORS = ("#4f46e5", "#be123c", "#65a30d", "#0284c7", "#a21caf", "#ca8a04")
 RL_CASH = 47_500.0
@@ -83,7 +89,8 @@ def live_performance_systems() -> tuple[str, ...]:
     Source of truth: tools/dailyrun_system_status.live_wired_systems().
     To put a new system on this page: wire it in DailyRun.bat and
     DAILYRUN_REGISTRY / REPORT_ORDER. Deprecated IND and research-only
-    stamps (RSIN, WRL, MVCP) stay out until they are wired.
+    stamps (RSIN, MVCP) stay out until they are wired. WRL is DailyRun-wired
+    (official 6-sys mix) — not gold.
     """
     try:
         mod = _dailyrun_status_mod()
@@ -927,6 +934,91 @@ def _svg_line(
     return "".join(parts)
 
 
+def _money_axis(value: float) -> str:
+    av = abs(value)
+    if av >= 1_000_000:
+        return f"${value / 1_000_000:,.1f}M"
+    if av >= 10_000:
+        return f"${value / 1_000:,.0f}k"
+    return _money(value)
+
+
+def _svg_equity(
+    curves: dict[str, pd.DataFrame],
+    title: str,
+    *,
+    legend_suffix: Optional[dict[str, str]] = None,
+) -> str:
+    """Absolute equity (not P&L-from-zero) for the $250k vs-SPY chart."""
+    series: dict[str, list[tuple[date, float]]] = {}
+    for label, frame in curves.items():
+        if frame is None or getattr(frame, "empty", True):
+            continue
+        series[label] = [
+            (d, float(v)) for d, v in zip(frame["date"], frame["equity"]) if math.isfinite(float(v))
+        ]
+    if not series:
+        return "<p class='muted'>No curve data available.</p>"
+    all_points = [point for values in series.values() for point in values]
+    min_d, max_d = min(p[0] for p in all_points), max(p[0] for p in all_points)
+    min_v = min(0.0, min(p[1] for p in all_points))
+    max_v = max(p[1] for p in all_points)
+    if max_v == min_v:
+        max_v += 1.0
+    width, height = 1000, 360
+    left, right, top, bottom = 86, 24, 24, 50
+    plot_w, plot_h = width - left - right, height - top - bottom
+    day_span = max(1, (max_d - min_d).days)
+
+    def xy(day: date, value: float) -> tuple[float, float]:
+        x = left + ((day - min_d).days / day_span) * plot_w
+        y = top + (max_v - value) / (max_v - min_v) * plot_h
+        return x, y
+
+    parts = [
+        f"<div class='chart-title'>{html.escape(title)}</div>",
+        f"<svg viewBox='0 0 {width} {height}' role='img' aria-label='{html.escape(title)}'>",
+        "<rect width='100%' height='100%' fill='#fff' rx='10'/>",
+    ]
+    for idx in range(5):
+        value = min_v + (max_v - min_v) * idx / 4
+        _, y = xy(min_d, value)
+        parts.append(
+            f"<line x1='{left}' y1='{y:.1f}' x2='{width-right}' y2='{y:.1f}' stroke='#e2e8f0'/>"
+            f"<text x='{left-8}' y='{y+4:.1f}' text-anchor='end' class='axis'>{_money_axis(value)}</text>"
+        )
+    year = min_d.year
+    while year <= max_d.year:
+        tick = date(year, 1, 1)
+        if min_d <= tick <= max_d:
+            x, _y = xy(tick, min_v)
+            parts.append(
+                f"<line x1='{x:.1f}' y1='{top}' x2='{x:.1f}' y2='{top+plot_h}' stroke='#f1f5f9'/>"
+                f"<text x='{x:.1f}' y='{height-14}' text-anchor='middle' class='axis'>{year}</text>"
+            )
+        year += 2 if (max_d.year - min_d.year) > 8 else 1
+    for label, points in series.items():
+        path = " ".join(
+            ("M" if idx == 0 else "L") + f"{xy(day, val)[0]:.1f},{xy(day, val)[1]:.1f}"
+            for idx, (day, val) in enumerate(points)
+        )
+        width_n = "3.1" if "no wires" in label.lower() or "no $7" in label.lower() else "2.4"
+        parts.append(
+            f"<path d='{path}' fill='none' stroke='{_system_color(label)}' stroke-width='{width_n}'/>"
+        )
+    parts.append("</svg><div class='legend'>")
+    for label in series:
+        suffix = ""
+        if legend_suffix and label in legend_suffix:
+            suffix = f" · {legend_suffix[label]}"
+        parts.append(
+            f"<span><i style='background:{_system_color(label)}'></i>"
+            f"{html.escape(LABELS.get(label, label))}{html.escape(suffix)}</span>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _system_section(
     system: str, trades: list[Trade], curve: pd.DataFrame, curve_label: str
 ) -> str:
@@ -955,6 +1047,343 @@ def _system_section(
         + _year_table(rows)
         + "</section>"
     )
+
+
+def _curve_frame(points: list) -> pd.DataFrame:
+    rows = []
+    for item in points or []:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            d, eq = item[0], item[1]
+        else:
+            continue
+        if isinstance(d, str):
+            try:
+                d = date.fromisoformat(d[:10])
+            except ValueError:
+                continue
+        try:
+            eq_f = float(eq)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(eq_f):
+            continue
+        rows.append({"date": d, "equity": eq_f})
+    if not rows:
+        return pd.DataFrame(columns=["date", "equity"])
+    return pd.DataFrame(rows).sort_values("date")
+
+
+def _ann_pct(v: object) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(x) <= 2.5:
+        x *= 100.0
+    return f"{x:.2f}%"
+
+
+def _live_style_performance_section() -> str:
+    """Official $250k live-style vs S&P 500 (not house dummy Closed)."""
+    try:
+        from stock_analysis.live_style_sizing import (
+            ACCOUNT_START,
+            FREEZE_STAMP,
+            NAME_CAP_FRAC,
+            official_live_style_callout_html,
+            load_freeze_summary,
+            ensure_nowire_vs_spy_cache,
+            load_wired_vs_spy,
+            leftover_5sys_nowire,
+            leftover_5sys_wired,
+            spy_250k_curve,
+        )
+    except Exception:
+        try:
+            from live_style_sizing import (  # type: ignore
+                ACCOUNT_START,
+                FREEZE_STAMP,
+                NAME_CAP_FRAC,
+                official_live_style_callout_html,
+                load_freeze_summary,
+                ensure_nowire_vs_spy_cache,
+                load_wired_vs_spy,
+                leftover_5sys_nowire,
+                leftover_5sys_wired,
+                spy_250k_curve,
+            )
+        except Exception:
+            return (
+                '<div class="notice recommend" id="live-style">'
+                "<strong>Official live-style sizing:</strong> "
+                'see <a href="live_style.html">compound growth (live-style)</a>.'
+                "</div>"
+            )
+
+    summ = load_freeze_summary() or {}
+    live = summ.get("live175") or {}
+    prior = summ.get("prior10") or {}
+    try:
+        nowire = ensure_nowire_vs_spy_cache(force=False)
+    except Exception as exc:
+        print(f"[performance] no-wire vs-SPY cache failed: {exc}", flush=True)
+        nowire = {}
+    try:
+        wired = load_wired_vs_spy()
+    except Exception as exc:
+        print(f"[performance] wired vs-SPY load failed: {exc}", flush=True)
+        wired = {
+            "end": live.get("end"),
+            "max_dd_pct": live.get("max_dd_pct"),
+            "eq_2010": live.get("eq_2010"),
+            "eq_2011": live.get("eq_2011"),
+            "eq_2012": live.get("eq_2012"),
+            "withdrawals": live.get("withdrawals"),
+            "asof": None,
+            "curve": [],
+        }
+    spy_end_d = None
+    for pack in (nowire, wired):
+        asof = pack.get("asof") or pack.get("spy_asof")
+        if asof:
+            try:
+                spy_end_d = date.fromisoformat(str(asof)[:10])
+                break
+            except ValueError:
+                pass
+    spy = spy_250k_curve(date(2010, 1, 1), spy_end_d) if spy_end_d else {}
+    if not spy.get("end_eq"):
+        spy = {
+            "end_eq": wired.get("spy_end") or nowire.get("spy_end") or summ.get("spy_tr_end"),
+            "ann_ror": wired.get("spy_ann_ror") or nowire.get("spy_ann_ror"),
+            "max_dd_pct": wired.get("spy_max_dd_pct") or nowire.get("spy_max_dd_pct"),
+            "curve": wired.get("curve") and [],
+            "start": "2010-01-04",
+            "end": str(spy_end_d or ""),
+            "series": "SPY Adj Close total return (dividends reinvested)",
+        }
+
+    def _m(v: object) -> str:
+        try:
+            return f"${float(v):,.0f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    def _p(v: object) -> str:
+        try:
+            return f"{float(v):.2f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    cap = f"{float(NAME_CAP_FRAC) * 100:.1f}".rstrip("0").rstrip(".")
+    nw_end = nowire.get("end")
+    spy_end = spy.get("end_eq") or nowire.get("spy_end") or wired.get("spy_end")
+    beat = None
+    if nw_end is not None and spy_end is not None:
+        try:
+            beat = float(nw_end) - float(spy_end)
+        except (TypeError, ValueError):
+            beat = None
+    nw_ann = nowire.get("ann_ror")
+    spy_ann = spy.get("ann_ror") or nowire.get("spy_ann_ror")
+    ann_beat = None
+    if nw_ann is not None and spy_ann is not None:
+        a = float(nw_ann)
+        b = float(spy_ann)
+        if abs(a) <= 2.5:
+            a *= 100.0
+        if abs(b) <= 2.5:
+            b *= 100.0
+        ann_beat = a - b
+    nw_dd = nowire.get("max_dd_pct")
+    spy_dd = spy.get("max_dd_pct") or nowire.get("spy_max_dd_pct")
+    asof = nowire.get("asof") or wired.get("asof") or spy.get("end") or ""
+    spy_start = spy.get("start") or nowire.get("spy_start") or "2010-01-04"
+    spy_series = spy.get("series") or "SPY Adj Close total return (dividends reinvested)"
+
+    vs_rows = [
+        (
+            "Live-style $250k — no $7,500/mo wires (realistic vs S&P 500)",
+            nw_end,
+            spy_end,
+            beat,
+            nw_ann,
+            spy_ann,
+            nw_dd,
+            spy_dd,
+        ),
+        (
+            "Official live-style $250k — includes $7,500/mo wires (2026 transfers)",
+            wired.get("end") or live.get("end"),
+            spy_end,
+            (float(wired.get("end") or live.get("end")) - float(spy_end))
+            if (wired.get("end") or live.get("end")) is not None and spy_end is not None
+            else None,
+            wired.get("ann_ror"),
+            spy_ann,
+            wired.get("max_dd_pct") or live.get("max_dd_pct"),
+            spy_dd,
+        ),
+    ]
+    vs_body = ""
+    for label, w_end, s_end, dol_beat, w_ann, s_ann, w_dd, s_dd in vs_rows:
+        vs_body += (
+            f"<tr><td>{html.escape(label)}</td>"
+            f"<td>{_m(w_end)}</td><td>{_m(s_end)}</td><td>{_m(dol_beat)}</td>"
+            f"<td>{_ann_pct(w_ann)}</td><td>{_ann_pct(s_ann)}</td>"
+            f"<td>{_p(w_dd)}</td><td>{_p(s_dd)}</td></tr>"
+        )
+
+    try:
+        pin5n = leftover_5sys_nowire()
+        pin5w = leftover_5sys_wired()
+    except Exception:
+        pin5n = {
+            "eq_2010": 400_050.0,
+            "eq_2011": 719_315.0,
+            "eq_2012": 938_067.0,
+            "end": 64_749_245.0,
+            "max_dd_pct": 10.42,
+        }
+        pin5w = {
+            "eq_2010": 284_646.36,
+            "eq_2011": 392_517.79,
+            "eq_2012": 422_474.98,
+            "end": 58_700_020.87,
+            "max_dd_pct": 20.59,
+        }
+    path_rows = [
+        (
+            "Official 6-sys $250k (no wires) — SB/RSI/VZ/MTS/RL/WRL",
+            nowire.get("eq_2010"),
+            nowire.get("eq_2011"),
+            nowire.get("eq_2012"),
+            nw_end,
+            nw_dd,
+        ),
+        (
+            "Official 6-sys $250k (with $7,500/mo wires)",
+            wired.get("eq_2010") or live.get("eq_2010"),
+            wired.get("eq_2011") or live.get("eq_2011"),
+            wired.get("eq_2012") or live.get("eq_2012"),
+            wired.get("end") or live.get("end"),
+            wired.get("max_dd_pct") or live.get("max_dd_pct"),
+        ),
+        (
+            "Leftover 5-sys pin (no wires) — SB/RSI/VZ/MTS/RL only",
+            pin5n.get("eq_2010"),
+            pin5n.get("eq_2011"),
+            pin5n.get("eq_2012"),
+            pin5n.get("end"),
+            pin5n.get("max_dd_pct"),
+        ),
+        (
+            "Leftover 5-sys pin (with $7,500/mo wires)",
+            pin5w.get("eq_2010"),
+            pin5w.get("eq_2011"),
+            pin5w.get("eq_2012"),
+            pin5w.get("end"),
+            pin5w.get("max_dd_pct"),
+        ),
+        (
+            "Prior 10% name freeze (history only, with wires)",
+            prior.get("eq_2010"),
+            prior.get("eq_2011"),
+            prior.get("eq_2012"),
+            prior.get("end"),
+            prior.get("max_dd_pct"),
+        ),
+        (
+            "S&P 500 (SPY) $250k buy-and-hold",
+            None,
+            None,
+            summ.get("spy_2012"),
+            spy_end,
+            spy_dd,
+        ),
+    ]
+    path_body = ""
+    for label, y0, y1, y2, end, dd in path_rows:
+        path_body += (
+            f"<tr><td>{html.escape(label)}</td>"
+            f"<td>{_m(y0)}</td><td>{_m(y1)}</td><td>{_m(y2)}</td>"
+            f"<td>{_m(end)}</td><td>{_p(dd)}</td></tr>"
+        )
+
+    nw_df = _curve_frame(nowire.get("curve") or [])
+    wd_df = _curve_frame(wired.get("curve") or [])
+    spy_df = _curve_frame(spy.get("curve") or [])
+    chart_curves = {}
+    if not nw_df.empty:
+        chart_curves["Live-style (no wires)"] = nw_df
+    if not wd_df.empty:
+        chart_curves["Official live-style (with wires)"] = wd_df
+    if not spy_df.empty:
+        chart_curves["S&P 500 (SPY) $250k"] = spy_df
+    chart = _svg_equity(
+        chart_curves,
+        f"Live-style $250k vs S&P 500 (SPY) buy-and-hold — {spy_start} through {asof}",
+        legend_suffix={
+            "Live-style (no wires)": _m(nw_end),
+            "Official live-style (with wires)": _m(wired.get("end") or live.get("end")),
+            "S&P 500 (SPY) $250k": _m(spy_end),
+        },
+    ) if chart_curves else "<p class='muted'>Equity curve unavailable.</p>"
+
+    startdates_note = (
+        "Start-date robustness (same lids, wires off, other start days) is a local research page: "
+        "<code>drive/paul_experiments/live_style_startdates_20260918/compare.html</code> — "
+        "do not treat the luckiest start as the headline."
+    )
+    wd_note = ""
+    try:
+        wd_amt = float(wired.get("withdrawals") or live.get("withdrawals") or 0.0)
+    except (TypeError, ValueError):
+        wd_amt = 0.0
+    if wd_amt:
+        wd_note = (
+            f" The official freeze already pulls {_m(wd_amt)} of $7,500/mo wires "
+            "(2026 personal transfers, not a sizing lid). "
+            "The <strong>realistic vs S&amp;P 500</strong> headline is the no-wire line."
+        )
+
+    return f"""
+{official_live_style_callout_html()}
+<section id="live-style">
+<h2>Official live-style $250k vs S&amp;P 500</h2>
+<p>Locked freeze <code>{html.escape(FREEZE_STAMP)}</code> — official <strong>six-sleeve</strong> compound wallet
+(StockBee, Relative Strength Index, Volume Zone, Magic Touch, Rocket Launcher,
+Weekly Range / Swing; Indicators out). DailyRun wire / official mix change — <strong>not gold</strong>.
+WRL fill-order sits after the five (RL → MTS → SB → VZ → RSI → WRL).
+Risk = min(1% beginning-of-month equity, $50k), shares ≤ 1% ADV20,
+notional ≤ {html.escape(cap)}% of current equity. Start {_m(ACCOUNT_START)} on 2010-01-01.
+Shares × house Closed <strong>fill prices</strong> (current official lids), not dummy $10k / $47.5k notionals.
+The $500k allocation / standalone tables below stay on house dummy Closed for reconcile.{wd_note}</p>
+<div class="cards">
+<div class="card"><span>Wallet end (no wires)</span><strong>{_m(nw_end)}</strong></div>
+<div class="card"><span>S&amp;P 500 (SPY) end</span><strong>{_m(spy_end)}</strong></div>
+<div class="card"><span>$ beat vs SPY</span><strong>{_m(beat)}</strong></div>
+<div class="card"><span>Ann ROR vs SPY</span><strong>{_ann_pct(nw_ann)} / {_ann_pct(spy_ann)}</strong></div>
+<div class="card"><span>Ann ROR beat</span><strong>{(f'{ann_beat:+.2f} pt' if ann_beat is not None else '—')}</strong></div>
+<div class="card"><span>Max DD vs SPY</span><strong>{_p(nw_dd)} / {_p(spy_dd)}</strong></div>
+</div>
+<p class="muted">Same $250k start, same window ({html.escape(str(spy_start))}–{html.escape(str(asof))}).
+SPY uses {html.escape(str(spy_series))}. Annualized Rate of Return (Ann ROR) is
+(end ÷ start)^(1 ÷ years) − 1. Click column headers to sort.
+Working pages:
+<a href="live_style.html">compound growth</a> ·
+<a href="live_style_monthly.html">wallet monthly</a> ·
+<a href="live_style_compare.html">17.5% vs prior 10%</a> ·
+<a href="monthly.html#live-style-250k">published monthly $250k section</a> ·
+<a href="investment.html">Suggested shares / avg-cost lots</a>.</p>
+<h3 id="vs-spy">Realistic outperformance vs S&amp;P 500</h3>
+<div class="table-wrap"><table class="sortable"><thead>{_header_row([("Book", "text"), ("Wallet end", "num"), ("SPY end", "num"), ("$ beat", "num"), ("Ann ROR", "num"), ("SPY Ann ROR", "num"), ("Max DD", "num"), ("SPY Max DD", "num")])}</thead><tbody>{vs_body}</tbody></table></div>
+<div class="chart" id="vs-spy-chart">{chart}</div>
+<p class="muted">{startdates_note}</p>
+<h3>Year path</h3>
+<div class="table-wrap"><table class="sortable"><thead>{_header_row([("Book", "text"), ("2010", "num"), ("2011", "num"), ("2012", "num"), ("As-of", "num"), ("Max DD", "num")])}</thead><tbody>{path_body}</tbody></table></div>
+</section>
+"""
 
 
 def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict[str, object]]:
@@ -1170,22 +1599,22 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
 <style>
 :root{{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--panel:#fff;--bg:#f8fafc;--accent:#0f766e}}
 *{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",Arial,sans-serif}}
-.shell{{max-width:1420px;margin:auto;padding:28px}} header{{background:linear-gradient(130deg,#0f172a,#134e4a);color:#fff;padding:28px;border-radius:16px}}
+.shell{{max-width:none;margin:auto;padding:28px}} header{{background:linear-gradient(130deg,#0f172a,#134e4a);color:#fff;padding:28px;border-radius:16px}}
 h1{{margin:0 0 5px;font-size:30px}} h2{{margin:0 0 16px;font-size:22px}} h3{{margin:16px 0 8px}} .sub,.muted{{color:var(--muted);font-size:12px}}
 header .sub{{color:#cbd5e1}} nav{{margin-top:18px;display:flex;gap:9px;flex-wrap:wrap}} nav a{{color:#fff;text-decoration:none;border:1px solid #ffffff55;border-radius:999px;padding:6px 11px}}
 .cards{{display:grid;grid-template-columns:repeat(6,minmax(145px,1fr));gap:12px;margin:18px 0}} .card,section,.chart{{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 3px 14px #0f172a0a}}
 .card{{padding:16px}} .card span,.detail-grid span{{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}} .card strong{{display:block;font-size:23px;margin-top:4px}}
 section{{padding:22px;margin:18px 0}} .chart{{padding:16px;margin:18px 0}} .chart-title{{font-size:16px;font-weight:700;margin:0 0 8px}} svg{{display:block;width:100%;height:auto}} .axis{{font-size:11px;fill:#64748b}}
 .legend{{display:flex;flex-wrap:wrap;gap:14px;margin:7px 8px 0}} .legend span{{color:var(--muted)}} .legend i{{display:inline-block;width:18px;height:3px;margin:0 5px 3px 0}}
-.table-wrap{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}} th{{background:#f1f5f9;color:#475569;font-size:11px;text-transform:uppercase}} th:first-child,td:first-child{{text-align:left}}
+.table-wrap{{overflow:visible;width:100%}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}} th{{background:#f1f5f9;color:#475569;font-size:11px;text-transform:uppercase}} th:first-child,td:first-child{{text-align:left}}
 th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable-th:hover{{background:#e2e8f0}} .sort-ind{{display:inline-block;width:0.9em;margin-left:4px;color:#94a3b8;font-size:10px}} th.sort-asc .sort-ind::after{{content:"▲";color:#334155}} th.sort-desc .sort-ind::after{{content:"▼";color:#334155}}
 .combined{{font-weight:700;background:#ecfdf5}} .pos{{color:#15803d;font-weight:650}} .neg{{color:#b91c1c;font-weight:650}} .detail-grid{{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin:16px 0}} .detail-grid div{{background:#f8fafc;border:1px solid var(--line);padding:10px;border-radius:9px}}
 .notice{{padding:13px 15px;border-radius:10px;margin:16px 0;background:#ecfeff;border:1px solid #a5f3fc}} .recommend{{background:#ecfdf5;border-color:#86efac}} .ask{{background:#fff7ed;border-color:#fdba74}} details{{margin-top:12px}} footer{{color:var(--muted);font-size:12px;padding:20px 4px 36px}} a{{color:#0f766e}}
 @media(max-width:900px){{.cards{{grid-template-columns:repeat(2,1fr)}}.detail-grid{{grid-template-columns:repeat(2,1fr)}}.shell{{padding:12px}}}}
 </style></head><body><div class="shell">
 <header><h1>Historical System Performance</h1><div class="sub">$500,000 allocation model · generated {generated.strftime("%Y-%m-%d %H:%M %Z")}</div>
-<nav><a href="index.html">Scanner</a><a href="investment.html">Investment</a><a href="convergence.html">Convergence</a><a href="monthly.html">Monthly</a><a href="#allocation">Allocation</a><a href="#systems">Systems</a><a href="#method">Methodology</a></nav></header>
-<div class="notice ask"><p><strong>What you asked</strong></p><p>“along those lines RSI should be added to historical performance report as well”</p><p><strong>In plain English</strong></p><p>The historical performance page was built before RSI (Relative Strength Index) was a DailyRun sleeve. It should show RSI next to the other systems, and it should not forget the next system we add.</p></div>
+<nav><a href="index.html">Scanner</a><a href="investment.html">Investment</a><a href="convergence.html">Convergence</a><a href="monthly.html">Monthly</a><a href="live_style.html">Live-style</a><a href="#live-style">Live-style $250k</a><a href="#vs-spy">vs S&amp;P 500</a><a href="#allocation">Allocation</a><a href="#systems">Systems</a><a href="#method">Methodology</a></nav></header>
+{_live_style_performance_section()}
 {missing_note}
 <div class="notice"><strong>Common comparison period:</strong> {common_start} through {common_end}. Allocation sleeves and the SPY line on the $500k chart below use exactly these endpoints (aligned series). The standalone systems chart overlays SPY from {spy_overlay_start} (first session on/after {SPY_ORIGIN}). SPY uses {html.escape(spy_label)}. Live sleeves on this page: {', '.join(systems)}.</div>
 <div class="cards">
@@ -1206,7 +1635,8 @@ th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable
 <div class="notice"><strong>SPY on this chart:</strong> buy-and-hold equity starting at {_money(PORTFOLIO_CAPITAL)} on {spy_overlay_start} (requested origin {SPY_ORIGIN}; first available session), through {spy_overlay_end}, using {html.escape(spy_label)}. System lines keep their native capital bases (~{_money(min(bases.values()))}–{_money(max(bases.values()))}) and native start dates; they are not truncated to 2010. For like-for-like $500k scaling over {common_start}–{common_end}, see the allocation chart above.</div>
 {sections}
 <section id="method"><h2>Methodology &amp; caveats</h2><ul>
-<li><strong>Live systems:</strong> sleeves come from <code>tools/dailyrun_system_status.live_wired_systems()</code> (DailyRun registry). Add a new system there and in DailyRun.bat — this page picks it up on the next generate. Deprecated IND and research-only stamps (including RSIN_PaulScore5_IS) stay off until they are DailyRun-wired.</li>
+<li><strong>Live-style $250k vs S&amp;P 500:</strong> the top section is the official <strong>6-sleeve</strong> compound wallet (SB / RSI / VZ / MTS / RL / WRL; stamp <code>risk_1pct_50k_adv_17name_20260917</code> lids, name cap 17.5%) using official shares × house Closed fill prices. DailyRun wire / official mix change — not gold. Parent 5-vs-6 was HOLD on quality (6-sys more $, Max DD 10.4%→17.2%, WR/Avg/PF softened). The old 5-sys pin is leftover in the year-path table. The <em>realistic vs S&amp;P 500 (SPY)</em> headline turns $7,500/mo wires off (those are 2026 personal transfers). Allocation / standalone Closed rows below stay on house dummy notionals for reconcile.</li>
+<li><strong>Live systems:</strong> sleeves come from <code>tools/dailyrun_system_status.live_wired_systems()</code> (DailyRun registry). Add a new system there and in DailyRun.bat — this page picks it up on the next generate. Deprecated IND and research-only stamps (including RSIN_PaulScore5_IS) stay off until they are DailyRun-wired. Weekly Range / Swing (WRL) is DailyRun-wired on the 29-name house universe.</li>
 <li><strong>RSI (Relative Strength Index):</strong> house book only — <code>RSI_house_last_run_ts.txt</code>{f" ({rsi_house_ts})" if rsi_house_ts else ""} / <code>RSI_LatestRun_Closed.csv</code> / <code>drive/universes/rsi_universe.csv</code> (149 names). Not RS (Relative Strength vs SPY). Not a research ALL-universe replay.</li>
 <li><strong>Capital basis:</strong> position notional is inferred as |dollar P&amp;L ÷ percentage P&amp;L|; RL uses its native $47,500 sizing. Each denominator is that system's observed peak overlapping gross notional. Scaling allocation ÷ basis preserves trade economics and proportionally reduces all simultaneous positions when a sleeve is smaller than its standalone basis.</li>
 <li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(systems)}. Only trades opened and closed inside it are used. The $500k allocation chart is a single aligned series: sleeves and SPY on that chart share {common_start}–{common_end}.</li>
@@ -1255,6 +1685,7 @@ def main() -> int:
         f"[performance] Common period: {payload['common_period']['start']} "
         f"to {payload['common_period']['end']}"
     )
+    print("[performance] Live-style $250k vs SPY is the top section (official shares x fill prices)")
     overlay = payload["spy_overlay_period"]
     print(f"[performance] SPY overlay: {overlay['start']} to {overlay['end']}")
     return 0

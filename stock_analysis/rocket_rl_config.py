@@ -216,6 +216,17 @@ RL_V_ALIASES.update(
     }
 )
 
+# RSI play-around DNA columns → RsiConfig / BRTConfig rsi_* trigger gates (0 = off).
+# Column-name -v keys are sheet-style MIN: keep if feature >= value (higher is better).
+# Opposite near-high cap is explicit rsi_max_dist_to_52w_high_pct_at_trigger only.
+RL_V_ALIASES.update(
+    {
+        "DIST_TO_52W_HIGH_PCT_AT_TRIGGER": "rsi_min_dist_to_52w_high_pct_at_trigger",
+        "REL_VOL_ON_TRIGGER": "rsi_min_rel_vol_on_trigger",
+        "RSI14_DROP_FROM_OB": "rsi_min_rsi14_drop_from_ob",
+    }
+)
+
 # BRTConfig rl_* field → RLConfig field name (when they differ).
 _BRT_KEY_TO_RL: dict[str, str] = {
     "rl_sma_qual": "sma_qual",

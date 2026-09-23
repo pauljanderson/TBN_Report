@@ -257,7 +257,7 @@ WRL_BASELINE: dict[str, Any] = {
     "yh_zones": False,
     "vec_zones": False,
     "wpbr_zones": False,
-    "wrl_target_mode": "scale",
+    "wrl_target_mode": "swing",
     "wrl_scale_frac": 0.50,
     "stop_pct": 1.0,
     "stop_pct_is_multiplier": True,

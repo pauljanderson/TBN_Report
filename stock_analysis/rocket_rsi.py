@@ -11,8 +11,11 @@ Correlation / Correlation_Pairs). Host: ``rocket_tbn.py``.
 
 Research provenance: ``tools/rsi_ob_neutral_rsi70_atr6_ts20_maxrsi60_ab_20260911.py``
 and stamp ``drive/paul_experiments/rsi_ob_neutral_rsi70_atr6_ts20_maxrsi60_20260911/``.
-Adopt stamp: ``drive/paul_experiments/rsi_atr5_dailyrun_20260914/``
-(prior sleeve adopt: ``drive/paul_experiments/rsi_tbn_adopt_20260911/``).
+Adopt stamp: ``drive/paul_experiments/rsi_roll_ab_20260916/``
+(``rsi_roll_from_max=8`` EXIT preference; prior entry freeze
+``rsi_atr293_dailyrun_20260916``, ``rsi_atr5_dailyrun_20260914``,
+``rsi_tbn_adopt_20260911``).
+7.18 min-dist DailyRun wire reverted (``rsi_mindist52_718_20260916``).
 
 Status: **DailyRun official TBN sleeve** — not walk-forward gold.
 """
@@ -22,9 +25,11 @@ import csv
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, replace
-from datetime import datetime
+from datetime import date as date_cls
+from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -63,12 +68,26 @@ class RsiConfig:
     rsi_os: float = 30.0  # Neutral band floor (below = oversold, not a buy here)
     rsi_exit: float = 70.0  # sell when RSI reaches this again
     rsi_max_trigger: float = 60.0  # entry gate: trigger RSI must be under this
-    rsi_min_atr_pct: float = 5.0  # entry gate: ATR14 / close * 100 at trigger
+    rsi_min_atr_pct: float = 2.93  # entry gate: ATR14 / close * 100 at trigger
     rsi_time_stop_days: int = 20  # calendar days from entry; 0 = off
+    # EXIT overlay: flatten next open when (in-trade max RSI14 − current RSI14) >= this.
+    # 0 = off. Engine default off; DailyRun / run_rsi.bat house default is 8.
+    rsi_roll_from_max: float = 0.0
     rsi_entry_on: str = "next_open"  # next_open (house) | close
     rsi_sheet_notional: float = 10_000.0
+    # Optional play-around DNA gates at the trigger bar (0 = off; DailyRun freeze unchanged).
+    # DIST_TO_52W_HIGH_PCT_AT_TRIGGER = (1 - close/52w_high)*100: 0 = at the high, larger = further below.
+    # One-number -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= maps to min (keep if dist >= X; farther below high).
+    # Opposite near-high cap: explicit rsi_max_dist_to_52w_high_pct_at_trigger (column alias does not hit max).
+    rsi_max_dist_to_52w_high_pct_at_trigger: float = 0.0
+    rsi_min_dist_to_52w_high_pct_at_trigger: float = 0.0
+    # REL_VOL_ON_TRIGGER = trigger volume / 10-session avg volume (min_periods=5).
+    rsi_min_rel_vol_on_trigger: float = 0.0
+    # RSI14_DROP_FROM_OB = prior >=rsi_ob bar's RSI − trigger RSI.
+    rsi_min_rsi14_drop_from_ob: float = 0.0
     symbol_reentry_cooldown_days: int = 0
     entry_start_date: str = ""
+    # Inclusive latest fill / DATE_OPENED (next_open), not the signal/trigger date. Empty = off.
     entry_end_date: str = ""
     brt_cash: float = 10_000.0
 
@@ -228,8 +247,15 @@ RSI_WATCHLIST_HEADER = [
     "MIN_ATR_PCT",
     "EXIT_RSI_LEVEL",
     "TIME_STOP_DAYS",
+    "CLOSE_FOR_RSI_LT_60",
+    "RANGE_FOR_ATR_PCT_GE_5",
+    "RANGE_TODAY",
     "TRIGGER_HINT",
 ]
+
+_ET = ZoneInfo("America/New_York")
+_RSI_PERIOD = 14
+_SESSION_CLOSE_ET = dt_time(16, 0)
 
 
 def _fmt_opt(x: Any, digits: int = 2) -> str:
@@ -326,7 +352,13 @@ def compute_features(df: pd.DataFrame, cfg: RsiConfig) -> dict[str, np.ndarray]:
     hi52 = pd.Series(high).rolling(252, min_periods=20).max().to_numpy()
     dist52 = np.where((hi52 > 0) & np.isfinite(close), (1.0 - close / hi52) * 100.0, np.nan)
     avg10 = pd.Series(vol).rolling(10, min_periods=5).mean().to_numpy()
-    rel_vol = np.where((avg10 > 0) & np.isfinite(vol), vol / avg10, np.nan)
+    # np.where still evaluates vol/avg10 everywhere (0/0, nan/nan → RuntimeWarning).
+    rel_vol = np.divide(
+        vol,
+        avg10,
+        out=np.full(n, np.nan, dtype=np.float64),
+        where=(avg10 > 0) & np.isfinite(vol) & np.isfinite(avg10),
+    )
     ob = float(cfg.rsi_ob)
     prior_ob = np.full(n, np.nan)
     last = np.nan
@@ -347,6 +379,15 @@ def compute_features(df: pd.DataFrame, cfg: RsiConfig) -> dict[str, np.ndarray]:
     }
 
 
+def _rsi14_drop_from_ob_at(feat: dict[str, np.ndarray], i: int) -> float:
+    """PRIOR_OB_RSI14 − RSI14_AT_TRIGGER (same as Closed RSI14_DROP_FROM_OB)."""
+    prior = feat["prior_ob"][i]
+    rsi = feat["rsi"][i]
+    if np.isfinite(prior) and np.isfinite(rsi):
+        return float(prior - rsi)
+    return float("nan")
+
+
 def gate_ok(cfg: RsiConfig, i: int, feat: dict[str, np.ndarray]) -> tuple[bool, str]:
     """Entry gates at the trigger bar. Returns (passed, first_failure_reason)."""
     rsi = feat["rsi"][i]
@@ -361,7 +402,436 @@ def gate_ok(cfg: RsiConfig, i: int, feat: dict[str, np.ndarray]) -> tuple[bool, 
             return False, "ATR% not available"
         if a < min_atr:
             return False, f"ATR% {a:.2f} < min_atr_pct {min_atr:g}"
+    min_dist = float(getattr(cfg, "rsi_min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+    max_dist = float(getattr(cfg, "rsi_max_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+    if min_dist > 0 or max_dist > 0:
+        d = feat["dist52"][i]
+        if not np.isfinite(d):
+            return False, "DIST_TO_52W_HIGH_PCT_AT_TRIGGER not available"
+        if min_dist > 0 and d < min_dist:
+            return False, f"DIST52 {d:.2f} < min {min_dist:g}"
+        if max_dist > 0 and d > max_dist:
+            return False, f"DIST52 {d:.2f} > max {max_dist:g}"
+    min_rv = float(getattr(cfg, "rsi_min_rel_vol_on_trigger", 0.0) or 0.0)
+    if min_rv > 0:
+        rv = feat["rel_vol"][i]
+        if not np.isfinite(rv):
+            return False, "REL_VOL_ON_TRIGGER not available"
+        if rv < min_rv:
+            return False, f"REL_VOL {rv:.3f} < min {min_rv:g}"
+    min_drop = float(getattr(cfg, "rsi_min_rsi14_drop_from_ob", 0.0) or 0.0)
+    if min_drop > 0:
+        drop = _rsi14_drop_from_ob_at(feat, i)
+        if not np.isfinite(drop):
+            return False, "RSI14_DROP_FROM_OB not available"
+        if drop < min_drop:
+            return False, f"RSI drop {drop:.2f} < min {min_drop:g}"
     return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Watchlist what-if (close for RSI<60, TR for ATR%>=5, range today)
+# ---------------------------------------------------------------------------
+
+
+def _wilder_rsi14_avg_state(
+    close: np.ndarray, period: int = _RSI_PERIOD
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Same seed/update as ``rocket_tbn._wilder_rsi14_arr``; also avg-gain / avg-loss."""
+    n = len(close)
+    rsi = np.full(n, np.nan, dtype=np.float64)
+    avg_g = np.full(n, np.nan, dtype=np.float64)
+    avg_l = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return rsi, avg_g, avg_l
+    delta = np.diff(close.astype(float), prepend=np.nan)
+    gain = np.where(np.isfinite(delta) & (delta > 0), delta, 0.0)
+    loss = np.where(np.isfinite(delta) & (delta < 0), -delta, 0.0)
+    g = float(np.nanmean(gain[1 : period + 1]))
+    l = float(np.nanmean(loss[1 : period + 1]))
+    avg_g[period] = g
+    avg_l[period] = l
+    if l == 0:
+        rsi[period] = 100.0
+    else:
+        rsi[period] = 100.0 - (100.0 / (1.0 + g / l))
+    for i in range(period + 1, n):
+        g = (g * (period - 1) + gain[i]) / period
+        l = (l * (period - 1) + loss[i]) / period
+        avg_g[i] = g
+        avg_l[i] = l
+        if l == 0:
+            rsi[i] = 100.0
+        else:
+            rsi[i] = 100.0 - (100.0 / (1.0 + g / l))
+    return rsi, avg_g, avg_l
+
+
+def _true_range_arr(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+    """True Range matching ``rocket_tbn._compute_atr_14_arr``."""
+    n = len(close)
+    tr = np.empty(n, dtype=np.float64)
+    tr[0] = float(high[0] - low[0])
+    if n > 1:
+        hl = high[1:] - low[1:]
+        h_pc = np.abs(high[1:] - close[:-1])
+        l_pc = np.abs(low[1:] - close[:-1])
+        tr[1:] = np.maximum.reduce([hl, h_pc, l_pc])
+    return tr
+
+
+def _rsi_from_next_close(
+    prev_close: float,
+    avg_gain: float,
+    avg_loss: float,
+    next_close: float,
+    period: int = _RSI_PERIOD,
+) -> float:
+    chg = float(next_close) - float(prev_close)
+    gain = chg if chg > 0 else 0.0
+    loss = -chg if chg < 0 else 0.0
+    g = (float(avg_gain) * (period - 1) + gain) / period
+    l = (float(avg_loss) * (period - 1) + loss) / period
+    if l == 0:
+        return 100.0
+    return 100.0 - (100.0 / (1.0 + g / l))
+
+
+def invert_close_for_rsi_below(
+    prev_close: float,
+    avg_gain: float,
+    avg_loss: float,
+    rsi_threshold: float = 60.0,
+    period: int = _RSI_PERIOD,
+) -> tuple[Optional[float], str]:
+    """Close that makes Wilder RSI just under ``rsi_threshold`` (engine gate is RSI < max_trigger).
+
+    Invert from the last complete bar's avg-gain / avg-loss. Returns
+    (price, note) where note is ``ok`` / ``already`` / ``impossible``.
+    """
+    prev = float(prev_close)
+    ag = float(avg_gain)
+    al = float(avg_loss)
+    thr = float(rsi_threshold)
+    if not np.isfinite(prev) or prev <= 0 or not np.isfinite(ag) or not np.isfinite(al):
+        return None, "rsi_not_ready"
+    if thr <= 0 or thr >= 100:
+        return None, "bad_threshold"
+    rs_thr = thr / (100.0 - thr)
+    # Exact RSI=threshold close, then nudge so RSI < threshold (gate is strict <).
+    # Down-move solution: loss = (period-1) * (avg_gain/rs_thr - avg_loss)
+    loss_at = (period - 1) * (ag / rs_thr - al)
+    gain_at = (period - 1) * (rs_thr * al - ag)
+    # Prefer the down-move price when we must cool; the up-move price is the
+    # ceiling that still keeps RSI at the threshold on a bounce.
+    if loss_at > 1e-12:
+        raw = prev - loss_at
+    elif gain_at > 1e-12:
+        raw = prev + gain_at
+    else:
+        raw = prev
+    if not np.isfinite(raw):
+        return None, "rsi_not_ready"
+    if raw <= 0:
+        return None, "impossible"
+    # Walk down by a cent until RSI is strictly below the gate (or we hit 0).
+    px = float(np.floor(raw * 100.0 + 1e-9) / 100.0)
+    for _ in range(40):
+        if px <= 0:
+            return None, "impossible"
+        rsi_px = _rsi_from_next_close(prev, ag, al, px, period)
+        if np.isfinite(rsi_px) and rsi_px < thr:
+            already = _rsi_from_next_close(prev, ag, al, prev, period)
+            if np.isfinite(already) and already < thr:
+                return px, "already"
+            return px, "ok"
+        px = float(np.round(px - 0.01, 2))
+    return None, "impossible"
+
+
+def invert_close_for_rsi_at_or_above(
+    prev_close: float,
+    avg_gain: float,
+    avg_loss: float,
+    rsi_threshold: float = 70.0,
+    period: int = _RSI_PERIOD,
+) -> tuple[Optional[float], str]:
+    """Close that makes Wilder RSI just at or above ``rsi_threshold`` (sell arm).
+
+    Invert from the last complete bar's avg-gain / avg-loss. Returns
+    (price, note) where note is ``ok`` / ``already`` / ``impossible`` /
+    ``rsi_not_ready`` / ``bad_threshold``.
+    """
+    prev = float(prev_close)
+    ag = float(avg_gain)
+    al = float(avg_loss)
+    thr = float(rsi_threshold)
+    if not np.isfinite(prev) or prev <= 0 or not np.isfinite(ag) or not np.isfinite(al):
+        return None, "rsi_not_ready"
+    if thr <= 0 or thr >= 100:
+        return None, "bad_threshold"
+    already = _rsi_from_next_close(prev, ag, al, prev, period)
+    if np.isfinite(already) and already >= thr:
+        return float(np.round(prev, 2)), "already"
+    rs_thr = thr / (100.0 - thr)
+    gain_at = (period - 1) * (rs_thr * al - ag)
+    loss_at = (period - 1) * (ag / rs_thr - al)
+    if gain_at > 1e-12:
+        raw = prev + gain_at
+    elif loss_at > 1e-12:
+        raw = prev - loss_at
+    else:
+        raw = prev
+    if not np.isfinite(raw):
+        return None, "rsi_not_ready"
+    if raw <= 0:
+        return None, "impossible"
+    px = float(np.ceil(raw * 100.0 - 1e-9) / 100.0)
+    for _ in range(80):
+        if px <= 0:
+            return None, "impossible"
+        rsi_px = _rsi_from_next_close(prev, ag, al, px, period)
+        if np.isfinite(rsi_px) and rsi_px >= thr:
+            return px, "ok"
+        px = float(np.round(px + 0.01, 2))
+    return None, "impossible"
+
+
+def invert_close_for_rsi_at_or_below(
+    prev_close: float,
+    avg_gain: float,
+    avg_loss: float,
+    rsi_threshold: float = 50.0,
+    period: int = _RSI_PERIOD,
+) -> tuple[Optional[float], str]:
+    """Close that makes Wilder RSI just at or below ``rsi_threshold`` (roll-8 stop).
+
+    Invert from the last complete bar's avg-gain / avg-loss. Returns
+    (price, note) where note is ``ok`` / ``already`` / ``impossible`` /
+    ``rsi_not_ready`` / ``bad_threshold``.
+    """
+    prev = float(prev_close)
+    ag = float(avg_gain)
+    al = float(avg_loss)
+    thr = float(rsi_threshold)
+    if not np.isfinite(prev) or prev <= 0 or not np.isfinite(ag) or not np.isfinite(al):
+        return None, "rsi_not_ready"
+    if thr <= 0 or thr >= 100:
+        return None, "bad_threshold"
+    already = _rsi_from_next_close(prev, ag, al, prev, period)
+    if np.isfinite(already) and already <= thr:
+        return float(np.round(prev, 2)), "already"
+    rs_thr = thr / (100.0 - thr)
+    loss_at = (period - 1) * (ag / rs_thr - al)
+    gain_at = (period - 1) * (rs_thr * al - ag)
+    if loss_at > 1e-12:
+        raw = prev - loss_at
+    elif gain_at > 1e-12:
+        raw = prev + gain_at
+    else:
+        raw = prev
+    if not np.isfinite(raw):
+        return None, "rsi_not_ready"
+    if raw <= 0:
+        return None, "impossible"
+    px = float(np.floor(raw * 100.0 + 1e-9) / 100.0)
+    for _ in range(80):
+        if px <= 0:
+            return None, "impossible"
+        rsi_px = _rsi_from_next_close(prev, ag, al, px, period)
+        if np.isfinite(rsi_px) and rsi_px <= thr:
+            return px, "ok"
+        px = float(np.round(px - 0.01, 2))
+    return None, "impossible"
+
+
+def invert_tr_for_atr_pct(
+    prior_tr: np.ndarray,
+    close_ref: float,
+    min_atr_pct: float = 5.0,
+    period: int = _RSI_PERIOD,
+) -> Optional[float]:
+    """True Range width so SMA(TR, 14)/close*100 >= min_atr_pct (same ATR% as gate_ok).
+
+    ``prior_tr`` is the 13 True Ranges immediately before the evaluation bar
+    (the window that will sit next to today's TR in the 14-bar SMA).
+    """
+    close = float(close_ref)
+    thr = float(min_atr_pct)
+    if not np.isfinite(close) or close <= 0 or not np.isfinite(thr) or thr <= 0:
+        return None
+    if prior_tr.size != period - 1 or not np.all(np.isfinite(prior_tr)):
+        return None
+    needed = period * (thr / 100.0) * close - float(np.sum(prior_tr))
+    if not np.isfinite(needed):
+        return None
+    return max(0.0, needed)
+
+
+def _asof_session_complete(asof_date: date_cls, now_et: Optional[datetime] = None) -> bool:
+    now = now_et or datetime.now(_ET)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_ET)
+    else:
+        now = now.astimezone(_ET)
+    today = now.date()
+    if asof_date != today:
+        return True
+    if now.weekday() >= 5:
+        return True
+    return now.time() >= _SESSION_CLOSE_ET
+
+
+def rsi_watchlist_whatif(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    asof_date: Any,
+    *,
+    rsi_threshold: float = 60.0,
+    min_atr_pct: float = 5.0,
+    now_et: Optional[datetime] = None,
+    current_rsi: Optional[float] = None,
+) -> dict[str, str]:
+    """Display strings for the three Watchlist what-if columns.
+
+    Invert Wilder RSI from the last *complete* bar. ATR% uses the engine
+    definition SMA(True Range, 14) / close × 100 (not classic Wilder ATR).
+    """
+    empty = {
+        "close_for_rsi_lt_60": "—",
+        "range_for_atr_pct_ge_5": "—",
+        "range_today": "—",
+    }
+    n = len(close)
+    if n < _RSI_PERIOD + 2:
+        return {**empty, "close_for_rsi_lt_60": "— (RSI not ready)"}
+
+    asof_ts = pd.to_datetime(asof_date, errors="coerce")
+    asof_d = asof_ts.date() if not pd.isna(asof_ts) else None
+    last = n - 1
+    complete = True
+    if asof_d is not None:
+        complete = _asof_session_complete(asof_d, now_et)
+    asof_label = asof_d.isoformat() if asof_d is not None else "ASOF"
+    session_note = f"{asof_label} complete" if complete else f"{asof_label} so far"
+
+    last_c = float(close[last])
+    last_h = float(high[last])
+    last_l = float(low[last])
+    hl = last_h - last_l if np.isfinite(last_h) and np.isfinite(last_l) else float("nan")
+    tr_arr = _true_range_arr(high, low, close)
+    tr_last = float(tr_arr[last]) if np.isfinite(tr_arr[last]) else float("nan")
+    hl_pct = (hl / last_c * 100.0) if np.isfinite(hl) and last_c > 0 else float("nan")
+
+    range_bits = []
+    if np.isfinite(hl):
+        if np.isfinite(hl_pct):
+            range_bits.append(f"{hl:.2f} ({hl_pct:.1f}%)")
+        else:
+            range_bits.append(f"{hl:.2f}")
+    else:
+        range_bits.append("—")
+    if np.isfinite(tr_last) and (not np.isfinite(hl) or abs(tr_last - hl) > 0.005):
+        range_bits.append(f"TR {tr_last:.2f}")
+    range_today = f"{' · '.join(range_bits)} · {session_note}"
+
+    # RSI invert: last complete bar's avg-gain/avg-loss → next close.
+    rsi_arr, avg_g, avg_l = _wilder_rsi14_avg_state(close)
+    if complete:
+        state_i = last
+    else:
+        state_i = last - 1
+    close_cell = "—"
+    if state_i < _RSI_PERIOD or not np.isfinite(avg_g[state_i]) or not np.isfinite(avg_l[state_i]):
+        close_cell = "— (RSI not ready)"
+    else:
+        px, note = invert_close_for_rsi_below(
+            float(close[state_i]),
+            float(avg_g[state_i]),
+            float(avg_l[state_i]),
+            rsi_threshold=float(rsi_threshold),
+        )
+        live_rsi = float(current_rsi) if current_rsi is not None and np.isfinite(current_rsi) else (
+            float(rsi_arr[last]) if np.isfinite(rsi_arr[last]) else float("nan")
+        )
+        if note == "impossible" or px is None:
+            close_cell = "— (would need a negative price)"
+        elif (np.isfinite(live_rsi) and live_rsi < float(rsi_threshold)) or note == "already":
+            rsi_txt = f"{live_rsi:.1f}" if np.isfinite(live_rsi) else "—"
+            stay = f"{px:.2f}" if px is not None else "—"
+            close_cell = f"already (RSI {rsi_txt} @ {last_c:.2f}; stay < {stay})"
+        else:
+            suffix = "" if not complete else " (next session)"
+            close_cell = f"{px:.2f}{suffix}"
+
+    # ATR%: same bar as "range today" when the ASOF bar is still forming;
+    # next session when ASOF is a full session.
+    atr_cell = "—"
+    if complete:
+        prior = tr_arr[last - (_RSI_PERIOD - 2) : last + 1] if last >= _RSI_PERIOD - 2 else np.array([])
+        # last 13 TRs including last complete → TR needed on the *next* bar
+        if prior.size == _RSI_PERIOD - 1:
+            prior13 = prior
+        else:
+            prior13 = np.array([])
+        close_ref = last_c
+    else:
+        # 13 TRs before the forming bar
+        start = last - (_RSI_PERIOD - 1)
+        prior13 = tr_arr[start:last] if start >= 0 else np.array([])
+        close_ref = last_c
+    tr_need = invert_tr_for_atr_pct(prior13, close_ref, min_atr_pct=float(min_atr_pct))
+    if tr_need is None:
+        atr_cell = "— (ATR not ready)"
+    elif tr_need <= 1e-9:
+        atr_cell = f"0.00 (already ATR%>={float(min_atr_pct):g} even with no range)"
+    else:
+        when = "next session TR" if complete else "TR"
+        atr_cell = f"{tr_need:.2f} {when}"
+
+    return {
+        "close_for_rsi_lt_60": close_cell,
+        "range_for_atr_pct_ge_5": atr_cell,
+        "range_today": range_today,
+    }
+
+
+def rsi_watchlist_whatif_from_df(
+    df: pd.DataFrame,
+    cfg: Optional[RsiConfig] = None,
+    *,
+    asof: Any = None,
+    now_et: Optional[datetime] = None,
+    current_rsi: Optional[float] = None,
+) -> dict[str, str]:
+    """OHLC DataFrame wrapper (Date column or index). House freeze defaults if cfg is None."""
+    cfg = cfg or RsiConfig()
+    work = df
+    if "Close" not in work.columns:
+        return {
+            "close_for_rsi_lt_60": "—",
+            "range_for_atr_pct_ge_5": "—",
+            "range_today": "—",
+        }
+    high = work["High"].to_numpy(dtype=np.float64)
+    low = work["Low"].to_numpy(dtype=np.float64)
+    close = work["Close"].to_numpy(dtype=np.float64)
+    if asof is None:
+        if "Date" in work.columns:
+            asof = work["Date"].iloc[-1]
+        else:
+            asof = work.index[-1]
+    return rsi_watchlist_whatif(
+        high,
+        low,
+        close,
+        asof,
+        rsi_threshold=float(cfg.rsi_max_trigger),
+        min_atr_pct=float(cfg.rsi_min_atr_pct),
+        now_et=now_et,
+        current_rsi=current_rsi,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +863,7 @@ def backtest_symbol(
     os_ = float(cfg.rsi_os)
     exit_rsi = float(cfg.rsi_exit)
     time_stop = int(cfg.rsi_time_stop_days or 0)
+    roll_from_max = float(getattr(cfg, "rsi_roll_from_max", 0.0) or 0.0)
     entry_on_close = str(cfg.rsi_entry_on or "next_open").strip().lower() == "close"
 
     prev_rsi = np.roll(rsi, 1)
@@ -415,6 +886,7 @@ def backtest_symbol(
             "signal_i": signal_i,
             "signal_iso": _iso(dates[signal_i]),
             "max_price": max(entry_px, float(high[entry_i])),
+            "max_rsi": float(rsi[entry_i]) if np.isfinite(rsi[entry_i]) else float("nan"),
             "rsi_trigger": float(rsi[signal_i]),
             "atr_pct": float(feat["atr_pct"][signal_i]),
             "prior_ob": float(feat["prior_ob"][signal_i]),
@@ -493,6 +965,10 @@ def backtest_symbol(
 
         if pos is not None:
             pos["max_price"] = max(float(pos["max_price"]), float(high[i]))
+            if np.isfinite(rsi[i]):
+                cur_rsi = float(rsi[i])
+                mx = float(pos.get("max_rsi", float("nan")))
+                pos["max_rsi"] = cur_rsi if not np.isfinite(mx) else max(mx, cur_rsi)
 
         # Last bar: no signal can be filled inside the backtest window.
         if i == n - 1:
@@ -503,7 +979,16 @@ def backtest_symbol(
             sell = np.isfinite(rsi[i]) and rsi[i] >= exit_rsi
             held = int((pd.Timestamp(dates[i]) - pd.Timestamp(dates[pos["entry_i"]])).days)
             timed = time_stop > 0 and held >= time_stop
-            if sell:
+            rolled = False
+            if roll_from_max > 0 and np.isfinite(rsi[i]):
+                mx = float(pos.get("max_rsi", float("nan")))
+                if np.isfinite(mx) and (mx - float(rsi[i])) >= roll_from_max:
+                    rolled = True
+            if rolled:
+                pending_exit = True
+                pending_exit_type = "RSI_ROLL"
+                pending_exit_rsi = float(rsi[i])
+            elif sell:
                 pending_exit = True
                 pending_exit_type = "OVERBOUGHT"
                 pending_exit_rsi = float(rsi[i])
@@ -535,6 +1020,12 @@ def backtest_symbol(
 
     # Still-open position at the end of the data.
     last = n - 1
+    whatif = rsi_watchlist_whatif_from_df(
+        df,
+        cfg,
+        asof=dates[last],
+        current_rsi=float(rsi[last]) if np.isfinite(rsi[last]) else None,
+    )
     if pos is not None:
         entry = float(pos["entry"])
         cl = float(close[last])
@@ -548,11 +1039,25 @@ def backtest_symbol(
             stop_iso = stop_ts.strftime("%Y%m%d")
             days_to_stop = max(0, time_stop - cal_open)
         rsi_now = float(rsi[last]) if np.isfinite(rsi[last]) else float("nan")
-        hint = (
-            f"Sell next open once RSI14 >= {exit_rsi:g} (now "
-            f"{rsi_now:.1f}). " if np.isfinite(rsi_now)
-            else f"Sell next open once RSI14 >= {exit_rsi:g}. "
-        )
+        max_rsi_now = float(pos.get("max_rsi", float("nan")))
+        if roll_from_max > 0:
+            if np.isfinite(max_rsi_now) and np.isfinite(rsi_now):
+                hint = (
+                    f"Sell next open once RSI14 drops {roll_from_max:g} from the "
+                    f"in-trade high (now max {max_rsi_now:.1f}, rsi {rsi_now:.1f}) "
+                    f"or RSI14 >= {exit_rsi:g}. "
+                )
+            else:
+                hint = (
+                    f"Sell next open once RSI14 drops {roll_from_max:g} from the "
+                    f"in-trade high or RSI14 >= {exit_rsi:g}. "
+                )
+        else:
+            hint = (
+                f"Sell next open once RSI14 >= {exit_rsi:g} (now "
+                f"{rsi_now:.1f}). " if np.isfinite(rsi_now)
+                else f"Sell next open once RSI14 >= {exit_rsi:g}. "
+            )
         if time_stop > 0:
             hint += (
                 f"Otherwise flatten at the {time_stop}-calendar-day time stop "
@@ -588,6 +1093,7 @@ def backtest_symbol(
                 "prior_ob": float(feat["prior_ob"][last]),
                 "atr_pct": float(feat["atr_pct"][last]),
                 "hint": hint,
+                **whatif,
             }
         )
 
@@ -605,6 +1111,7 @@ def backtest_symbol(
             "rsi": last_rsi,
             "prior_ob": last_prior_ob,
             "atr_pct": last_atr,
+            **whatif,
         }
         if pending_entry_i >= 0:
             # Signal fired on the final bar — the fill has not happened yet.
@@ -616,7 +1123,12 @@ def backtest_symbol(
                     "hint": (
                         f"Signal on {_iso_dash(asof)}: RSI14 cooled from overbought "
                         f"({last_prior_ob:.1f}) to {last_rsi:.1f} with ATR% {last_atr:.2f}. "
-                        f"Buy at the next open. Sell back at RSI14 >= {exit_rsi:g}"
+                        f"Buy at the next open. Sell back at "
+                        + (
+                            f"RSI14 roll {roll_from_max:g} from in-trade max or RSI14 >= {exit_rsi:g}"
+                            if roll_from_max > 0
+                            else f"RSI14 >= {exit_rsi:g}"
+                        )
                         + (f"; time stop {time_stop} calendar days." if time_stop > 0 else ".")
                     ),
                 }
@@ -766,8 +1278,21 @@ def brt_config_from_rsi(cfg: RsiConfig, host_cfg: Any = None) -> Any:
         rsi_max_trigger=float(cfg.rsi_max_trigger),
         rsi_min_atr_pct=float(cfg.rsi_min_atr_pct),
         rsi_time_stop_days=int(cfg.rsi_time_stop_days),
+        rsi_roll_from_max=float(getattr(cfg, "rsi_roll_from_max", 0.0) or 0.0),
         rsi_entry_on=str(cfg.rsi_entry_on or "next_open"),
         rsi_sheet_notional=float(cfg.rsi_sheet_notional),
+        rsi_max_dist_to_52w_high_pct_at_trigger=float(
+            getattr(cfg, "rsi_max_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0
+        ),
+        rsi_min_dist_to_52w_high_pct_at_trigger=float(
+            getattr(cfg, "rsi_min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0
+        ),
+        rsi_min_rel_vol_on_trigger=float(
+            getattr(cfg, "rsi_min_rel_vol_on_trigger", 0.0) or 0.0
+        ),
+        rsi_min_rsi14_drop_from_ob=float(
+            getattr(cfg, "rsi_min_rsi14_drop_from_ob", 0.0) or 0.0
+        ),
         brt_cash=float(cfg.brt_cash),
         symbol_reentry_cooldown_days=int(cfg.symbol_reentry_cooldown_days or 0),
         entry_start_date=str(cfg.entry_start_date or ""),
@@ -985,6 +1510,9 @@ def write_rsi_outputs(
                     f"{float(cfg.rsi_min_atr_pct):g}",
                     f"{float(cfg.rsi_exit):g}",
                     int(cfg.rsi_time_stop_days or 0),
+                    r.get("close_for_rsi_lt_60", ""),
+                    r.get("range_for_atr_pct_ge_5", ""),
+                    r.get("range_today", ""),
                     r["hint"],
                 ]
             )
@@ -1213,16 +1741,37 @@ def run_rsi_from_brt_main(
         f"[RSI] Relative Strength Index on {len(ticker_list)} symbols "
         f"(exit_rsi={rcfg.rsi_exit:g}, max_trigger={rcfg.rsi_max_trigger:g}, "
         f"min_atr_pct={rcfg.rsi_min_atr_pct:g}, time_stop={rcfg.rsi_time_stop_days}d, "
+        f"roll_from_max={float(getattr(rcfg, 'rsi_roll_from_max', 0.0) or 0.0):g}, "
         f"entry_on={rcfg.rsi_entry_on}, workers={n_workers})",
         flush=True,
     )
+    _extra = []
+    _max_d = float(rcfg.rsi_max_dist_to_52w_high_pct_at_trigger or 0.0)
+    _min_d = float(rcfg.rsi_min_dist_to_52w_high_pct_at_trigger or 0.0)
+    _min_rv = float(rcfg.rsi_min_rel_vol_on_trigger or 0.0)
+    _min_drop = float(rcfg.rsi_min_rsi14_drop_from_ob or 0.0)
+    if _max_d > 0:
+        _extra.append(f"max_dist52={_max_d:g}")
+    if _min_d > 0:
+        _extra.append(f"min_dist52={_min_d:g}")
+    if _min_rv > 0:
+        _extra.append(f"min_rel_vol={_min_rv:g}")
+    if _min_drop > 0:
+        _extra.append(f"min_rsi_drop={_min_drop:g}")
     print(
         "[RSI] Buy: prior bar RSI14 >= "
         f"{rcfg.rsi_ob:g} and today RSI14 between "
         f"{rcfg.rsi_os:g} and {rcfg.rsi_ob:g} with trigger RSI14 < "
         f"{rcfg.rsi_max_trigger:g} and ATR% >= {rcfg.rsi_min_atr_pct:g}; fill next open. "
-        f"Sell: RSI14 >= {rcfg.rsi_exit:g} next open, else flatten at "
-        f"{rcfg.rsi_time_stop_days} calendar days. No price stop / target.",
+        f"Sell: "
+        + (
+            f"RSI14 drop {float(getattr(rcfg, 'rsi_roll_from_max', 0.0) or 0.0):g} "
+            f"from in-trade max, else RSI14 >= {rcfg.rsi_exit:g} next open, else flatten at "
+            if float(getattr(rcfg, "rsi_roll_from_max", 0.0) or 0.0) > 0
+            else f"RSI14 >= {rcfg.rsi_exit:g} next open, else flatten at "
+        )
+        + f"{rcfg.rsi_time_stop_days} calendar days. No price stop / target."
+        + (f" Extra trigger gates: {', '.join(_extra)}." if _extra else ""),
         flush=True,
     )
 

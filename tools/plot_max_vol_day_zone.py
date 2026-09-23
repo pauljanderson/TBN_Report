@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Plot max-volume day Open/Close zone for a symbol (quick iterable prototype).
 
+DailyRun / watchlist / trendline charts that must show the engine **trigger**
+zone (possibly older than the latest winner) live in ``tools/vz_chart_zones.py``
++ ``gen_trendlines_charts_html.py``. This script is a rolling-winner explorer
+and is not the house signal overlay.
+
 Modes:
   single (default): last N bars → one max-vol day → one O–C zone band
   rolling: from lookback onward, each day zones O–C of the trailing-window

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""WRL one-knob A/B vs house control (scale 50/50, stop at swing low).
+"""WRL one-knob A/B vs house control (full exit at swing high, stop at swing low).
 
 Arms match ``optimizer_systems.WRL_PLAN`` (one knob at a time; controls frozen).
-Research only — does not change ``run_wrl.bat`` defaults.
+Research only — does not wire DailyRun.
 
 Usage:
   python tools/run_wrl_ab.py
@@ -43,11 +43,11 @@ DOCS_COPY = REPO / "docs" / "systems" / "wrl_ab.html"
 
 CONTROL = "00_control"
 ARMS: list[tuple[str, dict[str, Any], str]] = [
-    (CONTROL, {}, "House: scale 50/50, stop at swing low, min-zone off"),
+    (CONTROL, {}, "House: full exit at swing high, stop at swing low, min-zone off"),
     ("01_target_range", {"wrl_target_mode": "range"}, "Full size out at range high"),
-    ("02_target_swing", {"wrl_target_mode": "swing"}, "Full size out at swing high"),
-    ("03_scale_033", {"wrl_scale_frac": 0.33}, "Scale: 33% at range high, rest to swing high"),
-    ("04_scale_067", {"wrl_scale_frac": 0.67}, "Scale: 67% at range high, rest to swing high"),
+    ("02_target_scale", {"wrl_target_mode": "scale"}, "Leftover: 50% at range high, rest at swing high"),
+    ("03_scale_033", {"wrl_target_mode": "scale", "wrl_scale_frac": 0.33}, "Scale: 33% at range high, rest to swing high"),
+    ("04_scale_067", {"wrl_target_mode": "scale", "wrl_scale_frac": 0.67}, "Scale: 67% at range high, rest to swing high"),
     ("05_stop_098", {"stop_pct": 0.98}, "Stop = 98% of swing low (tighter)"),
     ("06_stop_099", {"stop_pct": 0.99}, "Stop = 99% of swing low (slightly tighter)"),
     ("07_minzone_01", {"wrl_min_zone_pct": 0.01}, "Require demand zone ≥ 1% wide"),
@@ -294,9 +294,9 @@ def summarize(root: Path = OUT_ROOT) -> Path:
         "# WRL A/B — one-knob levers vs house control",
         "",
         "Universe: Mag10 (`AAPL,AMD,AMZN,AU,GOOGL,META,MSFT,NFLX,NVDA,TSLA`).",
-        "Control: `wrl_target_mode=scale`, `wrl_scale_frac=0.50`, `stop_pct=1.0`, `wrl_min_zone_pct=0`.",
+        "Control: `wrl_target_mode=swing` (house 2026-09-22), `stop_pct=1.0`, `wrl_min_zone_pct=0`. `wrl_scale_frac` unused.",
         "Host cash scaled like `run_wrl.bat` (500k × 2.0 × 0.6). Aggressive equity off for the A/B.",
-        "Research only — `run_wrl.bat` defaults unchanged.",
+        "Research only — not DailyRun.",
         "",
         "| Arm | What changed | Trades | WR% | Total PnL $ | PF | Expectancy $ | Avg PnL% | Ann ROR | Max DD | Δ PnL $ | Δ Trades |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",

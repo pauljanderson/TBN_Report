@@ -45,10 +45,10 @@ DAILYRUN_REGISTRY: dict[str, dict[str, Any]] = {
         "note": "deprecated - DailyRun step [5] permanently skipped",
     },
     "WRL": {
-        "wired": False,
+        "wired": True,
         "skip_env": "SKIP_WRL",
         "bat": "run_wrl.bat",
-        "note": "research sleeve — not DailyRun gold",
+        "note": "DailyRun wire / official 6-sys mix — not gold",
     },
     "MVCP": {
         "wired": False,
@@ -59,7 +59,7 @@ DAILYRUN_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 # Report systems that appear on the investment report (order matches report chips).
-REPORT_ORDER = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI")
+REPORT_ORDER = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 
 
 def live_wired_systems() -> tuple[str, ...]:
@@ -99,9 +99,9 @@ def wired_system_ids() -> list[str]:
 def live_trendline_systems(_drive: Path | None = None) -> list[str]:
     """Opens / helds / watch / scan sleeves for daily trendline charts + score.
 
-    Wired DailyRun systems only. Deprecated IND, retired Minervini Volatility
-    Contraction Pattern (MVCP), and research Weekly Range / Swing (WRL) stay
-    out so a 250-name stale watchlist does not explode DailyRun.
+    Wired DailyRun systems only. Deprecated IND and retired Minervini Volatility
+    Contraction Pattern (MVCP) stay out. Weekly Range / Swing (WRL) is DailyRun
+    wired on the 29-name house universe (not gold).
     """
     return list(wired_system_ids())
 

@@ -1149,17 +1149,193 @@ def vz() -> str:
     )
 
 
+def rsi() -> str:
+    return page(
+        title="RSI — Relative Strength Index",
+        eyebrow="Production · Relative Strength Index (RSI)",
+        lede=(
+            "<strong>RSI</strong> (Relative Strength Index) is Wilder's 14-period heat gauge — "
+            "how stretched a name is on its own tape — <strong>not</strong> "
+            "<strong>RS</strong> (Relative Strength vs SPY). "
+            "It buys a cool-off after a hot run, then sells when RSI is hot again, "
+            "rolls off a peak, or the calendar clock hits. "
+            "<strong>DailyRun sleeve — not walk-forward gold.</strong>"
+        ),
+        badge_class="badge-ok",
+        badge_text="DailyRun / TBN official",
+        meta=(
+            "<span>Mode <code>rsi_mode=true</code></span>"
+            "<span>Runner <code>run_rsi.bat</code></span>"
+            "<span>Engine <span class='path'>stock_analysis/rocket_rsi.py</span></span>"
+            "<span>Prefix <code>RSI_*</code></span>"
+            "<span>Freeze ob70 / os30 / exit70 / maxrsi60 / atr2.93 / roll8 / ts20 / next_open</span>"
+        ),
+        body="""
+<div class="callout">
+  <strong>Not RS vs SPY:</strong> <strong>RSI</strong> here is J. Welles Wilder's Relative Strength Index (14) —
+  up-closes vs down-closes on this symbol. <strong>RS</strong> (Relative Strength) is the other sleeve
+  that scores excess return vs SPY plus Trend Condition (TC). Do not mix the two books, prefixes, or reports.
+</div>
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10c/13] · preference-adopt.
+  Universe <code>drive/universes/rsi_universe.csv</code> — <strong>149</strong> High-FIT / in-sample (IS)-good names.
+  House freeze from <code>run_rsi.bat</code> / DailyRun:
+  prior bar RSI(14) ≥ 70, then close with 30 &lt; RSI &lt; 60 and trigger RSI &lt; 60,
+  Average True Range (ATR)% ≥ 2.93, fill next open;
+  sell RSI(14) ≥ 70 next open, or roll-8, or 20 calendar-day clock.
+  <strong>No price stop. Dummy $10k sheet notional. Watchlist, not Scanner.
+  Not walk-forward gold.</strong>
+  Skip with <code>SKIP_RSI=1</code>.
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> DailyRun-wired is not the gold bar. Roll-8 and ATR% 2.93 are
+  preference adopts (see adopt stamps below). Out-of-sample (OOS) is report-only — do not retune.
+  Research A/B stamps (RSI 75 exit, ATR% 4, 7.18 distance-to-52-week-high, Kelly size) are
+  <strong>not</strong> this page’s house freeze.
+</div>
+<div class="callout ok">
+  <strong>Predictive timing:</strong> signal known at trigger-bar <em>close</em>
+  (Wilder RSI(14) + ATR% on that close). Default fill = <strong>next open</strong> (T+1).
+  Never buys the open of the signal morning. Gates are not re-checked on the fill bar.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Hypothesis: after a name runs hot (RSI(14) ≥ 70), a pullback into a cooler band
+  (still above oversold) on a lively tape is worth a short hold until heat returns,
+  the move gives back, or time runs out.
+  Role: short-hold heat-gauge sleeve vs multi-month <strong>RS</strong> (vs SPY) leadership
+  and zone-retest books (Break and ReTest / Year High / Pivot Break and Retest / Volume Zone).
+</p>
+<p>
+  One position at a time per symbol. Live surface is <strong>Watchlist</strong>
+  (<code>RSI_Watchlist_&lt;ts&gt;.csv</code>) — there is no <code>RSI_Scanner</code> file.
+  Watchlist rows include what-if closes (price that would print RSI &lt; 60 tomorrow, and
+  the range needed for the ATR% floor).
+</p>
+
+<h2>2. Entry logic</h2>
+<p>Signal bar <strong>T</strong> close — then fill at T+1 open. Engine: <code>_signal</code> path in
+<code>rocket_rsi.py</code> (<code>buy_base</code> + <code>gate_ok</code>).</p>
+<ol class="steps">
+  <li><strong>Was hot:</strong> prior bar RSI(14) ≥ <code>rsi_ob</code> (house <strong>70</strong>).
+      This arms the setup; it is not the buy.</li>
+  <li><strong>Cool-off band:</strong> T close has 30 &lt; RSI(14) &lt; 70
+      (<code>rsi_os=30</code>, still below the overbought line). Below 30 is oversold here — not a buy.</li>
+  <li><strong>Trigger cap:</strong> T’s RSI must be <strong>&lt; <code>rsi_max_trigger</code></strong>
+      (house <strong>60</strong>). Combined with the band: house buy is
+      prior ≥ 70, then <strong>30 &lt; RSI &lt; 60</strong> and trigger RSI &lt; 60.</li>
+  <li><strong>Volatility floor:</strong> 14-day ATR / close × 100 ≥ <code>rsi_min_atr_pct</code>
+      (house <strong>2.93</strong>) at the trigger close. Quiet names never enter.
+      This is not a stop.</li>
+  <li><strong>Optional DNA gates (house off):</strong>
+      <code>rsi_min_dist_to_52w_high_pct_at_trigger=0</code> (do not pass 7.18 — that wire was reverted),
+      rel-vol min off, RSI-drop-from-overbought min off, near-high cap off.</li>
+  <li><strong>Fill:</strong> <code>rsi_entry_on=next_open</code> → Open of T+1.
+      Alternate research: close of T. Do not buy T’s open using T’s close.</li>
+  <li>One name at a time. <code>symbol_reentry_cooldown_days=0</code> in house (off).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<p>
+  Evaluated on each bar’s close while in the trade; fills are the <strong>next open</strong>.
+  Priority if more than one fires on the same bar:
+</p>
+<ol class="steps">
+  <li><strong>Roll-8</strong> (<code>RSI_ROLL</code>): in-trade max RSI(14) − current RSI(14) ≥
+      <code>rsi_roll_from_max</code> (house <strong>8</strong>) → sell next open.</li>
+  <li><strong>Overbought</strong> (<code>OVERBOUGHT</code>): RSI(14) ≥ <code>rsi_exit</code>
+      (house <strong>70</strong>) → sell next open.</li>
+  <li><strong>Clock</strong> (<code>TIME</code>): calendar days from entry ≥
+      <code>rsi_time_stop_days</code> (house <strong>20</strong>) → sell next open.</li>
+</ol>
+"""
+        + kv([
+            ("Price stop", "<strong>None</strong> — Closed <code>STOP_PRICE=0</code>. Not a broker stop."),
+            ("Dollar target", "<strong>None</strong> — Closed <code>TARGET_PRICE=0</code>. Not a broker target."),
+            ("getTarget prices", "Implied what-if closes (RSI ≥ 70 / roll-8 invert) for the sheet — <strong>not</strong> live exits."),
+            ("Fill on exit", "Next session open (same as entry). Last bar of the tape cannot fill inside the backtest window."),
+        ])
+        + """
+<div class="callout warn">
+  <strong>Fidelity:</strong> there is no price stop and no dollar target to park at the broker.
+  Sell when Watchlist / Open says RSI ≥ 70, roll-8, or the 20-calendar-day date.
+  <code>getTarget.py</code> RSI rows are implied closes for those RSI events — not live exits.
+</div>
+
+<h2>4. Levers</h2>
+<p>House values from <code>run_rsi.bat</code> / DailyRun. Effects are directional tendencies — not guarantees.
+Research A/B knobs below stay off unless a later stamp adopts them.</p>
+"""
+        + levers([
+            ("<code>rsi_ob</code>", "Prior-bar “was hot” line that arms the setup", "<strong>70</strong>", "Higher → fewer armed setups"),
+            ("<code>rsi_os</code>", "Neutral-band floor (below = oversold, not a buy)", "<strong>30</strong>", "Higher floor → fewer deep pullbacks"),
+            ("<code>rsi_max_trigger</code>", "Trigger RSI must be strictly below this", "<strong>60</strong>", "Lower → cooler entries, fewer trades"),
+            ("<code>rsi_min_atr_pct</code>", "14-day ATR must be ≥ this % of trigger close", "<strong>2.93</strong>", "Higher → fewer quiet names. Preference adopt vs prior 5.0"),
+            ("<code>rsi_exit</code>", "Sell when RSI reaches this again (next open)", "<strong>70</strong>", "Higher → longer holds / fewer OVERBOUGHT exits"),
+            ("<code>rsi_roll_from_max</code>", "EXIT: flatten next open when in-trade max RSI − now ≥ this (0 = off)", "<strong>8</strong>", "Tighter roll → more RSI_ROLL, shorter holds. Engine default is 0; house is 8"),
+            ("<code>rsi_time_stop_days</code>", "Calendar-day clock from entry (0 = off)", "<strong>20</strong>", "Shorter → more TIME exits"),
+            ("<code>rsi_entry_on</code>", "Fill at trigger close vs next open", "<strong>next_open</strong>", "close = same-bar fill (research only)"),
+            ("<code>rsi_sheet_notional</code>", "Dummy sheet cash per name (Closed $ PnL scale)", "<strong>10000</strong>", "Kelly / risk-frac A/Bs are research only — house stays $10k"),
+            ("<code>rsi_min_dist_to_52w_high_pct_at_trigger</code>", "Keep if distance-to-52-week-high % ≥ X (0 = off)", "<strong>0</strong> (off)", "Do not pass 7.18 — that DailyRun wire was reverted"),
+            ("Universe CSV", "Whitelist symbols", "<strong>149</strong> High-FIT / IS-good", "ALL / research CSVs must not steal the house pin"),
+        ])
+        + """
+<h2>5. Universe / status</h2>
+"""
+        + kv([
+            ("Status", "<strong>DailyRun official TBN sleeve</strong> — preference-adopt, not walk-forward gold"),
+            ("TBN mode", "<code>rsi_mode=true</code> (early dispatch in <code>rocket_tbn.py</code>)"),
+            ("Runner", "<code>run_rsi.bat</code> · DailyRun step [10c/13] · <code>SKIP_RSI=1</code> to skip"),
+            ("Universe", "<code>drive/universes/rsi_universe.csv</code> (N=149; copy of <code>RSIN_HighFIT_ISgood_maxrsi60_20260911.csv</code>)"),
+            ("Live list", "<strong>Watchlist</strong> — no Scanner output"),
+            ("Sizing", "Dummy <strong>$10k</strong> sheet notional (<code>rsi_sheet_notional=10000</code>). Host 500k / 2× / 0.6 flags are neutralized for this book’s $ PnL."),
+            ("House pin", "<code>drive/RSI_house_last_run_ts.txt</code> — ALL / research lists must not steal it"),
+            ("Outputs", "<code>drive/RSI_*_&lt;ts&gt;.*</code> — Closed / Open / Watchlist / Summary / Report / Audit / Equity / LatestRun copies"),
+            ("Adopt (roll-8)", "<code>drive/paul_experiments/rsi_roll_ab_20260916/</code>"),
+            ("Prior ATR% adopt", "<code>drive/paul_experiments/rsi_atr293_dailyrun_20260916/</code> (replaced house ATR% 5)"),
+            ("Reverted wire", "<code>drive/paul_experiments/rsi_mindist52_718_20260916/</code> — 7.18 min-dist is off"),
+            ("IS / OOS", "IS = entry before 2024-01-01; OOS = 2024+ — report-only"),
+        ])
+        + """
+<h2>6. Caveats</h2>
+<ul>
+  <li><strong>Not Relative Strength vs SPY.</strong> Prefix <code>RSI_*</code> is this sleeve; <code>RS_*</code> is the other.</li>
+  <li>No price stop and no dollar target. A gap through the next-open sell is the live risk.</li>
+  <li>Dummy $10k notional means Closed dollar columns are sheet-scale, not a 500k deployable book. Do not change DailyRun host sizing from this page.</li>
+  <li>Watchlist is the live surface. Convergence / reports that look for <code>RSI_Scanner</code> will show missing — that is expected.</li>
+  <li>Roll-8 and ATR% 2.93 are preference adopts, not walk-forward gold. OOS is report-only; do not retune to “fix” OOS.</li>
+  <li>Optional trigger DNA (7.18 min-dist, rel-vol, RSI-drop) stays off in house. Passing them silently is a different system.</li>
+  <li>Never pass <code>entry_start_date</code> / <code>entry_end_date</code> on production runs (research shop only).</li>
+  <li><code>run_rsi.bat ALL</code> / research CSVs write their own stamps and must not overwrite <code>RSI_house_last_run_ts.txt</code>.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_rsi.bat</code> — production CLI + freeze comments</li>
+  <li><span class="path">stock_analysis/rocket_rsi.py</span> — <code>rsi_mode</code> engine</li>
+  <li><span class="path">drive/universes/rsi_universe.csv</span> — house 149</li>
+  <li><span class="path">drive/paul_experiments/rsi_roll_ab_20260916/</span> — roll-8 EXIT adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr293_dailyrun_20260916/</span> — ATR% 2.93 adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr5_dailyrun_20260914/</span> — prior ATR% 5 house</li>
+  <li><a href="../tbn_philosophy.html#rsi">TBN Philosophy § RSI</a> · <a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+""",
+        footer="Canonical RSI write-up · Twin Beacon Networks (TBN) · production knobs from run_rsi.bat",
+    )
+
+
 def wrl() -> str:
     return page(
         title="WRL — Weekly Range / Swing",
-        eyebrow="Research · Weekly Range / Swing",
+        eyebrow="DailyRun · Weekly Range / Swing · official 6-sys mix — not gold",
         lede=(
             "Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. "
             "Watch a daily close in the lower pocket; buy the next session if price trades up out of it. "
-            "Targets are last week’s high, then the swing high."
+            "House exit (2026-09-22): sell 100% at the walk-back swing high."
         ),
-        badge_class="badge-bad",
-        badge_text="Research candidate — not DailyRun",
+        badge_class="badge-warn",
+        badge_text="DailyRun wired — official 6-sys mix — not gold",
         meta=(
             "<span>Mode <code>wrl_mode=true</code></span>"
             "<span>Runner <code>run_wrl.bat</code></span>"
@@ -1167,8 +1343,10 @@ def wrl() -> str:
             "<span>Host <span class='path'>stock_analysis/rocket_wrl.py</span></span>"
         ),
         body="""
-<div class="callout bad">
-  <strong>Not production gold. Not a DailyRun numbered step. Not in the $500k allocation mix.</strong>
+<div class="callout warn">
+  <strong>DailyRun wired. Official 6-sys mix. Not gold.</strong>
+  Adopt stamp <code>wrl_dailyrund_6sys_20260922</code>. Parent 5-vs-6 was HOLD on quality
+  (6-sys more dollars; Max DD 10.4%→17.2%; WR / Avg / PF softened). Paul adopted anyway.
   Do not treat Watchlist rows as same-day fills. The last bar closing in the zone only arms
   <em>tomorrow’s</em> breakout check.
 </div>
@@ -1267,7 +1445,7 @@ def wrl() -> str:
 <ul>
   <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
   <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
-  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. House <code>TARGET_PRICE</code> = swing high (full exit). <code>TARGET2_PRICE</code> unused unless a leftover scale lot exists. Published <code>WRL_Closed_260906140457</code> is the old scale book until the next production run.</li>
 </ul>
 
 <h2>6. Exits</h2>
@@ -1276,20 +1454,20 @@ def wrl() -> str:
 <table class="sortable">
   <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
   <tbody>
-    <tr><td><code>scale</code> (default)</td><td>50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
-    <tr><td><code>range</code></td><td>Full size out at range high.</td></tr>
-    <tr><td><code>swing</code></td><td>Full size out at swing high.</td></tr>
+    <tr><td><code>swing</code> (default)</td><td>Sell 100% at the walk-back swing high. <code>wrl_scale_frac</code> unused.</td></tr>
+    <tr><td><code>range</code></td><td>Full size out at last week’s range high.</td></tr>
+    <tr><td><code>scale</code></td><td>Leftover: 50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
   </tbody>
 </table>
 </div>
-<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
+<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>. Min-zone off. Cooldown unset. DailyRun house default — not gold.</p>
 
 <h2>7. How to run</h2>
 <div class="card">
   <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
-  <p><code>run_wrl.bat</code> — Mag10 if <code>drive\\universes\\WRL_universe.csv</code> is missing.</p>
+  <p><code>run_wrl.bat</code> — house <code>drive\\universes\\WRL_universe.csv</code> (29 names). Mag10 only if that file is missing.</p>
   <p><code>run_wrl.bat drive\\universes\\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
-  <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p><code>run_wrl.bat ALL</code> — full universe. Default <code>WRL_TARGET_MODE=swing</code>. Override: <code>set WRL_TARGET_MODE=swing|range|scale</code>.</p>
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 
@@ -1300,18 +1478,19 @@ def wrl() -> str:
   <li>Keep a watch alive for more than one session. Cancel the buy stop at the close if it was not hit.</li>
   <li>Wait for the day’s high to print, then market-buy — that is chasing. The buy stop must be working at the range low.</li>
   <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
-  <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
+  <li>Call this gold. DailyRun wire ≠ gold. Parent 5-vs-6 was HOLD on quality. Do not retune OOS.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
   <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
   <li><code>run_wrl.bat</code> / <code>run_wrl_ab.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
-  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers)</li>
+  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers; historical control was scale)</li>
+  <li>House adopt 2026-09-22: <span class="path">drive/paul_experiments/wrl_adopt_exitswing_default_20260922/</span></li>
   <li><span class="path">tools/test_wrl_levels.py</span> · <span class="path">tools/run_wrl_ab.py</span></li>
 </ul>
 """,
-        footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · research only",
+        footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · DailyRun wire / official 6-sys — not gold",
     )
 
 
@@ -1606,6 +1785,7 @@ PAGES: list[tuple[str, str, object]] = [
     ("wpbr.html", "WPBR_System_Guide.html", wpbr),
     ("mts.html", "MTS_System_Guide.html", mts),
     ("vz.html", "VZ_System_Guide.html", vz),
+    ("rsi.html", "RSI_System_Guide.html", rsi),
     ("wrl.html", "WRL_System_Guide.html", wrl),
     ("mvcp.html", "MVCP_System_Guide.html", mvcp),
     ("ind.html", "IND_System_Guide.html", ind),
@@ -1622,7 +1802,8 @@ INDEX_CARDS = [
     ("wpbr.html", "gold", "Production", "WPBR — Pivot Break and Retest", "Weekly pivot zones, weekly breakout + confirm, daily hold-above retest."),
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
     ("vz.html", "gold", "Production", "VZ — Volume Zone", "Max-volume HL zones; break → retest. DailyRun official TBN (Paul78.142; 4% Average True Range (ATR) floor at trigger; stop at zone low − 0.25×ATR)."),
-    ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
+    ("rsi.html", "gold", "Production", "RSI — Relative Strength Index", "Wilder RSI(14) heat gauge (not RS vs SPY); cool-off buy after a hot run. DailyRun sleeve — not walk-forward gold."),
+    ("wrl.html", "gold", "DailyRun", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; DailyRun sleeve in official 6-sys mix — not gold."),
     ("mom.html", "research", "Research", "MOM — Momentum (Clenow)", "Weekly vol-adjusted momentum rank + ATR sizing. Research candidate — not DailyRun."),
     ("mvcp.html", "retired", "Retired", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21)."),
     ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),

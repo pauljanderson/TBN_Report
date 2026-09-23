@@ -2164,9 +2164,10 @@ def _zone_date_span(
     Semantics (documented for chart UX; signals are unchanged):
       Begin: ``ZONE_START`` if present; else **max_vol_date** from ``ZONE_ID``
         (zone formation day); else rolling first_active; else trade ``DATE_OPENED``.
-      End: ``ZONE_END`` if present; else **last date the zone was the rolling 126-bar
-        max-vol winner** (regime end from ``active_spans``); else trade ``DATE_CLOSED``;
-        else as-of chart end for still-open / still-active zones.
+      End: ``ZONE_END`` if present; else for Volume Zone (VZ) ``HL_``/``OC_`` trigger
+        rows **trade close / chart end** so the trigger box stays on-screen after a
+        newer max-vol winner is written; else last rolling-126 winner day; else
+        trade ``DATE_CLOSED``; else as-of chart end for still-open zones.
 
     Prefer reconstructing active intervals in the plot path (avoids re-running VZ /
     adding Closed columns). Optional ``ZONE_START``/``ZONE_END`` override when present.
@@ -2186,7 +2187,14 @@ def _zone_date_span(
 
     # Begin: formation day (max-vol) preferred over first_active (crown start).
     begin = z_start or max_vol_dt or first_act or opened
-    end = z_end or last_act or closed or chart_end
+    zid = str(_col(row, "ZONE_ID", "ZONE ID", default="") or "").strip().upper()
+    is_vz_trigger = zid.startswith("HL_") or zid.startswith("OC_")
+    if is_vz_trigger:
+        # Keep the trigger High–Low box through the trade / last bar. Ending at
+        # last_act hid older trigger zones after a newer 126d winner took over.
+        end = z_end or closed or chart_end
+    else:
+        end = z_end or last_act or closed or chart_end
     if begin is None or end is None:
         return None, None
     begin = pd.Timestamp(begin).normalize()
@@ -2356,7 +2364,7 @@ def _plot_zone_bands(
                 seen_break.add(bd)
                 ax.axvline(bd, color="#a78bfa", ls=":", lw=1.1, alpha=0.85, zorder=2)
     if n_bands:
-        ax.plot([], [], color="#3b82f6", lw=8, alpha=0.35, label="Volume zone (active span)")
+        ax.plot([], [], color="#3b82f6", lw=8, alpha=0.35, label="VZ trigger zone")
     if seen_maxvol:
         ax.plot([], [], color="#f59e0b", ls="--", lw=1.2, label="Max-vol day")
     if seen_break:

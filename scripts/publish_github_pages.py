@@ -26,6 +26,7 @@ NAV_FOOTER = """
   · <a href="convergence.html">System convergence</a>
   · <a href="trendlines/index.html">Trendlines + VZ charts</a>
   · <a href="monthly.html">Monthly report (all systems)</a>
+  · <a href="live_style.html">Live-style compound growth</a>
   · <a href="system_performance.html">Historical performance</a>
   · <a href="system_setup_process.html">System setup process</a>
   · <a href="tbn_philosophy.html">TBN Philosophy</a>
@@ -38,6 +39,7 @@ SYSTEM_PAGE_SOURCES: dict[str, str] = {
     "rs.html": "systems/rs.html",
     "sb.html": "systems/sb.html",
     "vz.html": "systems/vz.html",
+    "rsi.html": "systems/rsi.html",
     "rl.html": "systems/rl.html",
     "yh.html": "systems/yh.html",
     "brt.html": "systems/brt.html",
@@ -45,6 +47,8 @@ SYSTEM_PAGE_SOURCES: dict[str, str] = {
     "mts.html": "systems/mts.html",
     "ind.html": "systems/ind.html",
     "mvcp.html": "systems/mvcp.html",
+    "wrl.html": "systems/wrl.html",
+    "mom.html": "systems/mom.html",
     "index.html": "systems/index.html",
 }
 
@@ -282,6 +286,21 @@ def generate_performance_report(drive: Path, docs_dir: Path) -> Path:
     return out
 
 
+def publish_live_style_official(*, docs_dir: Path, rerun: bool = False) -> Path:
+    """Wire official live-style compound pages + callouts into docs/."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "publish_live_style_official",
+        ROOT / "tools" / "publish_live_style_official.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    mod.run(rerun=rerun)
+    out = docs_dir / "live_style.html"
+    print(f"[pages] Live-style compound growth -> {out}")
+    return out
 def publish_convergence(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = _resolve_drive(drive) / "System_Convergence_Latest.html"
     if not src.is_file():
@@ -405,6 +424,25 @@ def ensure_logo_in_docs(docs_dir: Path) -> None:
             _copy_file_resilient(src, dst)
 
 
+# GitHub rejects blobs over 100MB; keep a margin so Pages push does not fail mid-DailyRun.
+GITHUB_BLOB_SOFT_LIMIT_BYTES = 95 * 1024 * 1024
+
+
+def _assert_pages_blob_size(path: Path, *, limit: int = GITHUB_BLOB_SOFT_LIMIT_BYTES) -> None:
+    if not path.is_file():
+        return
+    size = path.stat().st_size
+    if size <= limit:
+        return
+    mb = size / (1024 * 1024)
+    lim_mb = limit / (1024 * 1024)
+    raise RuntimeError(
+        f"{path.name} is {mb:.1f} MB (limit {lim_mb:.0f} MB for GitHub Pages push). "
+        "Investment report must not embed chart PNGs for every system-filter subset — "
+        "see generate_investment_report._chart_embed_subsets."
+    )
+
+
 def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = drive / "Investment_Report_Latest.html"
     if not src.is_file():
@@ -419,6 +457,7 @@ def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
                 if img_src.resolve() != img_dst.resolve():
                     _copy_file_resilient(img_src, img_dst)
                 break
+    _assert_pages_blob_size(dst)
     return dst
 
 
@@ -611,6 +650,22 @@ def main() -> int:
     elif include_investment:
         print(f"[pages] Skipped historical performance (no {performance_dst.name})")
 
+    # After monthly/performance land in docs/, publish compound growth + inject callouts.
+    if include_investment and not args.scanner_only:
+        try:
+            live_dst = publish_live_style_official(docs_dir=docs_dir, rerun=False)
+            if live_dst.is_file():
+                published.append(live_dst)
+                for extra in (
+                    docs_dir / "live_style_monthly.html",
+                    docs_dir / "live_style_compare.html",
+                ):
+                    if extra.is_file():
+                        published.append(extra)
+                show_nav = True
+        except Exception as exc:
+            print(f"[pages] Live-style official pages skipped: {exc}", file=sys.stderr)
+
     setup_src = _resolve_drive(drive) / "paul_experiments" / "system_setup_process.html"
     if setup_src.is_file():
         setup_dst = publish_setup_process(drive=drive, docs_dir=docs_dir, show_nav=False)
@@ -658,6 +713,7 @@ def main() -> int:
     print("[pages]   Convergence:  https://pauljanderson.github.io/TBN_Report/convergence.html")
     print("[pages]   Trendlines:   https://pauljanderson.github.io/TBN_Report/trendlines/index.html")
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
+    print("[pages]   Live-style:   https://pauljanderson.github.io/TBN_Report/live_style.html")
     print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
     print("[pages]   Setup process: https://pauljanderson.github.io/TBN_Report/system_setup_process.html")
     print("[pages]   TBN Philosophy: https://pauljanderson.github.io/TBN_Report/tbn_philosophy.html")

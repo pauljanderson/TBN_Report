@@ -1,5 +1,6 @@
 @echo off
-rem WRL — Weekly Range / Swing demand-zone breakout (research sleeve)
+rem WRL — Weekly Range / Swing demand-zone breakout
+rem DailyRun sleeve [10d/13] — official 6-sys mix. Not gold.
 rem Lives at the development root (same folder as DailyRun.bat / run_wpbr.bat / run_vz.bat):
 rem   C:\Users\songg\Downloads\stockresearch\run_wrl.bat
 rem Double-click or:  cd /d C:\Users\songg\Downloads\stockresearch  &  run_wrl.bat
@@ -10,9 +11,10 @@ rem
 rem Levels: previous completed week high/low = range; walk back weekly for a higher high
 rem (swing high) and a lower low (swing low). Watch when daily close is in
 rem [swing_low, range_low]; buy next day if price trades up through range_low.
-rem Targets: range high then swing high (default scale 50/50).
+rem House target (2026-09-22): full exit at walk-back swing high (WRL_TARGET_MODE=swing).
+rem Leftover: set WRL_TARGET_MODE=scale for 50/50 at last week's range high then swing high.
 rem
-rem Universe: drive\universes\WRL_universe.csv if present; else Mag10 default below.
+rem Universe: drive\universes\WRL_universe.csv (house 29 names). Mag10 only if that file is missing.
 rem Override: run_wrl.bat path\to\test_universe.csv
 rem          set WRL_UNIVERSE_CSV=...
 rem          set WRL_SYMBOLS=AAPL,MSFT
@@ -22,7 +24,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
-if not defined WRL_TARGET_MODE set "WRL_TARGET_MODE=scale"
+if not defined WRL_TARGET_MODE set "WRL_TARGET_MODE=swing"
 if not defined WRL_STOP set "WRL_STOP=1.0"
 if not defined WRL_MAX_POSITIONS set "WRL_MAX_POSITIONS=0"
 if not defined WRL_AGGRESSIVE set "WRL_AGGRESSIVE=true"

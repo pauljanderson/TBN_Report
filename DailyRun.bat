@@ -32,13 +32,21 @@ rem       ATR% at trigger adopt: drive\paul_experiments\vz_atr_trigger_adopt_202
 rem       Keep VZ_REQUIRE_HVN_OVERLAP=false (house freeze; do not default-on).
 rem     RSI (Relative Strength Index) step [10c/13]: call run_rsi.bat
 rem       House univ drive\universes\rsi_universe.csv (149 HighFIT/ISgood). Not RS (vs SPY).
-rem       Freeze: ob=70 os=30 exit=70 max_trigger=60 min_atr%=5 ts=20 next_open.
+rem       Freeze: ob=70 os=30 exit=70 max_trigger=60 min_atr%=2.93 ts=20 next_open
+rem         rsi_roll_from_max=8 (EXIT: in-trade max RSI − RSI >= 8, next open)
+rem         min_dist52=off (0). Do not pass 7.18 — that was a preference wire, now reverted.
 rem       Preference-adopt / DailyRun sleeve — not walk-forward gold. Skip: set SKIP_RSI=1
-rem       Adopt note: drive\paul_experiments\rsi_atr5_dailyrun_20260914\
-rem     WRL (Weekly Range / Swing) — RESEARCH sleeve; runner lives at this root:
-rem       C:\Users\songg\Downloads\stockresearch\run_wrl.bat
-rem       Standalone: run_wrl.bat  (Mag10 default; run_wrl.bat ALL = full universe)
-rem       Optional later: call run_wrl.bat behind SKIP_WRL — do not treat as gold from wiring alone.
+rem       Adopt note: drive\paul_experiments\rsi_roll_ab_20260916\
+rem       Prior ATR% adopt: drive\paul_experiments\rsi_atr293_dailyrun_20260916\
+rem       Prior ATR5 adopt: drive\paul_experiments\rsi_atr5_dailyrun_20260914\
+rem       Prior 7.18 dist wire (reverted): drive\paul_experiments\rsi_mindist52_718_20260916\
+rem     WRL (Weekly Range / Swing) step [10d/13]: call run_wrl.bat
+rem       House univ drive\universes\WRL_universe.csv (29 names, no add/drop).
+rem       Freeze: WRL_TARGET_MODE=swing (EXIT_swing — 100% off at swing high;
+rem         stop swing low; min-zone off; cooldown unset).
+rem       Official 6-sys live-style sleeve (SB/RSI/VZ/MTS/RL/WRL). Not gold.
+rem       Skip: set SKIP_WRL=1
+rem       Adopt: drive\paul_experiments\wrl_dailyrund_6sys_20260922\
 rem     MVCP (Minervini VCP) — RETIRED 2026-08-21 from DailyRun and active reporting.
 rem       Not a DailyRun step (SKIP_MVCP removed). Standalone research only:
 rem       run_mvcp.bat / run_minervini_vcp.bat (engine + historical Closed stamps kept).
@@ -49,6 +57,11 @@ rem     set FORCE_GET=1           always run pygetallMore (override auto fresh s
 rem     set SKIP_FUND_SCORECARD=1 skip fund scorecard refresh + PIT snapshot (step 1b)
 rem     set FORCE_FUND_SCORECARD=1 ignore scorecard Yahoo TTL (full refresh)
 rem     set FUND_SCORECARD_TTL_DAYS=7  Yahoo multiples TTL (default 7)
+rem     Options chain archive (yfinance snapshot; NOT a sleeve / not gold / not reconcile):
+rem       Optional last step: call run_options_chain.bat — continues on Yahoo error.
+rem       Skip: set SKIP_OPTIONS_CHAIN=1
+rem       Standalone: run_options_chain.bat
+rem       Freeze: drive\paul_experiments\options_chain_archive_20260917\BASELINE.md
 rem     DailyRun --noGet          same as SKIP_GET=1
 rem     DailyRun --no-get         same as SKIP_GET=1
 rem     Default (no flags): auto — skip step 1 when data is fresh (see tools/data_update_freshness.py)
@@ -316,16 +329,32 @@ if /i "%SKIP_VZ%"=="1" (
 
 rem --- 10c) RSI (Relative Strength Index) ----------------
 rem Default: run_rsi.bat loads drive\universes\rsi_universe.csv (149-name house)
-rem Freeze: rsi_ob=70 rsi_os=30 rsi_exit=70 max_trigger=60 min_atr%=5 ts=20 next_open
+rem Freeze: rsi_ob=70 rsi_os=30 rsi_exit=70 max_trigger=60 min_atr%=2.93 ts=20 roll_from_max=8 next_open min_dist52=off
 rem Not RS (Relative Strength vs SPY). Disable: set SKIP_RSI=1
 if /i "%SKIP_RSI%"=="1" (
   echo [10c/13] SKIPPED - run_rsi ^(SKIP_RSI=1^)
   echo [10c/13] SKIPPED - run_rsi ^(SKIP_RSI=1^)>>"%LOG%"
   "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" set RSI SKIPPED --reason "SKIP_RSI=1" >>"%LOG%" 2>&1
 ) else (
-  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr5/ts20^)
-  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr5/ts20^)>>"%LOG%"
+  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr2.93/ts20/roll8/min_dist52=off^)
+  echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr2.93/ts20/roll8/min_dist52=off^)>>"%LOG%"
   call "%~dp0run_rsi.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+
+rem --- 10d) WRL (Weekly Range / Swing) --------------------------------
+rem Default: run_wrl.bat loads drive\universes\WRL_universe.csv (29-name house)
+rem Freeze: WRL_TARGET_MODE=swing (EXIT_swing; stop swing low; min-zone off)
+rem Official 6-sys sleeve — not gold. Disable: set SKIP_WRL=1
+if /i "%SKIP_WRL%"=="1" (
+  echo [10d/13] SKIPPED - run_wrl ^(SKIP_WRL=1^)
+  echo [10d/13] SKIPPED - run_wrl ^(SKIP_WRL=1^)>>"%LOG%"
+  "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" set WRL SKIPPED --reason "SKIP_WRL=1" >>"%LOG%" 2>&1
+) else (
+  echo [10d/13] run_wrl ^(house WRL_universe.csv; TARGET_MODE=swing; EXIT_swing 29-name^)
+  echo [10d/13] run_wrl ^(house WRL_universe.csv; TARGET_MODE=swing; EXIT_swing 29-name^)>>"%LOG%"
+  set "WRL_TARGET_MODE=swing"
+  call "%~dp0run_wrl.bat" >>"%LOG%" 2>&1
   if errorlevel 1 goto :fail
 )
 
@@ -390,6 +419,24 @@ rem --- 13b) Investment report + GitHub Pages ---
 echo [13/13] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
+
+rem --- 14) Options chain archive (yfinance snapshot; archive only; NOT a sleeve)
+rem Not gold. Not a scanner. Not reconcile / LatestRun / house pins.
+rem Yahoo flake must not fail DailyRun — bat always exits 0; still continue on error.
+rem Skip: set SKIP_OPTIONS_CHAIN=1
+rem Freeze: drive\paul_experiments\options_chain_archive_20260917\BASELINE.md
+if /i "%SKIP_OPTIONS_CHAIN%"=="1" (
+  echo [14] SKIPPED - run_options_chain ^(SKIP_OPTIONS_CHAIN=1^)
+  echo [14] SKIPPED - run_options_chain ^(SKIP_OPTIONS_CHAIN=1^)>>"%LOG%"
+) else (
+  echo [14] run_options_chain ^(archive only; continue on Yahoo error^)
+  echo [14] run_options_chain ^(archive only; continue on Yahoo error^)>>"%LOG%"
+  call "%~dp0run_options_chain.bat" >>"%LOG%" 2>&1
+  if errorlevel 1 (
+    echo [14] WARN - options chain archive failed; DailyRun continues>>"%LOG%"
+    echo [14] WARN - options chain archive failed; DailyRun continues
+  )
+)
 
 echo DailyRun finished OK: %date% %time%>>"%LOG%"
 echo Log: %LOG%

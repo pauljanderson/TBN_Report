@@ -55,7 +55,7 @@ DEFAULT_DB_TABLE = "prices"
 DEFAULT_MODE = "incremental"
 DEFAULT_INCREMENTAL_DAYS = 7
 # One-time safety backfill (kept explicit so symbol gets full history even if a short file exists).
-FORCE_FULL_BACKFILL_SYMBOLS = {"P"}
+FORCE_FULL_BACKFILL_SYMBOLS = {"P", "EA"}  # EA: truncated stub 2026-08; force restore
 
 # Local CSV/DuckDB symbol -> Yahoo Finance download symbol.
 # Keep local names stable; only the yfinance request/column key uses the Yahoo form.
@@ -1408,7 +1408,10 @@ def _history_covers_start(output_file: str, start_date: str) -> bool:
         mx = pd.Timestamp(old["Date"].max()).normalize()
         age_days = (datetime.now().date() - mn.date()).days
         span_days = (mx - mn).days
-        if age_days <= 90:
+        # Recent IPO / listing: accept only if the file actually has a short
+        # dense series. Tiny truncated stubs (e.g. EA wiped to 6 bars) must NOT
+        # pass — otherwise incremental never restores 2010+ history.
+        if age_days <= 90 and len(old) >= 40 and span_days >= max(20, int(age_days * 0.5)):
             return True
         if len(old) >= BACKFILL_MIN_ROWS_LATE_START and span_days >= max(180, int(age_days * 0.65)):
             return True

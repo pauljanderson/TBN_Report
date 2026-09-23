@@ -106,15 +106,17 @@
 <div class="wrap">
   <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
   <header class="doc-head">
-    <p class="eyebrow">Research · Weekly Range / Swing</p>
+    <p class="eyebrow">DailyRun · Weekly Range / Swing · official 6-sys mix — not gold</p>
     <h1>WRL — Weekly Range / Swing</h1>
-    <p class="lede">Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. Watch a daily close in the lower pocket; buy the next session if price trades up out of it. Targets are last week’s high, then the swing high.</p>
-    <div class="badge badge-bad">Research candidate — not DailyRun</div>
+    <p class="lede">Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. Watch a daily close in the lower pocket; buy the next session if price trades up out of it. House exit (2026-09-22): sell 100% at the walk-back swing high.</p>
+    <div class="badge badge-warn">DailyRun wired — official 6-sys mix — not gold</div>
     <div class="meta-row"><span>Mode <code>wrl_mode=true</code></span><span>Runner <code>run_wrl.bat</code></span><span>Engine <span class='path'>stock_analysis/wrl_zones.py</span></span><span>Host <span class='path'>stock_analysis/rocket_wrl.py</span></span></div>
   </header>
 
-<div class="callout bad">
-  <strong>Not production gold. Not a DailyRun numbered step. Not in the $500k allocation mix.</strong>
+<div class="callout warn">
+  <strong>DailyRun wired. Official 6-sys mix. Not gold.</strong>
+  Adopt stamp <code>wrl_dailyrund_6sys_20260922</code>. Parent 5-vs-6 was HOLD on quality
+  (6-sys more dollars; Max DD 10.4%→17.2%; WR / Avg / PF softened). Paul adopted anyway.
   Do not treat Watchlist rows as same-day fills. The last bar closing in the zone only arms
   <em>tomorrow’s</em> breakout check.
 </div>
@@ -213,7 +215,7 @@
 <ul>
   <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
   <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
-  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. House <code>TARGET_PRICE</code> = swing high (full exit). <code>TARGET2_PRICE</code> unused unless a leftover scale lot exists. Published <code>WRL_Closed_260906140457</code> is the old scale book until the next production run.</li>
 </ul>
 
 <h2>6. Exits</h2>
@@ -222,20 +224,20 @@
 <table class="sortable">
   <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
   <tbody>
-    <tr><td><code>scale</code> (default)</td><td>50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
-    <tr><td><code>range</code></td><td>Full size out at range high.</td></tr>
-    <tr><td><code>swing</code></td><td>Full size out at swing high.</td></tr>
+    <tr><td><code>swing</code> (default)</td><td>Sell 100% at the walk-back swing high. <code>wrl_scale_frac</code> unused.</td></tr>
+    <tr><td><code>range</code></td><td>Full size out at last week’s range high.</td></tr>
+    <tr><td><code>scale</code></td><td>Leftover: 50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
   </tbody>
 </table>
 </div>
-<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
+<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>. Min-zone off. Cooldown unset. DailyRun house default — not gold.</p>
 
 <h2>7. How to run</h2>
 <div class="card">
   <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
-  <p><code>run_wrl.bat</code> — Mag10 if <code>drive\universes\WRL_universe.csv</code> is missing.</p>
+  <p><code>run_wrl.bat</code> — house <code>drive\universes\WRL_universe.csv</code> (29 names). Mag10 only if that file is missing.</p>
   <p><code>run_wrl.bat drive\universes\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
-  <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p><code>run_wrl.bat ALL</code> — full universe. Default <code>WRL_TARGET_MODE=swing</code>. Override: <code>set WRL_TARGET_MODE=swing|range|scale</code>.</p>
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 
@@ -246,18 +248,19 @@
   <li>Keep a watch alive for more than one session. Cancel the buy stop at the close if it was not hit.</li>
   <li>Wait for the day’s high to print, then market-buy — that is chasing. The buy stop must be working at the range low.</li>
   <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
-  <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
+  <li>Call this gold. DailyRun wire ≠ gold. Parent 5-vs-6 was HOLD on quality. Do not retune OOS.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
   <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
   <li><code>run_wrl.bat</code> / <code>run_wrl_ab.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
-  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers)</li>
+  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers; historical control was scale)</li>
+  <li>House adopt 2026-09-22: <span class="path">drive/paul_experiments/wrl_adopt_exitswing_default_20260922/</span></li>
   <li><span class="path">tools/test_wrl_levels.py</span> · <span class="path">tools/run_wrl_ab.py</span></li>
 </ul>
 
-  <footer>Canonical WRL write-up · Twin Beacon Networks (TBN) · research only</footer>
+  <footer>Canonical WRL write-up · Twin Beacon Networks (TBN) · DailyRun wire / official 6-sys — not gold</footer>
 </div>
 
 <script>

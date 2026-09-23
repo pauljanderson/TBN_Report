@@ -218,14 +218,23 @@ PHILOSOPHY = """<!DOCTYPE html>
   <a class="card" href="systems/brt.html"><span class="tag gold">Production</span><strong>BRT — Break and ReTest</strong><span class="blurb">Daily pivot-zone break → support retest on the TBN host.</span></a>
   <a class="card" href="systems/wpbr.html"><span class="tag gold">Production</span><strong>WPBR — Pivot Break and Retest</strong><span class="blurb">Weekly pivot zones, weekly breakout + confirm, daily hold-above retest.</span></a>
   <a class="card" href="systems/mts.html"><span class="tag gold">Production</span><strong>MTS — Magic Touch</strong><span class="blurb">STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline).</span></a>
-  <a class="card" href="systems/vz.html"><span class="tag research">Research</span><strong>VZ — Volume Zone</strong><span class="blurb">Max-volume HL zones; break → retest. Not DailyRun-wired.</span></a>
-  <a class="card" href="systems/wrl.html"><span class="tag research">Research</span><strong>WRL — Weekly Range / Swing</strong><span class="blurb">Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break.</span></a>
+  <a class="card" href="systems/vz.html"><span class="tag gold">Production</span><strong>VZ — Volume Zone</strong><span class="blurb">Max-volume HL zones; break → retest. DailyRun official TBN (Paul78.142, stop 0.25).</span></a>
+  <a class="card" href="systems/rsi.html" id="rsi"><span class="tag gold">Production</span><strong>RSI — Relative Strength Index</strong><span class="blurb">Wilder RSI(14) heat gauge (not RS vs SPY); cool-off buy after a hot run. DailyRun sleeve — not walk-forward gold.</span></a>
+  <a class="card" href="systems/wrl.html"><span class="tag gold">DailyRun</span><strong>WRL — Weekly Range / Swing</strong><span class="blurb">Previous-week range + walk-back swing high/low; official 6-sys sleeve — DailyRun wired, not gold.</span></a>
   <a class="card" href="systems/mvcp.html"><span class="tag retired">Retired</span><strong>MVCP — Minervini VCP</strong><span class="blurb">Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21).</span></a>
   <a class="card" href="systems/ind.html"><span class="tag deprecated">Deprecated</span><strong>IND — Indicator / TC</strong><span class="blurb">Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve.</span></a>
 </div>
 
+<p>
+  <strong>RSI</strong> (Relative Strength Index) is Wilder's 14-period heat gauge — not
+  <strong>RS</strong> (Relative Strength vs SPY).
+  Full write-up (what it is, buy / sell, freeze, universe):
+  <a href="systems/rsi.html">RSI — Relative Strength Index</a>.
+</p>
+
 <div class="callout warn">
-  Research pages (e.g. VZ) and retired notes (MVCP) are for process transparency — not live allocation advice.
+  Research pages (e.g. MOM) and retired notes (MVCP) are for process transparency — not live allocation advice.
+  Weekly Range / Swing (WRL) is DailyRun-wired in the official 6-sys mix — not gold.
 </div>
 
 <footer class="doc-foot">

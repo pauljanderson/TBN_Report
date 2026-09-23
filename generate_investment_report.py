@@ -5,8 +5,11 @@ Generate a Google-Docs-friendly HTML investment report for BRT / IND / RL / YH /
 Data sources:
   - Accounts_History full exports in Downloads (numbered or timestamped; recent-history sells merged in)
   - History_for_Account_<acct> (N).csv per-account exports (merged when newer than Accounts_History)
-  - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows)
+  - getTarget_output.csv + gettarget_positions.csv (authoritative open book; persists across Fidelity export windows).
+    gettarget_positions.csv is the file Paul edits. Publish/report must not drop manual or
+    watchlist rows (e.g. ESTC SB before a broker fill). getTarget.py writes getTarget_output.csv only.
   - closed_positions_log.csv — append-only permanent closed round-trips (survives rolling Fidelity export windows)
+    One Open/Closed row per (symbol, system): average cost, first buy date; trim ≠ close.
   - trade_system_registry.csv — canonical (symbol, purchase_date) -> system
   - personal_holdings_exclude.csv — personal / non-system broker lots to keep off this report
   - sold_symbols_blocklist.csv — fully sold tickers; Open never resurrects them unless removed here
@@ -17,6 +20,10 @@ Data sources:
   - VZ: VZ_house_last_run_ts.txt / house-sized pin / latest house Summary (Paul78.142; not ALL)
   - RSI: RSI_house_last_run_ts.txt / house-sized pin (Relative Strength Index; not RS vs SPY)
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
+  - Live-style Suggested shares on every Scanner/Watchlist (BRT/IND/RL/YH/MTS/WPBR/RS/SB/VZ/RSI)
+    (stock_analysis/live_style_sizing.py + drive/live_style_account.json):
+    risk=min(1% BOM equity, $50k), shares≤1% ADV20, notional≤17.5% current equity.
+    Engine Closed CSVs stay on house dummy notionals for reconcile.
 
 Personal vs system (open book):
   - System purchase: row in gettarget_positions.csv with a report system (usually via mobile_trades BUY + system).
@@ -35,7 +42,7 @@ import io
 import json
 import re
 import shutil
-from collections import deque
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
@@ -63,6 +70,21 @@ if str(ROOT / "stock_analysis") not in sys.path:
     sys.path.insert(0, str(ROOT / "stock_analysis"))
 from mts_universe import MTS_SYMBOLS as _MTS_SYMBOLS_LIST
 from vec_zones import hvn_gate_fields_at_bar
+
+try:
+    from live_style_sizing import (  # type: ignore
+        enrich_scan_dataframe as _enrich_live_style_scan,
+        ensure_account_json as _ensure_live_style_account,
+        open_notional_by_symbol as _open_notional_by_symbol,
+        risk_dollar as _live_style_risk_dollar,
+    )
+except ImportError:
+    from stock_analysis.live_style_sizing import (  # type: ignore
+        enrich_scan_dataframe as _enrich_live_style_scan,
+        ensure_account_json as _ensure_live_style_account,
+        open_notional_by_symbol as _open_notional_by_symbol,
+        risk_dollar as _live_style_risk_dollar,
+    )
 
 DOWNLOADS = Path(r"C:\Users\songg\Downloads")
 DRIVE = ROOT / "Drive"
@@ -103,13 +125,14 @@ CLOSED_SINCE = date(2026, 5, 25)
 MIN_POSITION_VALUE = 47_500.0
 # Still show smaller lots when (symbol, entry_date) is in the system map (registry/engine).
 MIN_REGISTRY_TRACKED_VALUE = 5_000.0
-REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI")
+REPORT_SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 REPORT_TITLE = f"{len(REPORT_SYSTEMS)}-System Investment Report"
 REPORT_SYSTEM_LABELS = {
     "IND": "IND (deprecated)",
     "SB": "SB",
     "VZ": "VZ",
     "RSI": "RSI",
+    "WRL": "WRL",
 }
 _SYSTEM_ALIASES = {"PBR": "WPBR"}
 
@@ -314,10 +337,14 @@ def _excluded_open_without_gettarget(
     personal_exclude: frozenset[str],
     gettarget_keys: set[tuple[str, str]],
     sold_blocklist: Optional[frozenset[str]] = None,
+    system: str = "",
 ) -> bool:
     """Drop from Open: exclude/sold-blocklist wins unless gettarget_positions has this lot."""
     sym = symbol.upper()
-    if (sym, buy_date.isoformat()) in gettarget_keys:
+    sys = (system or "").upper()
+    if (sym, sys) in gettarget_keys or (sym, buy_date.isoformat()) in gettarget_keys:
+        return False
+    if any(s == sym for s, _k in gettarget_keys):
         return False
     if sold_blocklist and sym in sold_blocklist:
         return True
@@ -723,19 +750,118 @@ def _append_closed_positions_log(path: Path, trades: list[ClosedTrade]) -> int:
     return len(new_rows)
 
 
+def _closed_same_sleeve(a: ClosedTrade, b: ClosedTrade) -> bool:
+    return a.symbol.upper() == b.symbol.upper() and (a.system or "").upper() == (
+        b.system or ""
+    ).upper()
+
+
+def _closed_interval_overlaps(a: ClosedTrade, b: ClosedTrade) -> bool:
+    """True when two closed rows are the same sleeve and date ranges overlap."""
+    if not _closed_same_sleeve(a, b):
+        return False
+    return not (a.sell_date < b.buy_date or b.sell_date < a.buy_date)
+
+
+def _sum_closed_slices(slices: list[ClosedTrade]) -> ClosedTrade:
+    total_qty = sum(float(t.qty) for t in slices)
+    if total_qty <= 1e-9:
+        return slices[0]
+    avg_buy = sum(float(t.qty) * float(t.buy_price) for t in slices) / total_qty
+    avg_sell = sum(float(t.qty) * float(t.sell_price) for t in slices) / total_qty
+    pnl_dollars = sum(float(t.pnl_dollars) for t in slices)
+    pnl_pct = (avg_sell - avg_buy) / avg_buy * 100.0 if avg_buy else 0.0
+    orig = sum(float(t.original_qty or t.qty) for t in slices)
+    pv = sum(float(t.purchase_value or 0) or _position_value(t.original_qty or t.qty, t.buy_price) for t in slices)
+    system = next((t.system for t in slices if t.system), slices[0].system)
+    return ClosedTrade(
+        symbol=slices[0].symbol,
+        system=system,
+        buy_date=min(t.buy_date for t in slices),
+        buy_price=avg_buy,
+        sell_date=max(t.sell_date for t in slices),
+        sell_price=avg_sell,
+        qty=total_qty,
+        pnl_pct=pnl_pct,
+        pnl_dollars=pnl_dollars,
+        original_qty=orig,
+        purchase_value=pv,
+    )
+
+
+def _collapse_closed_cluster(slices: list[ClosedTrade]) -> ClosedTrade:
+    """One flatten row: prefer an encompassing aggregate, else sum complementary slices."""
+    if len(slices) == 1:
+        return slices[0]
+    by_qty = sorted(slices, key=lambda t: -float(t.qty))
+    biggest, rest = by_qty[0], by_qty[1:]
+    rest_qty = sum(float(t.qty) for t in rest)
+    if rest and abs(float(biggest.qty) - rest_qty) <= max(0.02, 0.002 * float(biggest.qty)):
+        return biggest
+    return _sum_closed_slices(slices)
+
+
+def _collapse_closed_rightsizing(trades: list[ClosedTrade]) -> list[ClosedTrade]:
+    """Merge overlapping same-sleeve Closed rows (old FIFO slices + new flatten)."""
+    remaining = list(trades)
+    clusters: list[list[ClosedTrade]] = []
+    while remaining:
+        seed = remaining.pop(0)
+        cluster = [seed]
+        changed = True
+        while changed:
+            changed = False
+            keep: list[ClosedTrade] = []
+            for t in remaining:
+                if any(_closed_interval_overlaps(t, c) for c in cluster):
+                    cluster.append(t)
+                    changed = True
+                else:
+                    keep.append(t)
+            remaining = keep
+        clusters.append(cluster)
+    out = [_collapse_closed_cluster(c) for c in clusters]
+    out.sort(key=lambda t: (t.sell_date, t.symbol, t.system))
+    return out
+
+
+def _drop_trim_closes_for_open(
+    closed: list[ClosedTrade],
+    open_agg: dict[tuple[str, str], Lot],
+    open_keys: Optional[set[tuple[str, str]]] = None,
+) -> list[ClosedTrade]:
+    """Hide Closed rows that are trims of a sleeve still shown on Open."""
+    if open_keys is None:
+        keys = {k for k, lot in open_agg.items() if float(lot.qty) > 1e-9}
+    else:
+        keys = open_keys
+    open_index = {
+        _lot_key(open_agg[k]): open_agg[k]
+        for k in keys
+        if k in open_agg and float(open_agg[k].qty) > 1e-9
+    }
+    out: list[ClosedTrade] = []
+    for t in closed:
+        lot = open_index.get(_position_key(t.symbol, t.system))
+        if lot is not None and t.buy_date >= lot.buy_date:
+            continue
+        out.append(t)
+    return out
+
+
 def _merge_closed_for_report(
     log_trades: list[ClosedTrade],
     fifo_trades: list[ClosedTrade],
 ) -> list[ClosedTrade]:
-    """Union by dedup key; log entry wins on conflict."""
+    """Union by dedup key; skip log slices already covered by a current flatten."""
     merged: dict[tuple, ClosedTrade] = {}
     for t in fifo_trades:
         merged[_closed_trade_dedup_key(t)] = t
     for t in log_trades:
+        if any(_closed_interval_overlaps(t, f) for f in fifo_trades):
+            continue
         merged[_closed_trade_dedup_key(t)] = t
-    out = list(merged.values())
-    out.sort(key=lambda x: (x.sell_date, x.symbol))
-    return out
+    return _collapse_closed_rightsizing(list(merged.values()))
 
 
 def _sync_closed_positions_log(
@@ -1134,17 +1260,21 @@ def _ensure_open_lots_for_registry(
     downloads: Path,
     personal_exclude: Optional[frozenset[str]] = None,
 ) -> tuple[dict[tuple[str, str], Lot], list[Lot]]:
-    """Ensure every gettarget_positions.csv row has a Lot (search older exports for qty if needed)."""
+    """Ensure every gettarget (symbol, system) has a Lot (search older exports for qty if needed)."""
     personal_exclude = personal_exclude or frozenset()
     for pos in _load_tracked_position_rows(positions_path):
         sym = pos["symbol"]
         bd: date = pos["buy_date"]
-        key = (sym, bd.isoformat())
-        if key in open_agg:
-            continue
+        date_key = (sym, bd.isoformat())
         px = float(pos.get("entry_price") or 0)
         if px <= 0:
-            px = float(entry_prices.get(key, 0) or 0)
+            px = float(entry_prices.get(date_key, 0) or 0)
+        sys = pos.get("system") or sys_map.get(date_key) or _lookup_system(
+            sym, bd, px, sys_map, entry_prices, personal_exclude=personal_exclude
+        )
+        key = _position_key(sym, sys)
+        if key in open_agg and float(open_agg[key].qty) > 1e-9:
+            continue
         qty = float(pos.get("qty") or 0)
         if qty <= 0:
             for row in _find_buy_rows_in_exports(downloads, sym, bd, px):
@@ -1157,9 +1287,6 @@ def _ensure_open_lots_for_registry(
                     continue
         if qty <= 0 or px <= 0:
             continue
-        sys = pos.get("system") or sys_map.get(key) or _lookup_system(
-            sym, bd, px, sys_map, entry_prices, personal_exclude=personal_exclude
-        )
         lot = Lot(sym, bd, px, qty, sys, original_qty=qty)
         open_agg[key] = lot
         open_lots.append(lot)
@@ -1167,7 +1294,31 @@ def _ensure_open_lots_for_registry(
 
 
 def _registry_open_keys(positions_path: Path) -> set[tuple[str, str]]:
-    return {(p["symbol"], p["buy_date"].isoformat()) for p in _load_tracked_position_rows(positions_path)}
+    """One key per (symbol, system) sleeve — add-on dates do not create extra Open rows."""
+    keys: set[tuple[str, str]] = set()
+    for p in _load_tracked_position_rows(positions_path):
+        keys.add(_position_key(p["symbol"], p.get("system") or ""))
+    return keys
+
+
+def _broker_buy_date_keys(acct: pd.DataFrame) -> set[tuple[str, str]]:
+    """(SYMBOL, YYYY-MM-DD) for YOU BOUGHT rows in the merged Fidelity book."""
+    keys: set[tuple[str, str]] = set()
+    if acct is None or acct.empty:
+        return keys
+    for _, r in acct.iterrows():
+        if "YOU BOUGHT" not in str(r.get("Action", "")):
+            continue
+        try:
+            sym = str(r.get("Symbol", "")).strip().upper()
+            rd = r.get("Run Date")
+            if not sym or rd is None or (isinstance(rd, float) and pd.isna(rd)):
+                continue
+            d = rd.date() if hasattr(rd, "date") else pd.Timestamp(rd).date()
+            keys.add((sym, d.isoformat()))
+        except Exception:
+            continue
+    return keys
 
 
 def _prune_gettarget_positions(
@@ -1175,26 +1326,48 @@ def _prune_gettarget_positions(
     open_agg: dict[tuple[str, str], "Lot"],
     *,
     sold_blocklist: Optional[frozenset[str]] = None,
+    fully_sold: Optional[set[str]] = None,
+    broker_buy_keys: Optional[set[tuple[str, str]]] = None,
 ) -> list[str]:
     """
-    Drop gettarget_positions rows that are no longer broker-open (FIFO).
+    Drop gettarget_positions rows only when that exact lot was a broker buy and is gone.
 
-    Also drops any row whose symbol is on the sold blocklist. Returns pruned symbols.
+    Keep manual / watchlist / pending-fill rows (no YOU BOUGHT on that purchase_date),
+    even if the symbol is historically net-flat or on the sold blocklist. Missing from
+    the current Open book is not a sell — that is how ESTC SB kept disappearing.
+
+    Returns pruned symbols.
     """
     tracked = _load_tracked_position_rows(positions_path)
     if not tracked:
         return []
     sold_blocklist = sold_blocklist or frozenset()
+    fully_sold = set(fully_sold or ())
+    broker_buy_keys = set(broker_buy_keys or ())
+    open_sleeves = {
+        _lot_key(lot) for lot in open_agg.values() if float(lot.qty) > 1e-9
+    }
+    open_syms = {
+        lot.symbol for lot in open_agg.values() if float(lot.qty) > 1e-9
+    }
     keep: list[dict] = []
     pruned: list[str] = []
     for pos in tracked:
         sym = pos["symbol"]
-        key = (sym, pos["buy_date"].isoformat())
-        if sym in sold_blocklist:
-            pruned.append(sym)
-            continue
-        lot = open_agg.get(key)
-        if lot is None or float(lot.qty) <= 1e-9:
+        buy_key = (sym, pos["buy_date"].isoformat())
+        sleeve = _position_key(sym, pos.get("system") or "")
+        had_broker_buy = buy_key in broker_buy_keys
+        sleeve_open = sleeve in open_sleeves or (
+            not pos.get("system")
+            and any(lot.symbol == sym and float(lot.qty) > 1e-9 for lot in open_agg.values())
+        )
+        confirmed_sold_lot = (
+            had_broker_buy
+            and not sleeve_open
+            and sym not in open_syms
+            and (sym in sold_blocklist or sym in fully_sold)
+        )
+        if confirmed_sold_lot:
             pruned.append(sym)
             continue
         keep.append(pos)
@@ -1623,12 +1796,28 @@ def _tracked_open_symbols(positions_path: Path) -> set[str]:
     return out
 
 
+def _position_key(symbol: str, system: str) -> tuple[str, str]:
+    return (str(symbol).strip().upper(), str(system or "").strip().upper())
+
+
 def _lot_key(lot: Lot) -> tuple[str, str]:
-    return (lot.symbol, lot.buy_date.isoformat())
+    return _position_key(lot.symbol, lot.system)
+
+
+_SYS_IN_DESC_RE = re.compile(r"\bsystem=([A-Za-z0-9]+)\b", re.I)
+
+
+def _system_from_broker_row(row: Any) -> str:
+    """Optional system= tag on mobile supplement Description (keeps RS+SB sells apart)."""
+    desc = str(row.get("Description", "") or "")
+    m = _SYS_IN_DESC_RE.search(desc)
+    if not m:
+        return ""
+    return _normalize_report_system(m.group(1).strip().upper())
 
 
 def _aggregate_lots_by_entry(lots: list[Lot]) -> dict[tuple[str, str], Lot]:
-    """One row per (symbol, entry_date) — never merge different systems or entries."""
+    """One row per (symbol, system) — rightsizing adds merge; RS+SB stay separate."""
     buckets: dict[tuple[str, str], list[Lot]] = {}
     for lot in lots:
         buckets.setdefault(_lot_key(lot), []).append(lot)
@@ -1638,12 +1827,14 @@ def _aggregate_lots_by_entry(lots: list[Lot]) -> dict[tuple[str, str], Lot]:
         if total_qty <= 1e-9:
             continue
         cost = sum(p.qty * p.buy_price for p in parts)
+        first = min(parts, key=lambda p: p.buy_date)
         out[key] = Lot(
-            parts[0].symbol,
-            parts[0].buy_date,
+            first.symbol,
+            first.buy_date,
             cost / total_qty,
             total_qty,
-            parts[0].system,
+            first.system,
+            original_qty=sum(float(p.original_qty or p.qty) for p in parts),
         )
     return out
 
@@ -1654,14 +1845,107 @@ def _gettarget_row_for_lot(gt_df: pd.DataFrame, lot: Lot) -> Optional[pd.Series]
     sym = lot.symbol
     bd = lot.buy_date
     mask = gt_df["Symbol"].astype(str).str.upper() == sym
+    if not mask.any():
+        return None
     if "PurchaseDate" in gt_df.columns:
         pds = pd.to_datetime(gt_df["PurchaseDate"], errors="coerce").dt.date
         dated = mask & (pds == bd)
         if dated.any():
             return gt_df.loc[dated].iloc[0]
-    if mask.sum() == 1:
-        return gt_df.loc[mask].iloc[0]
-    return None
+        sub = gt_df.loc[mask]
+        if len(sub) == 1:
+            return sub.iloc[0]
+        try:
+            deltas = (
+                pd.to_datetime(sub["PurchaseDate"], errors="coerce") - pd.Timestamp(bd)
+            ).abs()
+            return sub.loc[deltas.idxmin()]
+        except Exception:
+            return sub.iloc[0]
+    return gt_df.loc[mask].iloc[0]
+
+
+@dataclass
+class _RunningPos:
+    lot: Lot
+    bought_qty: float
+    bought_notional: float
+    sold_qty: float
+    sold_notional: float
+
+
+def _open_sleeves_for_symbol(
+    positions: dict[tuple[str, str], _RunningPos], symbol: str
+) -> list[tuple[str, str]]:
+    sym = symbol.upper()
+    return [k for k, pos in positions.items() if k[0] == sym and pos.lot.qty > 1e-9]
+
+
+def _pick_sleeve_for_sell(
+    positions: dict[tuple[str, str], _RunningPos],
+    symbol: str,
+    tagged_system: str = "",
+) -> Optional[tuple[str, str]]:
+    cands = _open_sleeves_for_symbol(positions, symbol)
+    if not cands:
+        return None
+    tag = (tagged_system or "").upper()
+    if tag:
+        tagged = [k for k in cands if k[1] == tag]
+        if tagged:
+            return tagged[0]
+    if len(cands) == 1:
+        return cands[0]
+    return min(cands, key=lambda k: (positions[k].lot.buy_date, k[1]))
+
+
+def _resolve_buy_sleeve(
+    positions: dict[tuple[str, str], _RunningPos],
+    symbol: str,
+    looked_up: str,
+    tagged_system: str = "",
+) -> tuple[str, str]:
+    """
+    Rightsizing add joins the open sleeve. Only an explicit tag (mobile system=
+    or exact gettarget/registry date) can open a second system on the same symbol.
+    Fuzzy/legacy lookup must not split an add onto a new sleeve.
+    """
+    explicit = (tagged_system or "").strip().upper()
+    cands = _open_sleeves_for_symbol(positions, symbol)
+    if explicit and any(k[1] == explicit for k in cands):
+        return _position_key(symbol, explicit)
+    if explicit and explicit in REPORT_SYSTEMS and all(k[1] != explicit for k in cands):
+        return _position_key(symbol, explicit)
+    if len(cands) == 1:
+        return cands[0]
+    if explicit:
+        return _position_key(symbol, explicit)
+    if looked_up:
+        return _position_key(symbol, looked_up)
+    return _position_key(symbol, "")
+
+
+def _flatten_closed_trade(pos: _RunningPos, sell_date: date) -> ClosedTrade:
+    lot = pos.lot
+    bought_qty = pos.bought_qty if pos.bought_qty > 1e-9 else lot.original_qty or lot.qty
+    sold_qty = pos.sold_qty if pos.sold_qty > 1e-9 else bought_qty
+    avg_buy = pos.bought_notional / bought_qty if bought_qty > 1e-9 else lot.buy_price
+    avg_sell = pos.sold_notional / sold_qty if sold_qty > 1e-9 else 0.0
+    pnl_dollars = pos.sold_notional - pos.bought_notional
+    pnl_pct = (avg_sell - avg_buy) / avg_buy * 100.0 if avg_buy else 0.0
+    return ClosedTrade(
+        symbol=lot.symbol,
+        system=lot.system,
+        buy_date=lot.buy_date,
+        buy_price=avg_buy,
+        sell_date=sell_date,
+        sell_price=avg_sell,
+        qty=bought_qty,
+        pnl_pct=pnl_pct,
+        pnl_dollars=pnl_dollars,
+        original_qty=bought_qty,
+        purchase_value=_position_value(bought_qty, avg_buy),
+    )
 
 
 def _fifo_closed_and_open(
@@ -1671,7 +1955,14 @@ def _fifo_closed_and_open(
     entry_prices: Optional[dict[tuple[str, str], float]] = None,
     personal_exclude: Optional[frozenset[str]] = None,
 ) -> tuple[list[ClosedTrade], list[Lot]]:
-    lots: dict[str, deque[Lot]] = {}
+    """
+    Average-cost running position per (symbol, system).
+
+    Adds update qty + avg cost and keep the first buy date. Partial sells reduce qty
+    only (avg cost unchanged; no Closed row). One Closed row when remaining qty hits 0:
+    first buy date, last flatten sell, total bought, buy/sell quantity-weighted averages.
+    """
+    positions: dict[tuple[str, str], _RunningPos] = {}
     closed: list[ClosedTrade] = []
     personal_exclude = personal_exclude or frozenset()
 
@@ -1679,29 +1970,48 @@ def _fifo_closed_and_open(
         sym = r["Symbol"]
         if not sym or sym == "NAN":
             continue
-        action = r["Action"]
+        action = str(r["Action"])
+        tagged = _system_from_broker_row(r)
         if "YOU BOUGHT" in action:
             qty = abs(float(r["Quantity"]))
             price = float(r["Price"])
             bd = r["Run Date"]
             if pd.isna(bd):
                 continue
-            lot = Lot(
-                sym,
-                bd,
-                price,
-                qty,
-                _lookup_system(
-                    sym, bd, price, sys_map, entry_prices, personal_exclude=personal_exclude
-                ),
-                original_qty=qty,
+            looked = _lookup_system(
+                sym, bd, price, sys_map, entry_prices, personal_exclude=personal_exclude
             )
-            lots.setdefault(sym, deque()).append(lot)
+            exact = ""
+            if not pd.isna(bd):
+                exact = str(sys_map.get((str(sym).upper(), bd.isoformat()), "") or "")
+            key = _resolve_buy_sleeve(positions, sym, looked, tagged or exact)
+            sys = key[1]
+            if key in positions and positions[key].lot.qty > 1e-9:
+                pos = positions[key]
+                remain_cost = pos.lot.qty * pos.lot.buy_price
+                pos.lot.qty += qty
+                pos.lot.buy_price = (
+                    (remain_cost + qty * price) / pos.lot.qty if pos.lot.qty > 0 else price
+                )
+                pos.bought_qty += qty
+                pos.bought_notional += qty * price
+                pos.lot.original_qty = pos.bought_qty
+            else:
+                lot = Lot(sym, bd, price, qty, sys, original_qty=qty)
+                positions[key] = _RunningPos(
+                    lot=lot,
+                    bought_qty=qty,
+                    bought_notional=qty * price,
+                    sold_qty=0.0,
+                    sold_notional=0.0,
+                )
         elif "DISTRIBUTION" in action:
             dist_qty = abs(float(r["Quantity"]))
-            if dist_qty <= 1e-9 or not lots.get(sym):
+            key = _pick_sleeve_for_sell(positions, sym, tagged)
+            if dist_qty <= 1e-9 or key is None:
                 continue
-            lot = lots[sym][0]
+            pos = positions[key]
+            lot = pos.lot
             old_cost = lot.qty * lot.buy_price
             try:
                 amount = float(r["Amount"])
@@ -1711,8 +2021,9 @@ def _fifo_closed_and_open(
                 old_cost += amount
             lot.qty += dist_qty
             lot.buy_price = old_cost / lot.qty if lot.qty > 0 else lot.buy_price
-            orig = lot.original_qty or (lot.qty - dist_qty)
-            lot.original_qty = orig + dist_qty
+            pos.bought_qty += dist_qty
+            pos.bought_notional += amount if amount and amount > 0 else 0.0
+            lot.original_qty = pos.bought_qty
         elif "YOU SOLD" in action:
             sell_qty = abs(float(r["Quantity"]))
             sell_price = float(r["Price"])
@@ -1720,37 +2031,24 @@ def _fifo_closed_and_open(
             if pd.isna(sd):
                 continue
             remaining = sell_qty
-            while remaining > 1e-9 and lots.get(sym):
-                lot = lots[sym][0]
+            while remaining > 1e-9:
+                key = _pick_sleeve_for_sell(positions, sym, tagged)
+                if key is None:
+                    break
+                pos = positions[key]
+                lot = pos.lot
                 take = min(remaining, lot.qty)
-                pnl_pct = (sell_price - lot.buy_price) / lot.buy_price * 100.0 if lot.buy_price else 0.0
-                pnl_dollars = take * (sell_price - lot.buy_price)
-                if sd >= since:
-                    orig = lot.original_qty or lot.qty
-                    closed.append(
-                        ClosedTrade(
-                            symbol=sym,
-                            system=lot.system,
-                            buy_date=lot.buy_date,
-                            buy_price=lot.buy_price,
-                            sell_date=sd,
-                            sell_price=sell_price,
-                            qty=take,
-                            pnl_pct=pnl_pct,
-                            pnl_dollars=pnl_dollars,
-                            original_qty=orig,
-                            purchase_value=_position_value(orig, lot.buy_price),
-                        )
-                    )
+                pos.sold_qty += take
+                pos.sold_notional += take * sell_price
                 lot.qty -= take
                 remaining -= take
                 if lot.qty <= 1e-9:
-                    lots[sym].popleft()
+                    if sd >= since:
+                        closed.append(_flatten_closed_trade(pos, sd))
+                    positions.pop(key, None)
 
-    open_lots: list[Lot] = []
-    for dq in lots.values():
-        open_lots.extend(list(dq))
-    closed.sort(key=lambda t: (t.sell_date, t.symbol))
+    open_lots = [pos.lot for pos in positions.values() if pos.lot.qty > 1e-9]
+    closed.sort(key=lambda t: (t.sell_date, t.symbol, t.system))
     return closed, open_lots
 
 
@@ -1761,11 +2059,9 @@ def _aggregate_closed_by_entry(
     personal_exclude: Optional[frozenset[str]] = None,
 ) -> list[ClosedTrade]:
     """
-    One row per (symbol, buy_date): sum sold shares, quantity-weighted avg entry/exit,
-    only when total purchase amount meets the size threshold (or registry-tracked floor).
-    Personal-exclude symbols without a system map entry are dropped.
+    Size-threshold / personal-exclude filter. Matcher already emits one flatten per sleeve;
+    leftover same-(symbol, first-buy) slices are still quantity-weighted together.
     """
-    from collections import defaultdict
 
     personal_exclude = personal_exclude or frozenset()
     groups: dict[tuple[str, date], list[ClosedTrade]] = defaultdict(list)
@@ -2144,6 +2440,17 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
     stop = pd.to_numeric(df.get("StopTrailing", df.get("StopInitial")), errors="coerce")
     df["StopLoss"] = stop
     df["GainPct"] = (df["CurrentPrice"] / df["EntryPrice"] - 1.0) * 100.0
+    def _clean_note(col: str) -> pd.Series:
+        if col not in df.columns:
+            return pd.Series([""] * len(df), index=df.index)
+        return df[col].map(
+            lambda x: "" if pd.isna(x) or str(x).strip().lower() == "nan" else str(x).strip()
+        )
+
+    df["TargetNote"] = _clean_note("TargetNote")
+    df["StopNote"] = _clean_note("StopNote")
+    df["RsiTargetHint"] = _clean_note("RsiTargetHint")
+    df["RsiStopHint"] = _clean_note("RsiStopHint")
     return df
 
 
@@ -2295,89 +2602,6 @@ def _rsi_freeze_from_book(scan: pd.DataFrame) -> dict[str, Any]:
     ts_days = _first_num("TIME_STOP_DAYS", float(fz["rsi_time_stop_days"]))
     fz["rsi_time_stop_days"] = int(ts_days)
     return fz
-
-
-def _rsi_watch_vs_scan_html(scan: pd.DataFrame) -> str:
-    """Watchlist-vs-Scanner + buy-range callout for the RSI section Paul reads."""
-    fz = _rsi_freeze_from_book(scan)
-    ob = f"{fz['rsi_ob']:g}"
-    os_ = f"{fz['rsi_os']:g}"
-    mx = f"{fz['rsi_max_trigger']:g}"
-    atr = f"{fz['rsi_min_atr_pct']:g}"
-    ex = f"{fz['rsi_exit']:g}"
-    ts = str(int(fz["rsi_time_stop_days"]))
-    entry_on = str(fz["rsi_entry_on"])
-    fill_plain = (
-        "the next session’s open"
-        if entry_on == "next_open"
-        else f"the {entry_on} (not the house default)"
-    )
-    freeze_rows = [
-        ["Arm (was hot)", f"RSI(14) ≥ {ob}", "Prior bar must print overbought before a buy can arm"],
-        [
-            "Neutral band",
-            f"{os_} < RSI(14) < {ob}",
-            "After the hot bar, today must close in this band (not still ≥ arm, not oversold)",
-        ],
-        [
-            "Buy gate (RSI)",
-            f"trigger RSI(14) < {mx}",
-            "Tighter than Neutral: still ≥ this number = no fill (Watchlist GATE_FAIL)",
-        ],
-        [
-            "Buy gate (ATR%)",
-            f"ATR% ≥ {atr}",
-            "14-bar Average True Range / close × 100 on the trigger bar",
-        ],
-        ["Fill", entry_on, f"House buys at {fill_plain} after the trigger close"],
-        [
-            "Sell",
-            f"RSI(14) ≥ {ex}, else {ts} calendar-day time stop",
-            "No price stop and no price target",
-        ],
-        [
-            "Not a buy",
-            f"RSI(14) ≤ {os_}",
-            "Oversold is the Neutral floor, not an entry signal on this sleeve",
-        ],
-    ]
-    freeze_table = _html_table(
-        ["Gate", "Live number", "Meaning"],
-        freeze_rows,
-        ["text", "text", "text"],
-        table_id="rsi-buy-range-table",
-    )
-    return f"""
-<div class="ask-callout" role="note">
-<h3>What you asked</h3>
-<p class="quote">“why does RSI result in a watchlist and not a scanner? are we only buying if they are in a range? if so, that range should be printed out in the investment report.”</p>
-<h4>In plain English</h4>
-<p>Relative Strength Index (RSI) is a 0–100 heat gauge (Wilder 14), not RS (Relative Strength vs SPY).
-This sleeve does <strong>not</strong> write a Scanner file. It lists names on a <strong>Watchlist</strong>
-because most rows are “armed / waiting / already held,” not a same-day buy slip. We
-<strong>do</strong> only buy when RSI has cooled into a numbered band after a hot reading.
-That band is in the table below (house freeze, not a nickname).</p>
-<h4>Watchlist vs Scanner in this shop</h4>
-<p>BRT / RL / YH / MTS / WPBR / RS write a <code>*_Scanner_*.csv</code> — last-bar names that
-cleared the engine’s buy gates (a same-run buy candidate). Their Watchlist, when they have one,
-is the near-miss / approaching list. RSI is like Volume Zone (VZ) and StockBee (SB): the engine
-never writes <code>RSI_Scanner_*.csv</code>. This page therefore loads
-<code>RSI_Watchlist_*</code> (or Open) and titles the section Watchlist.</p>
-<p>RSI Watchlist rows are not all “do not buy.” Status means:</p>
-<ul>
-<li><strong>BUY / PENDING_NEXT_OPEN</strong> — setup passed on today’s close; buy {fill_plain} (this is the RSI equivalent of a scanner fill).</li>
-<li><strong>NEAR / ARMED_OVERBOUGHT</strong> — RSI(14) ≥ {ob}; waiting to cool under {mx} with ATR% ≥ {atr}.</li>
-<li><strong>NEAR / GATE_FAIL</strong> — cooled into Neutral after overbought, but trigger RSI still ≥ {mx} or ATR% &lt; {atr}.</li>
-<li><strong>OPEN / IN_POSITION</strong> — already held; sell when RSI(14) ≥ {ex} or at the {ts}-day clock.</li>
-</ul>
-<h4>Buy range (live freeze)</h4>
-<p>Buy only if a prior bar was RSI(14) ≥ {ob}, then today’s close is {os_} &lt; RSI(14) &lt; {mx}
-(Neutral top is {ob}, but the entry gate cuts the top to {mx}) and ATR% ≥ {atr}. Fill at
-{entry_on}. Sell RSI(14) ≥ {ex} next open, else flatten at {ts} calendar days.</p>
-<p class="small">Click column headers to sort.</p>
-<div class="table-wrap">{freeze_table}</div>
-</div>
-"""
 
 
 def _rsi_summary_row_count(drive: Path, ts: str) -> Optional[int]:
@@ -2550,6 +2774,129 @@ def _fmt_watchlist_ymd(val: Any) -> str:
         s = str(val or "").strip().replace("-", "")[:8]
         return s if len(s) == 8 and s.isdigit() else "—"
     return ts.strftime("%Y%m%d")
+
+
+_RSI_WHATIF_COLS = (
+    "CLOSE_FOR_RSI_LT_60",
+    "RANGE_FOR_ATR_PCT_GE_5",
+    "RANGE_TODAY",
+)
+_SCAN_COL_LABELS = {
+    "CLOSE_FOR_RSI_LT_60": "Close for RSI&lt;60",
+    "RANGE_FOR_ATR_PCT_GE_5": "Range for ATR%≥5",
+    "RANGE_TODAY": "Range today",
+    "SUGGESTED_SHARES": "Suggested shares (range until fill)",
+    "SUGGESTED_NOTIONAL": "Suggested $",
+    "RISK_DOLLAR": "Risk $",
+    "ADV20": "ADV20",
+    "SIZE_LID": "Size lid",
+}
+
+
+def _enrich_rsi_watchlist_whatif(
+    df: pd.DataFrame,
+    drive: Path,
+    run_ts: Optional[str],
+    src_path: Optional[Path] = None,
+    data_dir: Path = DEFAULT_OHLCV_DATA_DIR,
+) -> pd.DataFrame:
+    """Add Close-for-RSI&lt;60 / Range-for-ATR%≥5 / Range-today from OHLC + engine helpers."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    try:
+        from rocket_rsi import RsiConfig, rsi_watchlist_whatif_from_df
+    except ImportError:
+        from stock_analysis.rocket_rsi import RsiConfig, rsi_watchlist_whatif_from_df  # type: ignore
+    work = df.copy()
+    fz = _rsi_freeze_from_book(work)
+    cfg = RsiConfig(
+        rsi_max_trigger=float(fz["rsi_max_trigger"]),
+        rsi_min_atr_pct=float(fz["rsi_min_atr_pct"]),
+        rsi_ob=float(fz["rsi_ob"]),
+        rsi_os=float(fz["rsi_os"]),
+        rsi_exit=float(fz["rsi_exit"]),
+        rsi_time_stop_days=int(fz["rsi_time_stop_days"]),
+        rsi_entry_on=str(fz["rsi_entry_on"]),
+    )
+    now_et = _now_et()
+    ohlc_cache: dict[str, Optional[pd.DataFrame]] = {}
+    close_vals: list[str] = []
+    atr_vals: list[str] = []
+    range_vals: list[str] = []
+    for _, row in work.iterrows():
+        sym = str(row.get("SYMBOL", "")).strip().upper()
+        asof = row.get("ASOF_DATE", "")
+        cur_rsi = pd.to_numeric(row.get("RSI14", row.get("RSI14_NOW")), errors="coerce")
+        if sym not in ohlc_cache:
+            ohlc_cache[sym] = _load_symbol_ohlcv(sym, data_dir)
+        ohlc = ohlc_cache.get(sym)
+        if ohlc is None or ohlc.empty:
+            close_vals.append("— (no OHLC)")
+            atr_vals.append("—")
+            range_vals.append("—")
+            continue
+        idx = _ohlc_bar_index(ohlc, asof)
+        sliced = ohlc.iloc[: idx + 1].copy() if idx is not None else ohlc
+        whatif = rsi_watchlist_whatif_from_df(
+            sliced,
+            cfg,
+            asof=sliced["Date"].iloc[-1] if "Date" in sliced.columns else asof,
+            now_et=now_et,
+            current_rsi=float(cur_rsi) if pd.notna(cur_rsi) else None,
+        )
+        close_vals.append(whatif["close_for_rsi_lt_60"])
+        atr_vals.append(whatif["range_for_atr_pct_ge_5"])
+        range_vals.append(whatif["range_today"])
+    work["CLOSE_FOR_RSI_LT_60"] = close_vals
+    work["RANGE_FOR_ATR_PCT_GE_5"] = atr_vals
+    work["RANGE_TODAY"] = range_vals
+    _persist_rsi_watchlist_whatif(work, drive, run_ts, src_path)
+    return work
+
+
+def _persist_rsi_watchlist_whatif(
+    df: pd.DataFrame,
+    drive: Path,
+    run_ts: Optional[str],
+    src_path: Optional[Path],
+) -> None:
+    """Write the three what-if columns back onto DailyRun Watchlist CSVs."""
+    if df is None or getattr(df, "empty", True):
+        return
+    if not all(c in df.columns for c in _RSI_WHATIF_COLS):
+        return
+    targets: list[Path] = []
+    if src_path is not None and src_path.is_file() and "Watchlist" in src_path.name:
+        targets.append(src_path)
+    if run_ts:
+        stamped = drive / f"RSI_Watchlist_{run_ts}.csv"
+        if stamped.is_file() and stamped not in targets:
+            targets.append(stamped)
+    latest = drive / "RSI_LatestRun_Watchlist.csv"
+    if latest.is_file() and latest not in targets:
+        targets.append(latest)
+    key = df["SYMBOL"].astype(str).str.strip().str.upper()
+    lookup = df.assign(_SYM=key).drop_duplicates("_SYM").set_index("_SYM")
+    for path in targets:
+        try:
+            existing = pd.read_csv(path)
+        except Exception:
+            existing = df.copy()
+        if "SYMBOL" not in existing.columns:
+            continue
+        syms = existing["SYMBOL"].astype(str).str.strip().str.upper()
+        for col in _RSI_WHATIF_COLS:
+            existing[col] = syms.map(lookup[col])
+        cols = [c for c in existing.columns if c not in _RSI_WHATIF_COLS]
+        if "TRIGGER_HINT" in cols:
+            i = cols.index("TRIGGER_HINT")
+            cols = cols[:i] + list(_RSI_WHATIF_COLS) + cols[i:]
+        else:
+            cols = cols + list(_RSI_WHATIF_COLS)
+        try:
+            existing[cols].to_csv(path, index=False)
+        except OSError:
+            continue
 
 
 def _enrich_vz_watchlist_hvn(
@@ -3067,55 +3414,20 @@ def _chart_avg_win_loss(
     return _fig_to_b64(fig)
 
 
-_SORTABLE_TABLE_SCRIPT = """
+from report_page_extras import SORTABLE_TABLE_SCRIPT as _SORTABLE_TABLE_SCRIPT
+from report_page_extras import SORTABLE_TH_CSS as _SORTABLE_TH_CSS
+
+_CLOSED_FOLD_SCRIPT = """
 <script>
 (function () {
-  function parseSortValue(text, type) {
-    const s = String(text || "").trim();
-    if (!s) return type === "text" ? "" : 0;
-    if (type === "text") return s.toUpperCase();
-    if (type === "date") {
-      const m = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
-      if (m) return parseInt(m[3] + m[1].padStart(2, "0") + m[2].padStart(2, "0"), 10);
-      return 0;
-    }
-    let n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
-    if (n === "" || n === "—" || n === "-") return 0;
-    const v = parseFloat(n);
-    return Number.isFinite(v) ? v : 0;
-  }
-  function sortTable(table, col, type, dir) {
-    const tbody = table.tBodies[0];
-    if (!tbody) return;
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-    rows.sort((a, b) => {
-      const av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
-      const bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
-      if (typeof av === "string" || typeof bv === "string") {
-        return dir * String(av).localeCompare(String(bv));
-      }
-      return dir * (av - bv);
-    });
-    rows.forEach((r) => tbody.appendChild(r));
-  }
-  function bindSortHeader(table, th, col) {
-    function onActivate(e) {
-      if (e.type === "touchend") e.preventDefault();
-      const type = th.dataset.sort || "text";
-      const dir = th.dataset.dir === "asc" ? -1 : 1;
-      table.querySelectorAll("th.sortable-th").forEach((h) => {
-        h.dataset.dir = "";
-        h.classList.remove("sort-asc", "sort-desc");
-      });
-      th.dataset.dir = dir === 1 ? "asc" : "desc";
-      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
-      sortTable(table, col, type, dir);
-    }
-    th.addEventListener("click", onActivate);
-    th.addEventListener("touchend", onActivate, { passive: false });
-  }
-  document.querySelectorAll("table.sortable").forEach((table) => {
-    table.querySelectorAll("th.sortable-th").forEach((th, col) => bindSortHeader(table, th, col));
+  var el = document.getElementById("closed-positions-fold");
+  if (!el) return;
+  var key = "investment_closed_positions_open";
+  try {
+    if (localStorage.getItem(key) === "1") el.open = true;
+  } catch (err) {}
+  el.addEventListener("toggle", function () {
+    try { localStorage.setItem(key, el.open ? "1" : "0"); } catch (err) {}
   });
 })();
 </script>
@@ -3131,6 +3443,19 @@ def _nonempty_system_subsets() -> list[frozenset[str]]:
     for mask in range(1, 1 << len(REPORT_SYSTEMS)):
         out.append(frozenset(REPORT_SYSTEMS[i] for i in range(len(REPORT_SYSTEMS)) if mask & (1 << i)))
     return out
+
+
+def _chart_embed_subsets() -> list[frozenset[str]]:
+    """Subsets that get embedded PNG charts in investment.html.
+
+    Metrics are still computed for every 2^n-1 chip combination (cheap JSON).
+    Chart PNGs are only for each single system + the full set — otherwise
+    11 systems × 4 charts ≈ 8k base64 images (~180MB) and GitHub rejects
+    the Pages push (100MB file limit). Multi-select keeps updating metrics;
+    charts refresh when the selection is a precomputed key.
+    """
+    singles = [frozenset({s}) for s in REPORT_SYSTEMS]
+    return singles + [frozenset(REPORT_SYSTEMS)]
 
 
 def _filter_closed_by_systems(closed: list[ClosedTrade], systems: frozenset[str]) -> list[ClosedTrade]:
@@ -3190,9 +3515,10 @@ def _build_system_filter_bundles(
     open_keys: set[tuple[str, str]],
     gt_df: pd.DataFrame,
 ) -> tuple[dict[str, dict], dict[str, dict]]:
-    """Precompute metrics + chart PNGs for every non-empty system subset."""
+    """Precompute metrics for every subset; PNG charts only for singles + all."""
     metrics_by_key: dict[str, dict] = {}
     charts_by_key: dict[str, dict] = {}
+    chart_keys = {_system_subset_key(s) for s in _chart_embed_subsets()}
     for subset in _nonempty_system_subsets():
         key = _system_subset_key(subset)
         fc = _filter_closed_by_systems(closed, subset)
@@ -3212,6 +3538,8 @@ def _build_system_filter_bundles(
             "win_sum_fmt": _fmt_money(sm["win_sum"]),
             "loss_sum_fmt": _fmt_money(sm["loss_sum"]),
         }
+        if key not in chart_keys:
+            continue
         charts_by_key[key] = {
             "cum": _chart_cumulative_pnl(fc, chart_start=chart_start, chart_end=chart_end),
             "gauge": _chart_win_gauge(sm["wins"], sm["losses"], sm["be"]),
@@ -3360,7 +3688,9 @@ _SYSTEM_FILTER_SCRIPT = """
     });
     const m = metricsByKey[key];
     const c = chartsByKey[key];
-    if (!m || !c) return;
+    // Metrics exist for every chip combo; chart PNGs only for singles + all
+    // (keeps investment.html under GitHub's 100MB limit).
+    if (!m) return;
     const realizedEl = document.getElementById("metric-realized");
     if (realizedEl) {
       realizedEl.textContent = m.realized_fmt;
@@ -3404,6 +3734,7 @@ _SYSTEM_FILTER_SCRIPT = """
     if (pendSec) {
       pendSec.style.display = (m.pending_sells_count || 0) > 0 ? "" : "none";
     }
+    if (!c) return;
     const imgMap = [
       ["chart-gauge", "gauge"],
       ["chart-pf", "pf"],
@@ -3492,13 +3823,20 @@ def build_report(
         print(f"Appended {log_appended} closed position(s) to {closed_log_path.name}")
     open_agg = _aggregate_lots_by_entry(open_lots)
 
-    # Keep sold names from resurrecting: blocklist + prune gettarget before ensure-open.
-    # Only auto-block tickers that were in gettarget and are now net-flat in the merged
-    # Fidelity book — do NOT dump every historical flat symbol into the blocklist.
+    # Keep sold names from resurrecting on Open: blocklist + prune only confirmed
+    # broker lots that are now net-flat. Do NOT drop manual/watchlist rows and do
+    # NOT blocklist a ticker just because it was pruned (that wiped ESTC SB).
     fully_sold = _symbols_fully_sold_in_accounts(acct)
-    tracked_syms = {p["symbol"] for p in _load_tracked_position_rows(positions_path)}
+    broker_buy_keys = _broker_buy_date_keys(acct)
+    tracked_rows = _load_tracked_position_rows(positions_path)
     open_syms = {lot.symbol for lot in open_agg.values() if float(lot.qty) > 1e-9}
-    block_add = {s for s in tracked_syms if s in fully_sold and s not in open_syms}
+    block_add = {
+        p["symbol"]
+        for p in tracked_rows
+        if p["symbol"] in fully_sold
+        and p["symbol"] not in open_syms
+        and (p["symbol"], p["buy_date"].isoformat()) in broker_buy_keys
+    }
     newly_blocked = _append_sold_blocklist(
         block_add,
         note=f"Auto-blocked {datetime.now().strftime('%Y-%m-%d')} — was in gettarget, now net flat in Fidelity FIFO",
@@ -3508,16 +3846,14 @@ def build_report(
         sold_blocklist = _load_sold_blocklist_symbols()
 
     pruned = _prune_gettarget_positions(
-        positions_path, open_agg, sold_blocklist=sold_blocklist
+        positions_path,
+        open_agg,
+        sold_blocklist=sold_blocklist,
+        fully_sold=fully_sold,
+        broker_buy_keys=broker_buy_keys,
     )
     if pruned:
         print(f"Pruned gettarget_positions: {', '.join(pruned)}")
-        newly_blocked2 = _append_sold_blocklist(
-            pruned,
-            note=f"Pruned from gettarget_positions {datetime.now().strftime('%Y-%m-%d')}",
-        )
-        if newly_blocked2:
-            sold_blocklist = _load_sold_blocklist_symbols()
 
     open_agg, open_lots = _ensure_open_lots_for_registry(
         open_agg,
@@ -3529,20 +3865,29 @@ def build_report(
         personal_exclude=personal_exclude,
     )
     # Never re-inflate sold-blocklist names via ensure-open leftovers
+    registry_keys = _registry_open_keys(positions_path)
     for key in list(open_agg.keys()):
-        if key[0] in sold_blocklist and key not in _registry_open_keys(positions_path):
+        if key[0] in sold_blocklist and key not in registry_keys:
             open_agg.pop(key, None)
-    open_lots = [lot for lot in open_lots if lot.symbol not in sold_blocklist or (lot.symbol, lot.buy_date.isoformat()) in _registry_open_keys(positions_path)]
+    open_lots = [
+        lot
+        for lot in open_lots
+        if lot.symbol not in sold_blocklist or _lot_key(lot) in registry_keys
+    ]
 
     open_df = _load_open_positions(gettarget_path)
     now_et = _now_et()
-    registry_keys = _registry_open_keys(positions_path)
     fifo_open_keys = {
         key
         for key, lot in open_agg.items()
         if key not in registry_keys
         and not _excluded_open_without_gettarget(
-            lot.symbol, lot.buy_date, personal_exclude, registry_keys, sold_blocklist
+            lot.symbol,
+            lot.buy_date,
+            personal_exclude,
+            registry_keys,
+            sold_blocklist,
+            system=lot.system,
         )
         and _meets_position_size_threshold(
             _position_value(lot.qty, lot.buy_price),
@@ -3553,6 +3898,7 @@ def build_report(
         )
     }
     open_keys = registry_keys | fifo_open_keys
+    closed = _drop_trim_closes_for_open(closed, open_agg, open_keys)
 
     open_df, open_prices_as_of, open_price_source = _maybe_refresh_open_prices(
         open_df, open_agg, open_keys, gettarget_path, now_et=now_et
@@ -3572,7 +3918,12 @@ def build_report(
         for lot in open_agg.values()
         if lot.system in REPORT_SYSTEMS
         and not _excluded_open_without_gettarget(
-            lot.symbol, lot.buy_date, personal_exclude, registry_keys, sold_blocklist
+            lot.symbol,
+            lot.buy_date,
+            personal_exclude,
+            registry_keys,
+            sold_blocklist,
+            system=lot.system,
         )
     ]
     _persist_trade_registry(registry_path, sys_map, extra_rows=resolved_rows)
@@ -3660,9 +4011,9 @@ def build_report(
             continue
         r = _gettarget_row_for_lot(open_df, lot)
         if r is not None:
-            entry = float(r["EntryPrice"])
+            entry = float(lot.buy_price)
             cur = float(r["CurrentPrice"])
-            gain_pct = float(r["GainPct"])
+            gain_pct = (cur / entry - 1.0) * 100.0 if entry else float("nan")
             pnl_d = (cur - entry) * lot.qty
             open_gain_total += pnl_d
             open_rows.append(
@@ -3675,8 +4026,39 @@ def build_report(
                     open_price_ts,
                     f"{gain_pct:+.2f}%",
                     _fmt_money(pnl_d),
-                    f"${float(r['TargetPrice']):.2f}" if pd.notna(r["TargetPrice"]) else "",
-                    f"${float(r['StopLoss']):.2f}" if pd.notna(r["StopLoss"]) else "",
+                    (
+                        (
+                            f"${float(r['TargetPrice']):.2f}"
+                            + (
+                                " now"
+                                if str(r.get("RsiTargetHint") or "") == "already"
+                                else ""
+                            )
+                        )
+                        if pd.notna(r["TargetPrice"])
+                        else (
+                            note
+                            if (note := str(r.get("TargetNote") or "").strip())
+                            and note.lower() != "nan"
+                            else ""
+                        )
+                    ),
+                    (
+                        (
+                            f"${float(r['StopLoss']):.2f}"
+                            + (
+                                " now"
+                                if str(r.get("RsiStopHint") or "") == "already"
+                                else ""
+                            )
+                        )
+                        if pd.notna(r["StopLoss"])
+                        else (
+                            str(r.get("StopNote") or "").strip()
+                            if str(lot.system).upper() == "RSI"
+                            else ""
+                        )
+                    ),
                 ]
             )
         else:
@@ -3741,6 +4123,9 @@ def build_report(
                 "RSI14_NOW",
                 "PRIOR_OB_RSI14",
                 "ATR_PCT",
+                "CLOSE_FOR_RSI_LT_60",
+                "RANGE_FOR_ATR_PCT_GE_5",
+                "RANGE_TODAY",
                 "MAX_RSI_TRIGGER",
                 "MIN_ATR_PCT",
                 "EXIT_RSI_LEVEL",
@@ -3761,6 +4146,11 @@ def build_report(
                 "MUST_OPEN_ABOVE",
                 "MUST_OPEN_AT_OR_BELOW",
                 "MAX_RISK_PCT",
+                "SUGGESTED_SHARES",
+                "SUGGESTED_NOTIONAL",
+                "RISK_DOLLAR",
+                "ADV20",
+                "SIZE_LID",
                 "NOTES",
             ]
             if c in cols
@@ -3783,7 +4173,7 @@ def build_report(
             sym = str(r.get(sym_key, "")).strip().upper() if sym_key else ""
             row.append(_fmt_avg_days_held(avg_map.get(sym) if sym else None))
             out.append(row)
-        headers = list(pick) + ["Prior avg days held"]
+        headers = [_SCAN_COL_LABELS.get(c, c) for c in pick] + ["Prior avg days held"]
         # Prefer num for known numeric scanner fields; keep SYMBOL/dates/notes as text.
         num_like = {
             "CLOSE",
@@ -3806,6 +4196,9 @@ def build_report(
             "MUST_OPEN_ABOVE",
             "MUST_OPEN_AT_OR_BELOW",
             "MAX_RISK_PCT",
+            "SUGGESTED_NOTIONAL",
+            "RISK_DOLLAR",
+            "ADV20",
             "POC",
             "ATR_PCT_AT_TRIGGER",
             "RSI14_AT_TRIGGER",
@@ -3843,6 +4236,58 @@ def build_report(
         sort_types.append("num")
         return out, headers, sort_types
 
+    vz_scan = _enrich_vz_watchlist_hvn(vz_scan, drive_dir, vz_run_ts)
+    rsi_scan = _enrich_rsi_watchlist_whatif(rsi_scan, drive_dir, rsi_run_ts, rsi_scan_path)
+
+    # Official live-style Suggested shares — every DailyRun/getTarget scanner, not only 5-sys.
+    live_acct = _ensure_live_style_account()
+    open_notional = _open_notional_by_symbol(
+        [lot for key, lot in open_agg.items() if key in open_keys]
+    )
+    _live_scan_asof = date.today()
+    _scan_enrich = {
+        "IND": ind_scan,
+        "BRT": brt_scan,
+        "RL": rl_scan,
+        "YH": yh_scan,
+        "MTS": mts_scan,
+        "WPBR": wpbr_scan,
+        "RS": rs_scan,
+        "SB": sb_scan,
+        "VZ": vz_scan,
+        "RSI": rsi_scan,
+    }
+    for _sys_code, _scan_df in _scan_enrich.items():
+        _scan_enrich[_sys_code] = _enrich_live_style_scan(
+            _scan_df,
+            system=_sys_code,
+            account=live_acct,
+            open_notional=open_notional,
+            data_dir=DEFAULT_OHLCV_DATA_DIR,
+            asof=_live_scan_asof,
+        )
+    ind_scan = _scan_enrich["IND"]
+    brt_scan = _scan_enrich["BRT"]
+    rl_scan = _scan_enrich["RL"]
+    yh_scan = _scan_enrich["YH"]
+    mts_scan = _scan_enrich["MTS"]
+    wpbr_scan = _scan_enrich["WPBR"]
+    rs_scan = _scan_enrich["RS"]
+    sb_scan = _scan_enrich["SB"]
+    vz_scan = _scan_enrich["VZ"]
+    rsi_scan = _scan_enrich["RSI"]
+    live_risk = _live_style_risk_dollar(live_acct.bom_equity)
+    live_size_note = (
+        f"Live buy size (all getTarget systems, including RS/BRT/YH/WPBR): "
+        f"risk = min(1% BOM equity, $50k) = "
+        f"${live_risk:,.0f} (BOM ${live_acct.bom_equity:,.0f}); "
+        f"shares ≤ 1% ADV20; notional ≤ 17.5% of current equity "
+        f"(${live_acct.current_equity:,.0f}). Edit drive/live_style_account.json. "
+        f"Suggested shares are a fill-band range until the order fills; "
+        f"getTarget locks exact shares after the paid price. "
+        f"Engine Closed PnL still uses house dummy notionals for reconcile."
+    )
+
     ind_rows, ind_cols, ind_sort = _scan_rows(
         ind_scan, _closed_avg_days_held_map("IND", drive_dir, ind_run_ts)
     )
@@ -3867,7 +4312,6 @@ def build_report(
     sb_rows, sb_cols, sb_sort = _scan_rows(
         sb_scan, _closed_avg_days_held_map("SB", drive_dir, sb_run_ts)
     )
-    vz_scan = _enrich_vz_watchlist_hvn(vz_scan, drive_dir, vz_run_ts)
     vz_rows, vz_cols, vz_sort = _scan_rows(
         vz_scan, _closed_avg_days_held_map("VZ", drive_dir, vz_run_ts)
     )
@@ -3951,11 +4395,6 @@ def build_report(
     rsi_scan_sub = _scanner_subtitle(rsi_scan_path, rsi_run_ts, "RSI")
     if rsi_scan_path is not None and rsi_run_ts is None:
         rsi_scan_sub = f"{rsi_scan_path.name} (RSI_LatestRun alias; no RSI_last_run_ts.txt pin)"
-    rsi_scan_sub += (
-        " · Relative Strength Index (RSI) — not RS (Relative Strength vs SPY)."
-        " This sleeve writes Watchlist/Open only (no RSI_Scanner CSV)."
-        " Buy-range numbers are in the callout below."
-    )
     rsi_section_title = (
         "Watchlist — RSI"
         if rsi_scan_path is None
@@ -3963,7 +4402,6 @@ def build_report(
         or "Open" in rsi_scan_path.name
         else "Scanner — RSI"
     )
-    rsi_range_html = _rsi_watch_vs_scan_html(rsi_scan)
     rsi_empty_msg = (
         "No RSI open/watchlist rows for the latest run (Relative Strength Index; not RS vs SPY)."
         if rsi_run_ts or rsi_scan_path is not None
@@ -4016,6 +4454,23 @@ def build_report(
         title_block = f"<h1>{REPORT_TITLE}</h1>\n<div class=\"sub\">{sub_line}</div>"
 
     dailyrun_status_html = _dailyrun_status_section_html(drive_dir)
+    live_size_html = f"""
+<div class="ask live-size">
+  <h2>Live buy size (official)</h2>
+  <p>{html_mod.escape(live_size_note)}</p>
+  <p class="small">Suggested shares appear on every Scanner/Watchlist — Breakout (BRT),
+  Industry (IND), Rocket Launcher (RL), Year-High (YH), Magic Touch (MTS),
+  Weekly Pivot Breakout (WPBR), Relative Strength vs SPY (RS), StockBee (SB),
+  Volume Zone (VZ), Relative Strength Index (RSI), and Weekly Range / Swing (WRL)
+  — not only the official 6-sys sleeve.
+  Suggested shares are a <strong>range until fill</strong> (next-open band, day’s high–low,
+  or last close ± ATR). getTarget prints the exact share count after the paid price.
+  Size lid = which rule bound the size (risk_1pct / risk_50k / adv / name_cap); a
+  <code>range:</code> prefix means the two fill-band edges bound differently.
+  Average Daily Volume (ADV20) = 20-session mean volume. Beginning-of-month (BOM) equity
+  from <code>drive/live_style_account.json</code>. Freeze stamp
+  <code>risk_1pct_50k_adv_17name_20260917</code> (name cap <strong>17.5%</strong>; 10% was the prior research freeze).</p>
+</div>"""
 
     filter_script = (
         _SYSTEM_FILTER_SCRIPT.replace("__METRICS_JSON__", json.dumps(metrics_by_key))
@@ -4024,6 +4479,10 @@ def build_report(
     )
 
     from report_page_extras import CACHE_META, FORCE_RELOAD_SCRIPT
+    try:
+        from stock_analysis.live_style_sizing import TABLE_UNCAP_CSS
+    except Exception:
+        TABLE_UNCAP_CSS = ""
 
     html = f"""<!DOCTYPE html>
 <html><head>
@@ -4033,7 +4492,7 @@ def build_report(
 <title>{REPORT_TITLE}</title>
 <style>
 * {{ box-sizing: border-box; }}
-body {{ font-family: Arial, Helvetica, sans-serif; color:#0f172a; margin:24px; max-width:1200px; }}
+body {{ font-family: Arial, Helvetica, sans-serif; color:#0f172a; margin:24px; max-width:none; width:auto; }}
 h1 {{ margin-bottom:4px; font-size:clamp(1.25rem, 4vw, 1.75rem); }}
 h2 {{ font-size:clamp(1.05rem, 3.5vw, 1.35rem); }}
 .report-header {{ display:flex; align-items:center; gap:20px; margin-bottom:20px; flex-wrap:wrap; }}
@@ -4050,11 +4509,11 @@ h2 {{ font-size:clamp(1.05rem, 3.5vw, 1.35rem); }}
 .row {{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }}
 .chart-img {{ display:block; width:100%; max-width:100%; height:auto; }}
 .small {{ font-size:12px; color:#64748b; }}
-.table-wrap {{ width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; margin:12px 0 28px; }}
-table {{ width:100%; border-collapse:collapse; font-size:12px; min-width:520px; }}
+.table-wrap {{ width:100%; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:12px 0 28px; }}
+table {{ width:max-content; min-width:100%; border-collapse:collapse; font-size:12px; }}
 th, td {{ border:1px solid #e2e8f0; padding:8px; text-align:left; }}
 th {{ background:#f1f5f9; }}
-th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; }}
+th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; position:relative; z-index:3; pointer-events:auto; }}
 th.sortable-th:hover {{ background:#e2e8f0; }}
 .sort-ind {{ display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }}
 th.sort-asc .sort-ind::after {{ content:"▲"; color:#4c1d95; }}
@@ -4067,7 +4526,8 @@ section {{ page-break-inside: avoid; margin-top:28px; }}
   .card {{ flex:1 1 100%; min-width:100%; width:100%; }}
   .row {{ flex-direction:column; align-items:flex-start; gap:8px; }}
   .row img {{ width:min(100%, 140px) !important; height:auto !important; }}
-  table {{ font-size:11px; min-width:640px; }}
+  .table-wrap {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+  table {{ font-size:11px; }}
 }}
 @media print {{
   body {{ margin:16px; max-width:none; }}
@@ -4093,16 +4553,26 @@ a.sym:hover {{ text-decoration:underline; }}
 .dr-not-wired {{ background:#e2e8f0; color:#334155; }}
 .dr-stale {{ background:#fee2e2; color:#991b1b; }}
 .dr-missing {{ background:#ffe4e6; color:#9f1239; }}
-.ask-callout {{ background:#eef2ff; border:1px solid #c7d2fe; border-radius:12px; padding:14px 18px; margin:8px 0 16px; font-size:14px; line-height:1.45; }}
-.ask-callout h3 {{ margin:0 0 8px; font-size:15px; color:#312e81; }}
-.ask-callout h4 {{ margin:14px 0 6px; font-size:13px; color:#3730a3; }}
-.ask-callout p {{ margin:0 0 8px; }}
-.ask-callout .quote {{ color:#334155; font-style:italic; }}
-.ask-callout ul {{ margin:6px 0 10px 18px; padding:0; }}
+.ask.live-size {{ margin:12px 0 20px; padding:14px 16px; background:#f0fdf4; border:1px solid #86efac; border-radius:10px; }}
+.ask.live-size h2 {{ margin:0 0 8px; font-size:1.05rem; color:#166534; }}
+.ask.live-size p {{ margin:0 0 8px; font-size:14px; line-height:1.45; }}
+details.closed-fold {{ margin:0; }}
+details.closed-fold > summary {{
+  cursor:pointer; list-style:none; font-size:clamp(1.05rem, 3.5vw, 1.35rem);
+  font-weight:700; padding:8px 0; color:#0f172a;
+}}
+details.closed-fold > summary::-webkit-details-marker {{ display:none; }}
+details.closed-fold > summary::marker {{ content:""; }}
+details.closed-fold > summary .fold-hint {{ font-weight:500; color:#64748b; font-size:0.72em; }}
+details.closed-fold:not([open]) > summary .fold-open {{ display:none; }}
+details.closed-fold[open] > summary .fold-shut {{ display:none; }}
+{TABLE_UNCAP_CSS}
+{_SORTABLE_TH_CSS}
 {showcase_css}</style></head><body>
 {title_block}
 
 {dailyrun_status_html}
+{live_size_html}
 
 <div id="system-filter" class="filter-bar" role="group" aria-label="Filter by trading system">
   <span class="filter-label">Show:</span>
@@ -4145,16 +4615,18 @@ a.sym:hover {{ text-decoration:underline; }}
 
 <section>
 <h2>Open Positions</h2>
-<p class="small">Open rows come from <code>gettarget_positions.csv</code> (system purchases; remove a row when sold) plus any other FIFO open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
+<p class="small">Open is one row per symbol+system: average cost across add-on buys, first buy date. Trims reduce shares only (no Closed row) until remaining shares hit zero. Rows come from <code>gettarget_positions.csv</code> (system purchases) plus any other open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. Relative Strength Index (RSI) Target/Stop are implied what-if closes (RSI&gt;=70 / roll8); fill is still next open. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
 <div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop"], open_rows, ["text","text","date","num","num","date","num","num","num","num"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
 </section>
 
 {showcase_section_html}
 
 <section>
-<h2>Closed Positions (sold on/after {closed_since:%m/%d/%Y})</h2>
-<p class="small">Closed rows come from <code>closed_positions_log.csv</code> (permanent ledger) merged with the current Fidelity export. Once logged, a closed round-trip stays on this list even when it ages out of a rolling Accounts_History window.</p>
+<details class="closed-fold" id="closed-positions-fold">
+<summary>Closed positions ({len(closed_rows)}) <span class="fold-hint fold-shut">— click to expand</span><span class="fold-hint fold-open">— click to collapse</span></summary>
+<p class="small">Sold on/after {closed_since:%m/%d/%Y}. Closed is one row per fully flattened sleeve: first buy date, average cost of all buys, quantity-weighted average of all sells (including trims), last sell date. Partial sells do not appear here. Rows come from <code>closed_positions_log.csv</code> (permanent ledger) merged with the current Fidelity export. Once logged, a closed round-trip stays on this list even when it ages out of a rolling Accounts_History window.</p>
 <div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Buy Price","Sell Date","Sell Price","Days Held","Gain/Loss %","Gain/Loss $","Shares"], closed_rows, ["text","text","date","num","date","num","num","num","num","num"], system_col=1, footer_row=closed_footer, table_id="closed-positions-table", footer_pnl_cell_id="closed-footer-pnl", footer_pnl_col=8) if closed_rows else '<p>No closed trades in range.</p>'}</div>
+</details>
 </section>
 
 {sell_section_html}
@@ -4215,12 +4687,12 @@ a.sym:hover {{ text-decoration:underline; }}
 
 <section data-system-section="RSI">
 <h2>{rsi_section_title}</h2>
-{rsi_range_html}
 <p class="small">{rsi_scan_sub}</p>
 <div class="table-wrap">{_html_table(rsi_cols, rsi_rows, rsi_sort if rsi_cols else None) if rsi_rows else f'<p>{rsi_empty_msg}</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}
+{_CLOSED_FOLD_SCRIPT}
 {filter_script}
 </body></html>
 """

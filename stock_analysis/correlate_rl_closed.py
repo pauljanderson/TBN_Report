@@ -24,6 +24,7 @@ import pandas as pd
 from correlate_brt_closed import (
     CORRELATION_TARGET_COLUMNS,
     CORRELATION_TARGETS,
+    correlation_pairs_path,
     is_correlation_var_excluded,
 )
 
@@ -112,7 +113,7 @@ def _write_rl_correlation_stubs(output_csv_path: str) -> None:
         ref_path = out.parent / "RL_ReferenceStats.csv"
     pd.DataFrame(columns=_REF_HEADER_COLS).to_csv(ref_path, index=False)
 
-    pairs_path = out.with_name(out.name.replace("_Correlation_", "_Correlation_Pairs_", 1))
+    pairs_path = correlation_pairs_path(out)
     pd.DataFrame(columns=_PAIRS_HEADER_COLS).to_csv(pairs_path, index=False)
 
 
@@ -248,7 +249,7 @@ def run_rl_correlation_report(closed_csv_path: str, output_csv_path: str) -> Non
     ref_df = pd.DataFrame(ref_stats_rows)
     ref_df.to_csv(ref_path, index=False, float_format="%.6f", na_rep="")
 
-    pairs_path = out.with_name(out.name.replace("_Correlation_", "_Correlation_Pairs_", 1))
+    pairs_path = correlation_pairs_path(out)
     try:
         import tempfile
 

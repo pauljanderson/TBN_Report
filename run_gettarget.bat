@@ -1,6 +1,9 @@
 @echo off
 rem Live stop/target for active systems. IND is deprecated and excluded from scheduled targets.
-rem Systems: RL, BRT, YH, MTS, WPBR, RS, SB (StockBee), CS (CAN SLIM).
+rem Systems: RL, BRT, YH, MTS, WPBR, RS, SB (StockBee), CS (CAN SLIM), VZ, RSI.
+rem RSI: implied what-if closes (Target=RSI>=70, Stop=roll8). Fill still next open.
+rem   House freeze lives in getTarget.py RsiProfile (ob=70 os=30 exit=70 max_trigger=60
+rem   min_atr=2.93 ts=20 roll_from_max=8 entry_on=next_open min_dist52 off).
 rem MVCP retired 2026-08-21 — still mapped in getTarget.py if any historical Open lots remain.
 rem Qull/Kell (EMA trail) are not mapped yet — use --list-systems on getTarget.py.
 rem Standalone: double-click or call from DailyRun.

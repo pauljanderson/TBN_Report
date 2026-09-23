@@ -4,9 +4,11 @@
 Reads a frozen trendline stamp (segments.json from gen_trendlines_tos_studies.py)
 and writes per-symbol PNGs + an index HTML under stamp/charts/.
 
-VZ zone drawn = house Vol Zone HL: rolling 126-bar max-volume day's High–Low
-for the *current* winner (tools/vol_zone_break_retest.build_zones, HL-only as in
-rocket_vz). OC of the same day drawn lightly for dual-zone context.
+VZ zone drawn = house Vol Zone HL. When a live Open / Watchlist row exists,
+the **trigger** High–Low box (``ZONE_ID``) is always drawn — even if it is
+older than the current 126-bar rolling max-volume winner. The latest unused
+winner may still be shown, faded. Window start extends left so the trigger
+write day is on-screen. Display-only (``tools/vz_chart_zones.py``).
 HV6m gold box comes from segments.json (calendar 6m max-vol High–Low).
 Bottom panel: Wilder RSI(14) with classic 70/30 overbought/oversold bands.
 
@@ -38,14 +40,23 @@ from matplotlib.patches import Rectangle  # noqa: E402
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "tools"))
 
-from vol_zone_break_retest import Zone, build_zones, load_ohlcv  # noqa: E402
+from vol_zone_break_retest import Zone, load_ohlcv  # noqa: E402
+from vz_chart_zones import (  # noqa: E402
+    CHART_MONTHS,
+    LOOKBACK_DAYS,
+    VzChartPack,
+    latest_unused_label,
+    load_vz_trigger_specs,
+    nearest_hl_zones,
+    resolve_vz_chart_pack,
+    trigger_label,
+    visible_window_start,
+)
 
 DEFAULT_STAMP = _REPO / "drive" / "paul_studies" / "trendlines_opens_latest"
 # Durable company-name cache (yfinance shortName/longName). Survives DailyRun;
 # only new symbols hit the network.
 COMPANY_NAMES_CACHE = _REPO / "drive" / "company_names_cache.json"
-LOOKBACK_DAYS = 126  # house VZ HL
-CHART_MONTHS = 6
 RSI_PERIOD = 14
 RSI_OVERBOUGHT = 70.0
 RSI_OVERSOLD = 30.0
@@ -62,7 +73,8 @@ TF_STYLE = {
     "daily": {"color": "#00bcd4", "lw": 1.2, "label": "D"},
 }
 HV6M_FACE = "#d4a84b"
-VZ_HL_FACE = "#7e57c2"
+VZ_HL_FACE = "#7e57c2"  # latest unused / current-when-no-trigger
+VZ_TRIGGER_FACE = "#4527a0"  # engine trigger HL
 VZ_OC_FACE = "#42a5f5"
 
 _SORTABLE_TABLE_SCRIPT = """
@@ -269,44 +281,11 @@ def symbol_display(symbol: str, company_name: str | None = None) -> str:
     return f"{symbol} — {name}"
 
 
-def nearest_hl_zones(zones: list[Zone], price: float) -> tuple[Zone | None, Zone | None]:
-    """Nearest mature VZ HL zone above/below *price* (house build_zones HL bands)."""
-    hl = [z for z in zones if z.kind == "HL"]
-    above = [z for z in hl if z.lo > price]
-    below = [z for z in hl if z.hi < price]
-    nearest_above = min(above, key=lambda z: z.lo - price) if above else None
-    nearest_below = max(below, key=lambda z: z.hi) if below else None
-    return nearest_above, nearest_below
-
-
 def _zone_band_label(z: Zone | None) -> str:
     if z is None:
         return "—"
     day = pd.Timestamp(z.max_vol_date).date()
     return f"{day} {z.lo:.2f}–{z.hi:.2f}"
-
-
-def current_vz_zones(df: pd.DataFrame, lookback: int = LOOKBACK_DAYS) -> dict[str, Zone | None]:
-    """Return current rolling-winner HL (house) and matching OC if present."""
-    out: dict[str, Zone | None] = {"HL": None, "OC": None}
-    if len(df) <= lookback:
-        return out
-    zones = build_zones(df, lookback)
-    last_i = len(df) - 1
-    # Prefer zones still the rolling winner as of last bar
-    active = [z for z in zones if z.last_winner_idx == last_i]
-    if not active:
-        # fallback: most recent created HL/OC
-        by_kind: dict[str, list[Zone]] = {"HL": [], "OC": []}
-        for z in zones:
-            by_kind.setdefault(z.kind, []).append(z)
-        for k in ("HL", "OC"):
-            if by_kind[k]:
-                out[k] = by_kind[k][-1]
-        return out
-    for z in active:
-        out[z.kind] = z
-    return out
 
 
 def _line_y_at_x(d1: date, p1: float, d2: date, p2: float, x: date) -> float:
@@ -374,15 +353,19 @@ def plot_symbol_chart(
     symbol: str,
     df: pd.DataFrame,
     meta: dict[str, Any],
-    vz: dict[str, Zone | None],
+    vz: VzChartPack,
     all_zones: list[Zone],
     sym_info: dict[str, Any] | None,
     out_png: Path,
     company_name: str | None = None,
 ) -> dict[str, Any]:
-    """Plot last ~6 calendar months; return summary fields for HTML."""
+    """Plot last ~6 calendar months (extended left if the VZ trigger is older)."""
     end_ts = pd.Timestamp(df["Date"].iloc[-1]).normalize()
-    start_ts = (end_ts - pd.DateOffset(months=CHART_MONTHS)).normalize()
+    start_ts = visible_window_start(
+        end_ts,
+        months=CHART_MONTHS,
+        trigger=vz.trigger_hl or vz.trigger_oc,
+    )
     plot_df = df[(df["Date"] >= start_ts) & (df["Date"] <= end_ts)].copy()
     if plot_df.empty:
         raise ValueError(f"{symbol}: empty plot window")
@@ -437,13 +420,22 @@ def plot_symbol_chart(
             )
             y_extra.extend(float(x) for x in sma_slice.dropna().tolist())
 
-    # --- VZ HL (house) + light OC ---
-    vz_hl = vz.get("HL")
-    vz_oc = vz.get("OC")
+    # --- VZ HL: engine trigger always, plus latest unused winner if different ---
+    trigger_hl = vz.trigger_hl
+    trigger_oc = vz.trigger_oc
+    current_hl = vz.current_hl
+    current_oc = vz.current_oc
+    # What we report as "the" VZ box: trigger first, else current winner.
+    vz_hl = trigger_hl or current_hl
+    vz_oc = trigger_oc or current_oc
+    show_unused = (
+        current_hl is not None
+        and trigger_hl is not None
+        and not vz.trigger_is_current
+    )
 
-    def _span_zone(z: Zone, face: str, alpha: float, label: str) -> None:
-        # Draw from max-vol day (or created_on if later) through last bar —
-        # same horizontal gating idea as HV6m / ToS zone boxes.
+    def _span_zone(z: Zone, face: str, alpha: float, label: str, *, lw: float = 0.8) -> None:
+        # Draw from max-vol day through last bar — same gating as HV6m / ToS.
         z_day = pd.Timestamp(z.max_vol_date).date()
         d0 = max(win_start, z_day)
         d1 = win_end
@@ -459,7 +451,7 @@ def plot_symbol_chart(
                 facecolor=face,
                 edgecolor=face,
                 alpha=alpha,
-                linewidth=0.8,
+                linewidth=lw,
                 zorder=1,
                 label=label,
             )
@@ -468,10 +460,49 @@ def plot_symbol_chart(
             ax.axvline(z_day, color=face, ls=":", lw=1.0, alpha=0.7, zorder=4)
         y_extra.extend([z.lo, z.hi])
 
-    if vz_hl is not None:
-        _span_zone(vz_hl, VZ_HL_FACE, 0.16, f"VZ HL {pd.Timestamp(vz_hl.max_vol_date).date()}")
-    if vz_oc is not None:
-        _span_zone(vz_oc, VZ_OC_FACE, 0.10, f"VZ OC {pd.Timestamp(vz_oc.max_vol_date).date()}")
+    if show_unused and current_hl is not None:
+        _span_zone(
+            current_hl,
+            VZ_HL_FACE,
+            0.10,
+            f"VZ latest unused {pd.Timestamp(current_hl.max_vol_date).date()}",
+        )
+        if current_oc is not None:
+            _span_zone(
+                current_oc,
+                VZ_OC_FACE,
+                0.06,
+                f"VZ OC latest {pd.Timestamp(current_oc.max_vol_date).date()}",
+            )
+    if trigger_hl is not None:
+        _span_zone(
+            trigger_hl,
+            VZ_TRIGGER_FACE,
+            0.22,
+            f"VZ trigger {pd.Timestamp(trigger_hl.max_vol_date).date()}",
+            lw=1.2,
+        )
+        if trigger_oc is not None:
+            _span_zone(
+                trigger_oc,
+                VZ_OC_FACE,
+                0.10,
+                f"VZ OC trigger {pd.Timestamp(trigger_oc.max_vol_date).date()}",
+            )
+    elif current_hl is not None:
+        _span_zone(
+            current_hl,
+            VZ_HL_FACE,
+            0.16,
+            f"VZ HL {pd.Timestamp(current_hl.max_vol_date).date()}",
+        )
+        if current_oc is not None:
+            _span_zone(
+                current_oc,
+                VZ_OC_FACE,
+                0.10,
+                f"VZ OC {pd.Timestamp(current_oc.max_vol_date).date()}",
+            )
 
     # --- HV6m gold box (from segments freeze) ---
     hv = meta.get("hv6m") or {}
@@ -613,10 +644,14 @@ def plot_symbol_chart(
         )
 
     vz_note = "—"
-    if vz_hl is not None:
+    if trigger_hl is not None:
+        vz_note = trigger_label(trigger_hl, is_current=vz.trigger_is_current)
+        if show_unused and current_hl is not None:
+            vz_note += f"   ·   {latest_unused_label(current_hl)}"
+    elif current_hl is not None:
         vz_note = (
-            f"HL {pd.Timestamp(vz_hl.max_vol_date).date()} "
-            f"{vz_hl.lo:.2f}–{vz_hl.hi:.2f}"
+            f"HL {pd.Timestamp(current_hl.max_vol_date).date()} "
+            f"{current_hl.lo:.2f}–{current_hl.hi:.2f}"
         )
     hv_note = "—"
     if hv and hv.get("day"):
@@ -634,7 +669,7 @@ def plot_symbol_chart(
     )
     label = symbol_display(symbol, company_name)
     title_lines = [
-        f"{label}  |  last 6m through {win_end}  |  last={last:.2f}  |  {rsi_note}",
+        f"{label}  |  {win_start} → {win_end}  |  last={last:.2f}  |  {rsi_note}",
     ]
     if header:
         title_lines.append(header)
@@ -648,7 +683,8 @@ def plot_symbol_chart(
         Line2D([0], [0], color="#ff9800", lw=2, label="W trendline"),
         Line2D([0], [0], color="#00bcd4", lw=2, label="D trendline"),
         Line2D([0], [0], color="#d4a84b", lw=6, alpha=0.45, label="HV6m box"),
-        Line2D([0], [0], color="#7e57c2", lw=6, alpha=0.45, label="VZ HL zone"),
+        Line2D([0], [0], color="#4527a0", lw=6, alpha=0.55, label="VZ trigger zone"),
+        Line2D([0], [0], color="#7e57c2", lw=6, alpha=0.35, label="VZ latest unused"),
         Line2D([0], [0], color="#42a5f5", lw=6, alpha=0.35, label="VZ OC (context)"),
         Line2D([0], [0], color="#ec407a", lw=1.2, label="SMA20"),
         Line2D([0], [0], color="#ef6c00", lw=1.2, label="SMA50"),
@@ -682,6 +718,16 @@ def plot_symbol_chart(
         "vz_hl_lo": float(vz_hl.lo) if vz_hl else None,
         "vz_hl_hi": float(vz_hl.hi) if vz_hl else None,
         "vz_oc_day": str(pd.Timestamp(vz_oc.max_vol_date).date()) if vz_oc else "",
+        "vz_trigger_day": (
+            str(pd.Timestamp(trigger_hl.max_vol_date).date()) if trigger_hl else ""
+        ),
+        "vz_trigger_lo": float(trigger_hl.lo) if trigger_hl else None,
+        "vz_trigger_hi": float(trigger_hl.hi) if trigger_hl else None,
+        "vz_trigger_id": (vz.trigger_spec.zone_id if vz.trigger_spec else ""),
+        "vz_trigger_is_current": bool(vz.trigger_is_current),
+        "vz_latest_day": (
+            str(pd.Timestamp(current_hl.max_vol_date).date()) if current_hl else ""
+        ),
         "systems": ", ".join(sym_info.get("systems") or []) if sym_info else "",
         "scanner_systems": ", ".join(sym_info.get("scanner_systems") or []) if sym_info else "",
         "purchase_date": str(sym_info.get("purchase_date") or "") if sym_info else "",
@@ -710,7 +756,18 @@ def write_index_html(
     table_rows = []
     for r in rows_sorted:
         vz = "—"
-        if r.get("vz_hl_day"):
+        if r.get("vz_trigger_day") and r.get("vz_trigger_lo") is not None:
+            tag = "trigger"
+            if r.get("vz_trigger_is_current"):
+                tag = "trigger=current"
+            vz = (
+                f'{html_mod.escape(tag)} {html_mod.escape(r["vz_trigger_day"])} '
+                f'{r["vz_trigger_lo"]:.2f}–{r["vz_trigger_hi"]:.2f}'
+            )
+            latest = r.get("vz_latest_day") or ""
+            if latest and latest != r.get("vz_trigger_day"):
+                vz += f' · latest {html_mod.escape(latest)}'
+        elif r.get("vz_hl_day"):
             vz = (
                 f'{html_mod.escape(r["vz_hl_day"])} '
                 f'{r["vz_hl_lo"]:.2f}–{r["vz_hl_hi"]:.2f}'
@@ -768,7 +825,7 @@ def write_index_html(
             f'Nearest HL above={html_mod.escape(r.get("zone_above") or "—")} · '
             f'below={html_mod.escape(r.get("zone_below") or "—")} · '
             f'segs={r["n_segs"]} · HV6m={html_mod.escape(r.get("hv6m_day") or "—")} · '
-            f'VZ HL={html_mod.escape(r.get("vz_hl_day") or "—")}</p>'
+            f'VZ={html_mod.escape(r.get("vz_trigger_id") or r.get("vz_hl_day") or "—")}</p>'
             f'<a href="{html_mod.escape(r["png"])}">'
             f'<img src="{html_mod.escape(r["png"])}" alt="{html_mod.escape(display)} chart" loading="lazy"/>'
             f"</a></section>"
@@ -848,25 +905,18 @@ generated {datetime.now().strftime("%Y-%m-%d %H:%M")} · offline PNGs ·
 Click column headers to sort · <a class="top" href="#charts">Jump to charts</a></p>
 
 <div class="defs">
-<strong>What you asked</strong>
-<pre style="white-space:pre-wrap;margin:0.4rem 0 0;font-size:0.85rem;">is there a way you Can add oversold overbought, either numbers or indicators on the daily trend charts. And can you rerun it and then publish it, please?</pre>
-<p style="margin:0.55rem 0 0;"><strong>In plain English:</strong>
-Add a daily “too hot / too cold” read on each chart (Relative Strength Index, RSI(14):
-≥70 overbought, ≤30 oversold), show the latest number on the chart and in the table,
-then regenerate and publish the opens trendline pack.</p>
-</div>
-
-<div class="defs">
 <strong>Overlays</strong>
 <ul>
 <li><b>M / W / D trendlines</b> — frozen fractal support (solid) &amp; resistance (dashed) from
 <code>segments.json</code> / <code>gen_trendlines_tos_studies.py</code> (same geometry as ToS studies).</li>
 <li><b>HV6m</b> — gold box: max-Volume day High–Low in last 6 <em>calendar</em> months (from stamp),
 drawn from HV day through last bar.</li>
-<li><b>VZ zone (house)</b> — purple band: Vol Zone <b>HL</b> for the <em>current</em> rolling
-<strong>126 trading-day</strong> max-volume winner (<code>build_zones</code> in
-<code>tools/vol_zone_break_retest.py</code>; house <code>rocket_vz</code> is HL-only).
-Light blue = same day's <b>OC</b> band for dual-zone context (not the house entry filter).</li>
+<li><b>VZ trigger zone (house)</b> — deep purple band: the High–Low box the live
+Volume Zone (VZ) Open / Watchlist row is based on (<code>ZONE_ID</code>). Always drawn,
+even when a newer 126-day max-volume winner exists. Window start extends left so
+the trigger write day is on-screen. Lighter purple = latest unused winner (context).
+Light blue = same day's <b>OC</b> band (not the house entry filter).
+Helper: <code>tools/vz_chart_zones.py</code>.</li>
 <li><b>SMA20 / SMA50 / SMA100</b> — simple moving averages on daily close (pink / orange / brown).</li>
 <li><b>RSI(14)</b> — bottom panel Wilder RSI; red band ≥{int(RSI_OVERBOUGHT)} overbought,
 green band ≤{int(RSI_OVERSOLD)} oversold; last value annotated on the panel and listed in the table.</li>
@@ -895,7 +945,7 @@ Dashed red/green guides on chart.</li>
 {_sortable_th("HL below", "text")}
 {_sortable_th("Segs", "num")}
 {_sortable_th("HV6m day", "date")}
-{_sortable_th("VZ HL", "text")}
+{_sortable_th("VZ trigger", "text")}
 {_sortable_th("PNG", "text")}
 </tr></thead>
 <tbody>
@@ -973,6 +1023,10 @@ def main() -> int:
     if args.limit and args.limit > 0:
         syms = syms[: args.limit]
 
+    trigger_specs = load_vz_trigger_specs(_REPO / "drive")
+    if trigger_specs:
+        print(f"[vz] {len(trigger_specs)} live trigger zone(s) from Open/Watchlist")
+
     company_names = resolve_company_names(syms)
     missing_names = [s for s in syms if s not in company_names]
     if missing_names:
@@ -1026,6 +1080,12 @@ def main() -> int:
                     "vz_hl_lo": None,
                     "vz_hl_hi": None,
                     "vz_oc_day": "",
+                    "vz_trigger_day": "",
+                    "vz_trigger_lo": None,
+                    "vz_trigger_hi": None,
+                    "vz_trigger_id": "",
+                    "vz_trigger_is_current": False,
+                    "vz_latest_day": "",
                     "systems": ", ".join(sym_info.get("systems") or []),
                     "scanner_systems": ", ".join(sym_info.get("scanner_systems") or []),
                     "purchase_date": str(sym_info.get("purchase_date") or ""),
@@ -1044,8 +1104,9 @@ def main() -> int:
             continue
         try:
             df = load_ohlcv(csv_path)
-            vz = current_vz_zones(df, LOOKBACK_DAYS)
-            all_zones = build_zones(df, LOOKBACK_DAYS) if len(df) > LOOKBACK_DAYS else []
+            spec = trigger_specs.get(sym)
+            vz = resolve_vz_chart_pack(df, lookback=LOOKBACK_DAYS, trigger_spec=spec)
+            all_zones = vz.all_zones
             sym_info = open_meta.get(sym)
             info = plot_symbol_chart(
                 sym,
@@ -1060,7 +1121,7 @@ def main() -> int:
             rows.append(info)
             print(
                 f"[{i}/{len(syms)}] {info.get('display') or sym}  bars={info['n_bars']}  "
-                f"vz_hl={info.get('vz_hl_day') or '—'}  "
+                f"vz={info.get('vz_trigger_id') or info.get('vz_hl_day') or '—'}  "
                 f"above={info.get('zone_above') or '—'}  -> {png.name}"
             )
         except Exception as exc:  # noqa: BLE001 — batch resilience
@@ -1075,8 +1136,10 @@ def main() -> int:
 - **Index:** `index.html`
 - **N charts:** {len(rows)}
 - **Skipped:** {len(skipped)}
-- **VZ zone drawn:** house Vol Zone **HL** — High–Low of the current rolling **126 trading-day**
-  max-volume winner (`tools/vol_zone_break_retest.build_zones`). Light OC band = same day for context.
+- **VZ zone drawn:** engine **trigger** High–Low (`ZONE_ID` from live Open/Watchlist) is
+  always included (`tools/vz_chart_zones.py`). Latest 126d winner may also be drawn
+  faded when it is a newer unused box. Window extends left so the trigger write day
+  is on-screen. Light OC band = same day for context.
 - **HV6m:** calendar-6m max-vol High–Low box from parent `segments.json`.
 - **Trendlines:** M/W/D fractal support/resistance from `segments.json`.
 

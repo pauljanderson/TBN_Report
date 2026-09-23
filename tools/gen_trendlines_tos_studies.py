@@ -6,9 +6,10 @@ emits frozen two-point plot segments in ThinkScript for overlay on a **Daily**
 chart, plus the same house overlays used on HTML trendline charts:
 
 - SMA20 / SMA50 / SMA100 (native ``Average(close, N)``)
-- House Vol Zone (VZ) HL: current 126d rolling max-volume winner + nearest HL
-  above/below last close (``tools/vol_zone_break_retest.build_zones``)
-- Light VZ OC band for the current winner day (context only)
+- House Vol Zone (VZ) HL: engine **trigger** zone (Open/Watchlist ``ZONE_ID``)
+  always drawn, plus latest 126d winner if different, plus nearest HL
+  above/below last close (``tools/vz_chart_zones.py`` / ``build_zones``)
+- Light VZ OC band for the trigger (or current winner) day (context only)
 - HV6m volume-day High/Low box
 
 Wired by DailyRun step 13d via ``run_trendlines_tos_daily.bat``.
@@ -36,7 +37,12 @@ _TOOLS = _REPO / "tools"
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
-from vol_zone_break_retest import Zone, build_zones  # noqa: E402
+from vol_zone_break_retest import Zone  # noqa: E402
+from vz_chart_zones import (  # noqa: E402
+    VzTriggerSpec,
+    load_vz_trigger_specs,
+    resolve_vz_chart_pack,
+)
 
 DEFAULT_DATA = _REPO / "data" / "newdata" / "data"
 DEFAULT_STAMP = "trendlines_mw_d_20260827"
@@ -59,7 +65,8 @@ HV6M_MONTHS = 6
 
 # House VZ HL lookback + chart-matched overlay colors (gen_trendlines_charts_html)
 VZ_LOOKBACK_DAYS = 126
-VZ_HL_RGB = (126, 87, 194)  # #7e57c2 purple — current winner HL
+VZ_HL_RGB = (126, 87, 194)  # #7e57c2 purple — latest unused / current-when-no-trigger
+VZ_TRIGGER_RGB = (69, 39, 160)  # #4527a0 deep purple — engine trigger HL
 VZ_OC_RGB = (66, 165, 245)  # #42a5f5 light blue — same-day OC context
 VZ_ABOVE_RGB = (198, 40, 40)  # #c62828 nearest HL above
 VZ_BELOW_RGB = (46, 125, 50)  # #2e7d32 nearest HL below
@@ -174,23 +181,28 @@ class VzHlBand:
     """Frozen house VZ HL (or OC) band for ThinkScript AddCloud."""
 
     kind: str  # HL | OC
-    role: str  # current | above | below
+    role: str  # current | trigger | unused | above | below
     day: date
     high: float
     low: float
     volume: float
+    zone_id: str = ""
 
 
 @dataclass(frozen=True)
 class VzOverlayPack:
-    """Chart-matched VZ overlays: current winner + nearest above/below."""
+    """Chart-matched VZ overlays: trigger + current winner + nearest above/below."""
 
     current_hl: VzHlBand | None = None
     current_oc: VzHlBand | None = None
+    trigger_hl: VzHlBand | None = None
+    trigger_oc: VzHlBand | None = None
     nearest_above: VzHlBand | None = None
     nearest_below: VzHlBand | None = None
     last_close: float | None = None
     n_hl_zones: int = 0
+    trigger_is_current: bool = False
+    trigger_zone_id: str = ""
 
 
 def _fmt_px(px: float) -> str:
@@ -272,59 +284,39 @@ def _zone_to_band(z: Zone, role: str) -> VzHlBand:
         high=float(z.hi),
         low=float(z.lo),
         volume=float(z.volume),
+        zone_id=str(z.zone_id or ""),
     )
 
 
-def nearest_hl_zones(zones: list[Zone], price: float) -> tuple[Zone | None, Zone | None]:
-    """Nearest mature VZ HL zone above/below *price* (same as chart generator)."""
-    hl = [z for z in zones if z.kind == "HL"]
-    above = [z for z in hl if z.lo > price]
-    below = [z for z in hl if z.hi < price]
-    nearest_above = min(above, key=lambda z: z.lo - price) if above else None
-    nearest_below = max(below, key=lambda z: z.hi) if below else None
-    return nearest_above, nearest_below
-
-
-def current_vz_zones(df: pd.DataFrame, lookback: int = VZ_LOOKBACK_DAYS) -> dict[str, Zone | None]:
-    """Return current rolling-winner HL (house) and matching OC if present."""
-    out: dict[str, Zone | None] = {"HL": None, "OC": None}
-    if len(df) <= lookback:
-        return out
-    zones = build_zones(df, lookback)
-    last_i = len(df) - 1
-    active = [z for z in zones if z.last_winner_idx == last_i]
-    if not active:
-        by_kind: dict[str, list[Zone]] = {"HL": [], "OC": []}
-        for z in zones:
-            by_kind.setdefault(z.kind, []).append(z)
-        for k in ("HL", "OC"):
-            if by_kind[k]:
-                out[k] = by_kind[k][-1]
-        return out
-    for z in active:
-        out[z.kind] = z
-    return out
-
-
-def find_vz_overlays(daily: pd.DataFrame, *, lookback: int = VZ_LOOKBACK_DAYS) -> VzOverlayPack:
-    """Compute chart-matched VZ HL overlays from house build_zones."""
+def find_vz_overlays(
+    daily: pd.DataFrame,
+    *,
+    lookback: int = VZ_LOOKBACK_DAYS,
+    trigger_spec: VzTriggerSpec | None = None,
+) -> VzOverlayPack:
+    """Chart-matched VZ overlays: engine trigger + current winner + nearest."""
     if daily.empty or "Volume" not in daily.columns or len(daily) <= lookback:
         return VzOverlayPack()
     dfz = _daily_to_zone_frame(daily)
     try:
-        zones = build_zones(dfz, lookback)
-    except ValueError:
-        return VzOverlayPack()
-    last_close = float(daily["Close"].iloc[-1])
-    cur = current_vz_zones(dfz, lookback)
-    above, below = nearest_hl_zones(zones, last_close)
+        last_close = float(daily["Close"].iloc[-1])
+    except (TypeError, ValueError):
+        last_close = None
+    pack = resolve_vz_chart_pack(
+        dfz, lookback=lookback, trigger_spec=trigger_spec, last_close=last_close
+    )
+    unused_role = "current" if pack.trigger_hl is None else "unused"
     return VzOverlayPack(
-        current_hl=_zone_to_band(cur["HL"], "current") if cur.get("HL") else None,
-        current_oc=_zone_to_band(cur["OC"], "current") if cur.get("OC") else None,
-        nearest_above=_zone_to_band(above, "above") if above else None,
-        nearest_below=_zone_to_band(below, "below") if below else None,
+        current_hl=_zone_to_band(pack.current_hl, unused_role) if pack.current_hl else None,
+        current_oc=_zone_to_band(pack.current_oc, unused_role) if pack.current_oc else None,
+        trigger_hl=_zone_to_band(pack.trigger_hl, "trigger") if pack.trigger_hl else None,
+        trigger_oc=_zone_to_band(pack.trigger_oc, "trigger") if pack.trigger_oc else None,
+        nearest_above=_zone_to_band(pack.nearest_above, "above") if pack.nearest_above else None,
+        nearest_below=_zone_to_band(pack.nearest_below, "below") if pack.nearest_below else None,
         last_close=last_close,
-        n_hl_zones=sum(1 for z in zones if z.kind == "HL"),
+        n_hl_zones=sum(1 for z in pack.all_zones if z.kind == "HL"),
+        trigger_is_current=bool(pack.trigger_is_current),
+        trigger_zone_id=(trigger_spec.zone_id if trigger_spec else ""),
     )
 
 
@@ -338,6 +330,7 @@ def _band_meta(b: VzHlBand | None) -> dict | None:
         "high": b.high,
         "low": b.low,
         "volume": b.volume,
+        "zone_id": b.zone_id,
     }
 
 
@@ -629,10 +622,13 @@ def build_thinkscript(
         "# HTF pivots mapped to the daily date that printed the period H/L.",
         "# Drawing: BarNumber linear interp between d1/d2; extend right of d2.",
         "# HV6m: AddCloud = High/Low of max-Volume day in last 6 calendar months.",
-        f"# VZ HL: house build_zones lookback={VZ_LOOKBACK_DAYS} — current winner HL",
+        f"# VZ HL: house build_zones lookback={VZ_LOOKBACK_DAYS} — engine trigger HL",
+        "#       always drawn (Open/Watchlist ZONE_ID) + latest winner if unused;",
         "#       + nearest HL above/below last close (frozen AddCloud); light OC context.",
         "# SMA20/50/100: native Average(close, N) — live on chart (not frozen).",
         "# Zone clouds: GetYYYYMMDD() >= max-vol day (same as tos/ts_common.py).",
+        "# Chart-read (not extra geometry): orange solid = weekly support (buy-today).",
+        "# Up to 6 trendlines are intended: monthly/weekly/daily × support/resistance.",
         "",
         "declare upper;",
         "",
@@ -645,6 +641,7 @@ def build_thinkscript(
         "input extendRight = yes;",
         "input showHV6m = yes;",
         "input showVzCurrent = yes;",
+        "input showVzTrigger = yes;",
         "input showVzNearest = yes;",
         "input showSMA = yes;",
         "",
@@ -656,6 +653,8 @@ def build_thinkscript(
     lines.append(f'DefineGlobalColor("HV6m", CreateColor({hr}, {hg}, {hb}));')
     vr, vg, vb = VZ_HL_RGB
     lines.append(f'DefineGlobalColor("VzHL", CreateColor({vr}, {vg}, {vb}));')
+    tr, tg, tb = VZ_TRIGGER_RGB
+    lines.append(f'DefineGlobalColor("VzTrigger", CreateColor({tr}, {tg}, {tb}));')
     or_, og, ob = VZ_OC_RGB
     lines.append(f'DefineGlobalColor("VzOC", CreateColor({or_}, {og}, {ob}));')
     ar, ag, ab = VZ_ABOVE_RGB
@@ -666,6 +665,16 @@ def build_thinkscript(
         lines.append(
             f'DefineGlobalColor("SMA{period}", CreateColor({sr}, {sg}, {sb}));'
         )
+    lines.append("")
+    lines.append(
+        "# Chart-read labels only — do not add lines. Buy-today = weekly support."
+    )
+    lines.append(
+        'AddLabel(yes, "Orange solid = weekly support (buy-today line)", GlobalColor("Weekly"));'
+    )
+    lines.append(
+        'AddLabel(yes, "Solid=support  dashed=resistance  violet=monthly  cyan=daily", Color.GRAY);'
+    )
     lines.append("")
 
     # --- Native SMA overlays (live, match HTML chart periods/colors) ---
@@ -747,13 +756,55 @@ def build_thinkscript(
         )
         lines.append("")
 
-    # House VZ overlays (frozen nearest + current — not full zone history)
+    # House VZ overlays: engine trigger always, plus latest unused winner
     lines.append(
         f"# ---- House VZ HL overlays (lookback={VZ_LOOKBACK_DAYS}; "
         f"n_hl={vz.n_hl_zones}; last_close="
-        f"{_fmt_px(vz.last_close) if vz.last_close is not None else 'n/a'}) ----"
+        f"{_fmt_px(vz.last_close) if vz.last_close is not None else 'n/a'}; "
+        f"trigger={vz.trigger_zone_id or 'none'}) ----"
     )
-    if vz.current_hl is not None:
+    show_unused = (
+        vz.current_hl is not None
+        and vz.trigger_hl is not None
+        and not vz.trigger_is_current
+    )
+    if show_unused and vz.current_hl is not None:
+        _emit_frozen_cloud(
+            lines,
+            prefix="vzHl",
+            show_input="showVzCurrent",
+            color_name="VzHL",
+            band=vz.current_hl,
+            bubble_label="VZ latest unused",
+        )
+        if vz.current_oc is not None:
+            _emit_frozen_cloud(
+                lines,
+                prefix="vzOcLatest",
+                show_input="showVzCurrent",
+                color_name="VzOC",
+                band=vz.current_oc,
+                bubble_label="VZ OC latest",
+            )
+    if vz.trigger_hl is not None:
+        _emit_frozen_cloud(
+            lines,
+            prefix="vzTrig",
+            show_input="showVzTrigger",
+            color_name="VzTrigger",
+            band=vz.trigger_hl,
+            bubble_label="VZ trigger",
+        )
+        if vz.trigger_oc is not None:
+            _emit_frozen_cloud(
+                lines,
+                prefix="vzTrigOc",
+                show_input="showVzTrigger",
+                color_name="VzOC",
+                band=vz.trigger_oc,
+                bubble_label="VZ OC trigger",
+            )
+    elif vz.current_hl is not None:
         _emit_frozen_cloud(
             lines,
             prefix="vzHl",
@@ -762,15 +813,15 @@ def build_thinkscript(
             band=vz.current_hl,
             bubble_label="VZ HL",
         )
-    if vz.current_oc is not None:
-        _emit_frozen_cloud(
-            lines,
-            prefix="vzOc",
-            show_input="showVzCurrent",
-            color_name="VzOC",
-            band=vz.current_oc,
-            bubble_label="VZ OC",
-        )
+        if vz.current_oc is not None:
+            _emit_frozen_cloud(
+                lines,
+                prefix="vzOc",
+                show_input="showVzCurrent",
+                color_name="VzOC",
+                band=vz.current_oc,
+                bubble_label="VZ OC",
+            )
     if vz.nearest_above is not None:
         _emit_frozen_cloud(
             lines,
@@ -794,6 +845,7 @@ def build_thinkscript(
     if (
         vz.current_hl is None
         and vz.current_oc is None
+        and vz.trigger_hl is None
         and vz.nearest_above is None
         and vz.nearest_below is None
     ):
@@ -839,12 +891,27 @@ def write_readme(
             "3. Overlay those segments on a **Daily** chart so dates line up.",
             "4. Add an **HV6m** volume-day High/Low box (frozen `AddCloud`, same date-gate "
             "pattern as zone boxes in `tos/ts_common.py`).",
-            "5. Add **house Vol Zone (VZ) HL** overlays matching HTML charts: current "
-            f"{VZ_LOOKBACK_DAYS}d rolling max-volume winner + nearest HL above/below "
-            "last close (`tools/vol_zone_break_retest.build_zones`), plus light OC context.",
+            "5. Add **house Vol Zone (VZ) HL** overlays matching HTML charts: engine "
+            "trigger zone (Open/Watchlist `ZONE_ID`) always drawn, plus latest unused "
+            f"{VZ_LOOKBACK_DAYS}d winner + nearest HL above/below last close "
+            "(`tools/vz_chart_zones.py`), plus light OC context.",
             "6. Plot **SMA20 / SMA50 / SMA100** via native `Average(close, N)` (live).",
             "",
             "So: **accurate vs the stated algorithm**, not vs a human discretionary line.",
+            "",
+            "## How to read the chart (not a bug)",
+            "",
+            "Multiple support/resistance marks are **intended**. One study draws up to "
+            "**six** fractal trendlines (monthly + weekly + daily, each with support "
+            "*and* resistance), plus HV6m / Vol Zone (VZ) bands and SMA20/50/100. "
+            "This is not a fan of all historical fits and not a duplicate plot.",
+            "",
+            "- **Buy-today line:** orange **solid** weekly support (`W Sup`).",
+            "- Support = solid; resistance = short dash.",
+            "- Colors: monthly violet (thick), weekly orange, daily cyan (thin).",
+            "- To see only the buy line: `showMonthly=no`, `showDaily=no`, "
+            "`showResistance=no` (leave `showWeekly` + `showSupport` on).",
+            "- Load **one** `{SYM}_trendlines_mwd` study — do not stack dated stamp + latest.",
             "",
             "## Algorithm",
             "",
@@ -886,16 +953,19 @@ def write_readme(
             "",
             f"- **Engine:** `build_zones(df, lookback={VZ_LOOKBACK_DAYS})` — every unique "
             "rolling max-volume winner becomes a persistent OC + HL band.",
-            "- **Current VZ HL (purple):** winner as of the last bar; High–Low of that day.",
-            "- **Current VZ OC (light blue):** Open–Close of the same winner day (context only; "
+            "- **Trigger VZ HL (deep purple):** Open/Watchlist `ZONE_ID` High–Low — always drawn, "
+            "even when older than the latest rolling winner. Toggle: `showVzTrigger`.",
+            "- **Latest unused VZ HL (lighter purple):** current 126d winner when it is a "
+            "different, unused box. Toggle: `showVzCurrent`.",
+            "- **VZ OC (light blue):** Open–Close of the trigger (or current) day (context only; "
             "house rocket_vz entry filter is HL-only).",
             "- **Nearest above / below:** among all mature HL zones, nearest with zone low "
             "above last close (above) or zone high below last close (below) — same selection "
-            "as `gen_trendlines_charts_html.nearest_hl_zones`.",
+            "as `vz_chart_zones.nearest_hl_zones`.",
             "- **Drawing:** frozen `AddCloud` from max-vol day extend-right; nearest also get "
-            "dashed edge guide plots. Toggles: `showVzCurrent`, `showVzNearest`.",
+            "dashed edge guide plots. Toggles: `showVzTrigger`, `showVzCurrent`, `showVzNearest`.",
             "- **Not embedded:** full historical fan of every past VZ winner (ToS study size / "
-            "readability) — only current + nearest above/below.",
+            "readability) — trigger + latest unused + nearest above/below.",
             "",
             "### SMA20 / SMA50 / SMA100",
             "",
@@ -929,7 +999,7 @@ def write_readme(
             "4. Apply on a **Daily** aggregation chart for that symbol.",
             "5. Toggles: `showMonthly` / `showWeekly` / `showDaily`, "
             "`showSupport` / `showResistance`, `showLabels`, `extendRight`, "
-            "`showHV6m`, `showVzCurrent`, `showVzNearest`, `showSMA`.",
+            "`showHV6m`, `showVzTrigger`, `showVzCurrent`, `showVzNearest`, `showSMA`.",
             "",
             "## Symbols / BTC naming",
             "",
@@ -974,7 +1044,7 @@ def write_readme(
             "- If a pivot date is missing on the chart (holiday mapping edge case), that "
             "segment will not plot (`HighestAll` of BarNumber stays NaN).",
             "- Only the **latest** support + resistance per TF (two pivots each) — not a fan of all historical swings.",
-            "- VZ embeds **current + nearest above/below only**, not the full zone history.",
+            "- VZ embeds **trigger + latest unused + nearest above/below**, not the full zone history.",
             "- HV6m / VZ need a Volume column; missing/zero volume → no box/zones for that symbol.",
             "- Discretionary multi-touch / channel judgment is out of scope.",
             "",
@@ -1001,13 +1071,13 @@ def write_readme(
             "",
             "## VZ HL overlays",
             "",
-            "| Symbol | Last close | Current HL | Current OC | Nearest above | Nearest below | N HL |",
-            "|---|---|---|---|---|---|---|",
+            "| Symbol | Last close | Trigger HL | Current HL | Current OC | Nearest above | Nearest below | N HL |",
+            "|---|---|---|---|---|---|---|---|",
         ]
     )
     for r in vz_rows:
         lines.append(
-            f"| {r['symbol']} | {r['last_close']} | {r['current_hl']} | {r['current_oc']} | "
+            f"| {r['symbol']} | {r['last_close']} | {r.get('trigger_hl') or '—'} | {r['current_hl']} | {r['current_oc']} | "
             f"{r['nearest_above']} | {r['nearest_below']} | {r['n_hl_zones']} |"
         )
     if not vz_rows:
@@ -1101,6 +1171,7 @@ def write_html(
         [
             _sortable_th("Symbol", "text"),
             _sortable_th("Last close", "num"),
+            _sortable_th("Trigger HL", "text"),
             _sortable_th("Current HL", "text"),
             _sortable_th("Current OC", "text"),
             _sortable_th("Nearest above", "text"),
@@ -1115,6 +1186,7 @@ def write_html(
             "<tr>"
             f"<td>{html_mod.escape(r['symbol'])}</td>"
             f"<td>{html_mod.escape(str(r['last_close']))}</td>"
+            f"<td>{html_mod.escape(r.get('trigger_hl') or '—')}</td>"
             f"<td>{html_mod.escape(r['current_hl'])}</td>"
             f"<td>{html_mod.escape(r['current_oc'])}</td>"
             f"<td>{html_mod.escape(r['nearest_above'])}</td>"
@@ -1125,6 +1197,7 @@ def write_html(
         )
     hr, hg, hb = HV6M_RGB
     vr, vg, vb = VZ_HL_RGB
+    tr, tg, tb = VZ_TRIGGER_RGB
     or_, og, ob = VZ_OC_RGB
     ar, ag, ab = VZ_ABOVE_RGB
     br, bg, bb = VZ_BELOW_RGB
@@ -1175,7 +1248,7 @@ Click column headers to sort.</p>
 <li>ToS/ThinkScript cannot reliably automate discretionary trendlines.</li>
 <li>These studies freeze <strong>last-two fractal swing</strong> support/resistance per TF.</li>
 <li>HV6m box = High/Low of the max-Volume daily bar in the trailing 6 months (ties → most recent).</li>
-<li>VZ HL = house <code>build_zones</code> ({VZ_LOOKBACK_DAYS}d) — current winner + nearest above/below last close (not full zone history).</li>
+<li>VZ HL = house <code>build_zones</code> ({VZ_LOOKBACK_DAYS}d) — engine <strong>trigger</strong> (Open/Watchlist <code>ZONE_ID</code>) always drawn + latest unused winner + nearest above/below last close.</li>
 <li>SMA20/50/100 = native <code>Average(close, N)</code> (live).</li>
 <li>Use on a <strong>Daily</strong> chart; BarNumber interpolation matches trading bars.</li>
 </ul>
@@ -1187,7 +1260,8 @@ Click column headers to sort.</p>
 <span class="swatch" style="background:rgb(255,152,0)"></span>Weekly ·
 <span class="swatch" style="background:rgb(0,188,212)"></span>Daily ·
 <span class="swatch" style="background:rgb({hr},{hg},{hb})"></span>HV6m ·
-<span class="swatch" style="background:rgb({vr},{vg},{vb})"></span>VZ HL current ·
+<span class="swatch" style="background:rgb({tr},{tg},{tb})"></span>VZ trigger ·
+<span class="swatch" style="background:rgb({vr},{vg},{vb})"></span>VZ latest unused ·
 <span class="swatch" style="background:rgb({or_},{og},{ob})"></span>VZ OC ·
 <span class="swatch" style="background:rgb({ar},{ag},{ab})"></span>VZ nearest above ·
 <span class="swatch" style="background:rgb({br},{bg},{bb})"></span>VZ nearest below ·
@@ -1195,7 +1269,7 @@ Click column headers to sort.</p>
 <span class="swatch" style="background:rgb({s50[0]},{s50[1]},{s50[2]})"></span>SMA50 ·
 <span class="swatch" style="background:rgb({s100[0]},{s100[1]},{s100[2]})"></span>SMA100
 </p>
-<p class="muted">Support = firm; Resistance = short dash. Toggles: showHV6m / showVzCurrent / showVzNearest / showSMA.</p>
+<p class="muted">Support = firm; Resistance = short dash. Toggles: showHV6m / showVzTrigger / showVzCurrent / showVzNearest / showSMA.</p>
 </section>
 <section>
 <h2>HV6m box</h2>
@@ -1213,9 +1287,9 @@ Click column headers to sort.</p>
 <h2>House VZ HL overlays</h2>
 <ul>
 <li>Engine: <code>tools/vol_zone_break_retest.build_zones</code> lookback {VZ_LOOKBACK_DAYS}.</li>
-<li>Current HL (purple) + light OC (blue); nearest HL above (red) / below (green) vs last close.</li>
+<li>Trigger HL (deep purple) from live Open/Watchlist <code>ZONE_ID</code> — always drawn, even if older than the latest 126d winner. Lighter purple = latest unused winner. Light OC (blue); nearest HL above (red) / below (green) vs last close.</li>
 <li>Frozen AddCloud from max-vol day extend-right — <strong>not</strong> the full historical zone fan.</li>
-<li>Toggles: <code>showVzCurrent</code>, <code>showVzNearest</code>.</li>
+<li>Toggles: <code>showVzTrigger</code>, <code>showVzCurrent</code>, <code>showVzNearest</code>.</li>
 </ul>
 <p class="muted">Click column headers to sort.</p>
 <div class="table-wrap"><table class="sortable"><thead><tr>{vz_head}</tr></thead><tbody>
@@ -1328,6 +1402,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "overlays": [
             "mwd_fractal_trendlines",
             "hv6m",
+            "vz_hl_trigger",
             "vz_hl_current",
             "vz_oc_current",
             "vz_hl_nearest_above",
@@ -1352,6 +1427,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         if isinstance(existing_meta.get("symbols"), dict):
             meta["symbols"] = dict(existing_meta["symbols"])
 
+    trigger_specs = load_vz_trigger_specs(_REPO / "drive")
+    if trigger_specs:
+        print(f"[vz] {len(trigger_specs)} live trigger zone(s) from Open/Watchlist")
+
     for raw in requested:
         if not raw.strip():
             continue
@@ -1364,7 +1443,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             continue
         segs = trendlines_for_symbol(df)
         hv6m = find_hv6m_box(df)
-        vz = find_vz_overlays(df)
+        vz = find_vz_overlays(df, trigger_spec=trigger_specs.get(key))
         ts_name = f"{key}_trendlines_mwd.ts"
         ts_path = studies_dir / ts_name
         text = build_thinkscript(
@@ -1384,8 +1463,9 @@ def main(argv: Iterable[str] | None = None) -> int:
             else "HV6m none"
         )
         vz_note = (
-            f"VZ above={_band_label(vz.nearest_above)} below={_band_label(vz.nearest_below)} "
-            f"curHL={_band_label(vz.current_hl)}"
+            f"VZ trigger={_band_label(vz.trigger_hl)} "
+            f"curHL={_band_label(vz.current_hl)} "
+            f"above={_band_label(vz.nearest_above)} below={_band_label(vz.nearest_below)}"
         )
         notes.append(f"{key}: {len(segs)} segments; {hv_note}; {vz_note}; SMA20/50/100 from {data_note}")
         if key == "BTC":
@@ -1419,6 +1499,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         vz_meta = {
             "last_close": vz.last_close,
             "n_hl_zones": vz.n_hl_zones,
+            "trigger_hl": _band_meta(vz.trigger_hl),
+            "trigger_oc": _band_meta(vz.trigger_oc),
+            "trigger_zone_id": vz.trigger_zone_id,
+            "trigger_is_current": vz.trigger_is_current,
             "current_hl": _band_meta(vz.current_hl),
             "current_oc": _band_meta(vz.current_oc),
             "nearest_above": _band_meta(vz.nearest_above),
@@ -1429,6 +1513,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "symbol": key,
                 "tos_symbol": tos_sym,
                 "last_close": _fmt_px(vz.last_close) if vz.last_close is not None else "—",
+                "trigger_hl": _band_label(vz.trigger_hl),
                 "current_hl": _band_label(vz.current_hl),
                 "current_oc": _band_label(vz.current_oc),
                 "nearest_above": _band_label(vz.nearest_above),

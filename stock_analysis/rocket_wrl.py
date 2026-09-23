@@ -59,9 +59,11 @@ except ImportError:
 @dataclass
 class WrlConfig:
     wrl_mode: bool = True
-    # range = full exit at range high; swing = full exit at swing high;
-    # scale = 50% at range high, remainder at swing high (stop to breakeven after T1).
-    wrl_target_mode: str = "scale"
+    # House default 2026-09-22: swing = sell 100% at the walk-back swing high.
+    # range = full exit at last week's range high;
+    # scale = leftover 50/50 (range high then swing high; stop to breakeven after T1).
+    # wrl_scale_frac is unused when mode=swing.
+    wrl_target_mode: str = "swing"
     wrl_scale_frac: float = 0.50
     # Stop at swing_low * stop_pct (1.0 = at the swing low).
     stop_pct: float = 1.0
@@ -278,7 +280,7 @@ def _zone_wide_enough(levels: WeeklyLevels, cfg: WrlConfig) -> bool:
 
 
 def _primary_target(levels: WeeklyLevels, mode: str) -> float:
-    m = (mode or "scale").strip().lower()
+    m = (mode or "swing").strip().lower()
     if m == "swing":
         return float(levels.swing_high)
     return float(levels.range_high)
@@ -332,7 +334,7 @@ def brt_config_from_wrl(cfg: WrlConfig, host_cfg: Any = None) -> Any:
         vec_zones=False,
         rl_mode="false",
         relative_strength_enabled=False,
-        wrl_target_mode=str(cfg.wrl_target_mode or "scale"),
+        wrl_target_mode=str(cfg.wrl_target_mode or "swing"),
         wrl_scale_frac=float(cfg.wrl_scale_frac or 0.50),
         wrl_min_zone_pct=float(cfg.wrl_min_zone_pct or 0.0),
         wrl_time_stop_bars=int(cfg.wrl_time_stop_bars or 0),
@@ -395,7 +397,7 @@ def backtest_symbol(
     c = df["Close"].to_numpy(dtype=np.float64)
     n = len(df)
     cash = float(cfg.brt_cash)
-    mode = (cfg.wrl_target_mode or "scale").strip().lower()
+    mode = (cfg.wrl_target_mode or "swing").strip().lower()
     scale_frac = min(0.99, max(0.01, float(cfg.wrl_scale_frac or 0.50)))
     use_scale = mode == "scale"
     cooldown_until = ""
@@ -1173,7 +1175,7 @@ def run_wrl_from_brt_main(
     print(
         "[WRL] Watch: daily close in [swing_low, range_low]. "
         "Buy next day if High > range_low (no gap down through swing_low). "
-        "Targets: range high then swing high.",
+        "House target: full exit at swing high. Stop at swing low.",
         flush=True,
     )
 
