@@ -11,8 +11,9 @@ __pycache__/
 .venv/
 venv/
 
-# IDE / local editor
-.cursor/
+# IDE / local editor (keep the Cloud Agent environment config)
+.cursor/*
+!.cursor/environment.json
 
 # Run outputs (code check-in via git_checkin.bat skips these)
 *.csv
