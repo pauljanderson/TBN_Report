@@ -1,7 +1,7 @@
 # Charts — trendlines_opens_latest
 
 - **Index:** `index.html`
-- **N charts:** 476
+- **N charts:** 471
 - **Skipped:** 0
 - **VZ zone drawn:** engine **trigger** High–Low (`ZONE_ID` from live Open/Watchlist) is
   always included (`tools/vz_chart_zones.py`). Latest 126d winner may also be drawn
@@ -10,4 +10,4 @@
 - **HV6m:** calendar-6m max-vol High–Low box from parent `segments.json`.
 - **Trendlines:** M/W/D fractal support/resistance from `segments.json`.
 
-Generated 2026-09-28T12:21:48.
+Generated 2026-09-28T18:54:46.
