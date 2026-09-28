@@ -242,7 +242,7 @@ _RL_SYMBOLS = {
 _MTS_SYMBOLS = set(_MTS_SYMBOLS_LIST)
 
 _ENGINE_CSV_RE = re.compile(
-    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<engine>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI|WRL)_(?P<kind>Closed|Open)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 
@@ -2455,7 +2455,7 @@ def _load_open_positions(gettarget_path: Path) -> pd.DataFrame:
 
 
 _RUN_TS_RE = re.compile(
-    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$",
+    r"^(?P<prefix>BRT|IND|RL|YH|MTS|WPBR|PBR|RS|SB|VZ|RSI|WRL)_(?:Closed|Open|Watchlist)_(?P<ts>\d{12})\.csv$",
     re.I,
 )
 _PIPELINE_TS_RE = re.compile(
@@ -3076,6 +3076,8 @@ def _scanner_for_latest_run(
     Use scanner CSV only when the latest core run actually wrote one.
     Avoids stale scanner rows when the newest DailyRun had no candidates.
     SB (StockBee) has no Scanner — fall back to Watchlist for the same run stamp.
+    WRL (Weekly Range / Swing) prefers Scanner, then Watchlist for the same stamp,
+    then WRL_LatestRun_Scanner / Watchlist aliases.
     VZ (Volume Zone) has no Scanner — Watchlist/Open for the pinned last-run stamp,
     else VZ_LatestRun_Watchlist.csv / Open (not the newest VZ_Watchlist_* on disk).
     RSI (Relative Strength Index) has no Scanner — Watchlist/Open for
@@ -3104,6 +3106,19 @@ def _scanner_for_latest_run(
             candidates.append(drive / f"RSI_Open_{run_ts}.csv")
         candidates.append(drive / "RSI_LatestRun_Watchlist.csv")
         candidates.append(drive / "RSI_LatestRun_Open.csv")
+        path = next((p for p in candidates if p.is_file()), None)
+        if path is None:
+            return None, pd.DataFrame(), run_ts
+        return path, pd.read_csv(path), run_ts
+
+    if pfx == "WRL":
+        run_ts = _latest_run_timestamp("WRL", drive)
+        candidates = []
+        if run_ts:
+            candidates.append(drive / f"WRL_Scanner_{run_ts}.csv")
+            candidates.append(drive / f"WRL_Watchlist_{run_ts}.csv")
+        candidates.append(drive / "WRL_LatestRun_Scanner.csv")
+        candidates.append(drive / "WRL_LatestRun_Watchlist.csv")
         path = next((p for p in candidates if p.is_file()), None)
         if path is None:
             return None, pd.DataFrame(), run_ts
@@ -3140,6 +3155,8 @@ def _closed_avg_days_held_map(
         candidates.append(drive / "VZ_LatestRun_Closed.csv")
     if pfx == "RSI":
         candidates.append(drive / "RSI_LatestRun_Closed.csv")
+    if pfx == "WRL":
+        candidates.append(drive / "WRL_LatestRun_Closed.csv")
     if not candidates:
         return {}
     path = next((p for p in candidates if p.is_file()), None)
@@ -3959,6 +3976,7 @@ def build_report(
     sb_scan_path, sb_scan, sb_run_ts = _scanner_for_latest_run("SB", drive_dir)
     vz_scan_path, vz_scan, vz_run_ts = _scanner_for_latest_run("VZ", drive_dir)
     rsi_scan_path, rsi_scan, rsi_run_ts = _scanner_for_latest_run("RSI", drive_dir)
+    wrl_scan_path, wrl_scan, wrl_run_ts = _scanner_for_latest_run("WRL", drive_dir)
 
     metrics_by_key, charts_by_key = _build_system_filter_bundles(
         closed,
@@ -4101,6 +4119,7 @@ def build_report(
                 "MAX_ENTRY_OPEN",
                 "PRIOR_DAY_CLOSE",
                 "TARGET",
+                "TARGET2",
                 "STOP_LOSS",
                 "IND_SCORE",
                 "IND_DIFF",
@@ -4119,6 +4138,12 @@ def build_report(
                 "DIST52_AT_TRIGGER",
                 "ROW_TYPE",
                 "STATUS",
+                "RANGE_HIGH",
+                "RANGE_LOW",
+                "SWING_HIGH",
+                "SWING_LOW",
+                "ZONE_LOW",
+                "ZONE_HIGH",
                 "RSI14",
                 "RSI14_NOW",
                 "PRIOR_OB_RSI14",
@@ -4215,6 +4240,13 @@ def build_report(
             "ENTRY_PRICE",
             "CURRENT_PRICE",
             "PNL_PCT",
+            "TARGET2",
+            "RANGE_HIGH",
+            "RANGE_LOW",
+            "SWING_HIGH",
+            "SWING_LOW",
+            "ZONE_LOW",
+            "ZONE_HIGH",
         }
         date_like = {
             "DATE",
@@ -4256,6 +4288,7 @@ def build_report(
         "SB": sb_scan,
         "VZ": vz_scan,
         "RSI": rsi_scan,
+        "WRL": wrl_scan,
     }
     for _sys_code, _scan_df in _scan_enrich.items():
         _scan_enrich[_sys_code] = _enrich_live_style_scan(
@@ -4276,6 +4309,7 @@ def build_report(
     sb_scan = _scan_enrich["SB"]
     vz_scan = _scan_enrich["VZ"]
     rsi_scan = _scan_enrich["RSI"]
+    wrl_scan = _scan_enrich["WRL"]
     live_risk = _live_style_risk_dollar(live_acct.bom_equity)
     live_size_note = (
         f"Live buy size (all getTarget systems, including RS/BRT/YH/WPBR): "
@@ -4317,6 +4351,9 @@ def build_report(
     )
     rsi_rows, rsi_cols, rsi_sort = _scan_rows(
         rsi_scan, _closed_avg_days_held_map("RSI", drive_dir, rsi_run_ts)
+    )
+    wrl_rows, wrl_cols, wrl_sort = _scan_rows(
+        wrl_scan, _closed_avg_days_held_map("WRL", drive_dir, wrl_run_ts)
     )
 
     pending_sells, sell_thresholds, sell_time_params, sell_as_of = find_all_pending_sells(
@@ -4406,6 +4443,19 @@ def build_report(
         "No RSI open/watchlist rows for the latest run (Relative Strength Index; not RS vs SPY)."
         if rsi_run_ts or rsi_scan_path is not None
         else "No RSI run outputs found in Drive."
+    )
+    wrl_scan_sub = _scanner_subtitle(wrl_scan_path, wrl_run_ts, "WRL")
+    if wrl_scan_path is not None and wrl_run_ts is None:
+        wrl_scan_sub = f"{wrl_scan_path.name} (WRL_LatestRun alias; no stamped WRL run pin)"
+    wrl_section_title = (
+        "Watchlist — WRL"
+        if wrl_scan_path is not None and "Watchlist" in wrl_scan_path.name
+        else "Scanner — WRL"
+    )
+    wrl_empty_msg = (
+        "No WRL scanner/watchlist for the latest run (Weekly Range / Swing)."
+        if wrl_run_ts or wrl_scan_path is not None
+        else "No WRL run outputs found in Drive."
     )
 
     filter_buttons_html = "".join(
@@ -4689,6 +4739,12 @@ details.closed-fold[open] > summary .fold-shut {{ display:none; }}
 <h2>{rsi_section_title}</h2>
 <p class="small">{rsi_scan_sub}</p>
 <div class="table-wrap">{_html_table(rsi_cols, rsi_rows, rsi_sort if rsi_cols else None) if rsi_rows else f'<p>{rsi_empty_msg}</p>'}</div>
+</section>
+
+<section data-system-section="WRL">
+<h2>{wrl_section_title}</h2>
+<p class="small">{wrl_scan_sub}</p>
+<div class="table-wrap">{_html_table(wrl_cols, wrl_rows, wrl_sort if wrl_cols else None) if wrl_rows else f'<p>{wrl_empty_msg}</p>'}</div>
 </section>
 
 {_SORTABLE_TABLE_SCRIPT}

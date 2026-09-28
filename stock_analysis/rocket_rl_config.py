@@ -119,6 +119,8 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_TARGET_PCT": "rl_target_pct",
     "RL_SMA_TARGET_OFF": "rl_sma_target_off",
     "RL_TOO_HIGH": "rl_too_high",
+    "RL_PRE_ENTRY_GAP_BARS": "rl_pre_entry_gap_bars",
+    "RL_PRE_ENTRY_GAP_PCT": "rl_pre_entry_gap_pct",
     "RL_EXPANSION": "rl_expansion",
     "RL_ACC_MIN": "rl_acc_min",
     "RL_ACC_COUNT": "rl_acc_count",
@@ -145,6 +147,11 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_TRAIL_STOP2": "rl_trail_stop2",
     "RL_EXIT_PERCENT": "rl_exit_percent",
     "RL_EXIT_DAYS": "rl_exit_days",
+    "RL_EXIT_CALENDAR_DAYS": "rl_exit_calendar_days",
+    "RL_MAX_HOLD_BARS": "rl_max_hold_bars",
+    "rl_time_stop_from_entry": "rl_max_hold_bars",
+    "RL_TIME_STOP_FROM_ENTRY": "rl_max_hold_bars",
+    "RL_MAX_HOLD_CALENDAR_DAYS": "rl_max_hold_calendar_days",
     "RL_ENTRY_TARGET_PCT": "rl_entry_target_pct",
     "RL_FLUSH_DAYS": "rl_flush_days",
     "PARTIAL_EXIT_TARGET": "rl_partial_exit_target",
@@ -350,6 +357,9 @@ class RLConfig:
     # Fill gates (too_low / too_high) always use signal_low × rl_stop_pct regardless of anchor.
     rl_stop_anchor: str = "signal_low"
     rl_stop_below_pct: float = 0.0  # extra cushion below dip_lo anchor (0.01 = 1% below band low)
+    # When > 0 and anchor is entry_open: protective stop = fill × this.
+    # Fill gates stay on rl_stop_pct. 0 = multiply the fill by rl_stop_pct (legacy).
+    rl_entry_stop_pct: float = 0.0
     # Post-TARGET re-entry window (0 bars = feature fully off; production unchanged).
     # When bars > 0 and prior closed trade exited TARGET with fill within N trading bars,
     # rl_post_target_reentry_mode selects one mutually exclusive policy:
@@ -367,10 +377,22 @@ class RLConfig:
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
     # When true: keep rl_target_pct for expansion-hit counting, but disable SMA50×target EXIT
-    # (TARGET never races; rl_target forced to 0). Research knob — default off.
-    rl_sma_target_off: bool = False
+    # 1 = keep rl_target_pct for expansion hits but do not sell at the SMA envelope.
+    # House DailyRun freeze 2026-09-27: SMA target off.
+    rl_sma_target_off: bool = True
     # Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default off).
     rl_too_high: float = 0.0
+    # Research entry gate. Both must be > 0 or the gate is off (frozen Control unchanged).
+    # Lookback is completed bars strictly before the entry date (entry-day gap excluded).
+    rl_pre_entry_gap_bars: int = 0
+    rl_pre_entry_gap_pct: float = 0.0
+    # abs | up | down. Default abs preserves the absolute overnight-gap gate.
+    rl_pre_entry_gap_side: str = "abs"
+    # Research entry gate (0 = off). Minimum retrace percent:
+    # ((HIGH - entry) / (HIGH - LOW)) * 100 over rl_retrace_months calendar months
+    # strictly before entry. Default window is 12 months.
+    rl_min_retrace_12m_pct: float = 0.0
+    rl_retrace_months: int = 12
     rl_expansion: float = 1.163
     rl_acc_min: int = 8
     rl_acc_count: int = 10
@@ -392,16 +414,29 @@ class RLConfig:
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
     rl_trail_stop2: float = 0.0
-    rl_exit_percent: float = 0.40  # +40% entry MTM gate (adopt 40_30d 20260831)
-    rl_exit_days: int = 30  # days after +40% before timed exit
-    # Full exit when high >= entry × (1 + this). 0=off. Races SMA50×rl_target_pct and timed exit.
-    rl_entry_target_pct: float = 0.0
+    rl_exit_percent: float = 0.0  # 0 = time clock off (house freeze 2026-09-27)
+    rl_exit_days: int = 0  # trading bars after +% before timed exit (time_counter)
+    # Research-only: calendar days after first rl_exit_percent hit (same clock as Closed
+    # DAYS HELD: days_diff(arming_iso, iso) + 1). 0=off. Exit @ open as RL_EXIT_CAL.
+    # When >0, disables the trading-bar rl_exit_days timed path (exclusive timed clocks).
+    # Distinct from rl_max_hold_calendar_days (calendar from entry, not from +% arming).
+    rl_exit_calendar_days: int = 0
+    # Research-only hard max-hold from fill bar (trading bars). 0=off.
+    # bars_held = idx - entry_bar_0; exit @ open when bars_held >= N (stop still races first).
+    # Distinct from rl_exit_days (clock starts after rl_exit_percent hit).
+    rl_max_hold_bars: int = 0
+    # Research-only hard max-hold in calendar days from entry (same clock as Closed DAYS HELD:
+    # days_diff(entry_iso, iso) + 1). 0=off. Exit @ open as RL_MAX_HOLD_CAL. Distinct from
+    # rl_max_hold_bars (trading bars) and rl_exit_days (post-+% trading-bar clock).
+    rl_max_hold_calendar_days: int = 0
+    # Full exit when high >= entry × (1 + this). Leftover target after the 80% sale.
+    rl_entry_target_pct: float = 0.40
     rl_flush_days: int = 0
     partial_exit_target: float = 0.0  # 0=off; gain fraction from entry to scale out
     partial_exit_percent: float = 0.50
     partial_exit_follow_target: float = 0.1  # remainder = entry × (1 + target + follow)
-    # Scale-out + stop ratchet (research). Empty = off. See parse_rl_scale_ladder.
-    rl_scale_ladder: str = ""
+    # Scale-out + stop ratchet. House freeze: sell 80% at +20%, leftover stop at entry.
+    rl_scale_ladder: str = "0.20:0.80:0"
     spy_inclusion: bool = False
     avg_vol_days: int = 50
     vol_pct_threshold: float = 0.0

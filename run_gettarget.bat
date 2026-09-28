@@ -89,8 +89,11 @@ rem "getTarget.py: error: unrecognized arguments:" (empty / invisible).
   --cs-atr-days=0 ^
   "--cs-target-pct=1.20" ^
   "--cs-stop-pct=0.92" ^
-  "--rl-target-pct=1.20" ^
   "--rl-stop-pct=0.934" ^
-  --rl-use-sma50 %PS_ARGS% %*
+  --rl-no-sma50 ^
+  "--rl-scale-gain=0.20" ^
+  "--rl-scale-sell-frac=0.80" ^
+  "--rl-scale-stop-gain=0" ^
+  "--rl-entry-target-pct=0.40" %PS_ARGS% %*
 
 exit /b %errorlevel%

@@ -41,6 +41,9 @@ from be_stop_replay_ab import (  # noqa: E402
     load_ohlc,
     split_is_oos,
     sortable_th,
+    _f,
+    _parse_d,
+    _row_get,
 )
 from compare_format import (  # noqa: E402
     DEFAULT_INITIAL_ACCOUNT,
@@ -54,6 +57,15 @@ OUT_DIR = DRIVE / "paul_experiments" / f"rl_profit_protect_matrix_{STAMP}"
 DEFAULT_CLOSED = (
     DRIVE
     / "paul_experiments"
+    / f"rl_profit_protect_matrix_{STAMP}"
+    / "closed"
+    / "pct20_d60_RL_Closed_enriched_pivots.csv"
+)
+# Frozen trade identity from no-SMA +20%/60d AB (entries unchanged); pivots backfilled
+# via tools/enrich_rl_closed_pivots.py to match AWK RL_Closed pivot/structure fields.
+LEGACY_CONTROL_CLOSED = (
+    DRIVE
+    / "paul_experiments"
     / "rl_no_sma_target_exit_ab_20260905"
     / "closed"
     / "pct20_d60_RL_Closed_260905205015.csv"
@@ -64,6 +76,49 @@ TERMINAL_DAYS = 60
 # If first OHLC bar after entry is more than this many calendar days later, treat as
 # missing history (keep Control exit). Guards truncated stubs like EA.csv (6 bars).
 MAX_ENTRY_GAP_DAYS = 14
+
+
+def load_closed_rl_with_raw(path: Path) -> list[dict[str, Any]]:
+    """Like be_stop_replay_ab.load_closed(style=rl) but keep full source row as ``raw``.
+
+    Overlay Closed CSVs can then emit the original AWK RL columns (SMAs, pivots, …)
+    plus profit-protect research fields.
+    """
+    rows: list[dict[str, Any]] = []
+    with path.open(newline="", encoding="utf-8-sig") as f:
+        for raw in csv.DictReader(f):
+            opened = _parse_d(_row_get(raw, "DATE OPENED", "DATE_OPENED"))
+            closed = _parse_d(_row_get(raw, "DATE CLOSED", "DATE_CLOSED"))
+            entry = _f(_row_get(raw, "ENTRY PRICE", "ENTRY_PRICE"))
+            stop = _f(_row_get(raw, "ORIGINAL STOP", "STOP LOSS AT CLOSE", "STOP_PRICE"))
+            target = _f(_row_get(raw, "ORIGINAL TARGET", "TARGET_PRICE"))
+            exit_px = _f(_row_get(raw, "EXIT PRICE", "EXIT_PRICE"))
+            pnl = _f(_row_get(raw, "PNL %", "PNL_PCT"))
+            days = _f(_row_get(raw, "DAYS HELD", "DAYS_HELD"))
+            pnl_d = _f(_row_get(raw, "PNL_DOLLARS"))
+            if pnl_d == 0.0 and pnl != 0.0:
+                pnl_d = RL_CASH * pnl / 100.0
+            xt = _row_get(raw, "EXIT TYPE", "EXIT_TYPE")
+            sym = _row_get(raw, "SYMBOL").upper()
+            if not sym or opened is None or closed is None or entry <= 0:
+                continue
+            rows.append(
+                {
+                    "sym": sym,
+                    "opened": opened,
+                    "closed": closed,
+                    "entry": entry,
+                    "stop": stop if stop > 0 else entry * 0.90,
+                    "target": target,
+                    "exit_px": exit_px,
+                    "pnl": pnl,
+                    "days": days,
+                    "pnl_d": pnl_d,
+                    "exit": xt or "UNKNOWN",
+                    "raw": {k: (v if v is not None else "") for k, v in raw.items()},
+                }
+            )
+    return rows
 
 
 def _as_date(d: Any) -> date:
@@ -449,82 +504,141 @@ def _fmt_opt_int(v: Any) -> str:
         return ""
 
 
+def _ymd8(d: Any) -> str:
+    if d is None:
+        return ""
+    if isinstance(d, date):
+        return f"{d.year:04d}{d.month:02d}{d.day:02d}"
+    s = str(d).strip().replace("-", "")
+    return s[:8] if len(s) >= 8 and s[:8].isdigit() else s
+
+
+# Research overlay columns appended after the full AWK RL_Closed schema.
+_OVERLAY_EXTRA_COLS = [
+    "FINAL EXIT PRICE",
+    "PNL $",
+    "ACTIVATED",
+    "ACTIVATION_DATE",
+    "PARTIAL",
+    "PARTIAL_PX",
+    "PARTIAL_PNL_%",
+    "REMAINDER_PNL_%",
+    "TOTAL_PNL_%",
+    "DAYS_TO_ACTIVATION",
+    "ACTIVATION_TO_CLOSE",
+    "ACTIVATION_TO_PROTECT_HIT",
+    "GIVEBACK_FROM_PEAK",
+    "PROTECT_HIT",
+    "PROTECT_STOP",
+    "PEAK_HIGH",
+    "PEAK_PCT",
+    "TIME_COUNTER",
+    "REM_FRAC",
+    "MISSING_BARS",
+]
+
+
 def write_closed_csv(trades: list[dict[str, Any]], path: Path) -> None:
+    """Write full AWK RL_Closed columns (from source ``raw``) + profit-protect extras."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = [
-        "SYMBOL",
-        "DATE OPENED",
-        "ENTRY PRICE",
-        "ORIGINAL STOP",
-        "DATE CLOSED",
-        "DAYS HELD",
-        "EXIT PRICE",
-        "FINAL EXIT PRICE",
-        "PNL %",
-        "PNL $",
-        "EXIT TYPE",
-        "ACTIVATED",
-        "ACTIVATION_DATE",
-        "PARTIAL",
-        "PARTIAL_PX",
-        "PARTIAL_DATE",
-        "PARTIAL_PNL_%",
-        "REMAINDER_PNL_%",
-        "TOTAL_PNL_%",
-        "DAYS_TO_ACTIVATION",
-        "ACTIVATION_TO_CLOSE",
-        "ACTIVATION_TO_PROTECT_HIT",
-        "GIVEBACK_FROM_PEAK",
-        "PROTECT_HIT",
-        "PROTECT_STOP",
-        "PEAK_HIGH",
-        "PEAK_PCT",
-        "TIME_COUNTER",
-        "REM_FRAC",
-        "MISSING_BARS",
-    ]
+    base_cols: list[str] = []
+    for t in trades:
+        raw = t.get("raw") or {}
+        if raw:
+            base_cols = list(raw.keys())
+            break
+    if not base_cols:
+        base_cols = [
+            "SYMBOL",
+            "DATE OPENED",
+            "ENTRY PRICE",
+            "ORIGINAL STOP",
+            "DATE CLOSED",
+            "DAYS HELD",
+            "EXIT PRICE",
+            "PNL %",
+            "EXIT TYPE",
+        ]
+    # Ensure pivot columns exist even on older stubs.
+    for c in (
+        "PIVOT_HIGH_AT_ENTRY",
+        "PIVOT_LOW_AT_ENTRY",
+        "STRUCT_HIGH_AT_ENTRY",
+        "STRUCT_LOW_AT_ENTRY",
+        "MAJOR_PIVOT_HIGH_AT_ENTRY",
+        "MAJOR_PIVOT_LOW_AT_ENTRY",
+        "PIVOT_HIGH_PRICE_AT_ENTRY",
+        "PIVOT_LOW_PRICE_AT_ENTRY",
+        "LAST_PIVOT_HIGH_PRICE",
+        "LAST_PIVOT_LOW_PRICE",
+        "PREV_PIVOT_HIGH_PRICE",
+        "PREV_PIVOT_LOW_PRICE",
+    ):
+        if c not in base_cols:
+            base_cols.append(c)
+    extras = [c for c in _OVERLAY_EXTRA_COLS if c not in base_cols]
+    # PARTIAL_DATE may already be in AWK schema — keep AWK position; also emit research
+    # PARTIAL_* extras. Prefer overwriting AWK PARTIAL_DATE/AMT when overlay partial fires.
+    cols = base_cols + extras
+
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(cols)
+        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
         for t in trades:
-            # TOTAL_PNL_% is the weighted full-position return (same as PNL % after overlay).
             total_pnl = t.get("total_pnl_pct")
             if total_pnl is None and t.get("pnl") is not None:
                 total_pnl = t.get("pnl")
-            w.writerow(
-                [
-                    t.get("sym", ""),
-                    t.get("opened", ""),
-                    f"{float(t['entry']):.4f}" if t.get("entry") is not None else "",
-                    f"{float(t['stop']):.4f}" if t.get("stop") is not None else "",
-                    t.get("closed", ""),
-                    t.get("days", ""),
-                    f"{float(t['exit_px']):.4f}" if t.get("exit_px") is not None else "",
-                    f"{float(t['final_exit_px']):.4f}" if t.get("final_exit_px") is not None else "",
-                    f"{float(t['pnl']):.4f}",
-                    f"{float(t['pnl_d']):.2f}",
-                    t.get("exit", ""),
-                    "1" if t.get("activated") else "0",
-                    t.get("activation_date", ""),
-                    "1" if t.get("partial") else "0",
-                    f"{float(t['partial_px']):.4f}" if t.get("partial_px") is not None else "",
-                    t.get("partial_date", ""),
-                    _fmt_opt_pct(t.get("partial_pnl_pct")),
-                    _fmt_opt_pct(t.get("remainder_pnl_pct")),
-                    _fmt_opt_pct(total_pnl),
-                    _fmt_opt_int(t.get("days_to_activation")),
-                    _fmt_opt_int(t.get("activation_to_close")),
-                    _fmt_opt_int(t.get("activation_to_protect_hit")),
-                    _fmt_opt_pct(t.get("giveback_from_peak")),
-                    "1" if t.get("protect_hit") else "0",
-                    f"{float(t['protect_stop']):.4f}" if t.get("protect_stop") is not None else "",
-                    f"{float(t['peak_high']):.4f}" if t.get("peak_high") is not None else "",
-                    f"{float(t.get('peak_pct') or 0):.4f}",
-                    t.get("time_counter", ""),
-                    f"{float(t.get('rem_frac') if t.get('rem_frac') is not None else 1):.4f}",
-                    "1" if t.get("missing_bars") else "0",
-                ]
+            row = dict(t.get("raw") or {})
+            row["SYMBOL"] = t.get("sym", row.get("SYMBOL", ""))
+            row["DATE OPENED"] = _ymd8(t.get("opened")) or row.get("DATE OPENED", "")
+            if t.get("entry") is not None:
+                row["ENTRY PRICE"] = f"{float(t['entry']):.2f}"
+            if t.get("stop") is not None:
+                row["ORIGINAL STOP"] = f"{float(t['stop']):.4f}"
+            row["DATE CLOSED"] = _ymd8(t.get("closed")) or row.get("DATE CLOSED", "")
+            if t.get("days") is not None:
+                row["DAYS HELD"] = str(int(float(t["days"])))
+            if t.get("exit_px") is not None:
+                row["EXIT PRICE"] = f"{float(t['exit_px']):.2f}"
+            if t.get("pnl") is not None:
+                row["PNL %"] = f"{float(t['pnl']):.2f}%"
+            row["EXIT TYPE"] = t.get("exit", row.get("EXIT TYPE", ""))
+            if t.get("partial_date"):
+                row["PARTIAL_DATE"] = _ymd8(t.get("partial_date"))
+            if t.get("partial_px") is not None:
+                row["PARTIAL_AMT"] = f"{float(t['partial_px']):.2f}"
+            # Research extras
+            row["FINAL EXIT PRICE"] = (
+                f"{float(t['final_exit_px']):.4f}" if t.get("final_exit_px") is not None else ""
             )
+            row["PNL $"] = f"{float(t['pnl_d']):.2f}" if t.get("pnl_d") is not None else ""
+            row["ACTIVATED"] = "1" if t.get("activated") else "0"
+            row["ACTIVATION_DATE"] = _ymd8(t.get("activation_date"))
+            row["PARTIAL"] = "1" if t.get("partial") else "0"
+            row["PARTIAL_PX"] = (
+                f"{float(t['partial_px']):.4f}" if t.get("partial_px") is not None else ""
+            )
+            row["PARTIAL_PNL_%"] = _fmt_opt_pct(t.get("partial_pnl_pct"))
+            row["REMAINDER_PNL_%"] = _fmt_opt_pct(t.get("remainder_pnl_pct"))
+            row["TOTAL_PNL_%"] = _fmt_opt_pct(total_pnl)
+            row["DAYS_TO_ACTIVATION"] = _fmt_opt_int(t.get("days_to_activation"))
+            row["ACTIVATION_TO_CLOSE"] = _fmt_opt_int(t.get("activation_to_close"))
+            row["ACTIVATION_TO_PROTECT_HIT"] = _fmt_opt_int(t.get("activation_to_protect_hit"))
+            row["GIVEBACK_FROM_PEAK"] = _fmt_opt_pct(t.get("giveback_from_peak"))
+            row["PROTECT_HIT"] = "1" if t.get("protect_hit") else "0"
+            row["PROTECT_STOP"] = (
+                f"{float(t['protect_stop']):.4f}" if t.get("protect_stop") is not None else ""
+            )
+            row["PEAK_HIGH"] = (
+                f"{float(t['peak_high']):.4f}" if t.get("peak_high") is not None else ""
+            )
+            row["PEAK_PCT"] = f"{float(t.get('peak_pct') or 0):.4f}"
+            row["TIME_COUNTER"] = t.get("time_counter", "")
+            row["REM_FRAC"] = (
+                f"{float(t.get('rem_frac') if t.get('rem_frac') is not None else 1):.4f}"
+            )
+            row["MISSING_BARS"] = "1" if t.get("missing_bars") else "0"
+            w.writerow({c: row.get(c, "") for c in cols})
 
 
 def _fmt_sharpe(m: dict[str, Any]) -> str:
@@ -753,6 +867,30 @@ def write_baseline(results: list[dict], out: Path) -> None:
         "A–L were a-priori from Paul's matrix (activation × partial × protect). "
         "No extra knobs. Judge structural behavior on IS; OOS softens → HOLD, do not retune.",
         "",
+        "## Closed trade fields (exit-path detail)",
+        "",
+        "Written on every arm Closed CSV under `closed/{arm}_RL_Closed_overlay.csv`:",
+        "",
+        "- Full AWK `RL_Closed` schema from the enriched Control source "
+        "(`pct20_d60_RL_Closed_enriched_pivots.csv`) — including SMAs, milestones, "
+        "and the 12 pivot/structure columns (`PIVOT_*` / `STRUCT_*` / `MAJOR_*` / "
+        "`LAST_PIVOT_*` / `PREV_PIVOT_*`), backfilled with AWK-matching math via "
+        "`tools/enrich_rl_closed_pivots.py` + `rocket_rl.compute_awk_rl_pivot_context`.",
+        "- Overlay extras: `PARTIAL_PNL_%`, `REMAINDER_PNL_%`, `TOTAL_PNL_%`, "
+        "`DAYS_TO_ACTIVATION`, `ACTIVATION_TO_CLOSE`, `ACTIVATION_TO_PROTECT_HIT`, "
+        "`GIVEBACK_FROM_PEAK`, `FINAL EXIT PRICE`, `PNL $`, activation/protect flags.",
+        "",
+        "- `PARTIAL_PNL_%` — return on the 50% sold at activation High (blank if no partial)",
+        "- `REMAINDER_PNL_%` — return on the remaining size at final exit",
+        "- `TOTAL_PNL_%` — weighted full-position return "
+        "(`0.5×partial + 0.5×remainder` when partial; else same as remainder / `PNL %`)",
+        "- `DAYS_TO_ACTIVATION` — calendar days entry → first activation High",
+        "- `ACTIVATION_TO_CLOSE` — calendar days first activation → final exit "
+        "(blank if never activated)",
+        "- `ACTIVATION_TO_PROTECT_HIT` — calendar days activation → protective stop fill "
+        "(blank unless protect exit)",
+        "- `GIVEBACK_FROM_PEAK` — `PEAK_PCT − REMAINDER_PNL_%`",
+        "",
     ]
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -868,7 +1006,7 @@ def main() -> int:
             print(f"ERROR: unknown arm keys: {bad}; known={sorted(known)}", file=sys.stderr)
             return 2
 
-    ctrl = load_closed(DEFAULT_CLOSED, "rl")
+    ctrl = load_closed_rl_with_raw(DEFAULT_CLOSED)
     print(f"[control] loaded N={len(ctrl)} from {DEFAULT_CLOSED.name}", flush=True)
     if args.summarize_only:
         print("[summarize-only] replaying arms from Control Closed (same as full run)", flush=True)

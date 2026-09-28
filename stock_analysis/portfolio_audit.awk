@@ -285,7 +285,7 @@ BEGIN {
     if (RL_POST_TARGET_MIN_STACK == "") RL_POST_TARGET_MIN_STACK = 0.05
     if (RL_POST_TARGET_UNDER_SMA20 == "") RL_POST_TARGET_UNDER_SMA20 = 0.03
     if (RL_TARGET_PCT == "") RL_TARGET_PCT = 1.20
-    if (RL_SMA_TARGET_OFF == "") RL_SMA_TARGET_OFF = 0
+    if (RL_SMA_TARGET_OFF == "") RL_SMA_TARGET_OFF = 1
     if (SMA_QUAL == "") SMA_QUAL = 1
     if (RL_EXPANSION == "") RL_EXPANSION = 1.163
     if (RL_ACC_MIN == "") RL_ACC_MIN = 8
@@ -387,8 +387,38 @@ BEGIN {
     if (RL_SHOCK_THRESHOLD == "") RL_SHOCK_THRESHOLD = 0
     if (RL_SHOCK_REHAB_DAYS == "") RL_SHOCK_REHAB_DAYS = 120
     if (RL_SHOCK_MAX_ALLOWED == "") RL_SHOCK_MAX_ALLOWED = 1
-    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 30
-    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0.40
+    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 0
+    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0
+    if (RL_ENTRY_TARGET_PCT == "") RL_ENTRY_TARGET_PCT = 0.40
+    if (RL_SCALE_LADDER == "") RL_SCALE_LADDER = "0.20:0.80:0"
+    n_ladder = 0
+    ladder_raw = RL_SCALE_LADDER
+    gsub(/ /, "", ladder_raw)
+    ladder_low = tolower(ladder_raw)
+    if (ladder_low != "" && ladder_low != "0" && ladder_low != "off" && ladder_low != "false" && ladder_low != "none") {
+        nparts = split(ladder_raw, ladder_parts, /[|;]/)
+        for (li = 1; li <= nparts; li++) {
+            if (split(ladder_parts[li], ladder_bits, ":") != 3) continue
+            lg = ladder_bits[1] + 0
+            ls = ladder_bits[2] + 0
+            lstop = ladder_bits[3] + 0
+            if (lg > 0 && ls > 0) {
+                n_ladder++
+                ladder_gain[n_ladder] = lg
+                ladder_sell[n_ladder] = ls
+                ladder_stopg[n_ladder] = lstop
+            }
+        }
+        for (li = 1; li <= n_ladder; li++) {
+            for (lj = li + 1; lj <= n_ladder; lj++) {
+                if (ladder_gain[lj] < ladder_gain[li]) {
+                    tmp = ladder_gain[li]; ladder_gain[li] = ladder_gain[lj]; ladder_gain[lj] = tmp
+                    tmp = ladder_sell[li]; ladder_sell[li] = ladder_sell[lj]; ladder_sell[lj] = tmp
+                    tmp = ladder_stopg[li]; ladder_stopg[li] = ladder_stopg[lj]; ladder_stopg[lj] = tmp
+                }
+            }
+        }
+    }
 
     if (RL_FLUSH_DAYS == "") RL_FLUSH_DAYS = 0 #42 may be the optimal number, but to turn it off we use 0
     if (PARTIAL_EXIT_TARGET == "") PARTIAL_EXIT_TARGET = 0
@@ -830,7 +860,9 @@ function perform_audit(sym) {
             _use_computed = 1
             # Use precomputed SMAs from Python when available; else compute in AWK (backward compat)
             key_sma = sym SUBSEP iso
-            if (key_sma in raw_sma && raw_sma[sym, iso] != "") {
+            # RL_USE_FILE_SMA=0: compute SMAs from closes. The CSV SMA columns are rounded
+            # (about 4 decimals) and disagree with rocket_rl.py on hairline dip-zone tests.
+            if ((RL_USE_FILE_SMA == "" || (RL_USE_FILE_SMA + 0)) && key_sma in raw_sma && raw_sma[sym, iso] != "") {
                 n = split(raw_sma[sym, iso], arr, "|")
                 # Accept prepacked row when SMA50 is ready, or before day 50 when SMA20 is
                 # already filled (Python precompute); avoids ~50 PRECOMP_SMA_MISS bars per symbol.
@@ -1011,8 +1043,44 @@ function perform_audit(sym) {
                 
                 debug_printf(sym, "\nSection 6:sym:%s\nexit_type:%s", sym, exit_type)
 
-                # --- PARTIAL EXIT LOGIC ---
-                if (execute_exit == 0 && has_hit_milestone[sym] == 0 && PARTIAL_EXIT_TARGET > 0 && curr_profit_pct >= PARTIAL_EXIT_TARGET) {
+                # --- SCALE LADDER (house freeze: 80% at +20%, leftover stop at entry) ---
+                # Same order as rocket_rl.py: sell and ratchet, then the stop check below sees the new stop.
+                if (execute_exit == 0 && n_ladder > 0) {
+                    orig_sh = initial_shares_at_entry[sym]
+                    if (orig_sh <= 0) orig_sh = rl_inv
+                    for (si = 1; si <= n_ladder; si++) {
+                        if (ladder_done[sym, si] == 1 || curr_profit_pct < ladder_gain[si]) continue
+                        want = int(orig_sh * ladder_sell[si])
+                        max_sell = (rl_inv > 1) ? int(rl_inv) - 1 : 0
+                        shares_to_sell = want
+                        if (shares_to_sell > max_sell) shares_to_sell = max_sell
+                        if (shares_to_sell < 0) shares_to_sell = 0
+                        if (shares_to_sell > 0) {
+                            rl_inv -= shares_to_sell
+                            gate = rl_entry_p[sym] * (1 + ladder_gain[si])
+                            opx = raw_op[sym, iso]
+                            p_exit = (opx > gate) ? opx : gate
+                            total_exit_proceeds[sym] += (shares_to_sell * p_exit)
+                            p_exit_val = (shares_to_sell * p_exit) - (shares_to_sell * rl_entry_p[sym])
+                            rl_pnl += p_exit_val
+                            trl += p_exit_val
+                            partial_exit_amount[sym] += p_exit_val
+                            if (partial_exit_date[sym] == "") partial_exit_date[sym] = iso
+                            sym_partial_cnt[sym]++
+                            sym_partial_amt[sym] += p_exit_val
+                            has_hit_milestone[sym] = 1
+                        }
+                        new_stop = rl_entry_p[sym] * (1 + ladder_stopg[si])
+                        if (new_stop > rl_stop) {
+                            rl_stop = new_stop
+                            rl_trail_active = (si >= 2) ? 2 : 1
+                        }
+                        ladder_done[sym, si] = 1
+                    }
+                }
+
+                # --- PARTIAL EXIT LOGIC (off when the scale ladder is on) ---
+                if (n_ladder == 0 && execute_exit == 0 && has_hit_milestone[sym] == 0 && PARTIAL_EXIT_TARGET > 0 && curr_profit_pct >= PARTIAL_EXIT_TARGET) {
                     debug_print(sym, "\nHERE1: Partial exit triggered")
 
                     has_hit_milestone[sym] = 1
@@ -1043,7 +1111,7 @@ function perform_audit(sym) {
                     }
                 }
 
-                  if (RL_TRAIL_PROFIT > 0 && rl_trail_active == 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT))) {
+                  if (n_ladder == 0 && RL_TRAIL_PROFIT > 0 && rl_trail_active == 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT))) {
                     debug_print(sym, "\nHERE2: Trail 1 activated")
                       rl_trail_active = 1
                       rl_stop = rl_entry_p[sym] * (1 + RL_TRAIL_STOP)
@@ -1051,7 +1119,7 @@ function perform_audit(sym) {
 
                   # --- TRAIL 2 ACTIVATION (The new 40%) ---
                   # If we hit RL_TRAIL_PROFIT2, we overwrite Trail 1 with the more aggressive Trail 2 stop
-                  if (RL_TRAIL_PROFIT2 > 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT2))) {
+                  if (n_ladder == 0 && RL_TRAIL_PROFIT2 > 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT2))) {
                     debug_print(sym, "\nHERE3: Trail 2 activated")
                       rl_trail_active = 2 # Setting this to 2 distinguishes the exit type
                       rl_stop = rl_entry_p[sym] * (1 + RL_TRAIL_STOP2)
@@ -1075,37 +1143,40 @@ function perform_audit(sym) {
                 debug_printf(sym, "\nHERE7:\nstop_price:%.2f (entry_day=%d)\nrl_stop:%.2f", stop_price, (iso == rl_entry_iso[sym]), rl_stop)
 
                     execute_exit = 1
-                    rl_sell = (rl_stop > raw_op[sym, iso]) ? rl_stop : raw_op[sym, iso]
-                        exit_type = (rl_trail_active == 2) ? "TRAIL_STOP2" : (rl_trail_active == 1 ? "TRAIL_STOP" : "STOP_LOSS")
+                    # Match rocket_rl.py: gap through the stop fills at the open;
+                    # an intraday touch fills at the stop. Trail labels win over GAP_DOWN.
+                    gap_through_stop = (raw_op[sym, iso] <= rl_stop)
+                    rl_sell = gap_through_stop ? raw_op[sym, iso] : rl_stop
+                    if (rl_trail_active == 2)
+                        exit_type = "TRAIL_STOP2"
+                    else if (rl_trail_active == 1)
+                        exit_type = "TRAIL_STOP"
+                    else if (gap_through_stop)
+                        exit_type = "GAP_DOWN"
+                    else
+                        exit_type = "STOP_LOSS"
                 } 
                 # 2. Check PROFIT RACE (Only if Stop wasn't hit)
                 else {
                     hit_sma = (sma_target_px > 0 && raw_hi[sym, iso] >= sma_target_px)
-                    hit_timed = (has_hit_time_trigger[sym] == 1 && time_trigger_counter[sym] >= RL_EXIT_DAYS)
-
-                    if (hit_sma && hit_timed) {
-                        debug_printf(sym, "\nHERE8:\nhit_timed:%d", hit_timed)
+                    hit_timed = (has_hit_time_trigger[sym] == 1 && (RL_EXIT_PERCENT + 0) > 0 && time_trigger_counter[sym] >= RL_EXIT_DAYS)
+                    entry_target_px = ((RL_ENTRY_TARGET_PCT + 0) > 0) ? (rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)) : 0
+                    hit_entry = (entry_target_px > 0 && raw_hi[sym, iso] >= entry_target_px)
+                    # Lowest hit price wins (stop already checked).
+                    best_px = -1
+                    best_type = ""
+                    if (hit_sma && (best_px < 0 || sma_target_px < best_px)) { best_px = sma_target_px; best_type = "TARGET" }
+                    if (hit_entry && (best_px < 0 || entry_target_px < best_px)) { best_px = entry_target_px; best_type = "ENTRY_TARGET" }
+                    if (hit_timed && (best_px < 0 || timed_exit_px < best_px)) { best_px = timed_exit_px; best_type = "RL_EXIT_DAYS" }
+                    if (best_type != "") {
                         execute_exit = 1
-                        # Price climbed from Open. Use lower price (hit first).
-                        if (sma_target_px < timed_exit_px) {
-                            debug_print(sym, "\nHERE9: SMA target hit first")
+                        exit_type = best_type
+                        if (best_type == "TARGET")
                             rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso]
-                            exit_type = "TARGET"
-                        } else {
-                            debug_printf(sym, "\nHERE17:\nhit_timed:%d\niso:%s", hit_timed, iso)
+                        else if (best_type == "ENTRY_TARGET")
+                            rl_sell = (entry_target_px > raw_op[sym, iso]) ? entry_target_px : raw_op[sym, iso]
+                        else
                             rl_sell = raw_op[sym, iso]
-                            exit_type = "RL_EXIT_DAYS"
-                        }
-                    }
-                    else if (hit_sma) {
-                        debug_print(sym, "\nHERE11: SMA target hit")
-                        execute_exit = 1; exit_type = "TARGET"
-                        rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso]
-                    }
-                    else if (hit_timed) {
-                        debug_printf(sym, "\nHERE12:\nhit_timed:%d\niso:%s", hit_timed, iso)
-                        execute_exit = 1; exit_type = "RL_EXIT_DAYS"
-                        rl_sell = raw_op[sym, iso]
                     }
                 }
             }
@@ -1133,8 +1204,16 @@ function perform_audit(sym) {
                         debug_printf(sym, "\nHERE15:current_target[sym]:%.2f\nraw_op[sym, iso]:%.2f\nrl_target:%.2f\niso:%s", current_target[sym], raw_op[sym, iso], rl_target, iso)
                         rl_sell = (rl_target > raw_op[sym, iso]) ? rl_target : raw_op[sym, iso]
                     }
+                    else if (exit_type == "ENTRY_TARGET")
+                    {
+                        et_px = rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)
+                        rl_sell = (et_px > raw_op[sym, iso]) ? et_px : raw_op[sym, iso]
+                    }
                     else if (exit_type == "FLUSH_EXIT")
                         rl_sell = raw_op[sym, iso]
+                    else if (exit_type == "STOP_LOSS" || exit_type == "GAP_DOWN" || exit_type == "TRAIL_STOP" || exit_type == "TRAIL_STOP2") {
+                        # Keep the fill from the stop check (gap at the open, touch at the stop).
+                    }
                     else 
                         rl_sell = rl_stop # Stop Loss / Trailing Stop
 
@@ -1257,6 +1336,9 @@ function perform_audit(sym) {
                     has_hit_time_trigger[sym] = 0
                     time_trigger_counter[sym] = 0
                     has_hit_milestone[sym] = 0
+                    partial_exit_date[sym] = ""
+                    partial_exit_amount[sym] = 0
+                    for (si = 1; si <= n_ladder; si++) ladder_done[sym, si] = 0
                     total_exit_proceeds[sym] = 0
                     total_shares_sold[sym] = 0
                     

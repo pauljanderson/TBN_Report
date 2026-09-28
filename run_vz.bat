@@ -53,6 +53,13 @@ rem Full universe: run_vz.bat ALL / --all / "*"
 rem Workers: set VZ_WORKERS=12
 rem Extra CLI: trailing %* forwarded to rocket_tbn (-v KEY=VALUE kept).
 rem
+rem paul_experiments stamps (vz_run_<ts>/): OFF by default for house/DailyRun.
+rem   Live outputs stay under drive\VZ_* + LatestRun only.
+rem   Research opt-in (any one):
+rem     set VZ_WRITE_STAMP_FOLDER=1
+rem     run_vz.bat … -v vz_write_stamp_folder=true
+rem     run_vz.bat … -v write_stamp_folder=true
+rem
 rem DailyRun: official TBN sleeve step [10b/13] behind SKIP_VZ=1 (not walk-forward gold).
 
 setlocal EnableExtensions EnableDelayedExpansion

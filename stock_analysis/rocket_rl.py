@@ -5,6 +5,7 @@ Matches AWK bar order: lagged peak/ATR/shock on prior bar, signal on current bar
 from __future__ import annotations
 
 import sys
+import math
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields
@@ -13,6 +14,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.offsets import DateOffset
 
 try:
     from rocket_rl_config import (
@@ -86,6 +88,11 @@ RL_WATCHLIST_HEADER = (
 
 ACCOUNT_SIZE_MULTIPLIER = 10
 
+# AWK portfolio_audit.awk BEGIN defaults (BRT_PIVOT_*) — reporting only on RL_Closed.
+RL_PIVOT_K = 4
+RL_PIVOT_M = 7
+RL_PIVOT_D = 0.06
+
 
 def days_diff(d1: str, d2: str) -> int:
     """Match portfolio_audit.awk days_diff (mktime local midnight, SECONDS_PER_DAY)."""
@@ -95,6 +102,203 @@ def days_diff(d1: str, d2: str) -> int:
         return int(time.mktime(t))
 
     return int((_epoch(d2) - _epoch(d1)) / 86400)
+
+
+def compute_awk_rl_pivot_context(
+    highs: np.ndarray,
+    lows: np.ndarray,
+    *,
+    k: int = RL_PIVOT_K,
+    m: int = RL_PIVOT_M,
+    d: float = RL_PIVOT_D,
+) -> dict[str, Any]:
+    """AWK ``compute_pivots_for_symbol`` + ``compute_market_structure_for_symbol``.
+
+    Snapshotted at RL fill/entry bar (DATE OPENED) into RL_Closed pivot columns.
+    Bars outside ``[k, n-m)`` stay unset (flags 0, prices/struct blank) — same as AWK.
+    """
+    n = len(highs)
+    ph = np.zeros(n, dtype=np.int8)
+    pl = np.zeros(n, dtype=np.int8)
+    ph_pr = np.full(n, np.nan, dtype=np.float64)
+    pl_pr = np.full(n, np.nan, dtype=np.float64)
+    struct_hi = np.empty(n, dtype=object)
+    struct_lo = np.empty(n, dtype=object)
+    struct_hi[:] = ""
+    struct_lo[:] = ""
+    major_ph = np.zeros(n, dtype=np.int8)
+    major_pl = np.zeros(n, dtype=np.int8)
+    last_ph_pr = np.full(n, np.nan, dtype=np.float64)
+    last_pl_pr = np.full(n, np.nan, dtype=np.float64)
+    prev_ph_pr = np.full(n, np.nan, dtype=np.float64)
+    prev_pl_pr = np.full(n, np.nan, dtype=np.float64)
+
+    if n < k + 1 + m:
+        return {
+            "ph": ph,
+            "pl": pl,
+            "ph_pr": ph_pr,
+            "pl_pr": pl_pr,
+            "struct_hi": struct_hi,
+            "struct_lo": struct_lo,
+            "major_ph": major_ph,
+            "major_pl": major_pl,
+            "last_ph_pr": last_ph_pr,
+            "last_pl_pr": last_pl_pr,
+            "prev_ph_pr": prev_ph_pr,
+            "prev_pl_pr": prev_pl_pr,
+        }
+
+    hi = np.asarray(highs, dtype=np.float64)
+    lo = np.asarray(lows, dtype=np.float64)
+
+    for j in range(k, n - m):
+        hi_j = float(hi[j])
+        lo_j = float(lo[j])
+        wmax = hi_j
+        wmin = lo_j
+        first_hi = j
+        first_lo = j
+        lo_i = max(0, j - k)
+        hi_i = min(n - 1, j + k)
+        for ii in range(lo_i, hi_i + 1):
+            hii = float(hi[ii])
+            loi = float(lo[ii])
+            if hii > wmax:
+                wmax = hii
+                first_hi = ii
+            if loi < wmin:
+                wmin = loi
+                first_lo = ii
+        for ii in range(lo_i, hi_i + 1):
+            if float(hi[ii]) == wmax and ii < first_hi:
+                first_hi = ii
+            if float(lo[ii]) == wmin and ii < first_lo:
+                first_lo = ii
+        is_ph = hi_j == wmax and j == first_hi
+        is_pl = lo_j == wmin and j == first_lo
+        fut_lo = 1e99
+        fut_hi = -1.0
+        for ii in range(j + 1, min(n, j + m + 1)):
+            loi = float(lo[ii])
+            hii = float(hi[ii])
+            if loi < fut_lo:
+                fut_lo = loi
+            if hii > fut_hi:
+                fut_hi = hii
+        if is_ph and fut_lo <= hi_j * (1.0 - d):
+            ph[j] = 1
+            ph_pr[j] = hi_j
+        if is_pl and fut_hi >= lo_j * (1.0 + d):
+            pl[j] = 1
+            pl_pr[j] = lo_j
+
+    last_ph: Optional[float] = None
+    last_pl: Optional[float] = None
+    prev_ph: Optional[float] = None
+    prev_pl: Optional[float] = None
+    for j in range(k, n - m):
+        if ph[j] == 1:
+            _ph = float(ph_pr[j])
+            if last_ph is not None:
+                struct_hi[j] = "HH" if _ph > last_ph else "LH"
+            prev_ph = last_ph
+            last_ph = _ph
+        if pl[j] == 1:
+            _pl = float(pl_pr[j])
+            if last_pl is not None:
+                struct_lo[j] = "HL" if _pl > last_pl else "LL"
+            prev_pl = last_pl
+            last_pl = _pl
+        if last_ph is not None:
+            last_ph_pr[j] = last_ph
+        if last_pl is not None:
+            last_pl_pr[j] = last_pl
+        if prev_ph is not None:
+            prev_ph_pr[j] = prev_ph
+        if prev_pl is not None:
+            prev_pl_pr[j] = prev_pl
+
+    ph_idxs = [j for j in range(k, n - m) if ph[j] == 1]
+    pl_idxs = [j for j in range(k, n - m) if pl[j] == 1]
+    for j in ph_idxs:
+        next_pl = ""
+        for j2 in pl_idxs:
+            if j2 > j:
+                next_pl = str(struct_lo[j2] or "")
+                break
+        major_ph[j] = 1 if next_pl == "LL" else 0
+    for j in pl_idxs:
+        next_ph = ""
+        for j2 in ph_idxs:
+            if j2 > j:
+                next_ph = str(struct_hi[j2] or "")
+                break
+        major_pl[j] = 1 if next_ph == "HH" else 0
+
+    return {
+        "ph": ph,
+        "pl": pl,
+        "ph_pr": ph_pr,
+        "pl_pr": pl_pr,
+        "struct_hi": struct_hi,
+        "struct_lo": struct_lo,
+        "major_ph": major_ph,
+        "major_pl": major_pl,
+        "last_ph_pr": last_ph_pr,
+        "last_pl_pr": last_pl_pr,
+        "prev_ph_pr": prev_ph_pr,
+        "prev_pl_pr": prev_pl_pr,
+    }
+
+
+def _pivot_price_or_none(arr: np.ndarray, idx: int) -> Optional[float]:
+    if idx < 0 or idx >= len(arr):
+        return None
+    v = arr[idx]
+    if v is None or (isinstance(v, (float, np.floating)) and not np.isfinite(v)):
+        return None
+    return float(v)
+
+
+def snap_awk_rl_pivots_at_entry(ctx: dict[str, Any], entry_idx: int) -> dict[str, Any]:
+    """Entry-bar pivot snapshot — same fields AWK stores into entry_pivot_* at fill."""
+    n = len(ctx["ph"])
+    if entry_idx < 0 or entry_idx >= n:
+        return {
+            "pivot_high": 0,
+            "pivot_low": 0,
+            "struct_high": "",
+            "struct_low": "",
+            "major_ph": 0,
+            "major_pl": 0,
+            "pivot_high_pr": None,
+            "pivot_low_pr": None,
+            "last_ph_pr": None,
+            "last_pl_pr": None,
+            "prev_ph_pr": None,
+            "prev_pl_pr": None,
+        }
+    return {
+        "pivot_high": int(ctx["ph"][entry_idx]),
+        "pivot_low": int(ctx["pl"][entry_idx]),
+        "struct_high": str(ctx["struct_hi"][entry_idx] or ""),
+        "struct_low": str(ctx["struct_lo"][entry_idx] or ""),
+        "major_ph": int(ctx["major_ph"][entry_idx]),
+        "major_pl": int(ctx["major_pl"][entry_idx]),
+        "pivot_high_pr": _pivot_price_or_none(ctx["ph_pr"], entry_idx),
+        "pivot_low_pr": _pivot_price_or_none(ctx["pl_pr"], entry_idx),
+        "last_ph_pr": _pivot_price_or_none(ctx["last_ph_pr"], entry_idx),
+        "last_pl_pr": _pivot_price_or_none(ctx["last_pl_pr"], entry_idx),
+        "prev_ph_pr": _pivot_price_or_none(ctx["prev_ph_pr"], entry_idx),
+        "prev_pl_pr": _pivot_price_or_none(ctx["prev_pl_pr"], entry_idx),
+    }
+
+
+def _fmt_opt_price4(v: Optional[float]) -> str:
+    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+        return ""
+    return f"{float(v):.4f}"
 
 
 def compute_post_milestone_path(
@@ -329,9 +533,35 @@ class RLClosedRow:
     avg_exit: float = 0.0
     avg_vol: float = 0.0
     trigger_vol: float = 0.0
+    # AWK pivot / structure snapshot at DATE OPENED (fill bar). Prices None → blank CSV.
+    pivot_high_at_entry: int = 0
+    pivot_low_at_entry: int = 0
+    struct_high_at_entry: str = ""
+    struct_low_at_entry: str = ""
+    major_pivot_high_at_entry: int = 0
+    major_pivot_low_at_entry: int = 0
+    pivot_high_price_at_entry: Optional[float] = None
+    pivot_low_price_at_entry: Optional[float] = None
+    last_pivot_high_price: Optional[float] = None
+    last_pivot_low_price: Optional[float] = None
+    prev_pivot_high_price: Optional[float] = None
+    prev_pivot_low_price: Optional[float] = None
 
     def to_csv_row(self) -> str:
-        piv = ["0"] * 12
+        piv = [
+            str(int(self.pivot_high_at_entry)),
+            str(int(self.pivot_low_at_entry)),
+            self.struct_high_at_entry or "",
+            self.struct_low_at_entry or "",
+            str(int(self.major_pivot_high_at_entry)),
+            str(int(self.major_pivot_low_at_entry)),
+            _fmt_opt_price4(self.pivot_high_price_at_entry),
+            _fmt_opt_price4(self.pivot_low_price_at_entry),
+            _fmt_opt_price4(self.last_pivot_high_price),
+            _fmt_opt_price4(self.last_pivot_low_price),
+            _fmt_opt_price4(self.prev_pivot_high_price),
+            _fmt_opt_price4(self.prev_pivot_low_price),
+        ]
         parts = [
             self.symbol,
             self.entry_iso,
@@ -681,6 +911,132 @@ def _ymd8(s: str) -> str:
     return digits[:8] if len(digits) >= 8 else ""
 
 
+def rl_pre_entry_gap_status(
+    opens: Any,
+    closes: Any,
+    entry_idx: int,
+    bars: int,
+    thresh_pct: float,
+    side: str = "abs",
+) -> dict[str, Any]:
+    """Overnight gaps on the completed bars immediately before the entry date.
+
+    Signed gap % = ((Open / prior trading day's Close) - 1) * 100.
+    side ``abs`` rejects on ABS(signed) >= thresh (the original rule).
+    side ``up`` rejects when any open is at least thresh above the prior close.
+    side ``down`` rejects when any open is at least thresh below the prior close.
+    The entry bar itself is excluded. ``bars`` <= 0 or ``thresh_pct`` <= 0 means the gate is off.
+    Returns status ``off`` | ``allow`` | ``gap`` | ``short`` | ``bad_price``.
+    ``short`` and ``bad_price`` fail the qualification (not enough clean history to allow).
+    """
+    lookback = int(bars or 0)
+    thresh = float(thresh_pct or 0.0)
+    which = str(side or "abs").strip().lower()
+    if which in ("up", "gapup", "gap_up"):
+        which = "up"
+    elif which in ("down", "gapdown", "gap_down"):
+        which = "down"
+    else:
+        which = "abs"
+    if lookback <= 0 or thresh <= 0:
+        return {"status": "off", "max_gap": None, "bars": lookback, "thresh": thresh, "side": which}
+    start = int(entry_idx) - lookback
+    if start < 1:
+        return {"status": "short", "max_gap": None, "bars": lookback, "thresh": thresh, "side": which}
+    gaps: list[float] = []
+    for k in range(start, int(entry_idx)):
+        prev = float(closes[k - 1])
+        op = float(opens[k])
+        if prev <= 0 or op != op or prev != prev:
+            return {"status": "bad_price", "max_gap": None, "bars": lookback, "thresh": thresh, "side": which}
+        signed = (op / prev - 1.0) * 100.0
+        if which == "up":
+            gaps.append(signed)
+        elif which == "down":
+            gaps.append(-signed)
+        else:
+            gaps.append(abs(signed))
+    mx = max(gaps) if gaps else None
+    if mx is None:
+        return {"status": "short", "max_gap": None, "bars": lookback, "thresh": thresh, "side": which}
+    if mx >= thresh:
+        return {"status": "gap", "max_gap": mx, "bars": lookback, "thresh": thresh, "side": which}
+    return {"status": "allow", "max_gap": mx, "bars": lookback, "thresh": thresh, "side": which}
+
+
+def _rl_pre_entry_gap_rejects(opens: Any, closes: Any, entry_idx: int, cfg: Any) -> bool:
+    """True when the pre-entry absolute-gap gate is on and this fill is not allowed."""
+    status = rl_pre_entry_gap_status(
+        opens,
+        closes,
+        entry_idx,
+        int(getattr(cfg, "rl_pre_entry_gap_bars", 0) or 0),
+        float(getattr(cfg, "rl_pre_entry_gap_pct", 0.0) or 0.0),
+        str(getattr(cfg, "rl_pre_entry_gap_side", "abs") or "abs"),
+    )
+    return status["status"] not in ("off", "allow")
+
+
+def rl_retrace_12m_pct(
+    dates: Any,
+    highs: Any,
+    lows: Any,
+    entry_idx: int,
+    entry_price: float,
+    months: int = 12,
+) -> Optional[float]:
+    """Percent of the prior 12-month high-to-low range given back by the entry price.
+
+    RETRACE_12M_PCT = ((HIGH_12M - ENTRY_PRICE) / (HIGH_12M - LOW_12M)) * 100
+
+    HIGH_12M / LOW_12M are the highest daily high and lowest daily low on sessions
+    from the entry date minus ``months`` calendar months through the session before
+    entry. The entry session is excluded. Returns None when the window is empty
+    or the high is not above the low.
+    """
+    idx = int(entry_idx)
+    px = float(entry_price)
+    if idx <= 0 or not math.isfinite(px) or px <= 0:
+        return None
+    entry_ymd = _ymd8(dates[idx])
+    if len(entry_ymd) != 8:
+        return None
+    start_ymd = (pd.Timestamp(entry_ymd) - DateOffset(months=int(months))).strftime("%Y%m%d")
+    hi: Optional[float] = None
+    lo: Optional[float] = None
+    for i in range(idx - 1, -1, -1):
+        if _ymd8(dates[i]) < start_ymd:
+            break
+        hv = float(highs[i])
+        lv = float(lows[i])
+        if not math.isfinite(hv) or not math.isfinite(lv):
+            continue
+        hi = hv if hi is None else max(hi, hv)
+        lo = lv if lo is None else min(lo, lv)
+    if hi is None or lo is None or hi <= lo:
+        return None
+    return (hi - px) / (hi - lo) * 100.0
+
+
+def _rl_min_retrace_12m_rejects(
+    dates: Any,
+    highs: Any,
+    lows: Any,
+    entry_idx: int,
+    entry_price: float,
+    cfg: Any,
+) -> bool:
+    """True when the 12-month retrace floor is on and this fill is below it."""
+    floor = float(getattr(cfg, "rl_min_retrace_12m_pct", 0.0) or 0.0)
+    if floor <= 0:
+        return False
+    months = int(getattr(cfg, "rl_retrace_months", 12) or 12)
+    if months <= 0:
+        months = 12
+    pct = rl_retrace_12m_pct(dates, highs, lows, entry_idx, entry_price, months=months)
+    return pct is None or pct < floor
+
+
 def _entry_date_allowed(iso: str, start: str, end: str) -> bool:
     """Inclusive entry date window; empty bounds = open."""
     d = _ymd8(iso)
@@ -847,7 +1203,9 @@ def _rl_compute_original_stop(
         base = y_sma * (2.0 - cfg.rl_dip_pct) if y_sma > 0 else sig_low
         return base * (1.0 - below)
     if anchor in ("entry_open", "entry"):
-        return entry_price * stop_pct if entry_price > 0 else sig_low * stop_pct
+        entry_mult = float(getattr(cfg, "rl_entry_stop_pct", 0.0) or 0.0)
+        mult = entry_mult if entry_mult > 0 else stop_pct
+        return entry_price * mult if entry_price > 0 else sig_low * stop_pct
     if anchor in ("sma50", "sma_50"):
         base = y_sma if y_sma > 0 else sig_low
         return base * stop_pct
@@ -931,6 +1289,7 @@ def run_symbol_rl(
         bars["sma"][100],
         bars["sma"][200],
     )
+    pivot_ctx = compute_awk_rl_pivot_context(h, l)
 
     ind_pre, mand_rules, excl_rules = _load_rl_ind_gate_context(cfg, df, symbol)
     entry_start = str(getattr(cfg, "entry_start_date", "") or "").strip()
@@ -975,6 +1334,7 @@ def run_symbol_rl(
     rl_trail_active = 0
     has_hit_time = 0
     time_counter = 0
+    timed_arm_iso = ""  # ISO date of first rl_exit_percent hit (calendar clock arming)
     has_hit_milestone = 0
     total_exit_proceeds = 0.0
     sym_hwm = 0.0
@@ -1148,6 +1508,7 @@ def run_symbol_rl(
             if has_hit_time == 0 and cfg.rl_exit_percent > 0 and curr_profit_pct >= cfg.rl_exit_percent:
                 has_hit_time = 1
                 time_counter = 0
+                timed_arm_iso = iso
             if has_hit_time == 1:
                 time_counter += 1
 
@@ -1162,15 +1523,22 @@ def run_symbol_rl(
                     shares_to_sell = max(0, min(want, max_sell))
                     if shares_to_sell > 0:
                         rl_inv -= float(shares_to_sell)
-                        p_exit = h[idx]
+                        # Limit at the step's gain vs entry. If the bar opens through
+                        # that price, fill at the open (same idea as ENTRY_TARGET).
+                        gate = float(entry_price) * (1.0 + float(gain))
+                        opx = float(o[idx])
+                        p_exit = opx if opx > gate else gate
                         total_exit_proceeds += shares_to_sell * p_exit
                         partial_amt += (shares_to_sell * p_exit) - (shares_to_sell * entry_price)
                         if not partial_date:
                             partial_date = iso
                     new_stop = entry_price * (1.0 + stop_gain)
+                    # Only ratchet when the new stop is tighter. A step whose stop
+                    # sits at or below the current stop leaves that stop in place
+                    # (used to keep the original stop on the runner).
                     if new_stop > rl_stop:
                         rl_stop = new_stop
-                    rl_trail_active = 2 if si >= 1 else max(rl_trail_active, 1)
+                        rl_trail_active = 2 if si >= 1 else max(rl_trail_active, 1)
                     ladder_done[si] = True
 
             # Partial exit (AWK PARTIAL_EXIT_*). Remainder target becomes
@@ -1210,6 +1578,7 @@ def run_symbol_rl(
                 rl_stop = entry_price * (1 + cfg.rl_trail_stop2)
 
             hit_timed = False
+            hit_timed_cal = False
             if execute_exit == 0:
                 timed_exit_px = entry_price * (1 + cfg.rl_exit_percent)
                 sma_target_px = rl_target
@@ -1232,29 +1601,60 @@ def run_symbol_rl(
                     else:
                         exit_type = "STOP_LOSS"
                 else:
-                    hit_sma = sma_target_px > 0 and h[idx] >= sma_target_px
-                    hit_timed = has_hit_time == 1 and time_counter >= cfg.rl_exit_days
-                    hit_entry_tgt = entry_target_px > 0 and h[idx] >= entry_target_px
-                    # Same-bar race among SMA target, entry target, and timed exit:
-                    # lowest hit price level wins (timed compared at gate; fill still @open).
-                    race: list[tuple[str, float]] = []
-                    if hit_sma:
-                        race.append(("TARGET", float(sma_target_px)))
-                    if hit_entry_tgt:
-                        race.append(("ENTRY_TARGET", float(entry_target_px)))
-                    if hit_timed:
-                        race.append(("RL_EXIT_DAYS", float(timed_exit_px)))
-                    if race:
+                    # Research-only hard max-hold from fill. Stop already checked; these are
+                    # hard deadlines ahead of SMA/timed/entry-target race.
+                    # Order: trading-bar max-hold → calendar-day max-hold → SMA/timed race.
+                    max_hold = int(getattr(cfg, "rl_max_hold_bars", 0) or 0)
+                    bars_held = (idx - (entry_idx - 1)) if entry_idx > 0 else 0
+                    max_hold_cal = int(getattr(cfg, "rl_max_hold_calendar_days", 0) or 0)
+                    # Same formula as Closed DAYS HELD: days_diff(entry, today) + 1.
+                    cal_days_held = days_diff(entry_iso, iso) + 1
+                    if max_hold > 0 and bars_held >= max_hold:
                         execute_exit = 1
-                        exit_type = min(race, key=lambda t: t[1])[0]
-                        if exit_type == "TARGET":
-                            rl_sell = sma_target_px if sma_target_px > o[idx] else o[idx]
-                        elif exit_type == "ENTRY_TARGET":
-                            rl_sell = (
-                                entry_target_px if entry_target_px > o[idx] else o[idx]
+                        exit_type = "RL_MAX_HOLD"
+                        rl_sell = o[idx]
+                    elif max_hold_cal > 0 and cal_days_held >= max_hold_cal:
+                        execute_exit = 1
+                        exit_type = "RL_MAX_HOLD_CAL"
+                        rl_sell = o[idx]
+                    else:
+                        hit_sma = sma_target_px > 0 and h[idx] >= sma_target_px
+                        exit_cal_days = int(getattr(cfg, "rl_exit_calendar_days", 0) or 0)
+                        # Exclusive timed clocks: calendar post-+% disables trading-bar clock.
+                        if exit_cal_days > 0:
+                            cal_after_arm = (
+                                (days_diff(timed_arm_iso, iso) + 1)
+                                if has_hit_time == 1 and timed_arm_iso
+                                else 0
                             )
+                            hit_timed_cal = has_hit_time == 1 and cal_after_arm >= exit_cal_days
+                            hit_timed = False
                         else:
-                            rl_sell = o[idx]
+                            hit_timed = has_hit_time == 1 and time_counter >= cfg.rl_exit_days
+                            hit_timed_cal = False
+                        hit_entry_tgt = entry_target_px > 0 and h[idx] >= entry_target_px
+                        # Same-bar race among SMA target, entry target, and timed exit:
+                        # lowest hit price level wins (timed compared at gate; fill still @open).
+                        race: list[tuple[str, float]] = []
+                        if hit_sma:
+                            race.append(("TARGET", float(sma_target_px)))
+                        if hit_entry_tgt:
+                            race.append(("ENTRY_TARGET", float(entry_target_px)))
+                        if hit_timed:
+                            race.append(("RL_EXIT_DAYS", float(timed_exit_px)))
+                        if hit_timed_cal:
+                            race.append(("RL_EXIT_CAL", float(timed_exit_px)))
+                        if race:
+                            execute_exit = 1
+                            exit_type = min(race, key=lambda t: t[1])[0]
+                            if exit_type == "TARGET":
+                                rl_sell = sma_target_px if sma_target_px > o[idx] else o[idx]
+                            elif exit_type == "ENTRY_TARGET":
+                                rl_sell = (
+                                    entry_target_px if entry_target_px > o[idx] else o[idx]
+                                )
+                            else:
+                                rl_sell = o[idx]
 
             if execute_exit == 1:
                 # Fills vs original entry_price. Do not rebase cost to the +29% gate.
@@ -1266,6 +1666,11 @@ def run_symbol_rl(
                     if not hit_timed:
                         gate = entry_price * (1.0 + cfg.rl_exit_percent)
                         rl_sell = o[idx] if o[idx] > gate else gate
+                elif exit_type == "RL_EXIT_CAL":
+                    # Calendar post-+% timed exit: fill @open (same as RL_EXIT_DAYS race path).
+                    if not hit_timed_cal:
+                        gate = entry_price * (1.0 + cfg.rl_exit_percent)
+                        rl_sell = o[idx] if o[idx] > gate else gate
                 elif exit_type == "TARGET":
                     rl_sell = rl_target if rl_target > o[idx] else o[idx]
                 elif exit_type == "ENTRY_TARGET":
@@ -1273,6 +1678,8 @@ def run_symbol_rl(
                     rl_sell = et if et > o[idx] else o[idx]
                 elif exit_type in (
                     "FLUSH_EXIT",
+                    "RL_MAX_HOLD",
+                    "RL_MAX_HOLD_CAL",
                     "SPY_INT_TC_WEAK_EXIT",
                     "SPY_SHORT_TC_WEAK_EXIT",
                     "SPY_LONG_TC_WEAK_EXIT",
@@ -1449,6 +1856,18 @@ def run_symbol_rl(
                         avg_exit=avg_exit,
                         avg_vol=snap.get("avg_vol", 0.0),
                         trigger_vol=snap.get("trigger_vol", 0.0),
+                        pivot_high_at_entry=int(snap.get("pivot_high", 0) or 0),
+                        pivot_low_at_entry=int(snap.get("pivot_low", 0) or 0),
+                        struct_high_at_entry=str(snap.get("struct_high", "") or ""),
+                        struct_low_at_entry=str(snap.get("struct_low", "") or ""),
+                        major_pivot_high_at_entry=int(snap.get("major_ph", 0) or 0),
+                        major_pivot_low_at_entry=int(snap.get("major_pl", 0) or 0),
+                        pivot_high_price_at_entry=snap.get("pivot_high_pr"),
+                        pivot_low_price_at_entry=snap.get("pivot_low_pr"),
+                        last_pivot_high_price=snap.get("last_ph_pr"),
+                        last_pivot_low_price=snap.get("last_pl_pr"),
+                        prev_pivot_high_price=snap.get("prev_ph_pr"),
+                        prev_pivot_low_price=snap.get("prev_pl_pr"),
                         )
                     )
                 last_exit_idx = idx
@@ -1459,6 +1878,7 @@ def run_symbol_rl(
                 rl_trail_active = 0
                 has_hit_time = 0
                 time_counter = 0
+                timed_arm_iso = ""
                 has_hit_milestone = 0
                 total_exit_proceeds = 0.0
                 sym_hwm = 0.0
@@ -1624,6 +2044,17 @@ def run_symbol_rl(
                 if filters_ok and iso and _rl_block_entries_spy_int_weak(cfg, spy_tc_lookup, iso):
                     filters_ok = False
 
+                # Pre-entry overnight gap gate (off unless bars>0 and pct>0).
+                # Window is the completed bars strictly before the entry date.
+                if filters_ok and _rl_pre_entry_gap_rejects(o, c, next_idx, cfg):
+                    filters_ok = False
+
+                # Retrace floor (off when rl_min_retrace_12m_pct <= 0).
+                # Window is rl_retrace_months calendar months (default 12).
+                # Same formula as the closed-report column, measured on the fill date.
+                if filters_ok and _rl_min_retrace_12m_rejects(dates, h, l, next_idx, next_open, cfg):
+                    filters_ok = False
+
                 # Post-TARGET re-entry quality / cooldown (modes other than stop_loss).
                 if filters_ok and _rl_post_target_blocks_entry(
                     cfg,
@@ -1692,6 +2123,7 @@ def run_symbol_rl(
                     rl_trail_active = 0
                     has_hit_time = 0
                     time_counter = 0
+                    timed_arm_iso = ""
                     has_hit_milestone = 0
                     total_exit_proceeds = 0.0
                     sym_hwm = 0.0
@@ -1711,6 +2143,7 @@ def run_symbol_rl(
                     e50 = float(sma50[next_idx]) if np.isfinite(sma50[next_idx]) else 0.0
                     e100 = float(sma100[next_idx]) if np.isfinite(sma100[next_idx]) else 0.0
                     e200 = float(sma200[next_idx]) if np.isfinite(sma200[next_idx]) else 0.0
+                    piv_snap = snap_awk_rl_pivots_at_entry(pivot_ctx, next_idx)
                     snap = {
                         "entry_idx": entry_idx,
                         "sma20": e20,
@@ -1735,6 +2168,7 @@ def run_symbol_rl(
                         "active_shocks": active_shocks,
                         "last_shock_mag": last_shock_mag,
                         "rehab": rehab_cooldown,
+                        **piv_snap,
                     }
                     if spy_maps and next_iso:
                         snap["spy_p"] = spy_maps["p"].get(next_iso, 0.0)

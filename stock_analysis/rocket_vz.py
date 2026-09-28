@@ -24,6 +24,14 @@ Outputs (prefix ``VZ_``):
   EquityCurve (+ Aggressive) / EquityMeta / Correlation / Summary_Symbols
   Pipeline_Timings / checkpoint / LatestRun_* / last_run_ts
 
+Stamp folders (``drive/paul_experiments/vz_run_<ts>/``):
+  **Off by default** for DailyRun / ``run_vz.bat`` / TBN ``vz_mode`` (live outputs stay
+  under ``drive/VZ_*`` + LatestRun only). Opt in for research ABs:
+    set VZ_WRITE_STAMP_FOLDER=1
+    run_vz.bat … -v vz_write_stamp_folder=true   (alias: -v write_stamp_folder=true)
+    python stock_analysis/rocket_vz.py … --stamp-folder
+    python stock_analysis/rocket_vz.py … -v write_stamp_folder=true
+
 Status: **DailyRun official TBN sleeve** — not walk-forward gold.
 Docs: drive/paul_experiments/VZ_System_Guide.html
       drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md
@@ -256,6 +264,34 @@ def _as_bool(x: Any) -> bool:
     return str(x).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _resolve_write_stamp_folder(
+    *,
+    cfg: Any = None,
+    cli_value: Optional[bool] = None,
+) -> bool:
+    """Whether to write ``drive/paul_experiments/vz_run_<ts>/``.
+
+    House / DailyRun / ``run_vz.bat`` default is **False** (live ``VZ_*`` + LatestRun only).
+
+    Opt in for research stamps (first match wins):
+      1. CLI ``--stamp-folder`` / ``--no-stamp-folder`` (standalone)
+      2. env ``VZ_WRITE_STAMP_FOLDER=1|true`` (also works with ``run_vz.bat``)
+      3. BRT/TBN ``-v vz_write_stamp_folder=true`` (alias ``write_stamp_folder``)
+      4. standalone ``-v write_stamp_folder=true`` (via ``_apply_v_overrides`` after resolve)
+    """
+    if cli_value is not None:
+        return bool(cli_value)
+    env = os.environ.get("VZ_WRITE_STAMP_FOLDER", "").strip()
+    if env:
+        return _as_bool(env)
+    if cfg is not None:
+        if bool(getattr(cfg, "vz_write_stamp_folder", False)):
+            return True
+        if bool(getattr(cfg, "write_stamp_folder", False)):
+            return True
+    return False
+
+
 def _ymd(d: Any) -> str:
     if hasattr(d, "strftime"):
         return d.strftime("%Y%m%d")
@@ -323,7 +359,9 @@ class VzConfig:
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
     aggressive: bool = True
     write_charts: bool = False
-    write_stamp_folder: bool = True
+    # House/DailyRun default OFF — do not clutter paul_experiments with vz_run_* stamps.
+    # Research opt-in: --stamp-folder / -v write_stamp_folder=true / VZ_WRITE_STAMP_FOLDER=1.
+    write_stamp_folder: bool = False
     max_positions: int = 0
     aggressive_max_multiple: float = 2.0
     margin_utilization: float = 0.6
@@ -1148,7 +1186,7 @@ def vz_config_from_brt(cfg: Any) -> VzConfig:
         aggressive_max_multiple=float(getattr(cfg, "aggressive_max_multiple", 2.0) or 2.0),
         margin_utilization=float(getattr(cfg, "margin_utilization", 0.6) or 0.6),
         brt_cash=float(getattr(cfg, "brt_cash", SHEET_NOTIONAL) or SHEET_NOTIONAL),
-        write_stamp_folder=True,
+        write_stamp_folder=_resolve_write_stamp_folder(cfg=cfg),
         trade_side=str(getattr(cfg, "vz_trade_side", "long") or "long"),
         cooldown_after_target_days=int(
             getattr(cfg, "vz_cooldown_after_target_days", 0) or 0
@@ -2005,7 +2043,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--initial-capital", type=float, default=DEFAULT_INITIAL_CAPITAL)
     p.add_argument("--aggressive", action="store_true", default=True)
     p.add_argument("--no-aggressive", action="store_true")
-    p.add_argument("--no-stamp-folder", action="store_true")
+    p.add_argument(
+        "--stamp-folder",
+        action="store_true",
+        help="Write drive/paul_experiments/vz_run_<ts>/ (research; off by default for house/DailyRun).",
+    )
+    p.add_argument(
+        "--no-stamp-folder",
+        action="store_true",
+        help="Force-disable vz_run_* stamp folder (default already off).",
+    )
     p.add_argument(
         "-w",
         "--workers",
@@ -2048,6 +2095,8 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
                 "trade_side": "trade_side",
                 "vz_cooldown_after_target_days": "cooldown_after_target_days",
                 "cooldown_after_target_days": "cooldown_after_target_days",
+                "vz_write_stamp_folder": "write_stamp_folder",
+                "write_stamp_folder": "write_stamp_folder",
             }
             k2 = aliases.get(k, k)
             if not hasattr(cfg, k2):
@@ -2069,6 +2118,11 @@ def _apply_v_overrides(cfg: VzConfig, sets: list[str]) -> VzConfig:
 
 
 def cfg_from_args(ns: argparse.Namespace) -> VzConfig:
+    stamp_cli: Optional[bool] = None
+    if bool(getattr(ns, "no_stamp_folder", False)):
+        stamp_cli = False
+    elif bool(getattr(ns, "stamp_folder", False)):
+        stamp_cli = True
     cfg = VzConfig(
         lookback_days=int(ns.lookback_days),
         retest_window=int(ns.retest_window),
@@ -2089,7 +2143,7 @@ def cfg_from_args(ns: argparse.Namespace) -> VzConfig:
         sheet_notional=float(ns.sheet_notional),
         initial_capital=float(ns.initial_capital),
         aggressive=not bool(ns.no_aggressive),
-        write_stamp_folder=not bool(ns.no_stamp_folder),
+        write_stamp_folder=_resolve_write_stamp_folder(cli_value=stamp_cli),
     )
     return _apply_v_overrides(cfg, list(ns.set or []))
 

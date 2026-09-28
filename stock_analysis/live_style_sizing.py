@@ -299,6 +299,8 @@ def stop_from_row(row: Mapping[str, Any]) -> Optional[float]:
     # MUST_OPEN_AT_OR_BELOW is the SB max fill, not a stop.
     for k in (
         "STOP_LOSS",
+        "STOP_PRICE",
+        "STOP PRICE",
         "SIGNAL_LOW",
         "ZONE_LO",
         "SWING_LOW",

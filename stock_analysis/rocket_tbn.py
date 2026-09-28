@@ -343,6 +343,10 @@ class BRTConfig:
     vz_trade_side: str = "long"  # long | short | both (house default long)
     # Post-TARGET re-entry cooldown (calendar days, inclusive). House adopt 20260821 = 10.
     vz_cooldown_after_target_days: int = 10
+    # Research only: write drive/paul_experiments/vz_run_<ts>/ (BASELINE + HTML copies).
+    # House / DailyRun / run_vz.bat default OFF — live outputs stay under drive/VZ_* + LatestRun.
+    # Opt in: -v vz_write_stamp_folder=true (alias write_stamp_folder) or VZ_WRITE_STAMP_FOLDER=1.
+    vz_write_stamp_folder: bool = False
     # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
     wrl_mode: bool = False
     wrl_target_mode: str = "swing"  # swing (house: 100% at swing high) | range | scale (leftover 50/50)
@@ -424,6 +428,9 @@ class BRTConfig:
     rl_stop_pct: float = 0.934
     rl_stop_anchor: str = "signal_low"  # signal_low | dip_lo | entry_open | sma50 | atr2
     rl_stop_below_pct: float = 0.0  # cushion below dip_lo anchor (research)
+    # When > 0 and rl_stop_anchor=entry_open: protective stop = entry × this.
+    # Fill gates (too_low / too_high) stay on rl_stop_pct. 0 = use rl_stop_pct (legacy).
+    rl_entry_stop_pct: float = 0.0
     # Post-TARGET re-entry window (0 bars = off). Mode is mutually exclusive; see RLConfig.
     rl_post_target_reentry_bars: int = 0
     rl_post_target_reentry_mode: str = "stop_loss"
@@ -432,9 +439,24 @@ class BRTConfig:
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
     # Research: keep expansion hits at rl_target_pct, but disable SMA50 envelope EXIT (TARGET).
-    rl_sma_target_off: bool = False
+    rl_sma_target_off: bool = True
     # Fill: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default 0 = off).
     rl_too_high: float = 0.0
+    # Research entry gate (0 = off; production and frozen Control unchanged).
+    # When bars>0 and pct>0: reject the fill if any of the `bars` completed sessions
+    # immediately before the entry date has ABS((Open/prior close)-1)*100 >= pct.
+    # The entry day's own opening gap is not included. Short lookback rejects.
+    rl_pre_entry_gap_bars: int = 0
+    rl_pre_entry_gap_pct: float = 0.0
+    # abs (default) | up | down. abs keeps the original absolute-gap rule.
+    rl_pre_entry_gap_side: str = "abs"
+    # Research entry gate (0 = off). Keep the fill only when
+    # ((HIGH - entry) / (HIGH - LOW)) * 100 is at least this percent.
+    # HIGH / LOW are the highest daily high and lowest daily low in the
+    # rl_retrace_months calendar months strictly before the entry date (default 12).
+    # Undefined range rejects.
+    rl_min_retrace_12m_pct: float = 0.0
+    rl_retrace_months: int = 12
     rl_expansion: float = 1.163
     rl_acc_min: int = 8
     rl_acc_count: int = 10
@@ -456,14 +478,25 @@ class BRTConfig:
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
     rl_trail_stop2: float = 0.0
-    rl_exit_percent: float = 0.40  # +40% entry MTM gate (adopt 40_30d 20260831)
-    rl_exit_days: int = 30  # days after +40% before timed exit
-    # Full exit when high >= entry × (1 + this). 0=off. Races SMA50×rl_target_pct and timed exit.
-    rl_entry_target_pct: float = 0.0
+    rl_exit_percent: float = 0.0  # 0 = time clock off (house freeze 2026-09-27)
+    rl_exit_days: int = 0  # trading bars after +% before timed exit (time_counter)
+    # Research-only: calendar days after first rl_exit_percent hit (days_diff(arming, today)+1).
+    # 0=off. Exit @ open as RL_EXIT_CAL. When >0, ignores trading-bar rl_exit_days timed path.
+    # Distinct from rl_max_hold_calendar_days (from entry) and rl_exit_days (trading bars).
+    rl_exit_calendar_days: int = 0
+    # Research-only hard max-hold from fill bar (trading bars). 0=off.
+    # Distinct from rl_exit_days (post-+% clock). Alias: rl_time_stop_from_entry.
+    rl_max_hold_bars: int = 0
+    # Research-only hard max-hold in calendar days from entry (Closed DAYS HELD clock:
+    # days_diff(entry, today) + 1). 0=off. Exit @ open as RL_MAX_HOLD_CAL.
+    # Distinct from rl_max_hold_bars (trading bars).
+    rl_max_hold_calendar_days: int = 0
+    # Leftover target after the 80% sale at +20%. Races the stop (stop first).
+    rl_entry_target_pct: float = 0.40
     rl_partial_exit_target: float = 0.0
     rl_partial_exit_percent: float = 0.50
     rl_partial_exit_follow_target: float = 0.1
-    rl_scale_ladder: str = ""
+    rl_scale_ladder: str = "0.20:0.80:0"
     rl_spy_inclusion: bool = False  # AWK SPY_INCLUSION (50>100>200 on entry day)
     rl_avg_vol_days: int = 50  # AWK AVG_VOL_DAYS (0=off)
     rl_vol_pct_threshold: float = 0.0  # AWK VOL_PCT_THRESHOLD (0=off)
@@ -16581,6 +16614,11 @@ _AUDIT_CFG_COLS = [
     "rl_shock_rehab_days",
     "rl_shock_max_allowed",
     "rl_too_high",
+    "rl_pre_entry_gap_bars",
+    "rl_pre_entry_gap_pct",
+    "rl_pre_entry_gap_side",
+    "rl_min_retrace_12m_pct",
+    "rl_retrace_months",
     "rl_spy_inclusion",
     "rl_avg_vol_days",
     "rl_vol_pct_threshold",
@@ -16603,6 +16641,9 @@ _AUDIT_CFG_COLS = [
     "rl_trail_stop2",
     "rl_exit_percent",
     "rl_exit_days",
+    "rl_exit_calendar_days",
+    "rl_max_hold_bars",
+    "rl_max_hold_calendar_days",
     "rl_entry_target_pct",
     "rl_flush_days",
     "rl_partial_exit_target",
@@ -16949,13 +16990,41 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_shock_rehab_days": "Shock lookback window (AWK RL_SHOCK_REHAB_DAYS, default 120).",
     "rl_shock_max_allowed": "Max shocks allowed in rehab window (AWK RL_SHOCK_MAX_ALLOWED, default 1).",
     "rl_too_high": "Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (AWK RL_TOO_HIGH, default 0=off). When on (e.g. 1.14) with stop 0.934, allows open up to ~low*1.065; rl_too_high=1 requires open <= low*0.934 (below signal low - almost never fills). 0|off|none|false|empty disables.",
+    "rl_pre_entry_gap_bars": (
+        "Research entry gate. Number of completed trading bars immediately before the entry date "
+        "to scan for overnight opening gaps. 0=off (default). Does not include the entry bar."
+    ),
+    "rl_pre_entry_gap_pct": (
+        "Research entry gate. Reject the entry if any scanned bar has absolute overnight gap "
+        "ABS((Open/prior close)-1)*100 at or above this percent. 0=off. Active only when "
+        "rl_pre_entry_gap_bars>0 as well. Example: bars=20 and pct=7 rejects a 7% or larger gap."
+    ),
+    "rl_pre_entry_gap_side": (
+        "Research entry gate. Which overnight gaps count. abs (default) uses the absolute jump. "
+        "up counts only an open at least pct above the prior close. "
+        "down counts only an open at least pct below the prior close. "
+        "Ignored unless rl_pre_entry_gap_bars and rl_pre_entry_gap_pct are both on."
+    ),
+    "rl_min_retrace_12m_pct": (
+        "Research entry gate. Minimum retrace percent: "
+        "((HIGH - entry price) / (HIGH - LOW)) * 100. "
+        "HIGH and LOW are the highest daily high and lowest daily low in the "
+        "rl_retrace_months calendar months strictly before the entry date (default 12). "
+        "0=off (default). Example: 30 keeps a buy only when that retrace is at least 30."
+    ),
+    "rl_retrace_months": (
+        "Calendar months of highs and lows used by rl_min_retrace_12m_pct. "
+        "Default 12. The entry session is excluded. Ignored when the retrace floor is off."
+    ),
     "rl_spy_inclusion": "When true, only enter if SPY SMA50>100>200 (AWK SPY_INCLUSION).",
     "rl_avg_vol_days": "Rolling average volume window reported/used at entry (AWK AVG_VOL_DAYS; 0=off).",
     "rl_min_avg_vol": "RL PIT min average volume (shares) on trigger bar over rl_avg_vol_days; 0=off. Research gate (e.g. 500000).",
     "rl_min_trigger_vol": "RL PIT min trigger-bar volume / TRIGGER_VOL (shares); 0=off. Research gate (e.g. 5000).",
     "rl_vol_pct_threshold": "Volume surge gate percent above avg (AWK VOL_PCT_THRESHOLD; 0=off).",
     "rl_brt_entry_gates_enabled": "When true, optional BRT zone gates may filter RL entries (default false / neutralized in rl_mode).",
-    "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934).",
+    "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934). Also the fill-gate multiplier (too_low / too_high).",
+    "rl_stop_anchor": "Protective-stop base: signal_low (default, signal-day low × rl_stop_pct) | dip_lo | entry_open | sma50 | atr2. Fill gates stay on rl_stop_pct.",
+    "rl_entry_stop_pct": "When > 0 and rl_stop_anchor=entry_open, protective stop = entry price × this (0.91 = 9% below the fill). 0 = use rl_stop_pct. Fill gates stay on rl_stop_pct.",
     "rl_post_target_reentry_bars": (
         "Trading bars after a TARGET exit during which rl_post_target_reentry_mode applies (0=off). "
         "Alias: rl_post_target_reentry_days / RL_POST_TARGET_REENTRY_DAYS. Modes are mutually exclusive. "
@@ -16989,7 +17058,28 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_trail_profit2": "Tier-2 trail arm gain fraction (AWK RL_TRAIL_PROFIT2; 0=off).",
     "rl_trail_stop2": "Tier-2 locked stop gain fraction (AWK RL_TRAIL_STOP2).",
     "rl_exit_percent": "Timed-exit profit trigger fraction vs entry MTM (AWK RL_EXIT_PERCENT, house 0.40).",
-    "rl_exit_days": "Days after profit trigger before forced exit (AWK RL_EXIT_DAYS; house 30; 10000≈off).",
+    "rl_exit_days": (
+        "Trading bars after profit trigger before forced exit (AWK RL_EXIT_DAYS; house 30; "
+        "10000≈off). time_counter after rl_exit_percent hit. Ignored when rl_exit_calendar_days>0."
+    ),
+    "rl_exit_calendar_days": (
+        "Research-only: calendar days after first rl_exit_percent hit before forced exit (0=off). "
+        "Same clock as Closed DAYS HELD: days_diff(arming_iso, iso) + 1. Exit type RL_EXIT_CAL. "
+        "When >0, disables trading-bar rl_exit_days timed path (exclusive). Distinct from "
+        "rl_max_hold_calendar_days (calendar from entry) and rl_exit_days (trading bars after +%)."
+    ),
+    "rl_max_hold_bars": (
+        "Research-only: hard flatten at open when trading bars from fill >= N (0=off). "
+        "bars_held = idx − entry_bar (0 on entry bar). Stop still checked first. "
+        "Not the same as rl_exit_days (clock after rl_exit_percent). Alias rl_time_stop_from_entry."
+    ),
+    "rl_max_hold_calendar_days": (
+        "Research-only: hard flatten at open when calendar days from entry >= N (0=off). "
+        "Same clock as Closed DAYS HELD: days_diff(entry_iso, iso) + 1. Exit type RL_MAX_HOLD_CAL. "
+        "Stop still checked first; races ahead of SMA/timed. Distinct from rl_max_hold_bars "
+        "(trading bars), rl_exit_days (post-+% trading-bar clock), and rl_exit_calendar_days "
+        "(post-+% calendar clock)."
+    ),
     "rl_entry_target_pct": (
         "Entry-based full-exit target: exit when high >= entry × (1 + this). "
         "0=off. Races SMA50 × rl_target_pct and rl_exit_percent/days (lowest hit price wins same bar)."
@@ -19457,6 +19547,9 @@ def main() -> int:
             key = _pbr_to_wpbr[key]
         if key == "merge_overlapping_zones":
             key = "wpbr_merge_overlapping_zones"
+        if key == "write_stamp_folder":
+            # VZ research stamp opt-in; canonical BRT field is vz_write_stamp_folder.
+            key = "vz_write_stamp_folder"
         if key == "stop_anchor":
             # Legacy alias → stop_loss_based (signal_low↔trigger_low, entry↔entry_open).
             if "stop_loss_based" in _v_keys_normalized:

@@ -297,6 +297,10 @@ if (-not [string]::IsNullOrEmpty($env:RL_DIP_PCT)) { [void]$awkArgList.Add('-v')
 if (-not [string]::IsNullOrEmpty($env:RL_CUT_THE_LOSERS)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_CUT_THE_LOSERS=$($env:RL_CUT_THE_LOSERS)") }
 if (-not [string]::IsNullOrEmpty($env:RL_EXIT_PERCENT)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_EXIT_PERCENT=$($env:RL_EXIT_PERCENT)") }
 if (-not [string]::IsNullOrEmpty($env:RL_EXIT_DAYS)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_EXIT_DAYS=$($env:RL_EXIT_DAYS)") }
+if (-not [string]::IsNullOrEmpty($env:RL_SMA_TARGET_OFF)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_SMA_TARGET_OFF=$($env:RL_SMA_TARGET_OFF)") }
+if (-not [string]::IsNullOrEmpty($env:RL_SCALE_LADDER)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_SCALE_LADDER=$($env:RL_SCALE_LADDER)") }
+if (-not [string]::IsNullOrEmpty($env:RL_ENTRY_TARGET_PCT)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_ENTRY_TARGET_PCT=$($env:RL_ENTRY_TARGET_PCT)") }
+if (-not [string]::IsNullOrEmpty($env:RL_USE_FILE_SMA)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_USE_FILE_SMA=$($env:RL_USE_FILE_SMA)") }
 if ($RLTrailProfit -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT=$RLTrailProfit") }
 if ($RLTrailStop -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_STOP=$RLTrailStop") }
 if ($RLTrailProfit2 -ne "") { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_TRAIL_PROFIT2=$RLTrailProfit2") }

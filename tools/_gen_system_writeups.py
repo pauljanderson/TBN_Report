@@ -506,7 +506,7 @@ def rl() -> str:
   <li><strong>Target:</strong> SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong>. Anchored to the 50-SMA (not entry) and <em>updated while the trade is open</em>.</li>
   <li>Shared gap-down / gap-up / intraday stop / target schedule (first match wins), matching AWK bar order.</li>
   <li>Trail / partial / flush levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
-  <li><strong>Timed exit (house adopt 2026-08-31):</strong> after entry MTM reaches <code>rl_exit_percent=0.40</code> (+40%), force exit <code>rl_exit_days=30</code> later (open fill). SMA50 × <code>rl_target_pct=1.20</code> target stays live and races the timed exit.</li>
+  <li><strong>Exit (house freeze 2026-09-27):</strong> sell 80% at +20% from the buy (<code>rl_scale_ladder=0.20:0.80:0</code>), move the leftover stop to the entry price, and sell that leftover at +40% (<code>rl_entry_target_pct=0.40</code>). No time clock (<code>rl_exit_percent=0</code>, <code>rl_exit_days=0</code>). SMA envelope target off (<code>rl_sma_target_off=1</code>). If one day trades both the leftover stop and the +40% target, the stop is checked first. Universe is every name under <code>data/newdata/data</code>.</li>
   <li>Post-TARGET re-entry window: prod <code>rl_post_target_reentry_bars=0</code> (off).</li>
   <li>AWK-only subsystems (not in the Python 50-trigger port): RL100 (100-SMA) and Dive Bomber shorts — audit defaults show them off.</li>
 </ul>

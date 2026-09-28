@@ -63,6 +63,11 @@ _RL_PROFILE_KEYS = frozenset(
     {
         "rl_target_pct",
         "rl_stop_pct",
+        "use_sma50_target",
+        "rl_scale_gain",
+        "rl_scale_sell_frac",
+        "rl_scale_stop_gain",
+        "rl_entry_target_pct",
         "rl_trail_profit",
         "rl_trail_stop",
         "rl_trail_profit2",

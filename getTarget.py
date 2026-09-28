@@ -25,7 +25,8 @@ purchase_date is not in the symbol CSV yet (e.g. bought today before files updat
 Use --default-atr-pct when ATR mode needs a proxy % and history is missing.
 
 CLI sets defaults per system, e.g.:
-  --brt-atr-target 8 --ind-atr-target 2.4 --rl-target-pct 1.20 --rl-use-sma50
+  --brt-atr-target 8 --ind-atr-target 2.4
+  --rl-no-sma50 --rl-scale-gain 0.20 --rl-entry-target-pct 0.40
   --sb-target-pct 1.097 --mvcp-target-pct 1.25 --cs-target-pct 1.20
 """
 from __future__ import annotations
@@ -255,10 +256,16 @@ class AtrProfile:
 
 @dataclass
 class RlProfile:
-  # portfolio_audit.awk defaults
+    # House DailyRun freeze 2026-09-27: no SMA target. Sell 80% at +20% from entry,
+    # raise the leftover stop to the buy, leftover target +40%. rl_target_pct remains
+    # the old SMA50 multiplier and is used only when use_sma50_target is on.
     rl_target_pct: float = 1.20
     rl_stop_pct: float = 0.934
-    use_sma50_target: bool = True
+    use_sma50_target: bool = False
+    rl_scale_gain: float = 0.20
+    rl_scale_sell_frac: float = 0.80
+    rl_scale_stop_gain: float = 0.0
+    rl_entry_target_pct: float = 0.40
     rl_trail_profit: float = 0.0
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
@@ -647,6 +654,78 @@ def compute_atr_system(
     }
 
 
+def _rl_exit_levels(
+    entry_price: float,
+    stop_initial: float,
+    max_high: float,
+    profile: RlProfile,
+    sma50_as_of: float,
+    sma50_signal: float,
+) -> dict[str, Any]:
+    """Next live stop and target for one open Rocket Launcher lot.
+
+    Frozen default: until the high reaches +20%, the working target is that +20%
+    sale (80% of the original shares) and the stop stays the original stop.
+    Once that high has printed, the leftover stop moves to the buy if that is
+    tighter, and the working target is +40% on the remainder. SMA50 × rl_target_pct
+    is used only when use_sma50_target is on.
+    """
+    scale_gain = float(profile.rl_scale_gain or 0.0)
+    sell_frac = float(profile.rl_scale_sell_frac or 0.0)
+    entry_tgt = float(profile.rl_entry_target_pct or 0.0)
+    scale_px = entry_price * (1.0 + scale_gain) if scale_gain > 0 and entry_price > 0 else None
+    runner_px = entry_price * (1.0 + entry_tgt) if entry_tgt > 0 and entry_price > 0 else None
+
+    if profile.use_sma50_target and np_finite(sma50_as_of):
+        target_price = sma50_as_of * profile.rl_target_pct
+        target_note = "SMA50(as_of)"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+        if profile.rl_trail_profit2 > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit2):
+            trail_tier = 2
+            stop_trailing = entry_price * (1.0 + profile.rl_trail_stop2)
+        elif profile.rl_trail_profit > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit):
+            trail_tier = 1
+            stop_trailing = entry_price * (1.0 + profile.rl_trail_stop)
+    elif profile.use_sma50_target and np_finite(sma50_signal):
+        target_price = sma50_signal * profile.rl_target_pct
+        target_note = "SMA50(signal_bar)"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+    elif scale_px is not None and max_high >= scale_px:
+        raised = entry_price * (1.0 + float(profile.rl_scale_stop_gain or 0.0))
+        stop_trailing = raised if raised > stop_initial else stop_initial
+        target_price = runner_px if runner_px is not None else scale_px
+        target_note = "runner_40_stop_at_entry"
+        trail_tier = 1
+        scale_hit = True
+    elif scale_px is not None:
+        target_price = scale_px
+        target_note = "scale_80_at_20"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+    else:
+        target_price = entry_price * profile.rl_target_pct
+        target_note = "entry"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+
+    return {
+        "TargetPrice": target_price,
+        "TargetNote": target_note,
+        "StopTrailing": stop_trailing,
+        "RL_TrailTier": trail_tier,
+        "RL_ScalePrice": scale_px,
+        "RL_RunnerTarget": runner_px,
+        "RL_ScaleSellFrac": sell_frac if scale_px is not None else None,
+        "RL_ScaleHit": scale_hit,
+    }
+
+
 def compute_rl_system(
     sym: str,
     df: pd.DataFrame,
@@ -681,26 +760,12 @@ def compute_rl_system(
         else float("nan")
     )
 
-    if profile.use_sma50_target and np_finite(sma50_as_of):
-        target_price = sma50_as_of * profile.rl_target_pct
-        target_note = "SMA50(as_of)"
-    elif profile.use_sma50_target and np_finite(sma50_signal):
-        target_price = sma50_signal * profile.rl_target_pct
-        target_note = "SMA50(signal_bar)"
-    else:
-        target_price = entry_price * profile.rl_target_pct
-        target_note = "entry"
-
     max_high = _max_high_since_entry(df, entry_ts, entry_price, as_of_effective, entry_in_data)
-
-    trail_tier = 0
-    stop_trailing = stop_initial
-    if profile.rl_trail_profit2 > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit2):
-        trail_tier = 2
-        stop_trailing = entry_price * (1.0 + profile.rl_trail_stop2)
-    elif profile.rl_trail_profit > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit):
-        trail_tier = 1
-        stop_trailing = entry_price * (1.0 + profile.rl_trail_stop)
+    levels = _rl_exit_levels(entry_price, stop_initial, max_high, profile, sma50_as_of, sma50_signal)
+    target_price = levels["TargetPrice"]
+    target_note = levels["TargetNote"]
+    stop_trailing = levels["StopTrailing"]
+    trail_tier = levels["RL_TrailTier"]
 
     atr_at_entry = None
     if entry_in_data and entry_ts in df.index and "ATR" in df.columns:
@@ -717,6 +782,10 @@ def compute_rl_system(
         "TargetNote": target_note,
         "StopInitial": stop_initial,
         "StopTrailing": stop_trailing,
+        "RL_ScalePrice": levels["RL_ScalePrice"],
+        "RL_RunnerTarget": levels["RL_RunnerTarget"],
+        "RL_ScaleSellFrac": levels["RL_ScaleSellFrac"],
+        "RL_ScaleHit": levels["RL_ScaleHit"],
         "atr_target": None,
         "atr_stop": None,
         "atr_increment": None,
@@ -1292,20 +1361,32 @@ def compute_price_only_payload(
     if system == "VZ":
         return {"error": "VZ requires OHLC CSV to resolve zone.lo stop/target"}
     if system == "RL":
-        target_price = entry_price * rl_profile.rl_target_pct
         stop_initial = entry_price * rl_profile.rl_stop_pct
+        levels = _rl_exit_levels(
+            entry_price,
+            stop_initial,
+            float(entry_price),
+            rl_profile,
+            float("nan"),
+            float("nan"),
+        )
         return {
             "System": "RL",
             "EntrySource": entry_src,
             "EntryInData": False,
-            "TargetPrice": target_price,
-            "TargetNote": "entry_no_csv",
+            "TargetPrice": levels["TargetPrice"],
+            "TargetNote": levels["TargetNote"],
             "StopInitial": stop_initial,
-            "StopTrailing": stop_initial,
+            "StopTrailing": levels["StopTrailing"],
+            "RL_ScalePrice": levels["RL_ScalePrice"],
+            "RL_RunnerTarget": levels["RL_RunnerTarget"],
+            "RL_ScaleSellFrac": levels["RL_ScaleSellFrac"],
+            "RL_ScaleHit": levels["RL_ScaleHit"],
             "ATR": None,
             "ATRPct": None,
             "SMA20": None,
             "SMA50": None,
+            "use_sma50": rl_profile.use_sma50_target,
         }
     if system == "WRL":
         return {"error": "WRL needs OHLC history to compute weekly range/swing levels"}
@@ -1598,10 +1679,44 @@ def main() -> None:
     _add_atr_profile_args(parser, "mvcp", AtrProfile())
     _add_atr_profile_args(parser, "cs", AtrProfile())
 
-    parser.add_argument("--rl-target-pct", type=float, default=1.20)
+    parser.add_argument(
+        "--rl-target-pct",
+        type=float,
+        default=1.20,
+        help="SMA50 target multiplier. Used only with --rl-use-sma50 (legacy). Default 1.20.",
+    )
     parser.add_argument("--rl-stop-pct", type=float, default=0.934)
-    parser.add_argument("--rl-use-sma50", action="store_true", default=True)
+    parser.add_argument(
+        "--rl-use-sma50",
+        action="store_true",
+        default=False,
+        help="Legacy: target = SMA50 × --rl-target-pct. Off by default (2026-09-27 freeze).",
+    )
     parser.add_argument("--rl-no-sma50", dest="rl_use_sma50", action="store_false")
+    parser.add_argument(
+        "--rl-scale-gain",
+        type=float,
+        default=0.20,
+        help="Sell the bulk of the position when the high reaches this gain from entry. Default 0.20.",
+    )
+    parser.add_argument(
+        "--rl-scale-sell-frac",
+        type=float,
+        default=0.80,
+        help="Fraction of the original shares sold at --rl-scale-gain. Default 0.80. Reported, not resized here.",
+    )
+    parser.add_argument(
+        "--rl-scale-stop-gain",
+        type=float,
+        default=0.0,
+        help="After the +20%% sale, raise the leftover stop to entry × (1 + this) when tighter. 0 = the buy price.",
+    )
+    parser.add_argument(
+        "--rl-entry-target-pct",
+        type=float,
+        default=0.40,
+        help="Leftover target as a gain from entry after the scale-out. Default 0.40.",
+    )
     parser.add_argument("--rl-trail-profit", type=float, default=0.0)
     parser.add_argument("--rl-trail-stop", type=float, default=0.0)
     parser.add_argument("--rl-trail-profit2", type=float, default=0.0)
@@ -1826,6 +1941,10 @@ def main() -> None:
         rl_target_pct=args.rl_target_pct,
         rl_stop_pct=args.rl_stop_pct,
         use_sma50_target=bool(args.rl_use_sma50),
+        rl_scale_gain=args.rl_scale_gain,
+        rl_scale_sell_frac=args.rl_scale_sell_frac,
+        rl_scale_stop_gain=args.rl_scale_stop_gain,
+        rl_entry_target_pct=args.rl_entry_target_pct,
         rl_trail_profit=args.rl_trail_profit,
         rl_trail_stop=args.rl_trail_stop,
         rl_trail_profit2=args.rl_trail_profit2,
@@ -2282,6 +2401,8 @@ def main() -> None:
             extra += f" [progress_stop={_format_dollar(row_out.get('ATRScheduleProgressPrice'))}]"
         if payload.get("SMAStopApplied") and row_out.get("SMAStopLevel") is not None:
             extra += f" [sma_stop={_format_dollar(row_out.get('SMAStopLevel'))} N={payload.get('sma_stop_days')}]"
+        if payload.get("TargetNote") and system == "RL":
+            extra += f" [RL {payload.get('TargetNote')}]"
         if payload.get("RL_TrailTier"):
             extra += f" [RL_trail_tier={payload.get('RL_TrailTier')}]"
         if stop_floor_applied and row_out.get("PrevStopFloor") is not None:

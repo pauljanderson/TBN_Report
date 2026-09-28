@@ -35,11 +35,15 @@ DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
 SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
 
+# Open-position recommended shares only. Does not edit drive/live_style_account.json.
+MONTHLY_OPEN_SIZE_EQUITY = 245_000.0
+
 try:
     from stock_analysis.live_style_sizing import (
         official_live_style_callout_html as _live_style_callout,
         parse_live_style_month_ledger as _live_style_months,
         load_freeze_summary as _live_style_summary,
+        size_share_range as _size_share_range,
         NAME_CAP_FRAC as _LIVE_NAME_CAP,
         ACCOUNT_START as _LIVE_START,
         FREEZE_STAMP as _LIVE_STAMP,
@@ -54,6 +58,7 @@ except Exception:
             official_live_style_callout_html as _live_style_callout,
             parse_live_style_month_ledger as _live_style_months,
             load_freeze_summary as _live_style_summary,
+            size_share_range as _size_share_range,
             NAME_CAP_FRAC as _LIVE_NAME_CAP,
             ACCOUNT_START as _LIVE_START,
             FREEZE_STAMP as _LIVE_STAMP,
@@ -68,6 +73,13 @@ except Exception:
 
         def _live_style_summary() -> dict:
             return {}
+
+        def _size_share_range(**_kwargs):  # type: ignore
+            return {
+                "SUGGESTED_SHARES": "—",
+                "SUGGESTED_NOTIONAL": "—",
+                "SIZE_LID": "—",
+            }
 
         _LIVE_NAME_CAP = 0.175
         _LIVE_START = 250_000.0
@@ -128,6 +140,9 @@ class TradeRow:
     pnl_dollars: float
     pnl_pct: float
     status: str  # closed | open
+    stop_price: Optional[float] = None
+    suggested_shares: str = "—"
+    size_lid: str = "—"
 
 
 def _resolve_drive(drive: Path) -> Path:
@@ -333,6 +348,7 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
     pnl_d_c = _col(df, "PNL_DOLLARS")
     pnl_p_c = _col(df, "PNL_PCT")
     current_c = _col(df, "CURRENT_PRICE")
+    stop_c = _col(df, "STOP_PRICE", "STOP PRICE", "STOP_LOSS", "STOP")
 
     rows: list[TradeRow] = []
     for _, r in df.iterrows():
@@ -366,6 +382,7 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
             cur = _parse_money(r.get(current_c)) if current_c else entry
             pnl_d = _parse_money(r.get(pnl_d_c)) if pnl_d_c else 0.0
             pnl_p = _parse_pct(r.get(pnl_p_c)) if pnl_p_c else 0.0
+            stop_px = _parse_money(r.get(stop_c)) if stop_c else 0.0
             rows.append(
                 TradeRow(
                     system=system,
@@ -379,6 +396,7 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
                     pnl_dollars=pnl_d,
                     pnl_pct=pnl_p,
                     status="open",
+                    stop_price=stop_px if stop_px > 0 else None,
                 )
             )
     return rows
@@ -536,12 +554,103 @@ def _trade_detail_table(trades: list[TradeRow]) -> str:
     )
 
 
+def _notional_high(text: str) -> float:
+    """Upper dollar of a suggested-notional cell ('12,345.00' or '10,000–12,000')."""
+    raw = (text or "").strip()
+    if not raw or raw in {"—", "-"}:
+        return 0.0
+    vals: list[float] = []
+    for part in re.split(r"[–\-]", raw):
+        s = part.replace(",", "").replace("$", "").strip()
+        if not s:
+            continue
+        try:
+            vals.append(float(s))
+        except ValueError:
+            continue
+    return max(vals) if vals else 0.0
+
+
+def _attach_recommended_shares(open_rows: list[TradeRow]) -> None:
+    """Size each open lot with the official live-style range helper.
+
+    Equity is MONTHLY_OPEN_SIZE_EQUITY for both beginning-of-month risk and the
+    name cap. When the same ticker appears in more than one system, later
+    systems (report order) only get the name-cap room still left.
+    """
+    order = sorted(
+        range(len(open_rows)),
+        key=lambda i: (
+            SYSTEMS.index(open_rows[i].system) if open_rows[i].system in SYSTEMS else 99,
+            open_rows[i].date_opened,
+            open_rows[i].symbol,
+            i,
+        ),
+    )
+    used: dict[str, float] = {}
+    for i in order:
+        t = open_rows[i]
+        sym = t.symbol.strip().upper()
+        row: dict = {
+            "SYMBOL": sym,
+            "ENTRY_PRICE": t.entry_price if t.entry_price > 0 else "",
+            "CURRENT_PRICE": t.exit_price if t.exit_price else "",
+        }
+        if t.stop_price and t.stop_price > 0:
+            row["STOP_PRICE"] = t.stop_price
+        packed = _size_share_range(
+            symbol=sym,
+            system=t.system,
+            row=row,
+            bom_equity=MONTHLY_OPEN_SIZE_EQUITY,
+            current_equity=MONTHLY_OPEN_SIZE_EQUITY,
+            open_notional_same_name=float(used.get(sym, 0.0)),
+            asof=date.today(),
+        )
+        t.suggested_shares = str(packed.get("SUGGESTED_SHARES") or "—")
+        t.size_lid = str(packed.get("SIZE_LID") or "—")
+        used[sym] = used.get(sym, 0.0) + _notional_high(
+            str(packed.get("SUGGESTED_NOTIONAL") or "")
+        )
+
+
+def _open_positions_size_note() -> str:
+    equity = f"${MONTHLY_OPEN_SIZE_EQUITY:,.0f}"
+    cap_pct = f"{float(_LIVE_NAME_CAP) * 100:.1f}".rstrip("0").rstrip(".")
+    return f"""
+<p class="small">
+  Recommended shares use the same live buy-size rules as the investment report
+  (freeze <code>{html_mod.escape(str(_LIVE_STAMP))}</code>),
+  <strong>sized off {equity} starting balance</strong>.
+  Risk dollars are the smaller of 1% of that {equity} or $50,000.
+  Share count also stays within 1% of 20-day average daily volume (ADV20),
+  and the position cannot use more than {cap_pct}% of the {equity}
+  (the name cap). Relative Strength Index (RSI) uses the frozen average-loss
+  slot instead of the distance from entry to the stop.
+  The share count is a range until the order fills (next-open band, the day’s high–low,
+  or last close ± Average True Range (ATR)).
+  Size lid names the rule that set the count:
+  <code>risk_1pct</code> (1% of the starting balance),
+  <code>risk_50k</code> ($50,000 risk ceiling),
+  <code>adv</code> (ADV20),
+  or <code>name_cap</code> ({cap_pct}% of {equity}).
+  A <code>range:</code> prefix means the two ends of the fill band hit different lids.
+  If the same ticker is open in more than one system, systems further down this page
+  only get the name-cap room left after earlier systems.
+  Dollar P&amp;L in the other columns is still the house dummy size.
+</p>
+<p class="small">Click column headers to sort.</p>
+"""
+
+
 def _open_table(trades: list[TradeRow]) -> str:
     if not trades:
         return "<p class=\"small\">No open positions.</p>"
     rows = sorted(trades, key=lambda t: t.symbol)
     body = ""
     for t in rows:
+        shares = html_mod.escape(t.suggested_shares or "—")
+        lid = html_mod.escape(t.size_lid or "—")
         body += (
             "<tr>"
             f"<td>{_symbol_link(t.symbol)}</td>"
@@ -551,6 +660,8 @@ def _open_table(trades: list[TradeRow]) -> str:
             f"<td>{t.days_held}</td>"
             f"<td class=\"{_pnl_class(t.pnl_pct)}\">{_fmt_pct(t.pnl_pct)}</td>"
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"
+            f"<td>{shares}</td>"
+            f"<td>{lid}</td>"
             "</tr>"
         )
     head = "".join(
@@ -563,6 +674,8 @@ def _open_table(trades: list[TradeRow]) -> str:
             ("Days", "num"),
             ("PnL %", "num"),
             ("Unrealized $", "num"),
+            ("Recommended shares", "num"),
+            ("Size lid", "text"),
         )
     )
     return (
@@ -692,6 +805,7 @@ def build_html(
     sources: list[str],
     generated: datetime,
 ) -> str:
+    _attach_recommended_shares(open_rows)
     year_closed = [t for t in closed if t.date_closed and t.date_closed.year == year]
     now = generated.astimezone(ET)
     through_month = now.month if now.year == year else 12
@@ -913,6 +1027,7 @@ a.sym:hover {{ text-decoration:underline; }}
 <section>
 <h2>Open positions (unrealized)</h2>
 <p class="small">Current backtest open book from latest runs — what each system would show if held through the latest price update.</p>
+{_open_positions_size_note()}
 {open_sections if open_sections else '<p class="small muted">No open positions in latest backtest outputs.</p>'}
 </section>
 

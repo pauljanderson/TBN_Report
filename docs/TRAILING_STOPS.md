@@ -278,8 +278,7 @@ CLI defaults are **per system** (DailyRun step 6):
 ```text
 --brt-atr-target=8 --brt-atr-stop=3 --brt-atr-increment=12 ...
 --ind-atr-target=2.4 --ind-atr-stop=1.1 --ind-atr-progress=0.9 --ind-atr-days=6 ...
---rl-target-pct=1.20 --rl-stop-pct=0.934 --rl-use-sma50
---rl-trail-profit=0.14 --rl-trail-stop=0 --rl-trail-profit2=0.40 --rl-trail-stop2=0.20
+--rl-no-sma50 --rl-scale-gain=0.20 --rl-scale-sell-frac=0.80 --rl-scale-stop-gain=0 --rl-entry-target-pct=0.40 --rl-stop-pct=0.934
 ```
 
 | System | Target | Stop / trailing |
@@ -287,7 +286,7 @@ CLI defaults are **per system** (DailyRun step 6):
 | **IND** (`--ind-mode auto`, default) | If all `--ind-atr-*` are **0**: `entry×--ind-target-pct` (default 1.21). Else ATR × `--ind-atr-target`. | `entry×--ind-stop-pct` or IND ATR stop |
 | **BRT** (`--brt-mode auto`, default) | If all `--brt-atr-*` are **0**: `entry×--brt-target-pct` (default 1.21). Else ATR. | `entry×--brt-stop-pct` or BRT ATR stop |
 | **BRT** (`--brt-mode percent`) | Same percent path | Same |
-| **RL** | **SMA50(as_of)×rl-target-pct** when `--rl-use-sma50` | Signal-day low×`rl-stop-pct`; trail tiers when high crosses `rl-trail-profit` / `rl-trail-profit2` |
+| **RL** | Until the high reaches entry×1.20: that price (sell 80%). After that high has printed: entry×1.40 on the leftover, and the stop rises to the buy if that is tighter than the original stop. `--rl-use-sma50` restores SMA50×`--rl-target-pct`. | Signal-day low×`rl-stop-pct` until the +20% sale; then the buy price |
 
 | Output column | Meaning |
 |---------------|---------|

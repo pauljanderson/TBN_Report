@@ -66,6 +66,9 @@ SORTABLE_TABLE_SCRIPT = """
     if (type === "date") {
       var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
       if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      // Compact YYYYMMDD (VZ TRIGGER_DATE, RS/BRT DATE, RSI ASOF_DATE, etc.)
+      var ymd = s.match(/^(\\d{8})$/);
+      if (ymd) return parseInt(ymd[1], 10);
       var mdy = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
       if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
       return 0;

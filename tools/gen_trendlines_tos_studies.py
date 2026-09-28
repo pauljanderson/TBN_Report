@@ -77,6 +77,12 @@ SMA_RGB = {
 }
 SMA_PERIODS = (20, 50, 100)
 
+# Chart bubbles: place at the far-LEFT of the loaded history (not near the event
+# bar / right edge). A right-edge clear zone of N bars fails on long charts that
+# are zoomed into recent years — e.g. labelBarsFromRight=20 still lands inside a
+# 2023–2026 viewport. Far-left bubbles sit off-screen on typical recent zooms.
+LABEL_AT_FAR_LEFT = True
+
 # BTC: Yahoo for data; ToS chart naming is documented separately
 BTC_YAHOO = "BTC-USD"
 BTC_TOS_PREFERRED = "BTCUSD"
@@ -546,6 +552,83 @@ def trendlines_for_symbol(daily: pd.DataFrame) -> list[TrendLineSeg]:
     return segs
 
 
+def _emit_label_prelude(lines: list[str]) -> None:
+    """Shared far-left bubble anchor + legend / bubble toggles."""
+    lines.append("input showLegend = no;")
+    lines.append(
+        "# Optional on-chart bubbles at the FIRST loaded bar (far-left of history)."
+    )
+    lines.append(
+        "# Default off — names use AddLabel (top strip) so recent zooms stay clear."
+    )
+    lines.append("input showChartBubbles = no;")
+    lines.append(
+        "# Far-left of the full loaded series (not the visible zoom window)."
+    )
+    lines.append(
+        "def chartFirstBN = LowestAll("
+        "if !IsNaN(close) then BarNumber() else Double.NaN);"
+    )
+    lines.append(
+        "def labelBubbleHere = !IsNaN(chartFirstBN) "
+        "and BarNumber() == chartFirstBN;"
+    )
+    lines.append("")
+
+
+def _emit_name_label(
+    lines: list[str],
+    *,
+    condition: str,
+    text: str,
+    color_name: str,
+) -> None:
+    """Compact AddLabel in the ToS top strip (not painted on price bars)."""
+    lines.append(
+        f'AddLabel({condition}, "{text}", GlobalColor("{color_name}"));'
+    )
+
+
+def _emit_chart_bubble(
+    lines: list[str],
+    *,
+    condition: str,
+    price: str,
+    text: str,
+    color_name: str,
+    above: bool,
+) -> None:
+    """Optional AddChartBubble at far-left of history (off-screen on recent zooms)."""
+    loc = "yes" if above else "no"
+    lines.append(
+        f'AddChartBubble(showChartBubbles and {condition} and labelBubbleHere, '
+        f'{price}, "{text}", GlobalColor("{color_name}"), {loc});'
+    )
+
+
+def _emit_feature_label(
+    lines: list[str],
+    *,
+    condition: str,
+    price: str,
+    text: str,
+    color_name: str,
+    above: bool,
+) -> None:
+    """Name via AddLabel; optional far-left bubble when showChartBubbles=yes."""
+    _emit_name_label(
+        lines, condition=condition, text=text, color_name=color_name
+    )
+    _emit_chart_bubble(
+        lines,
+        condition=condition,
+        price=price,
+        text=text,
+        color_name=color_name,
+        above=above,
+    )
+
+
 def _emit_frozen_cloud(
     lines: list[str],
     *,
@@ -591,10 +674,13 @@ def _emit_frozen_cloud(
         lines.append(f'{prefix}EdgeLo.SetDefaultColor(GlobalColor("{color_name}"));')
         lines.append(f"{prefix}EdgeLo.SetLineWeight(1);")
         lines.append(f"{prefix}EdgeLo.SetStyle(Curve.SHORT_DASH);")
-    lines.append(f"def {prefix}Hit = GetYYYYMMDD() == {d};")
-    lines.append(
-        f'AddChartBubble(showLabels and {show_input} and {prefix}Hit, {hi_s}, '
-        f'"{bubble_label} {band.day.isoformat()}", GlobalColor("{color_name}"), yes);'
+    _emit_feature_label(
+        lines,
+        condition=f"showLabels and {show_input}",
+        price=hi_s,
+        text=f"{bubble_label} {band.day.isoformat()}",
+        color_name=color_name,
+        above=True,
     )
     lines.append("")
 
@@ -629,6 +715,9 @@ def build_thinkscript(
         "# Zone clouds: GetYYYYMMDD() >= max-vol day (same as tos/ts_common.py).",
         "# Chart-read (not extra geometry): orange solid = weekly support (buy-today).",
         "# Up to 6 trendlines are intended: monthly/weekly/daily × support/resistance.",
+        "# Labels: AddLabel name strip (default); optional far-left AddChartBubble",
+        "#         (showChartBubbles) — never at event/right bars (recent-zoom safe).",
+        "# Legend: showLegend=no default (opaque color-key boxes off).",
         "",
         "declare upper;",
         "",
@@ -646,6 +735,7 @@ def build_thinkscript(
         "input showSMA = yes;",
         "",
     ]
+    _emit_label_prelude(lines)
     for tf, (r, g, b) in TF_RGB.items():
         gname = tf.capitalize()
         lines.append(f'DefineGlobalColor("{gname}", CreateColor({r}, {g}, {b}));')
@@ -667,13 +757,16 @@ def build_thinkscript(
         )
     lines.append("")
     lines.append(
-        "# Chart-read labels only — do not add lines. Buy-today = weekly support."
+        "# Optional color-key legend (off by default — opaque boxes cover candles)."
     )
     lines.append(
-        'AddLabel(yes, "Orange solid = weekly support (buy-today line)", GlobalColor("Weekly"));'
+        'AddLabel(showLegend, "Orange solid = weekly support (buy-today line)", '
+        'GlobalColor("Weekly"));'
     )
     lines.append(
-        'AddLabel(yes, "Solid=support  dashed=resistance  violet=monthly  cyan=daily", Color.GRAY);'
+        'AddLabel(showLegend, '
+        '"Solid=support  dashed=resistance  violet=monthly  cyan=daily", '
+        "Color.GRAY);"
     )
     lines.append("")
 
@@ -720,9 +813,14 @@ def build_thinkscript(
         lines.append(f'TL{i}.SetDefaultColor(GlobalColor("{gname}"));')
         lines.append(f"TL{i}.SetLineWeight({weight});")
         lines.append(f"TL{i}.SetStyle({style});")
-        lines.append(
-            f'AddChartBubble(showLabels and b{i}Hit2, {p2}, "{label}", '
-            f'GlobalColor("{gname}"), {"yes" if seg.side == "resistance" else "no"});'
+        # Name in AddLabel strip; optional far-left bubble (not on recent bars).
+        _emit_feature_label(
+            lines,
+            condition="showLabels",
+            price=p1,
+            text=label,
+            color_name=gname,
+            above=(seg.side == "resistance"),
         )
         lines.append("")
 
@@ -749,10 +847,13 @@ def build_thinkscript(
         lines.append("def hvHi = if hvOn then HighestAll(hvHiV) else Double.NaN;")
         lines.append("def hvLo = if hvOn then LowestAll(hvLoV) else Double.NaN;")
         lines.append('AddCloud(hvHi, hvLo, GlobalColor("HV6m"), GlobalColor("HV6m"));')
-        lines.append(f"def hvHit = GetYYYYMMDD() == {d};")
-        lines.append(
-            f'AddChartBubble(showLabels and showHV6m and hvHit, {hi_s}, '
-            f'"HV6m {hv6m.day.isoformat()}", GlobalColor("HV6m"), yes);'
+        _emit_feature_label(
+            lines,
+            condition="showLabels and showHV6m",
+            price=hi_s,
+            text=f"HV6m {hv6m.day.isoformat()}",
+            color_name="HV6m",
+            above=True,
         )
         lines.append("")
 
@@ -947,7 +1048,9 @@ def write_readme(
             "(`GetYYYYMMDD() >= HV day`), matching zone-box gating in `tos/ts_common.py` "
             "(not a fixed end date).",
             "- **Color:** muted gold/amber (`HV6m`); toggle `showHV6m`.",
-            "- **Label:** `HV6m YYYY-MM-DD` bubble on the HV day (when `showLabels`).",
+            "- **Label:** `HV6m YYYY-MM-DD` via **AddLabel** (top strip) when `showLabels`; "
+            "optional far-left `AddChartBubble` only if `showChartBubbles=yes` "
+            "(off by default — never on recent/event bars).",
             "",
             "### House VZ HL zones (match HTML charts)",
             "",
@@ -982,7 +1085,10 @@ def write_readme(
             "```",
             "",
             "Support = firm line; resistance = short dash. Colors: monthly violet, "
-            "weekly orange, daily cyan. Labels at the second pivot.",
+            "weekly orange, daily cyan. Names via **AddLabel** (top strip). Optional "
+            "on-chart bubbles sit at the **far-left** of the loaded history "
+            "(`showChartBubbles`, default **no**) — not at the event bar or a "
+            "right-edge clear zone (those still land inside a recent-years zoom).",
             "",
             "HV6m / VZ clouds:",
             "",
@@ -990,6 +1096,10 @@ def write_readme(
             "on = GetYYYYMMDD() >= zone_day",
             "AddCloud(HighestAll(High), LowestAll(Low)) while on",
             "```",
+            "",
+            "Zone / HV / trendline **names** use AddLabel; chart bubbles (if enabled) "
+            "anchor at `chartFirstBN` so a 15Y chart zoomed to recent years stays clear.",
+            "Color-key legend is `showLegend=no` by default (opaque boxes cover candles).",
             "",
             "## Install (Thinkorswim)",
             "",
@@ -999,7 +1109,9 @@ def write_readme(
             "4. Apply on a **Daily** aggregation chart for that symbol.",
             "5. Toggles: `showMonthly` / `showWeekly` / `showDaily`, "
             "`showSupport` / `showResistance`, `showLabels`, `extendRight`, "
-            "`showHV6m`, `showVzTrigger`, `showVzCurrent`, `showVzNearest`, `showSMA`.",
+            "`showHV6m`, `showVzTrigger`, `showVzCurrent`, `showVzNearest`, `showSMA`, "
+            "`showLegend` (default **no**), `showChartBubbles` (default **no** — "
+            "far-left only if on).",
             "",
             "## Symbols / BTC naming",
             "",
@@ -1251,6 +1363,7 @@ Click column headers to sort.</p>
 <li>VZ HL = house <code>build_zones</code> ({VZ_LOOKBACK_DAYS}d) — engine <strong>trigger</strong> (Open/Watchlist <code>ZONE_ID</code>) always drawn + latest unused winner + nearest above/below last close.</li>
 <li>SMA20/50/100 = native <code>Average(close, N)</code> (live).</li>
 <li>Use on a <strong>Daily</strong> chart; BarNumber interpolation matches trading bars.</li>
+<li>Names: <strong>AddLabel</strong> strip (not mid-chart). Optional <code>showChartBubbles</code> (default <strong>no</strong>) places bubbles at the <strong>far-left</strong> of loaded history — a right-edge clear zone still lands inside a recent-years zoom. Color-key <code>showLegend</code> default <strong>no</strong>.</li>
 </ul>
 </section>
 <section>
@@ -1269,7 +1382,7 @@ Click column headers to sort.</p>
 <span class="swatch" style="background:rgb({s50[0]},{s50[1]},{s50[2]})"></span>SMA50 ·
 <span class="swatch" style="background:rgb({s100[0]},{s100[1]},{s100[2]})"></span>SMA100
 </p>
-<p class="muted">Support = firm; Resistance = short dash. Toggles: showHV6m / showVzTrigger / showVzCurrent / showVzNearest / showSMA.</p>
+<p class="muted">Support = firm; Resistance = short dash. Toggles: showHV6m / showVzTrigger / showVzCurrent / showVzNearest / showSMA / showLabels / showLegend (off) / showChartBubbles (off).</p>
 </section>
 <section>
 <h2>HV6m box</h2>
@@ -1398,6 +1511,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         "pivot_k": PIVOT_K,
         "hv6m_months": HV6M_MONTHS,
         "vz_lookback_days": VZ_LOOKBACK_DAYS,
+        "label_at_far_left": LABEL_AT_FAR_LEFT,
+        "show_legend_default": False,
+        "show_chart_bubbles_default": False,
         "sma_periods": list(SMA_PERIODS),
         "overlays": [
             "mwd_fractal_trendlines",
