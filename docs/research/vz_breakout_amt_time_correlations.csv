@@ -1,0 +1,16 @@
+feature,label,vs,spearman,pearson,p_spearman,n
+bars_after_break,Bars from upside break to fill (time),pnl_pct,-0.0015088561801930034,-0.018074866124166155,0.9124407444606306,5313
+bars_after_break,Bars from upside break to fill (time),ann_ror_pct,-0.01173069906714239,-0.005884000580531199,0.39257750834135274,5313
+bars_after_break,Bars from upside break to fill (time),r_mult,-0.004304171534661685,0.004090836875747207,0.7537668819209034,5313
+break_dist_pct,Break-bar close vs zone.hi (amount),pnl_pct,0.0247756076511773,0.030847069419028126,0.07090011936496055,5313
+break_dist_pct,Break-bar close vs zone.hi (amount),ann_ror_pct,0.033502891902639616,0.01753909161505939,0.014567814231158271,5313
+break_dist_pct,Break-bar close vs zone.hi (amount),r_mult,0.037578402452466006,0.013208688505640869,0.006134164059157232,5313
+break_atr_mult,Break-bar distance in ATR14 (amount),pnl_pct,0.022290440665721275,-0.0005261857287168081,0.10419336829773895,5313
+break_atr_mult,Break-bar distance in ATR14 (amount),ann_ror_pct,0.02466520644136733,0.006187064270068725,0.0721669278664181,5313
+break_atr_mult,Break-bar distance in ATR14 (amount),r_mult,0.03543645218435864,0.01775684621592852,0.00976302447344013,5313
+ext_pct,Max high break→signal vs zone.hi (run-up amount),pnl_pct,-0.00011494788997169354,0.03483694433720473,0.9933161893297913,5313
+ext_pct,Max high break→signal vs zone.hi (run-up amount),ann_ror_pct,0.011489781041375177,0.008056040802494838,0.40237251648858274,5313
+ext_pct,Max high break→signal vs zone.hi (run-up amount),r_mult,0.017145162325396895,0.005921209683876699,0.21142196181748396,5313
+ext_atr,Max high break→signal in ATR14 (run-up amount),pnl_pct,-0.0116154807697866,-0.017613942642180885,0.3987142165143407,5280
+ext_atr,Max high break→signal in ATR14 (run-up amount),ann_ror_pct,-0.0060415725503270585,-0.005248688609115002,0.6607141996127632,5280
+ext_atr,Max high break→signal in ATR14 (run-up amount),r_mult,0.007762141370126639,0.017234514191950285,0.5727981259731998,5280
