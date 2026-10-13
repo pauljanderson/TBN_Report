@@ -164,7 +164,7 @@ table.sortable tbody tr:hover th {
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
   Tickers link to that symbol’s chart in <a href="trendlines/index.html">Trendlines + VZ charts</a>.<br>
   Dollar tables below are <strong>house dummy Closed reconcile</strong> unless labeled live-style.<br>
-  Generated 2026-10-12 18:57 EDT.
+  Generated 2026-10-13 10:07 EDT.
 </p>
 
 <section id="live-style-250k">
@@ -965,6 +965,8 @@ table.sortable tbody tr:hover th {
       return dir * (av - bv);
     });
     movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+    var wrap = table.closest(".table-wrap, .scroll, .wrap");
+    if (wrap) wrap.scrollTop = 0;
   }
   function headerCol(th) {
     if (typeof th.cellIndex === "number" && th.cellIndex >= 0) return th.cellIndex;
@@ -996,10 +998,38 @@ table.sortable tbody tr:hover th {
   }
   function headerFromEvent(e) {
     var t = e.target;
-    if (!t || !t.closest) return null;
-    return t.closest("th.sortable-th");
+    if (t && t.closest) {
+      var direct = t.closest("th.sortable-th");
+      if (direct) return direct;
+    }
+    if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
+    var best = null;
+    var bestZ = -Infinity;
+    var bestArea = Infinity;
+    var list = document.querySelectorAll("table.sortable th.sortable-th");
+    for (var i = 0; i < list.length; i++) {
+      var th = list[i];
+      var r = th.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+      var z = parseInt(window.getComputedStyle(th).zIndex, 10);
+      if (!isFinite(z)) z = 0;
+      var area = r.width * r.height;
+      if (!best || z > bestZ || (z === bestZ && area < bestArea)) {
+        best = th;
+        bestZ = z;
+        bestArea = area;
+      }
+    }
+    return best;
   }
   document.addEventListener("click", function (e) {
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("pointerup", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     var th = headerFromEvent(e);
     if (!th) return;
     onActivate(th);
