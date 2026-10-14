@@ -2790,7 +2790,210 @@ _SCAN_COL_LABELS = {
     "RISK_DOLLAR": "Risk $",
     "ADV20": "ADV20",
     "SIZE_LID": "Size lid",
+    "ZONE_LOW": "Zone low",
+    "ZONE_CENTER": "Zone center",
+    "ZONE_HIGH": "Zone high",
+    "ZONE_LO": "Zone low",
+    "ZONE_HI": "Zone high",
+    "ZONE_ID": "Zone id",
+    "ZONE_KIND": "Zone kind",
+    "WPBR_ZONE_ID": "Zone id",
+    "MATURITY_DATE": "Zone / maturity date",
+    "CLOSE_ABOVE_DATE": "Close-above date",
+    "BREAKOUT_DATE": "Breakout date",
+    "BREAKOUT_ISO": "Breakout date",
+    "BREAK_DATE": "Breakout date",
+    "REWARD_RISK": "reward/risk",
 }
+
+
+def _fmt_reward_risk(target: Any, close: Any, stop: Any) -> str:
+    """(target - close) / (close - stop). Em dash when stop is not below the close."""
+
+    def _num(v: Any) -> Optional[float]:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        s = str(v).strip().replace(",", "").replace("$", "")
+        if not s or s.lower() in {"nan", "none", "—", "-"}:
+            return None
+        try:
+            n = float(s)
+        except ValueError:
+            return None
+        if not np.isfinite(n):
+            return None
+        return n
+
+    t, c, s = _num(target), _num(close), _num(stop)
+    if t is None or c is None or s is None:
+        return "—"
+    denom = c - s
+    if not (s < c) or denom == 0:
+        return "—"
+    return f"{(t - c) / denom:.2f}"
+
+
+def _clean_zone_cell_series(s: pd.Series) -> pd.Series:
+    out = s.astype(str).str.strip()
+    return out.replace(
+        {
+            "nan": "",
+            "NaN": "",
+            "None": "",
+            "none": "",
+            "<NA>": "",
+        }
+    )
+
+
+def _normalize_scan_zone_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Align zone column names across zone systems for the investment report tables.
+
+    TBN scanners (BRT/YH/MTS/WPBR) use ZONE_LOW/ZONE_HIGH/WPBR_ZONE_ID.
+    VZ watchlist uses ZONE_LO/ZONE_HI/ZONE_ID. Copy aliases so one pick list works.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    work = df.copy()
+    if "ZONE_LOW" not in work.columns and "ZONE_LO" in work.columns:
+        work["ZONE_LOW"] = work["ZONE_LO"]
+    if "ZONE_HIGH" not in work.columns and "ZONE_HI" in work.columns:
+        work["ZONE_HIGH"] = work["ZONE_HI"]
+    if "WPBR_ZONE_ID" not in work.columns and "ZONE_ID" in work.columns:
+        work["WPBR_ZONE_ID"] = work["ZONE_ID"]
+    if "BREAKOUT_DATE" not in work.columns and "BREAK_DATE" in work.columns:
+        work["BREAKOUT_DATE"] = work["BREAK_DATE"]
+    if "BREAKOUT_DATE" not in work.columns and "BREAKOUT_ISO" in work.columns:
+        work["BREAKOUT_DATE"] = work["BREAKOUT_ISO"]
+    for col in (
+        "ZONE_LOW",
+        "ZONE_CENTER",
+        "ZONE_HIGH",
+        "WPBR_ZONE_ID",
+        "ZONE_KIND",
+        "MATURITY_DATE",
+        "CLOSE_ABOVE_DATE",
+        "BREAKOUT_DATE",
+    ):
+        if col in work.columns:
+            work[col] = _clean_zone_cell_series(work[col])
+    return work
+
+
+_ZONE_ENGINE_PREFIXES = ("BRT", "YH", "MTS", "WPBR", "VZ")
+
+
+def _engine_open_zone_lookup(drive: Path) -> dict[tuple[str, str], dict[str, str]]:
+    """
+    Map (SYMBOL, SYSTEM) -> zone fields from each engine's LatestRun Open CSV.
+    Used to show breakout/retest zone on open positions that came from a zone system.
+    """
+    out: dict[tuple[str, str], dict[str, str]] = {}
+    for eng in _ZONE_ENGINE_PREFIXES:
+        path = drive / f"{eng}_LatestRun_Open.csv"
+        if not path.is_file():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        if df is None or df.empty or "SYMBOL" not in df.columns:
+            continue
+        for _, r in df.iterrows():
+            sym = str(r.get("SYMBOL", "")).strip().upper()
+            if not sym:
+                continue
+            zl = r.get("ZONE_LOW", r.get("ZONE_LO", ""))
+            zh = r.get("ZONE_HIGH", r.get("ZONE_HI", ""))
+            zid = r.get("WPBR_ZONE_ID", r.get("ZONE_ID", ""))
+            zc = r.get("ZONE_CENTER", "")
+            md = r.get("MATURITY_DATE", "")
+            bd = r.get("BREAKOUT_DATE", r.get("BREAK_DATE", ""))
+            zkind = r.get("ZONE_KIND", "")
+
+            def _cell(v: Any) -> str:
+                if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                    return ""
+                s = str(v).strip()
+                return "" if s.lower() in {"", "nan", "none"} else s
+
+            fields = {
+                "ZONE_LOW": _cell(zl),
+                "ZONE_CENTER": _cell(zc),
+                "ZONE_HIGH": _cell(zh),
+                "ZONE_ID": _cell(zid),
+                "MATURITY_DATE": _cell(md),
+                "BREAKOUT_DATE": _cell(bd),
+                "ZONE_KIND": _cell(zkind),
+            }
+            if not any(fields.values()):
+                continue
+            # Prefer first open row for the symbol; later rows keep first non-empty fields.
+            key = (sym, eng)
+            prev = out.get(key)
+            if prev is None:
+                out[key] = fields
+            else:
+                for k, v in fields.items():
+                    if not prev.get(k) and v:
+                        prev[k] = v
+    # VZ Open (via write_brt_open) historically omitted ZONE_ID; fill from Watchlist.
+    vz_wl = drive / "VZ_LatestRun_Watchlist.csv"
+    if vz_wl.is_file():
+        try:
+            wdf = pd.read_csv(vz_wl)
+        except Exception:
+            wdf = None
+        if wdf is not None and not wdf.empty and "SYMBOL" in wdf.columns:
+            for _, r in wdf.iterrows():
+                sym = str(r.get("SYMBOL", "")).strip().upper()
+                if not sym:
+                    continue
+                key = (sym, "VZ")
+                cur = out.setdefault(
+                    key,
+                    {
+                        "ZONE_LOW": "",
+                        "ZONE_CENTER": "",
+                        "ZONE_HIGH": "",
+                        "ZONE_ID": "",
+                        "MATURITY_DATE": "",
+                        "BREAKOUT_DATE": "",
+                        "ZONE_KIND": "",
+                    },
+                )
+                for src, dst in (
+                    ("ZONE_LO", "ZONE_LOW"),
+                    ("ZONE_LOW", "ZONE_LOW"),
+                    ("ZONE_HI", "ZONE_HIGH"),
+                    ("ZONE_HIGH", "ZONE_HIGH"),
+                    ("ZONE_ID", "ZONE_ID"),
+                    ("ZONE_KIND", "ZONE_KIND"),
+                    ("BREAK_DATE", "BREAKOUT_DATE"),
+                ):
+                    if cur.get(dst):
+                        continue
+                    v = r.get(src, "")
+                    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                        continue
+                    s = str(v).strip()
+                    if s and s.lower() not in {"nan", "none"}:
+                        cur[dst] = s
+    return out
+
+
+def _fmt_open_zone_cell(val: str) -> str:
+    s = str(val or "").strip()
+    if not s:
+        return ""
+    try:
+        f = float(s)
+        if np.isfinite(f) and f > 0:
+            return f"{f:.4f}"
+    except (TypeError, ValueError):
+        pass
+    return s
 
 
 def _enrich_rsi_watchlist_whatif(
@@ -3433,6 +3636,7 @@ def _chart_avg_win_loss(
 
 from report_page_extras import SORTABLE_TABLE_SCRIPT as _SORTABLE_TABLE_SCRIPT
 from report_page_extras import SORTABLE_TH_CSS as _SORTABLE_TH_CSS
+from report_page_extras import SWIPE_NOTE_HTML as _SWIPE_NOTE_HTML
 
 _CLOSED_FOLD_SCRIPT = """
 <script>
@@ -3603,11 +3807,30 @@ def _html_table(
     footer_pnl_col: Optional[int] = None,
 ) -> str:
     types = sort_types or ["text"] * len(headers)
-    th = "".join(
-        f'<th class="sortable-th" data-sort="{types[i] if i < len(types) else "text"}" '
-        f'tabindex="0" role="columnheader" aria-sort="none">{h}<span class="sort-ind"></span></th>'
+    hint_cols = {
+        i
         for i, h in enumerate(headers)
-    )
+        if str(h).strip().upper().startswith("TRIGGER_HINT")
+    }
+
+    def _th(i: int, h: str) -> str:
+        cls = "sortable-th"
+        if i in hint_cols:
+            cls += " col-trigger-hint"
+        title = ""
+        if str(h).strip().lower() == "reward/risk":
+            title = (
+                ' title="Distance from the close up to the target, '
+                'divided by the distance from the close down to the stop."'
+            )
+        sort = types[i] if i < len(types) else "text"
+        return (
+            f'<th class="{cls}" data-sort="{sort}" tabindex="0" '
+            f'role="columnheader" aria-sort="none"{title}>{h}'
+            f'<span class="sort-ind"></span></th>'
+        )
+
+    th = "".join(_th(i, h) for i, h in enumerate(headers))
     body = ""
     for row in rows:
         sys_attr = ""
@@ -3615,7 +3838,13 @@ def _html_table(
             sys_val = _normalize_report_system(str(row[system_col]).strip().upper())
             if sys_val:
                 sys_attr = f' data-system="{sys_val}"'
-        body += f"<tr{sys_attr}>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>"
+        cells = []
+        for i, c in enumerate(row):
+            if i in hint_cols:
+                cells.append(f'<td class="col-trigger-hint">{c}</td>')
+            else:
+                cells.append(f"<td>{c}</td>")
+        body += f"<tr{sys_attr}>" + "".join(cells) + "</tr>"
     foot = ""
     if footer_row:
         foot_cells: list[str] = []
@@ -3742,7 +3971,7 @@ _SYSTEM_FILTER_SCRIPT = """
       if (m.pending_sells_count > 0) {
         pendWarn.style.display = "";
         pendWarn.innerHTML =
-          "⚠ " + m.pending_sells_count + " open position(s) need a manual sell action — see Exit reason / When (Fidelity stop/target alone is not enough for time exits).";
+          "⚠ " + m.pending_sells_count + " open position(s) need a manual sell action — see Exit reason / When (system already exited, or time/low-vol exits that Fidelity stop/target alone may not cover).";
       } else {
         pendWarn.style.display = "none";
       }
@@ -4021,6 +4250,21 @@ def build_report(
     )
 
     open_price_ts = _format_et_datetime(open_prices_as_of)
+    open_zone_lookup = _engine_open_zone_lookup(drive_dir)
+
+    def _open_zone_cells(lot: Lot) -> list[str]:
+        eng = str(lot.system or "").strip().upper()
+        if eng == "PBR":
+            eng = "WPBR"
+        z = open_zone_lookup.get((str(lot.symbol).strip().upper(), eng), {})
+        return [
+            _fmt_open_zone_cell(z.get("ZONE_LOW", "")),
+            _fmt_open_zone_cell(z.get("ZONE_CENTER", "")),
+            _fmt_open_zone_cell(z.get("ZONE_HIGH", "")),
+            _fmt_open_zone_cell(z.get("ZONE_ID", "")),
+            _fmt_open_zone_cell(z.get("BREAKOUT_DATE", "") or z.get("MATURITY_DATE", "")),
+        ]
+
     open_rows = []
     open_gain_total = 0.0
     for key in sorted(open_keys):
@@ -4028,6 +4272,7 @@ def build_report(
         if lot is None:
             continue
         r = _gettarget_row_for_lot(open_df, lot)
+        zone_cells = _open_zone_cells(lot)
         if r is not None:
             entry = float(lot.buy_price)
             cur = float(r["CurrentPrice"])
@@ -4077,6 +4322,7 @@ def build_report(
                             else ""
                         )
                     ),
+                    *zone_cells,
                 ]
             )
         else:
@@ -4092,10 +4338,11 @@ def build_report(
                     "—",
                     "",
                     "",
+                    *zone_cells,
                 ]
             )
     open_footer = (
-        ["Total", "", "", "", "", "", "", _fmt_money(open_gain_total), "", ""]
+        ["Total", "", "", "", "", "", "", _fmt_money(open_gain_total), "", "", "", "", "", "", ""]
         if open_rows
         else None
     )
@@ -4104,6 +4351,8 @@ def build_report(
         df: pd.DataFrame,
         avg_days_by_symbol: Optional[dict[str, float]] = None,
         limit: int = 50,
+        *,
+        reward_risk: bool = False,
     ) -> tuple[list[list[str]], list[str], list[str]]:
         if df.empty:
             return [], [], []
@@ -4142,8 +4391,15 @@ def build_report(
                 "RANGE_LOW",
                 "SWING_HIGH",
                 "SWING_LOW",
+                # Zone band used for breakout/retest (aliases normalized upstream)
                 "ZONE_LOW",
+                "ZONE_CENTER",
                 "ZONE_HIGH",
+                "WPBR_ZONE_ID",
+                "ZONE_KIND",
+                "MATURITY_DATE",
+                "CLOSE_ABOVE_DATE",
+                "BREAKOUT_DATE",
                 "RSI14",
                 "RSI14_NOW",
                 "PRIOR_OB_RSI14",
@@ -4182,6 +4438,11 @@ def build_report(
         ]
         if "TRIGGER_DATE" in pick and "ASOF_DATE" in pick:
             pick = [c for c in pick if c != "ASOF_DATE"]
+        if reward_risk:
+            # WRL only: TARGET2 repeats the swing target. Keep TARGET.
+            pick = [c for c in pick if c != "TARGET2"]
+            insert_at = pick.index("TARGET") + 1 if "TARGET" in pick else len(pick)
+            pick.insert(insert_at, "REWARD_RISK")
         if not pick:
             pick = cols[:8]
         sym_key = "SYMBOL" if "SYMBOL" in cols else ("Symbol" if "Symbol" in cols else None)
@@ -4190,6 +4451,11 @@ def build_report(
         for _, r in df.head(limit).iterrows():
             row: list[str] = []
             for c in pick:
+                if c == "REWARD_RISK":
+                    row.append(
+                        _fmt_reward_risk(r.get("TARGET"), r.get("CLOSE"), r.get("STOP_LOSS"))
+                    )
+                    continue
                 val = str(r.get(c, ""))
                 if sym_key and c == sym_key:
                     row.append(_symbol_link(val))
@@ -4240,12 +4506,13 @@ def build_report(
             "ENTRY_PRICE",
             "CURRENT_PRICE",
             "PNL_PCT",
-            "TARGET2",
+            "REWARD_RISK",
             "RANGE_HIGH",
             "RANGE_LOW",
             "SWING_HIGH",
             "SWING_LOW",
             "ZONE_LOW",
+            "ZONE_CENTER",
             "ZONE_HIGH",
         }
         date_like = {
@@ -4255,6 +4522,9 @@ def build_report(
             "ASOF_DATE",
             "SIGNAL_DATE",
             "DATE_OPENED",
+            "MATURITY_DATE",
+            "CLOSE_ABOVE_DATE",
+            "BREAKOUT_DATE",
         }
         sort_types: list[str] = []
         for c in pick:
@@ -4270,6 +4540,12 @@ def build_report(
 
     vz_scan = _enrich_vz_watchlist_hvn(vz_scan, drive_dir, vz_run_ts)
     rsi_scan = _enrich_rsi_watchlist_whatif(rsi_scan, drive_dir, rsi_run_ts, rsi_scan_path)
+    ind_scan = _normalize_scan_zone_columns(ind_scan)
+    brt_scan = _normalize_scan_zone_columns(brt_scan)
+    yh_scan = _normalize_scan_zone_columns(yh_scan)
+    mts_scan = _normalize_scan_zone_columns(mts_scan)
+    wpbr_scan = _normalize_scan_zone_columns(wpbr_scan)
+    vz_scan = _normalize_scan_zone_columns(vz_scan)
 
     # Official live-style Suggested shares — every DailyRun/getTarget scanner, not only 5-sys.
     live_acct = _ensure_live_style_account()
@@ -4353,7 +4629,9 @@ def build_report(
         rsi_scan, _closed_avg_days_held_map("RSI", drive_dir, rsi_run_ts)
     )
     wrl_rows, wrl_cols, wrl_sort = _scan_rows(
-        wrl_scan, _closed_avg_days_held_map("WRL", drive_dir, wrl_run_ts)
+        wrl_scan,
+        _closed_avg_days_held_map("WRL", drive_dir, wrl_run_ts),
+        reward_risk=True,
     )
 
     pending_sells, sell_thresholds, sell_time_params, sell_as_of = find_all_pending_sells(
@@ -4593,6 +4871,13 @@ th.sortable-th {{ min-height:44px; padding:12px 8px; touch-action:manipulation; 
 tr.table-total td {{ font-weight:700; border-top:2px solid #334155; background:#f8fafc; }}
 a.sym {{ color:#1d4ed8; text-decoration:none; font-weight:600; }}
 a.sym:hover {{ text-decoration:underline; }}
+/* TRIGGER_HINT is the long text column and the one that wraps (table is width 100%).
+   Published-page layout at a 2227px window: RSI 119px, WRL 258px.
+   RSI min-width is 3× (358px). WRL min-width is 4× (1031px). */
+section[data-system-section="RSI"] th.col-trigger-hint,
+section[data-system-section="RSI"] td.col-trigger-hint {{ min-width: 358px; white-space: normal; }}
+section[data-system-section="WRL"] th.col-trigger-hint,
+section[data-system-section="WRL"] td.col-trigger-hint {{ min-width: 1031px; white-space: normal; }}
 .dailyrun-status {{ margin:8px 0 20px; }}
 .dr-banner {{ padding:12px 16px; border-radius:10px; margin:8px 0 12px; font-size:14px; line-height:1.4; }}
 .dr-banner-warn {{ background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }}
@@ -4620,6 +4905,7 @@ details.closed-fold[open] > summary .fold-shut {{ display:none; }}
 {_SORTABLE_TH_CSS}
 {showcase_css}</style></head><body>
 {title_block}
+{_SWIPE_NOTE_HTML}
 
 {dailyrun_status_html}
 {live_size_html}
@@ -4666,7 +4952,7 @@ details.closed-fold[open] > summary .fold-shut {{ display:none; }}
 <section>
 <h2>Open Positions</h2>
 <p class="small">Open is one row per symbol+system: average cost across add-on buys, first buy date. Trims reduce shares only (no Closed row) until remaining shares hit zero. Rows come from <code>gettarget_positions.csv</code> (system purchases) plus any other open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. Relative Strength Index (RSI) Target/Stop are implied what-if closes (RSI&gt;=70 / roll8); fill is still next open. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
-<div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop"], open_rows, ["text","text","date","num","num","date","num","num","num","num"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
+<div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop","Zone low","Zone center","Zone high","Zone id","Breakout / zone date"], open_rows, ["text","text","date","num","num","date","num","num","num","num","num","num","num","text","date"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
 </section>
 
 {showcase_section_html}
@@ -4743,7 +5029,7 @@ details.closed-fold[open] > summary .fold-shut {{ display:none; }}
 
 <section data-system-section="WRL">
 <h2>{wrl_section_title}</h2>
-<p class="small">{wrl_scan_sub}</p>
+<p class="small">{wrl_scan_sub} reward/risk is the distance from the close up to the target, divided by the distance from the close down to the stop.</p>
 <div class="table-wrap">{_html_table(wrl_cols, wrl_rows, wrl_sort if wrl_cols else None) if wrl_rows else f'<p>{wrl_empty_msg}</p>'}</div>
 </section>
 
