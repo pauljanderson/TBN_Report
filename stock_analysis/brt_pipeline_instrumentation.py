@@ -16,6 +16,27 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 
+def _log_sparse_progress(detail: str, done: int, total: int) -> bool:
+    """Log start, finish, and every 50th tick when stdout is a file, not a terminal.
+
+    A full-universe run used to append one progress line per symbol per phase.
+    Phase labels without a counter (finish markers) always print. Errors do not
+    come through this helper.
+    """
+    if "/" not in detail:
+        return True
+    if done <= 1 or done >= total:
+        return True
+    try:
+        left = detail.split("/")[0].split()[-1]
+        right = detail.split("/")[1].split()[0]
+        n_done = int(left)
+        n_total = int(right)
+    except (ValueError, IndexError):
+        return done % 50 == 0
+    return n_done <= 1 or n_done >= n_total or n_done % 50 == 0
+
+
 def _format_eta_remaining(seconds: float) -> str:
     s = max(0, int(seconds))
     if s < 60:
@@ -166,7 +187,9 @@ class BRTPipelineInstrument:
             pad = max(0, (cols - 1) - len(msg))
             out.write("\r" + msg + " " * pad)
         else:
-            if msg != getattr(self, "_last_logged_line", ""):
+            if _log_sparse_progress(detail, done, total) and msg != getattr(
+                self, "_last_logged_line", ""
+            ):
                 out.write(msg + "\n")
                 self._last_logged_line = msg
         out.flush()

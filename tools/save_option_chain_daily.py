@@ -4,13 +4,17 @@
 Stores one row per contract: symbol, expiry, type (C/P), strike, bid, ask, mid,
 lastPrice, volume, openInterest, impliedVolatility, plus snapshot_date / fetched_at.
 
-Default universe is PaulTwenty + UNH (N=21) via data/options/options_universe.csv.
+Default universe is data/options/options_universe.csv: distinct symbols in
+data/ohlcv.duckdb table prices, excluding SPY (same rule as
+stock_analysis/ohlcv_store.list_symbols). Was PaulTwenty + UNH (N=21).
 Default expiries: first 6 listed (nearest first). Same calendar day overwrites.
+--resume appends and skips symbols already stored for that day.
 
 Yahoo Finance (yfinance) quotes are a live/delayed snapshot — homemade history,
 not official end-of-day OPRA / CBOE. Archive only; not gold; not a DailyRun sleeve.
 
-Exit 0 by default (--soft-fail) so Yahoo flakes cannot break stock DailyRun.
+Exit 0 by default (--soft-fail) so a Yahoo miss does not look like a crash.
+Not a DailyRun step. Run via run_options_chain.bat.
 """
 
 from __future__ import annotations
@@ -53,8 +57,13 @@ STAMP_DIR = ROOT / "drive" / "paul_experiments" / "options_chain_archive_2026091
 DEFAULT_MAX_EXPIRIES = 6
 DEFAULT_DELAY_SYMBOL = 0.75
 DEFAULT_DELAY_EXPIRY = 0.35
+# Local warehouse symbol -> Yahoo ticker. Matches pygetallMore.YAHOO_ALIAS.
+_YAHOO_ALIAS = {"BRK.B": "BRK-B", "BF.B": "BF-B", "OCANF": "OGC"}
+# Stop this pass if Yahoo rate-limits this many names in a row (resume retries them).
+_RATE_LIMIT_STREAK_STOP = 6
 
-# PaulTwenty (drive/universes/PaulTwenty_universe.csv) + UNH. N=21.
+# Fallback only if options_universe.csv is missing. The on-disk file is the
+# warehouse list (prices, excluding SPY). Previous freeze: PaulTwenty + UNH (N=21).
 DEFAULT_UNIVERSE: tuple[str, ...] = (
     "NVDA",
     "GOOG",
@@ -141,7 +150,8 @@ def ensure_universe_file() -> Path:
     if not UNIVERSE_CSV.exists():
         lines = [
             "# Options chain archive universe — edit this file to widen later.",
-            "# Freeze 2026-09-17: PaulTwenty + UNH. N=21.",
+            "# Fallback if this file was missing: PaulTwenty + UNH (N=21).",
+            "# The maintained file is the warehouse list (prices, excluding SPY).",
             "# Archive only (yfinance snapshot). Not a scanner. Not gold.",
             *DEFAULT_UNIVERSE,
         ]
@@ -219,7 +229,9 @@ def fetch_symbol_chains(
         "note": "",
         "underlying_last": None,
     }
-    t = yf.Ticker(symbol)
+    # Warehouse names stay in the row; Yahoo uses a hyphen for class shares.
+    # Same two aliases as pygetallMore.YAHOO_ALIAS (BRK.B, BF.B).
+    t = yf.Ticker(_YAHOO_ALIAS.get(symbol, symbol))
     try:
         spot = _last_close(t, yahoo_max_retries, yahoo_base_wait_sec)
     except Exception as e:  # noqa: BLE001
@@ -610,7 +622,7 @@ def render_index_html(
   Re-running the same calendar day <em>overwrites</em> that day’s parquet (no run-id).</p>
 </div>
 <h2 id="dates">Available snapshot dates</h2>
-<p class="small">Click column headers to sort. A new date appears when DailyRun (or <code>run_options_chain.bat</code>) finishes a fetch.</p>
+<p class="small">Click column headers to sort. A new date appears when <code>run_options_chain.bat</code> finishes a fetch.</p>
 <div class="table-wrap">
 <table class="sortable">
   <thead><tr>{date_head}</tr></thead>
@@ -694,8 +706,18 @@ def render_day_html(
             ("Contract", "text"),
         )
     )
+    # Full-universe chains are hundreds of thousands of rows; keep the page on the summary.
+    html_contract_cap = 40000
+    omit_contracts = len(df) > html_contract_cap
     body = []
-    for _, r in df.iterrows():
+    if omit_contracts:
+        contract_section = (
+            f"<p class=\"small\">Contract table omitted ({len(df):,} rows). "
+            "Open this day's <code>chain.parquet</code> for every contract.</p>"
+        )
+    else:
+        contract_section = ""
+    for _, r in ([] if omit_contracts else df.iterrows()):
         body.append(
             "<tr"
             f' data-symbol="{html_mod.escape(str(r["symbol"]))}"'
@@ -742,6 +764,7 @@ def render_day_html(
 {_summary_table(summary)}
 <h2>Contracts</h2>
 <p class="small">Filter the table (does not change the saved parquet). Click column headers to sort.</p>
+{contract_section}
 <div class="filters">
   <label>Symbol
     <select id="f-symbol"><option value="">All</option>{sym_opts}</select>
@@ -860,6 +883,23 @@ def write_html_views(snapshot_date: str | None) -> list[Path]:
     return written
 
 
+def _is_rate_limit_note(note: str) -> bool:
+    s = (note or "").lower()
+    return (
+        "rate limit" in s
+        or "too many requests" in s
+        or "yfratelimit" in s
+        or "temporarily unavailable" in s
+        or "429" in s
+    )
+
+
+def _saved_symbols(df: pd.DataFrame) -> set[str]:
+    if df is None or df.empty or "symbol" not in df.columns:
+        return set()
+    return {str(s).strip().upper() for s in df["symbol"].dropna().unique() if str(s).strip()}
+
+
 def run_fetch(
     symbols: list[str],
     *,
@@ -868,66 +908,152 @@ def run_fetch(
     delay_expiry: float,
     yahoo_retries: int,
     yahoo_base_wait: float,
+    resume: bool = False,
+    checkpoint_every: int = 5,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     snapshot_date = date.today().isoformat()
     fetched_at = _now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+    prior = load_day_frame(snapshot_date) if resume else pd.DataFrame(columns=CHAIN_COLS)
+    saved = _saved_symbols(prior) if resume else set()
+    todo = [s for s in symbols if s not in saved]
+    skipped = [s for s in symbols if s in saved]
+    if resume and skipped:
+        print(
+            f"[options-chain] resume {snapshot_date}: skip {len(skipped)} already saved, "
+            f"{len(todo)} left",
+            flush=True,
+        )
     parts: list[pd.DataFrame] = []
     per: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    rate_streak = 0
+    stopped = ""
+    attempted = 0
+    remaining: list[str] = list(todo)
 
-    for i, sym in enumerate(symbols):
-        print(f"[options-chain] {sym} ({i + 1}/{len(symbols)})", flush=True)
-        try:
-            df, meta = fetch_symbol_chains(
-                sym,
-                max_expiries,
-                yahoo_max_retries=yahoo_retries,
-                yahoo_base_wait_sec=yahoo_base_wait,
-                delay_between_expiries=delay_expiry,
-                snapshot_date=snapshot_date,
-                fetched_at=fetched_at,
-            )
-        except BaseException as e:  # noqa: BLE001 — never abort the book on one name
-            print(f"[options-chain] WARN {sym}: {e}", file=sys.stderr, flush=True)
-            meta = {
-                "symbol": sym,
-                "ok": False,
-                "n_contracts": 0,
-                "expiries": [],
-                "note": f"yahoo_error: {e}",
-                "underlying_last": None,
-            }
-            df = pd.DataFrame(columns=CHAIN_COLS)
-        per.append(meta)
-        if meta.get("ok") and not df.empty:
-            parts.append(df)
+    def _chain_so_far() -> pd.DataFrame:
+        frames = []
+        if resume and prior is not None and not prior.empty:
+            frames.append(prior)
+        frames.extend(parts)
+        if not frames:
+            return pd.DataFrame(columns=CHAIN_COLS)
+        return pd.concat(frames, ignore_index=True)
+
+    def _manifest(chain: pd.DataFrame, remaining: list[str]) -> dict[str, Any]:
+        ok_now = int(sum(1 for m in per if m.get("ok")))
+        return {
+            "snapshot_date": snapshot_date,
+            "fetched_at": fetched_at,
+            "source": "yfinance.Ticker.option_chain",
+            "source_note": "live_or_delayed_snapshot_not_opra_eod",
+            "archive_only": True,
+            "gold": False,
+            "scanner": False,
+            "idempotent": "resume_append_skip_saved" if resume else "overwrite_same_calendar_day",
+            "universe_file": str(UNIVERSE_CSV.as_posix()),
+            "symbols": symbols,
+            "n_symbols": len(symbols),
+            "n_symbols_skipped_existing": len(skipped),
+            "n_symbols_ok": len(saved) + ok_now if resume else ok_now,
+            "n_symbols_ok_this_pass": ok_now,
+            "n_symbols_failed": len(failed),
+            "n_symbols_remaining": len(remaining),
+            "stopped": stopped,
+            "failed": failed,
+            "remaining": remaining,
+            "max_expiries": int(max_expiries),
+            "expiry_rule": f"first_{int(max_expiries)}_listed_nearest_first",
+            "n_contracts": int(len(chain)),
+            "per_symbol": per,
+            "columns": CHAIN_COLS,
+        }
+
+    def _checkpoint(remaining: list[str]) -> None:
+        if not resume:
+            return
+        chain = _chain_so_far()
+        manifest = _manifest(chain, remaining)
+        day_dir = ARCHIVE_ROOT / snapshot_date
+        write_day_archive(chain, symbol_summary(chain), manifest, day_dir)
+        status = {
+            "snapshot_date": snapshot_date,
+            "universe": len(symbols),
+            "saved_symbols": len(_saved_symbols(chain)),
+            "failed_this_pass": len(failed),
+            "remaining": len(remaining),
+            "stopped": stopped,
+            "n_contracts": int(len(chain)),
+        }
+        (day_dir / "resume_status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
+        print(
+            f"[options-chain] checkpoint saved={status['saved_symbols']} "
+            f"failed={status['failed_this_pass']} remaining={status['remaining']} "
+            f"rows={status['n_contracts']}",
+            flush=True,
+        )
+
+    try:
+        for i, sym in enumerate(todo):
+            print(f"[options-chain] {sym} ({i + 1}/{len(todo)}; universe {len(symbols)})", flush=True)
+            try:
+                df, meta = fetch_symbol_chains(
+                    sym,
+                    max_expiries,
+                    yahoo_max_retries=yahoo_retries,
+                    yahoo_base_wait_sec=yahoo_base_wait,
+                    delay_between_expiries=delay_expiry,
+                    snapshot_date=snapshot_date,
+                    fetched_at=fetched_at,
+                )
+            except BaseException as e:  # noqa: BLE001 — never abort the book on one name
+                print(f"[options-chain] WARN {sym}: {e}", file=sys.stderr, flush=True)
+                meta = {
+                    "symbol": sym,
+                    "ok": False,
+                    "n_contracts": 0,
+                    "expiries": [],
+                    "note": f"yahoo_error: {e}",
+                    "underlying_last": None,
+                }
+                df = pd.DataFrame(columns=CHAIN_COLS)
+            attempted += 1
+            per.append(meta)
+            if meta.get("ok") and not df.empty:
+                parts.append(df)
+                rate_streak = 0
+            else:
+                failed.append({"symbol": meta.get("symbol"), "note": meta.get("note")})
+                if _is_rate_limit_note(str(meta.get("note") or "")):
+                    rate_streak += 1
+                else:
+                    rate_streak = 0
+            if resume and (attempted % max(1, int(checkpoint_every)) == 0):
+                _checkpoint(todo[i + 1 :])
+            if rate_streak >= _RATE_LIMIT_STREAK_STOP:
+                stopped = "yahoo_rate_limit"
+                # These streak failures are not saved; a later --resume retries them.
+                retry = [str(x.get("symbol")) for x in failed[-rate_streak:]]
+                failed = failed[:-rate_streak]
+                per = per[:-rate_streak]
+                remaining = retry + todo[i + 1 :]
+                print(
+                    f"[options-chain] STOP rate-limit streak={rate_streak}; "
+                    f"{len(remaining)} names left for --resume",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                break
+            elif delay_symbol > 0 and i + 1 < len(todo):
+                time.sleep(delay_symbol)
         else:
-            failed.append({"symbol": meta.get("symbol"), "note": meta.get("note")})
-        if delay_symbol > 0 and i + 1 < len(symbols):
-            time.sleep(delay_symbol)
+            remaining = []
+    finally:
+        if resume:
+            _checkpoint(remaining)
 
-    chain = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=CHAIN_COLS)
-    manifest = {
-        "snapshot_date": snapshot_date,
-        "fetched_at": fetched_at,
-        "source": "yfinance.Ticker.option_chain",
-        "source_note": "live_or_delayed_snapshot_not_opra_eod",
-        "archive_only": True,
-        "gold": False,
-        "scanner": False,
-        "idempotent": "overwrite_same_calendar_day",
-        "universe_file": str(UNIVERSE_CSV.as_posix()),
-        "symbols": symbols,
-        "n_symbols": len(symbols),
-        "n_symbols_ok": int(sum(1 for m in per if m.get("ok"))),
-        "n_symbols_failed": len(failed),
-        "failed": failed,
-        "max_expiries": int(max_expiries),
-        "expiry_rule": f"first_{int(max_expiries)}_listed_nearest_first",
-        "n_contracts": int(len(chain)),
-        "per_symbol": per,
-        "columns": CHAIN_COLS,
-    }
+    chain = _chain_so_far()
+    manifest = _manifest(chain, remaining)
     return chain, manifest
 
 
@@ -953,10 +1079,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--yahoo-base-wait", type=float, default=2.5)
     ap.add_argument("--html-only", action="store_true", help="Rebuild Drive HTML from existing snapshots.")
     ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip symbols already in today's parquet and append (checkpoint as it goes).",
+    )
+    ap.add_argument("--no-html", action="store_true", help="Do not rebuild Drive HTML views.")
+    ap.add_argument(
         "--soft-fail",
         action="store_true",
         default=True,
-        help="Exit 0 even if Yahoo flakes (default). DailyRun-safe.",
+        help="Exit 0 even if Yahoo flakes (default).",
     )
     ap.add_argument("--strict", action="store_true", help="Exit 1 if no contracts saved.")
     args = ap.parse_args(argv)
@@ -973,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = load_universe(Path(args.universe), args.symbols)
         print(
             f"[options-chain] archive {len(symbols)} names × first {int(args.max_expiries)} expiries "
-            f"(overwrite same calendar day)",
+            f"({'resume/append' if args.resume else 'overwrite same calendar day'})",
             flush=True,
         )
         chain, manifest = run_fetch(
@@ -983,6 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
             delay_expiry=float(args.delay_between_expiries),
             yahoo_retries=int(args.yahoo_retries),
             yahoo_base_wait=float(args.yahoo_base_wait),
+            resume=bool(args.resume),
         )
         summary = symbol_summary(chain)
         day = str(manifest["snapshot_date"])
@@ -1000,18 +1133,27 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
                 flush=True,
             )
-        write_html_views(day)
+        if manifest.get("n_symbols_remaining"):
+            print(
+                f"[options-chain] remaining {manifest['n_symbols_remaining']} "
+                f"(stopped={manifest.get('stopped') or 'n/a'})",
+                file=sys.stderr,
+                flush=True,
+            )
+        if not args.no_html:
+            write_html_views(day)
         if manifest["n_contracts"] == 0 and args.strict:
             return 1
         return 0
-    except Exception as e:  # noqa: BLE001 — DailyRun must not die on Yahoo
+    except Exception as e:  # noqa: BLE001 — a Yahoo miss must not look like a crash
         print(f"[options-chain] WARN unhandled: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         if soft:
-            try:
-                write_html_views(None)
-            except Exception:
-                pass
+            if not args.no_html:
+                try:
+                    write_html_views(None)
+                except Exception:
+                    pass
             return 0
         return 1
 

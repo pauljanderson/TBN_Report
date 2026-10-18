@@ -31,6 +31,10 @@ call "%~dp0tools\load_universe_csv.bat" RL "%RL_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [RL] Universe src=%RL_UNIVERSE_SRC% pass_s=%RL_PASS_SYMBOLS%
 
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 5. Explicit RL_WORKERS wins.
+if not defined RL_WORKERS if defined DAILYRUN_WORKERS set "RL_WORKERS=%DAILYRUN_WORKERS%"
+if not defined RL_WORKERS set "RL_WORKERS=5"
+
 if not defined PER_SYMBOL_SETTINGS set "PER_SYMBOL_SETTINGS=stock_analysis\Per_Symbol_Optimized_Settings_Approved_Latest.json"
 
 set "PS_ARGS="
@@ -42,8 +46,8 @@ rem No time clock. No SMA50 envelope target. Ladder 0.20:0.80:0.
 rem Cheap analysis (ONE_LINER / FIT / ImproveHints) emits automatically after the run.
 rem Charts + CRWD-style HTML (NOT in DailyRun): python stock_analysis\rl_post_run_analysis.py --stamp <ts> --charts
 if "%RL_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 5 --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% -s "!RL_SYMBOLS!" !RL_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% -s "!RL_SYMBOLS!" !RL_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 5 --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% !RL_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% !RL_FORWARD!
 )
 exit /b %errorlevel%

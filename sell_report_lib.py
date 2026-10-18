@@ -9,12 +9,16 @@ Rules:
   3) VZ time stop — research freeze zone_atr05_ts40 (40 bars); flag when
      approaching (within warn window) or hit. Works when VZ opens exist
      (gettarget / VZ_Open) even before DailyRun wire.
+  4) System already exited — gettarget / positions still shows a live lot, but
+     the matching engine Closed row has already exited (stop / target / time /
+     gap, including same-day buy+stop). Flag an immediate pending sell so the
+     live book can catch up (e.g. SB ALGM stopped out while still held).
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +29,13 @@ DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data" / "newdata" / "data"
 # Any system prefix with stamped Open/Audit (skip RL twin names in callers).
 _AUDIT_TS_RE = re.compile(r"^(?P<prefix>[A-Za-z]+)_Audit_Report_(?P<ts>\d{12})\.csv$", re.I)
 _OPEN_TS_RE = re.compile(r"^(?P<prefix>[A-Za-z]+)_Open_(?P<ts>\d{12})\.csv$", re.I)
+_CLOSED_TS_RE = re.compile(r"^(?P<prefix>[A-Za-z]+)_Closed_(?P<ts>\d{12})\.csv$", re.I)
+
+# Broker fill date may lag/lead the engine DATE_OPENED by one session.
+_ENTRY_DATE_MATCH_SLACK_DAYS = 1
+# Engine fill vs broker fill can differ a few cents; require rough price agree when
+# using the slack date match (exact entry-date match does not need this).
+_ENTRY_PRICE_MATCH_PCT = 0.02
 
 # SB gold freeze defaults (run_stockbee_burst.bat / sb_baseline).
 DEFAULT_SB_TIME_STOP_DAYS = 5
@@ -159,6 +170,123 @@ def _latest_open_path(drive_dir: Path, prefix: str) -> Optional[Path]:
             if best is None or ts > best[0]:
                 best = (ts, path)
     return best[1] if best else None
+
+
+def _latest_closed_path(drive_dir: Path, prefix: str) -> Optional[Path]:
+    pfx = prefix.upper()
+    best: Optional[tuple[str, Path]] = None
+    for path in drive_dir.glob(f"{pfx}_Closed_*.csv"):
+        if "_RL_" in path.name.upper():
+            continue
+        m = _CLOSED_TS_RE.match(path.name)
+        if m and m.group("prefix").upper() == pfx:
+            ts = m.group("ts")
+            if best is None or ts > best[0]:
+                best = (ts, path)
+    return best[1] if best else None
+
+
+def _load_closed_exits(
+    drive_dir: Path, prefix: str
+) -> list[dict]:
+    """
+    Latest Closed CSV rows for prefix → list of exit dicts
+    (symbol, entry_date, exit_date, exit_type, entry_price, exit_price, days_held).
+    """
+    path = _latest_closed_path(drive_dir, prefix)
+    if not path or not path.is_file():
+        return []
+    try:
+        df = pd.read_csv(path)
+    except OSError:
+        return []
+    if df.empty or "SYMBOL" not in df.columns:
+        return []
+    out: list[dict] = []
+    for _, r in df.iterrows():
+        sym = str(r.get("SYMBOL", "")).strip().upper()
+        if not sym:
+            continue
+        ed = _parse_trade_date(r.get("DATE_OPENED"))
+        xd = _parse_trade_date(r.get("DATE_CLOSED"))
+        if ed is None or xd is None:
+            continue
+        exit_type = str(r.get("EXIT_TYPE", "") or "").strip()
+        if not exit_type:
+            continue
+        ep = None
+        xp = None
+        try:
+            raw_ep = r.get("ENTRY_PRICE")
+            if raw_ep is not None and not (isinstance(raw_ep, float) and pd.isna(raw_ep)):
+                ep = float(raw_ep)
+        except (TypeError, ValueError):
+            ep = None
+        try:
+            raw_xp = r.get("EXIT_PRICE")
+            if raw_xp is not None and not (isinstance(raw_xp, float) and pd.isna(raw_xp)):
+                xp = float(raw_xp)
+        except (TypeError, ValueError):
+            xp = None
+        days_held = None
+        try:
+            raw_dh = r.get("DAYS_HELD")
+            if raw_dh is not None and not (isinstance(raw_dh, float) and pd.isna(raw_dh)):
+                days_held = int(float(raw_dh))
+        except (TypeError, ValueError):
+            days_held = None
+        out.append(
+            {
+                "symbol": sym,
+                "entry_date": ed,
+                "exit_date": xd,
+                "exit_type": exit_type.upper(),
+                "entry_price": ep,
+                "exit_price": xp,
+                "days_held": days_held,
+            }
+        )
+    return out
+
+
+def _match_closed_exit(
+    closed_rows: list[dict],
+    *,
+    symbol: str,
+    entry_date: date,
+    entry_price: Optional[float],
+) -> Optional[dict]:
+    """Prefer exact (symbol, entry_date); else ±1 day with entry-price agreement."""
+    sym = symbol.upper()
+    exact = [
+        r
+        for r in closed_rows
+        if r["symbol"] == sym and r["entry_date"] == entry_date
+    ]
+    if exact:
+        # Same entry day can appear once; if not, keep the latest exit.
+        exact.sort(key=lambda r: r["exit_date"], reverse=True)
+        return exact[0]
+
+    if entry_price is None or entry_price <= 0:
+        return None
+    slack = timedelta(days=_ENTRY_DATE_MATCH_SLACK_DAYS)
+    fuzzy: list[dict] = []
+    for r in closed_rows:
+        if r["symbol"] != sym:
+            continue
+        if abs((r["entry_date"] - entry_date).days) > slack.days:
+            continue
+        ep = r.get("entry_price")
+        if ep is None or ep <= 0:
+            continue
+        if abs(float(ep) - float(entry_price)) / float(entry_price) > _ENTRY_PRICE_MATCH_PCT:
+            continue
+        fuzzy.append(r)
+    if not fuzzy:
+        return None
+    fuzzy.sort(key=lambda r: r["exit_date"], reverse=True)
+    return fuzzy[0]
 
 
 def load_open_rel_vol_lookup(drive_dir: Path, prefix: str) -> dict[tuple[str, date], float]:
@@ -610,6 +738,101 @@ def find_pending_time_based_sells(
     return pending, params, as_of
 
 
+def _human_exit_type(exit_type: str) -> str:
+    t = (exit_type or "").strip().upper()
+    labels = {
+        "STOP_LOSS": "stopped out",
+        "STOP": "stopped out",
+        "TARGET": "target hit",
+        "TIME": "time exit",
+        "GAP_DOWN": "gap-down exit",
+        "NO_FT": "no follow-through",
+        "LOW_REL_VOL_EXIT": "low relative volume exit",
+    }
+    return labels.get(t, t.replace("_", " ").lower() or "exited")
+
+
+def find_pending_system_closed_sells(
+    *,
+    positions_path: Path,
+    gettarget_path: Path,
+    drive_dir: Path,
+    as_of_date: Optional[date] = None,
+) -> tuple[list[PendingSell], date]:
+    """
+    Live lots still in gettarget/positions whose matching engine Closed trade
+    already exited (stop/target/time/etc.), including same-day buy+stop.
+
+    Engine Open will not list these (already closed), so time/low-vol scanners
+    miss them — Paul still needs a manual sell to sync the broker book.
+    """
+    as_of = _resolve_as_of_date(gettarget_path, as_of_date)
+    # Paul's live book only — do not pull engine Open (those are already "open").
+    candidates, gt_rows = _collect_open_candidates(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        open_prefixes=(),
+    )
+
+    closed_by_sys: dict[str, list[dict]] = {}
+    pending: list[PendingSell] = []
+    seen: set[tuple[str, str, date]] = set()
+
+    for sym, sys_, ed, ep, cp in candidates:
+        if not sys_ or sys_ == "RL":
+            continue
+        lot = (sym, sys_, ed)
+        if lot in seen:
+            continue
+        if sys_ not in closed_by_sys:
+            closed_by_sys[sys_] = _load_closed_exits(drive_dir, sys_)
+        match = _match_closed_exit(
+            closed_by_sys[sys_],
+            symbol=sym,
+            entry_date=ed,
+            entry_price=ep,
+        )
+        if match is None:
+            continue
+        seen.add(lot)
+        if cp is None:
+            gt_r = gt_rows.get((sym, ed.isoformat()))
+            if gt_r is not None:
+                try:
+                    raw_cp = gt_r.get("CurrentPrice")
+                    if raw_cp is not None and not pd.isna(raw_cp):
+                        cp = float(raw_cp)
+                except (TypeError, ValueError):
+                    pass
+            if cp is None and match.get("exit_price") is not None:
+                cp = float(match["exit_price"])
+        if ep is None and match.get("entry_price") is not None:
+            ep = float(match["entry_price"])
+        exit_type = str(match["exit_type"])
+        human = _human_exit_type(exit_type)
+        xd: date = match["exit_date"]
+        xp = match.get("exit_price")
+        xp_bit = f" @ ${xp:.2f}" if isinstance(xp, (int, float)) else ""
+        reason = f"{exit_type} - system already exited ({human} {xd:%Y-%m-%d}{xp_bit})"
+        pending.append(
+            PendingSell(
+                symbol=sym,
+                system=sys_,
+                entry_date=ed,
+                as_of_date=as_of,
+                exit_reason=reason,
+                sell_when="Immediate (still holding after system exit)",
+                entry_price=ep,
+                current_price=cp,
+                days_held=match.get("days_held"),
+            )
+        )
+
+    pending.sort(key=lambda x: (x.system, x.symbol, x.exit_reason))
+    return pending, as_of
+
+
 def find_all_pending_sells(
     *,
     positions_path: Path,
@@ -619,7 +842,17 @@ def find_all_pending_sells(
     data_dir: Path = DEFAULT_DATA_DIR,
     thresholds: Optional[dict[str, float]] = None,
 ) -> tuple[list[PendingSell], dict[str, float], dict[str, int], date]:
-    """Merge low-vol + time-based pending sells (dedupe by symbol/system/entry/reason)."""
+    """Merge system-closed + low-vol + time-based pending sells.
+
+    System-closed wins per (symbol, system, entry): the engine already exited
+    that lot, so a separate time/low-vol flag for the same live hold is redundant.
+    """
+    closed_pending, as_of_closed = find_pending_system_closed_sells(
+        positions_path=positions_path,
+        gettarget_path=gettarget_path,
+        drive_dir=drive_dir,
+        as_of_date=as_of_date,
+    )
     low_vol, thresh, as_of = find_pending_low_vol_sells(
         positions_path=positions_path,
         gettarget_path=gettarget_path,
@@ -635,14 +868,19 @@ def find_all_pending_sells(
         as_of_date=as_of_date or as_of,
         data_dir=data_dir,
     )
-    as_of = as_of_date or as_of2 or as_of
-    pending = list(low_vol)
+    as_of = as_of_date or as_of2 or as_of or as_of_closed
+    pending = list(closed_pending)
+    seen_lots = {(p.symbol, p.system, p.entry_date) for p in pending}
     seen = {(p.symbol, p.system, p.entry_date, p.exit_reason) for p in pending}
-    for p in timed:
+    for p in list(low_vol) + list(timed):
+        lot = (p.symbol, p.system, p.entry_date)
+        if lot in seen_lots:
+            continue
         key = (p.symbol, p.system, p.entry_date, p.exit_reason)
         if key in seen:
             continue
         seen.add(key)
+        seen_lots.add(lot)
         pending.append(p)
     pending.sort(key=lambda x: (x.system, x.symbol, x.exit_reason))
     return pending, thresh, time_params, as_of
@@ -751,14 +989,16 @@ def sell_report_html_section(
         "Fidelity stop/target covers price exits. Time-based exits "
         "(SB no-FT / SB time stop / VZ 40d) are <strong>not</strong> in the broker ticket — "
         "watch this section after each DailyRun / investment report refresh. "
-        "Low-vol BRT/IND exits: next session open when REL_VOL_AT_ENTRY &lt; threshold."
+        "Low-vol BRT/IND exits: next session open when REL_VOL_AT_ENTRY &lt; threshold. "
+        "If the engine already closed a lot (stop/target/time) but gettarget still shows "
+        "you holding it — including same-day buy+stop — it appears here as an immediate sell."
     )
     if not pending:
         return f"""
 <section>
 <h2>Pending sells</h2>
 <p class="small">{thr_note}</p>
-<p>No open positions currently flagged for low-vol or time-based exits.</p>
+<p>No open positions currently flagged for system-closed, low-vol, or time-based exits.</p>
 <p class="small">{rule_note}</p>
 </section>
 """
@@ -773,7 +1013,7 @@ def sell_report_html_section(
     return f"""
 <section class="pagebreak" id="pending-sells-section">
 <h2>Pending sells</h2>
-<p id="pending-sells-warn" class="small warn">⚠ {n} open position(s) need a manual sell action — see Exit reason / When (Fidelity stop/target alone is not enough for time exits).</p>
+<p id="pending-sells-warn" class="small warn">⚠ {n} open position(s) need a manual sell action — see Exit reason / When (system already exited, or time/low-vol exits that Fidelity stop/target alone may not cover).</p>
 <p class="small">{thr_note}</p>
 <div class="table-wrap">{table}</div>
 <p class="small">{rule_note} Click column headers to sort.</p>

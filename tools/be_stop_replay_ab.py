@@ -24,6 +24,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from report_page_extras import ENSURE_TABLE_WRAP_JS, RESPONSIVE_TABLE_CSS  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "drive" / "paul_experiments"))
 from compare_format import (  # noqa: E402
@@ -357,13 +362,14 @@ th.sortable-th:hover{background:#e8e4d8}
 .sort-ind{display:inline-block;width:0.9em;margin-left:4px;color:#9a9588;font-size:10px}
 th.sort-asc .sort-ind::after{content:"▲";color:#1c1b19}
 th.sort-desc .sort-ind::after{content:"▼";color:#1c1b19}
-"""
+""" + "\n" + RESPONSIVE_TABLE_CSS
 
 # Already includes <script>…</script>. Emit with {SORTABLE_TABLE_SCRIPT} only —
 # do NOT wrap again in <script>…</script> (nested tags make JS a syntax error).
 SORTABLE_TABLE_SCRIPT = r"""
 <script>
 (function () {
+""" + ENSURE_TABLE_WRAP_JS + r"""
   function parseSortValue(text, type) {
     var s = String(text || "").trim();
     if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;

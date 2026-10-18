@@ -301,6 +301,9 @@ def run_one_backtest(
     collect_extras: bool = False,
     filter_members: Any | None = None,
     allow_empty: bool = False,
+    mcap_lo: float | None = None,
+    mcap_hi: float | None = None,
+    allow_partial_book: bool = False,
 ) -> BacktestResult:
     """Equal-weight top-X, rebalance every N days, annual membership refresh.
 
@@ -309,6 +312,11 @@ def run_one_backtest(
     is applied on the signal close before the next-open fill. ``allow_empty``
     lets the overlay cash the book (sell all); cadence still uses the last
     reconstitution roster so the book can re-enter later.
+
+    Optional cap band (default off, frozen engine unchanged): keep only names
+    whose scaled market cap is in ``[mcap_lo, mcap_hi)`` before taking the
+    largest X. ``allow_partial_book`` holds fewer than X when the band is thin
+    (and, with ``allow_empty``, cashes a year with nobody in the band).
     """
     calendar = closes.index
     if len(calendar) < min_history_days + 5:
@@ -317,7 +325,8 @@ def run_one_backtest(
         )
 
     syms = [c for c in closes.columns if c != "SPY" and c in mcap_now]
-    if len(syms) < X:
+    need_n = 1 if allow_partial_book else X
+    if len(syms) < need_n:
         return BacktestResult(
             X, N, cost_bps, False, f"only {len(syms)} symbols with mcap", "", "", 0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0, {}
         )
@@ -367,6 +376,15 @@ def run_one_backtest(
             approx = mcap_vec * (px / ref_close)
         approx[~np.isfinite(approx) | (px <= 0) | ~np.isfinite(px)] = np.nan
         return approx
+
+    def _pick(mcap: np.ndarray) -> list[int]:
+        ok = np.isfinite(mcap)
+        if mcap_lo is not None:
+            ok = ok & (mcap >= float(mcap_lo))
+        if mcap_hi is not None:
+            ok = ok & (mcap < float(mcap_hi))
+        order = np.argsort(-np.nan_to_num(np.where(ok, mcap, np.nan), nan=-1.0))
+        return [int(j) for j in order if ok[j]][:X]
 
     def _mark(i: int) -> float:
         px = close_arr[i]
@@ -587,11 +605,19 @@ def run_one_backtest(
                     }
                 )
 
-    # Seed: first reconstitution / start
+    # Seed: first reconstitution / start. Cap-band studies may wait until the
+    # band has at least one name (mega-cap is thin in the early 2010s).
     first_mcap = _mcap_at(start_i)
-    order = np.argsort(-np.nan_to_num(first_mcap, nan=-1.0))
-    seed = [int(j) for j in order if np.isfinite(first_mcap[j])][:X]
-    if len(seed) < X:
+    seed = _pick(first_mcap)
+    if len(seed) < need_n and allow_partial_book:
+        for i in range(start_i + 1, n_days):
+            if calendar[i] in recon_days:
+                cand = _pick(_mcap_at(i))
+                if len(cand) >= need_n:
+                    start_i = i
+                    seed = cand
+                    break
+    if len(seed) < need_n:
         return BacktestResult(
             X, N, cost_bps, False, f"seed top-X incomplete ({len(seed)})", "", "", 0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0, {}
         )
@@ -610,10 +636,12 @@ def run_one_backtest(
             # already scheduled
             pass
         elif calendar[i] in recon_days and i > start_i:
-            mcap = _mcap_at(i)
-            order = np.argsort(-np.nan_to_num(mcap, nan=-1.0))
-            new = [int(j) for j in order if np.isfinite(mcap[j])][:X]
-            if len(new) >= X:
+            new = _pick(_mcap_at(i))
+            if allow_partial_book:
+                if new or allow_empty:
+                    roster = list(new)
+                    _schedule_equal_weight(i, _apply_filter(i, new, "recon"), "recon")
+            elif len(new) >= X:
                 roster = list(new)
                 _schedule_equal_weight(i, _apply_filter(i, new, "recon"), "recon")
         elif pending is None and (i - last_rebalance_i) >= N:

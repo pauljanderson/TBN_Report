@@ -15,6 +15,13 @@ rem     atr4=4% ATR floor at trigger close, not a 4-ATR stop; s025=zone.lo-0.25*
 rem     trigger-gate adopt 2026-09-07 after HOLD AB — entry gate off).
 rem     One position per symbol (DailyRun lock 2026-09-15): latest side is VZ_LatestRun_Closed.csv;
 rem     golden is the house pin after that lock (not the old pyramid 2708-trade book).
+rem WPBR: DailyRun freeze 2026-10-02, 22%% overhead arm of
+rem     wpbr_overhead20_vs22_t20s8_ab_20261002. Engine stamp 261002051403.
+rem     Full data directory. wpbr_overhead_band_pct=0.22, target 1.20,
+rem     stop 0.92 (8%% under the trigger-day low, not under the entry price),
+rem     growth filter off, min_history_bars=0, second chance on, no start_date.
+rem     Prior golden 260929065132 (growth-filter-off control, target 1.22, stop 0.91,
+rem     min_history_bars=756, no overhead gate) is no longer the WPBR baseline.
 rem MVCP: retired 2026-08-21 — config enabled:false (freeze archive kept)
 setlocal EnableExtensions
 cd /d "%~dp0"

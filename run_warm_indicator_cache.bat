@@ -7,5 +7,8 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
-"%PY%" stock_analysis\warm_indicator_cache.py data\newdata\data -w 30
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 30.
+if not defined WARM_IND_WORKERS if defined DAILYRUN_WORKERS set "WARM_IND_WORKERS=%DAILYRUN_WORKERS%"
+if not defined WARM_IND_WORKERS set "WARM_IND_WORKERS=30"
+"%PY%" stock_analysis\warm_indicator_cache.py data\newdata\data -w %WARM_IND_WORKERS%
 exit /b %errorlevel%

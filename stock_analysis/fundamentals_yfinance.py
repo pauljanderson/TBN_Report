@@ -1542,6 +1542,84 @@ def _bundle_from_cache(
     )
 
 
+def _dailyrun_wave_readonly_fundamentals(
+    sym: str,
+    *,
+    db_path: str | Path | None,
+    force_refresh: bool | None,
+    refresh_missing_short: bool | None,
+    lookback_years: float,
+    ttl: int | None,
+    quiet: bool,
+) -> SymbolFundamentals:
+    """Cache lookup that never opens ``fundamentals_cache.duckdb`` for write.
+
+    DailyRun's system wave runs several engines at once. ``ensure_schema`` and the
+    normal lookup take a write connection even on a cache hit, so two processes
+    would lock the same file. This path is read-only. A miss raises so the caller
+    can fall back to yfinance instead of taking the write lock.
+    """
+    import duckdb
+
+    p = resolve_fundamentals_db(db_path)
+    if not p.is_file():
+        raise RuntimeError(
+            f"DAILYRUN_WAVE: fundamentals cache missing ({p}); not creating it while other systems run"
+        )
+    ttl_n = int(ttl if ttl is not None else ttl_days())
+    force = bool(force_refresh) if force_refresh is not None else force_refresh_requested()
+    want_short = (
+        bool(refresh_missing_short)
+        if refresh_missing_short is not None
+        else refresh_missing_short_requested()
+    )
+    try:
+        con = duckdb.connect(str(p), read_only=True)
+    except Exception as exc:
+        raise RuntimeError(
+            f"DAILYRUN_WAVE: fundamentals cache is not readable for {sym} ({exc})"
+        ) from exc
+    try:
+        info = _load_info_row(con, sym) or {}
+        quarterly = _load_quarterly(con, sym)
+        dates = _load_earnings_dates(con, sym)
+    finally:
+        con.close()
+
+    info_ok = bool(info) and _info_fresh(info.get("fetched_at"), ttl=ttl_n)
+    earn_ok = (
+        _quarterly_covers_lookback(quarterly, lookback_years)
+        and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n)
+    ) or (bool(quarterly or dates) and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n))
+    short_gap = bool(info) and (
+        _short_interest_never_fetched(info) or (want_short and _short_fields_null(info))
+    )
+    if (
+        not force
+        and not short_gap
+        and info_ok
+        and (earn_ok or (bool(info) and _earnings_fetch_fresh(quarterly, dates, ttl=ttl_n)))
+    ):
+        if not quiet:
+            print(f"[YF_FUND] CACHE HIT {sym}", flush=True)
+        return _bundle_from_cache(sym, info, quarterly, dates, cache_hit=True, source="CACHE")
+    if not force and not short_gap and info_ok and quarterly and not dates:
+        if not quiet:
+            print(f"[YF_FUND] CACHE HIT {sym} (info+eps; no earnings_dates)", flush=True)
+        return _bundle_from_cache(sym, info, quarterly, dates, cache_hit=True, source="CACHE")
+    if yfinance_disabled():
+        if not quiet:
+            print(f"[YF_FUND] NO_YFINANCE — cache only for {sym}", flush=True)
+        if info or quarterly or dates:
+            return _bundle_from_cache(
+                sym, info or {"fetched_at": None}, quarterly, dates, cache_hit=True, source="DISABLED"
+            )
+        return SymbolFundamentals(symbol=sym, source="DISABLED")
+    raise RuntimeError(
+        f"DAILYRUN_WAVE: fundamentals cache miss for {sym}; not taking a write lock"
+    )
+
+
 def get_symbol_fundamentals(
     symbol: str,
     *,
@@ -1556,6 +1634,17 @@ def get_symbol_fundamentals(
     sym = str(symbol or "").strip().upper()
     if not sym:
         return SymbolFundamentals(symbol="", source="EMPTY")
+
+    if os.environ.get("DAILYRUN_WAVE", "").strip() == "1":
+        return _dailyrun_wave_readonly_fundamentals(
+            sym,
+            db_path=db_path,
+            force_refresh=force_refresh,
+            refresh_missing_short=refresh_missing_short,
+            lookback_years=lookback_years,
+            ttl=ttl,
+            quiet=quiet,
+        )
 
     p = ensure_schema(db_path)
     ttl_n = int(ttl if ttl is not None else ttl_days())

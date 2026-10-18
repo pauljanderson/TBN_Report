@@ -21,7 +21,7 @@ DEFAULT_GETTARGET = ROOT / "getTarget_output.csv"
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Pending sell report (low-vol + SB no-FT/time + VZ time stop)"
+        description="Pending sell report (system-closed + low-vol + SB no-FT/time + VZ time stop)"
     )
     p.add_argument("--positions", type=Path, default=DEFAULT_POSITIONS)
     p.add_argument("--gettarget", type=Path, default=DEFAULT_GETTARGET)

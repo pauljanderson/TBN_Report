@@ -40,9 +40,130 @@ FORCE_RELOAD_SCRIPT = """<script>
 
 # Extra click-target rules for wide / horizontally scrollable tables.
 # Pair with generator th.sortable-th hover styles; do not invent a new sort UX.
-SORTABLE_TH_CSS = """
-th.sortable-th { position: relative; z-index: 3; pointer-events: auto; }
-thead { position: relative; z-index: 3; }
+_SORTABLE_CLICK_CSS = """
+th.sortable-th { pointer-events: auto; touch-action: manipulation; cursor: pointer; }
+.sort-ind { display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }
+th.sort-asc .sort-ind::after { content:"\\25B2"; color:#4c1d95; }
+th.sort-desc .sort-ind::after { content:"\\25BC"; color:#4c1d95; }
+"""
+
+# Phone layout for data tables. Horizontal scroll plus a sticky first column
+# (the row label). Do not turn the table into a card stack. Sort JS still
+# pins tr.total-row and tr.table-total. Inject this inside <style>, and wrap
+# each data table in <div class="table-wrap"> (legacy class "scroll" or "wrap"
+# is accepted). One caption is enough: SWIPE_NOTE_HTML.
+RESPONSIVE_TABLE_CSS = """
+/* report-table-responsive */
+.table-wrap, .scroll, .wrap {
+  overflow: auto;
+  max-height: calc(100vh - 8rem);
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.swipe-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
+table.sortable {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.sortable th,
+table.sortable td {
+  border: 1px solid #d8dee9;
+  padding: 6px 8px;
+}
+table.sortable thead th,
+table.sortable > thead > tr > th.sortable-th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 2;
+}
+table.sortable th[data-sort="num"] { text-align: right; }
+table.sortable > tbody > tr > td:first-child,
+table.sortable > tbody > tr > th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.06);
+}
+table.sortable > thead > tr > th:first-child,
+table.sortable > thead > tr > th.sortable-th:first-child {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  background: #f8fafc;
+}
+table.sortable tr.total-row > td:first-child,
+table.sortable tr.total-row > th:first-child,
+table.sortable tr.table-total > td:first-child,
+table.sortable tr.table-total > th:first-child {
+  z-index: 2;
+  background: #f8fafc;
+}
+table.sortable tbody tr:hover td,
+table.sortable tbody tr:hover th {
+  background: #f1f5f9;
+}
+@media (max-width: 800px) {
+  .table-wrap table.sortable,
+  .scroll table.sortable,
+  .wrap table.sortable {
+    width: max-content;
+    min-width: 100%;
+  }
+  .table-wrap th, .table-wrap td,
+  .scroll th, .scroll td,
+  .wrap th, .wrap td {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+}
+"""
+
+SORTABLE_TH_CSS = _SORTABLE_CLICK_CSS + RESPONSIVE_TABLE_CSS
+
+SWIPE_NOTE_HTML = '<p class="swipe-note">Swipe sideways to see more columns.</p>'
+
+# Run once from the shared sort script so a forgotten wrapper still scrolls.
+ENSURE_TABLE_WRAP_JS = """
+  function ensureTableWraps() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var parent = table.parentElement;
+      if (!parent || !parent.classList) return;
+      var cls = parent.classList;
+      if (cls.contains("table-wrap") || cls.contains("scroll") || cls.contains("wrap")) return;
+      var div = document.createElement("div");
+      div.className = "table-wrap";
+      parent.insertBefore(div, table);
+      div.appendChild(table);
+    });
+  }
+  function alignNumericColumns() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var headRow = table.tHead && table.tHead.rows[0];
+      if (!headRow || !table.tBodies[0]) return;
+      var idx = [];
+      for (var i = 0; i < headRow.cells.length; i++) {
+        if (headRow.cells[i].getAttribute("data-sort") === "num") idx.push(i);
+      }
+      if (!idx.length) return;
+      Array.prototype.forEach.call(table.tBodies[0].rows, function (tr) {
+        idx.forEach(function (i) {
+          if (tr.cells[i]) tr.cells[i].style.textAlign = "right";
+        });
+      });
+    });
+  }
+  function bootTables() {
+    ensureTableWraps();
+    alignNumericColumns();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootTables);
+  } else {
+    bootTables();
+  }
 """
 
 # Shared sort JS for investment + monthly (and anyone else who imports it).
@@ -51,6 +172,7 @@ thead { position: relative; z-index: 3; }
 SORTABLE_TABLE_SCRIPT = """
 <script>
 (function () {
+""" + ENSURE_TABLE_WRAP_JS + """
   var MONTHS = {
     january:1, february:2, march:3, april:4, may:5, june:6,
     july:7, august:8, september:9, october:10, november:11, december:12
@@ -96,6 +218,8 @@ SORTABLE_TABLE_SCRIPT = """
       return dir * (av - bv);
     });
     movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+    var wrap = table.closest(".table-wrap, .scroll, .wrap");
+    if (wrap) wrap.scrollTop = 0;
   }
   function headerCol(th) {
     if (typeof th.cellIndex === "number" && th.cellIndex >= 0) return th.cellIndex;
@@ -127,10 +251,38 @@ SORTABLE_TABLE_SCRIPT = """
   }
   function headerFromEvent(e) {
     var t = e.target;
-    if (!t || !t.closest) return null;
-    return t.closest("th.sortable-th");
+    if (t && t.closest) {
+      var direct = t.closest("th.sortable-th");
+      if (direct) return direct;
+    }
+    if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
+    var best = null;
+    var bestZ = -Infinity;
+    var bestArea = Infinity;
+    var list = document.querySelectorAll("table.sortable th.sortable-th");
+    for (var i = 0; i < list.length; i++) {
+      var th = list[i];
+      var r = th.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+      var z = parseInt(window.getComputedStyle(th).zIndex, 10);
+      if (!isFinite(z)) z = 0;
+      var area = r.width * r.height;
+      if (!best || z > bestZ || (z === bestZ && area < bestArea)) {
+        best = th;
+        bestZ = z;
+        bestArea = area;
+      }
+    }
+    return best;
   }
   document.addEventListener("click", function (e) {
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("pointerup", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     var th = headerFromEvent(e);
     if (!th) return;
     onActivate(th);

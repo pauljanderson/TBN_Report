@@ -26,11 +26,18 @@ call "%~dp0tools\load_universe_csv.bat" MTS "%MTS_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [MTS] Universe src=%MTS_UNIVERSE_SRC% pass_s=%MTS_PASS_SYMBOLS%
 
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 22. Explicit MTS_WORKERS wins.
+if not defined MTS_WORKERS if defined DAILYRUN_WORKERS set "MTS_WORKERS=%DAILYRUN_WORKERS%"
+if not defined MTS_WORKERS set "MTS_WORKERS=22"
+
 if "%MTS_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 22 --aggressive --no-regression --mts-sheet-parity -v band_pct=0.018 -v touch_threshold=2 -v strong_post_pivot_bars=7 -v strong_post_pivot_pct=0.06 -v strong_pre_pivot_bars=7 -v strong_pre_pivot_pct=0.12 -v target_pct=1.22 -v stop_pct=0.934 -v stop_pct_is_multiplier=true -v stop_loss_based=trigger_low --symbol-reentry-cooldown-days 20 -v min_upper_wick_atr_at_trigger=0.25 -v min_dist_to_52w_high_pct_at_trigger=25 -s "!MTS_SYMBOLS!" !MTS_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !MTS_WORKERS! --aggressive --no-regression --mts-sheet-parity -v band_pct=0.018 -v touch_threshold=2 -v strong_post_pivot_bars=7 -v strong_post_pivot_pct=0.06 -v strong_pre_pivot_bars=7 -v strong_pre_pivot_pct=0.12 -v target_pct=1.22 -v stop_pct=0.934 -v stop_pct_is_multiplier=true -v stop_loss_based=trigger_low --symbol-reentry-cooldown-days 20 -v min_upper_wick_atr_at_trigger=0.25 -v min_dist_to_52w_high_pct_at_trigger=25 -s "!MTS_SYMBOLS!" !MTS_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 22 --aggressive --no-regression --mts-sheet-parity -v band_pct=0.018 -v touch_threshold=2 -v strong_post_pivot_bars=7 -v strong_post_pivot_pct=0.06 -v strong_pre_pivot_bars=7 -v strong_pre_pivot_pct=0.12 -v target_pct=1.22 -v stop_pct=0.934 -v stop_pct_is_multiplier=true -v stop_loss_based=trigger_low --symbol-reentry-cooldown-days 20 -v min_upper_wick_atr_at_trigger=0.25 -v min_dist_to_52w_high_pct_at_trigger=25 !MTS_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !MTS_WORKERS! --aggressive --no-regression --mts-sheet-parity -v band_pct=0.018 -v touch_threshold=2 -v strong_post_pivot_bars=7 -v strong_post_pivot_pct=0.06 -v strong_pre_pivot_bars=7 -v strong_pre_pivot_pct=0.12 -v target_pct=1.22 -v stop_pct=0.934 -v stop_pct_is_multiplier=true -v stop_loss_based=trigger_low --symbol-reentry-cooldown-days 20 -v min_upper_wick_atr_at_trigger=0.25 -v min_dist_to_52w_high_pct_at_trigger=25 !MTS_FORWARD!
 )
 if errorlevel 1 exit /b 1
+rem DailyRun's system wave sets DAILYRUN_WAVE=1. Copy-latest touches every
+rem system's LatestRun files, so it stays on DailyRun step 11 after the wave.
+if /i "%DAILYRUN_WAVE%"=="1" exit /b 0
 call "%~dp0run_copy_latest.bat"
 exit /b %errorlevel%

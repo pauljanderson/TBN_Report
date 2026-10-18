@@ -28,6 +28,8 @@ if not defined WRL_TARGET_MODE set "WRL_TARGET_MODE=swing"
 if not defined WRL_STOP set "WRL_STOP=1.0"
 if not defined WRL_MAX_POSITIONS set "WRL_MAX_POSITIONS=0"
 if not defined WRL_AGGRESSIVE set "WRL_AGGRESSIVE=true"
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 12. Explicit WRL_WORKERS wins.
+if not defined WRL_WORKERS if defined DAILYRUN_WORKERS set "WRL_WORKERS=%DAILYRUN_WORKERS%"
 if not defined WRL_WORKERS set "WRL_WORKERS=12"
 set "WRL_AGG_FLAG="
 if /i "%WRL_AGGRESSIVE%"=="true" set "WRL_AGG_FLAG=--aggressive"

@@ -57,18 +57,30 @@ rem     set FORCE_GET=1           always run pygetallMore (override auto fresh s
 rem     set SKIP_FUND_SCORECARD=1 skip fund scorecard refresh + PIT snapshot (step 1b)
 rem     set FORCE_FUND_SCORECARD=1 ignore scorecard Yahoo TTL (full refresh)
 rem     set FUND_SCORECARD_TTL_DAYS=7  Yahoo multiples TTL (default 7)
-rem     Options chain archive (yfinance snapshot; NOT a sleeve / not gold / not reconcile):
-rem       Optional last step: call run_options_chain.bat — continues on Yahoo error.
-rem       Skip: set SKIP_OPTIONS_CHAIN=1
-rem       Standalone: run_options_chain.bat
+rem     Options chain archive is no longer part of DailyRun (was step [14], removed 2026-10-02).
+rem       Run it on its own, at a different time of day: run_options_chain.bat
+rem       Archive only (yfinance snapshot). Not a sleeve / not gold / not reconcile.
 rem       Freeze: drive\paul_experiments\options_chain_archive_20260917\BASELINE.md
 rem     DailyRun --noGet          same as SKIP_GET=1
 rem     DailyRun --no-get         same as SKIP_GET=1
 rem     Default (no flags): auto — skip step 1 when data is fresh (see tools/data_update_freshness.py)
+rem DailyRun.bat -w 8 runs independent systems together and gives each engine 8 workers
+rem   (--workers 8 is the same). Omit -w to keep each script's own worker count.
+rem   At most 8 system engines at once. If CPU load is above 90%, the next start waits.
 
 rem --- CLI flags (optional) ---
+rem -w / --workers sets DAILYRUN_WORKERS for engines that already take -w.
+rem Help, -h, and --dry-parse exit before any engine starts.
 :parse_args
 if "%~1"=="" goto args_done
+if /i "%~1"=="/?" goto :usage
+if /i "%~1"=="-h" goto :usage
+if /i "%~1"=="--help" goto :usage
+if /i "%~1"=="--dry-parse" (
+  set "DAILYRUN_DRY_PARSE=1"
+  shift
+  goto parse_args
+)
 if /i "%~1"=="--noGet" (
   set "SKIP_GET=1"
   shift
@@ -79,12 +91,52 @@ if /i "%~1"=="--no-get" (
   shift
   goto parse_args
 )
+if /i "%~1"=="-w" goto :take_workers
+if /i "%~1"=="--workers" goto :take_workers
 echo Unknown DailyRun option: %~1
-echo Usage: DailyRun [--noGet^|--no-get]
-echo   or:  set SKIP_GET=1 ^& DailyRun
-exit /b 1
-:args_done
+goto :usage_fail
 
+:take_workers
+shift
+if "%~1"=="" (
+  echo DailyRun -w needs a whole number. Example: DailyRun.bat -w 8
+  exit /b 1
+)
+set "DAILYRUN_WORKERS=%~1"
+echo %DAILYRUN_WORKERS%| findstr /r "^[0-9][0-9]*$" >nul
+if errorlevel 1 (
+  echo DailyRun -w expects a whole number of workers, got: %DAILYRUN_WORKERS%
+  exit /b 1
+)
+shift
+goto parse_args
+
+:args_done
+if /i "%DAILYRUN_DRY_PARSE%"=="1" (
+  if defined DAILYRUN_WORKERS (
+    echo DAILYRUN_WORKERS=!DAILYRUN_WORKERS!
+  ) else (
+    echo DAILYRUN_WORKERS=
+  )
+  if /i "!SKIP_GET!"=="1" (echo SKIP_GET=1) else (echo SKIP_GET=)
+  exit /b 0
+)
+goto :run_body
+
+:usage
+echo Usage: DailyRun.bat [-w N^|--workers N] [--noGet^|--no-get]
+echo   -w N runs independent systems together and gives each engine N workers.
+echo   At most 8 system engines at once. If CPU load is above 90%%, the next start waits.
+echo   Omit -w to keep each run_*.bat worker default. Systems with no worker flag are unchanged.
+echo   No worker flag: audit, update_data, fund scorecard, rl_compare, copy_latest,
+echo   reconcile, gettarget, trendlines, trendlines_tos, publish.
+exit /b 0
+
+:usage_fail
+echo Usage: DailyRun.bat [-w N^|--workers N] [--noGet^|--no-get]
+exit /b 1
+
+:run_body
 rem --- Log file (one per run) ---
 set "LOGDIR=%~dp0logs"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
@@ -97,6 +149,7 @@ echo ============================================================>>"%LOG%"
 echo DailyRun started: %date% %time%>>"%LOG%"
 echo CD=%CD%>>"%LOG%"
 echo USER=%USERNAME% COMPUTER=%COMPUTERNAME% SESSION=%SESSIONNAME%>>"%LOG%"
+if defined DAILYRUN_WORKERS echo DAILYRUN_WORKERS=%DAILYRUN_WORKERS%>>"%LOG%"
 
 rem --- Python: prefer python.org (%%LOCALAPPDATA%%\Programs\Python\...) ---
 rem     Microsoft Store / WindowsApps Python often returns "Access is denied" when
@@ -227,6 +280,7 @@ if /i "%WARM_IND%"=="1" (
 )
 
 rem --- 3a) Audit (legacy AWK Rocket Launcher) ---
+rem AWK audit has no -w / --workers flag. DAILYRUN_WORKERS is not passed here.
 echo [3/13] run_audit (AWK RL)>>"%LOG%"
 call "%~dp0run_audit.bat" -AllowRegression >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
@@ -249,37 +303,49 @@ if not defined RL_PY_TS (
 echo [3/13] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
 
 rem --- 3c) AWK vs Python RL output parity ---
+rem run_rl_compare has no worker flag.
 echo [3/13] run_rl_compare>>"%LOG%"
 call "%~dp0run_rl_compare.bat" %RL_AWK_TS% %RL_PY_TS% >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
+rem --- Wave: independent system runs (read warehouse, write their own PREFIX files) ---
+rem Stay sequential before this: price download (writes ohlcv.duckdb), fund scorecard,
+rem optional indicator warmup, AWK RL then Python RL then compare (shared RL files).
+rem Stay sequential after: copy_latest, reconcile, gettarget, trendlines, publish.
+rem YH and WPBR open data\ohlcv.duckdb read-only. Timing duckdb is per system
+rem (TBN_INSTRUMENT_DB). Shared last_run_ts.txt is not written inside the wave.
+rem Each wave engine already takes rocket_tbn -w. -w on DailyRun sets that count.
+rem The wave starts at most 8 of these engines at once and does not kill a running one.
+rem If CPU LoadPercentage is above 90, the next system waits and retries.
+rem copy_latest, reconcile, gettarget, trendlines, and publish have no worker flag.
+set "WAVEFILE=%TEMP%\DailyRun_wave_%STAMP%.txt"
+if exist "%WAVEFILE%" del "%WAVEFILE%"
+
 rem --- 4) BRT system backtest (Break and ReTest; TBN engine via run_brt.bat ??? rocket_tbn.py) ---
 echo [4/13] run_brt>>"%LOG%"
-call "%~dp0run_brt.bat" >>"%LOG%" 2>&1
-if errorlevel 1 goto :fail
+echo 4/13;BRT;run_brt.bat;drive\BRT_profile.duckdb>>"%WAVEFILE%"
 
 rem --- 5) DEPRECATED: IND indicator-only backtest (manual script retained) ---
 echo [5/13] SKIPPED - run_ind (IND deprecated)>>"%LOG%"
 
 rem --- 6) YH backtest ---
 echo [6/13] run_yh>>"%LOG%"
-call "%~dp0run_yh.bat" >>"%LOG%" 2>&1
-if errorlevel 1 goto :fail
+echo 6/13;YH;run_yh.bat;drive\YH_profile.duckdb>>"%WAVEFILE%"
 
 rem --- 7) MTS backtest ---
 echo [7/13] run_mts>>"%LOG%"
-call "%~dp0run_mts.bat" >>"%LOG%" 2>&1
-if errorlevel 1 goto :fail
+echo 7/13;MTS;run_mts.bat;drive\MTS_profile.duckdb>>"%WAVEFILE%"
 
-rem --- 8) WPBR backtest (Mag9; run_wpbr.bat: SC-on, stop 0.91, target 1.22, NO start_date; AMD out of WPBR) ---
-echo [8/13] run_wpbr>>"%LOG%"
-call "%~dp0run_wpbr.bat" >>"%LOG%" 2>&1
-if errorlevel 1 goto :fail
+rem --- 8) WPBR backtest (full data directory; run_wpbr.bat freeze 2026-10-02:
+rem     22%% overhead arm of wpbr_overhead20_vs22_t20s8_ab_20261002 stamp 261002051403;
+rem     overhead 0.22, stop 0.92 under the trigger-day low, target 1.20,
+rem     min_history_bars=0, growth filter off, NO start_date) ---
+echo [8/13] run_wpbr ^(full data directory; overhead 22%%; target 1.20; stop 0.92; growth filter off^)>>"%LOG%"
+echo 8/13;WPBR;run_wpbr.bat;drive\WPBR_profile.duckdb>>"%WAVEFILE%"
 
 rem --- 9) RS (Relative Strength: SPY_COMPARE>0 + TC Strong) ---
 echo [9/13] run_rs>>"%LOG%"
-call "%~dp0run_rs.bat" >>"%LOG%" 2>&1
-if errorlevel 1 goto :fail
+echo 9/13;RS;run_rs.bat;drive\RS_profile.duckdb>>"%WAVEFILE%"
 
 rem --- 10) SB (StockBee Momentum Burst) -----------------------------------------
 rem Default: run_sb.bat with no args loads drive\universes\SB_universe.csv (56 names)
@@ -305,8 +371,7 @@ if /i "%SKIP_SB%"=="1" (
   )
   echo [10/13] run_sb ^(gold SB_universe.csv^)
   echo [10/13] run_sb ^(gold SB_universe.csv^)>>"%LOG%"
-  call "%~dp0run_sb.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
+  echo 10/13;SB;run_sb.bat;drive\SB_profile.duckdb>>"!WAVEFILE!"
 )
 
 rem --- 10b) VZ (Volume Zone) ----------------------------------------------------
@@ -323,8 +388,7 @@ if /i "%SKIP_VZ%"=="1" (
 ) else (
   echo [10b/13] run_vz ^(house VZ_universe.csv; exit_bars=20 stop_atr=0.25; one position per symbol^)
   echo [10b/13] run_vz ^(house VZ_universe.csv; exit_bars=20 stop_atr=0.25; one position per symbol^)>>"%LOG%"
-  call "%~dp0run_vz.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
+  echo 10b/13;VZ;run_vz.bat;drive\VZ_profile.duckdb>>"!WAVEFILE!"
 )
 
 rem --- 10c) RSI (Relative Strength Index) ----------------
@@ -338,8 +402,7 @@ if /i "%SKIP_RSI%"=="1" (
 ) else (
   echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr2.93/ts20/roll8/min_dist52=off^)
   echo [10c/13] run_rsi ^(house rsi_universe.csv; ob70/exit70/maxrsi60/atr2.93/ts20/roll8/min_dist52=off^)>>"%LOG%"
-  call "%~dp0run_rsi.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
+  echo 10c/13;RSI;run_rsi.bat;drive\RSI_profile.duckdb>>"!WAVEFILE!"
 )
 
 rem --- 10d) WRL (Weekly Range / Swing) --------------------------------
@@ -354,9 +417,14 @@ if /i "%SKIP_WRL%"=="1" (
   echo [10d/13] run_wrl ^(house WRL_universe.csv; TARGET_MODE=swing; EXIT_swing 29-name^)
   echo [10d/13] run_wrl ^(house WRL_universe.csv; TARGET_MODE=swing; EXIT_swing 29-name^)>>"%LOG%"
   set "WRL_TARGET_MODE=swing"
-  call "%~dp0run_wrl.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
+  echo 10d/13;WRL;run_wrl.bat;drive\WRL_profile.duckdb>>"!WAVEFILE!"
 )
+
+echo [wave] independent systems, at most 8 at once ^(BRT YH MTS WPBR RS and any of SB VZ RSI WRL not skipped^)
+echo [wave] independent systems, at most 8 at once>>"%LOG%"
+"%PY%" "%~dp0tools\dailyrun_wave.py" --log "%LOG%" --jobs-file "%WAVEFILE%"
+if errorlevel 1 goto :fail
+del "%WAVEFILE%" 2>nul
 
 rem --- Status snapshot (RUN / SKIPPED / NOT WIRED) before LatestRun promotion ---
 "%PY%" "%~dp0tools\dailyrun_system_status.py" --drive "%~dp0drive" finalize >>"%LOG%" 2>&1
@@ -420,23 +488,8 @@ echo [13/13] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 14) Options chain archive (yfinance snapshot; archive only; NOT a sleeve)
-rem Not gold. Not a scanner. Not reconcile / LatestRun / house pins.
-rem Yahoo flake must not fail DailyRun — bat always exits 0; still continue on error.
-rem Skip: set SKIP_OPTIONS_CHAIN=1
-rem Freeze: drive\paul_experiments\options_chain_archive_20260917\BASELINE.md
-if /i "%SKIP_OPTIONS_CHAIN%"=="1" (
-  echo [14] SKIPPED - run_options_chain ^(SKIP_OPTIONS_CHAIN=1^)
-  echo [14] SKIPPED - run_options_chain ^(SKIP_OPTIONS_CHAIN=1^)>>"%LOG%"
-) else (
-  echo [14] run_options_chain ^(archive only; continue on Yahoo error^)
-  echo [14] run_options_chain ^(archive only; continue on Yahoo error^)>>"%LOG%"
-  call "%~dp0run_options_chain.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 (
-    echo [14] WARN - options chain archive failed; DailyRun continues>>"%LOG%"
-    echo [14] WARN - options chain archive failed; DailyRun continues
-  )
-)
+rem --- Options chain archive is no longer part of DailyRun (was step [14]).
+rem Run at a different time of day: run_options_chain.bat
 
 echo DailyRun finished OK: %date% %time%>>"%LOG%"
 echo Log: %LOG%

@@ -22,6 +22,7 @@ Status: **DailyRun official TBN sleeve** — not walk-forward gold.
 from __future__ import annotations
 
 import csv
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, replace
@@ -85,6 +86,10 @@ class RsiConfig:
     rsi_min_rel_vol_on_trigger: float = 0.0
     # RSI14_DROP_FROM_OB = prior >=rsi_ob bar's RSI − trigger RSI.
     rsi_min_rsi14_drop_from_ob: float = 0.0
+    # Research high-water trail. 0 = off (no price stop; live RSI exits only).
+    # No price base until the trail turns on. Day T uses the high through T-1.
+    hwm_act_pct: float = 0.0
+    hwm_keep: float = 0.0
     symbol_reentry_cooldown_days: int = 0
     entry_start_date: str = ""
     # Inclusive latest fill / DATE_OPENED (next_open), not the signal/trigger date. Empty = off.
@@ -370,6 +375,7 @@ def compute_features(df: pd.DataFrame, cfg: RsiConfig) -> dict[str, np.ndarray]:
         "close": close,
         "open": df["Open"].to_numpy(dtype=np.float64),
         "high": high,
+        "low": low,
         "rsi": rsi,
         "atr_pct": atr_pct,
         "sma50_pct": sma50_pct,
@@ -864,7 +870,17 @@ def backtest_symbol(
     exit_rsi = float(cfg.rsi_exit)
     time_stop = int(cfg.rsi_time_stop_days or 0)
     roll_from_max = float(getattr(cfg, "rsi_roll_from_max", 0.0) or 0.0)
+    hwm_act = float(getattr(cfg, "hwm_act_pct", 0.0) or 0.0)
+    hwm_keep = float(getattr(cfg, "hwm_keep", 0.0) or 0.0)
+    hwm_on = hwm_act > 0.0 and hwm_keep > 0.0
     entry_on_close = str(cfg.rsi_entry_on or "next_open").strip().lower() == "close"
+
+    def _trail_stop(entry_px: float, prior_hwm: float) -> float | None:
+        if not hwm_on or entry_px <= 0.0:
+            return None
+        if prior_hwm < entry_px * (1.0 + hwm_act / 100.0) - 1e-9:
+            return None
+        return entry_px + hwm_keep * (prior_hwm - entry_px)
 
     prev_rsi = np.roll(rsi, 1)
     prev_rsi[0] = np.nan
@@ -893,6 +909,7 @@ def backtest_symbol(
             "dist52": float(feat["dist52"][signal_i]),
             "rel_vol": float(feat["rel_vol"][signal_i]),
             "sma50_pct": float(feat["sma50_pct"][signal_i]),
+            "prior_hwm": float(entry_px),
         }
 
     def _close_position(exit_i: int, exit_px: float, exit_type: str, exit_rsi_val: float) -> None:
@@ -958,13 +975,41 @@ def backtest_symbol(
             pending_entry_i = -1
         elif pending_exit and pos is not None:
             px = float(open_[i])
-            if np.isfinite(px) and px > 0:
+            trail = _trail_stop(float(pos["entry"]), float(pos.get("prior_hwm", pos["entry"])))
+            # A gap through the trail sells at the open before a pending RSI exit.
+            if (
+                trail is not None
+                and i > int(pos["entry_i"])
+                and np.isfinite(px)
+                and px > 0
+                and px <= trail
+            ):
+                _close_position(i, px, "HWM_TRAIL", float(rsi[i]) if np.isfinite(rsi[i]) else float("nan"))
+                closed[-1].stop_price = float(trail)
+            elif np.isfinite(px) and px > 0:
                 _close_position(i, px, pending_exit_type, pending_exit_rsi)
             pending_exit = False
             pending_exit_rsi = float("nan")
 
+        if pos is not None and i > int(pos["entry_i"]):
+            trail = _trail_stop(float(pos["entry"]), float(pos.get("prior_hwm", pos["entry"])))
+            if trail is not None:
+                opx = float(open_[i])
+                lpx = float(feat["low"][i])
+                if np.isfinite(opx) and opx > 0 and opx <= trail:
+                    _close_position(i, opx, "HWM_TRAIL", float(rsi[i]) if np.isfinite(rsi[i]) else float("nan"))
+                    closed[-1].stop_price = float(trail)
+                    pending_exit = False
+                elif np.isfinite(lpx) and lpx <= trail:
+                    _close_position(i, float(trail), "HWM_TRAIL", float(rsi[i]) if np.isfinite(rsi[i]) else float("nan"))
+                    closed[-1].stop_price = float(trail)
+                    pending_exit = False
+
         if pos is not None:
             pos["max_price"] = max(float(pos["max_price"]), float(high[i]))
+            hi_now = float(high[i])
+            if np.isfinite(hi_now) and hi_now > float(pos.get("prior_hwm", pos["entry"])):
+                pos["prior_hwm"] = hi_now
             if np.isfinite(rsi[i]):
                 cur_rsi = float(rsi[i])
                 mx = float(pos.get("max_rsi", float("nan")))
@@ -1696,7 +1741,9 @@ def write_rsi_outputs(
             (output_dir / name).write_bytes(src.read_bytes())
 
     (output_dir / f"{FILE_PREFIX}_last_run_ts.txt").write_text(ts + "\n", encoding="utf-8")
-    (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
+    # Shared pointer. A DailyRun wave skips it so siblings do not write the same path.
+    if os.environ.get("DAILYRUN_WAVE", "").strip() != "1":
+        (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
     if _is_rsi_house_universe(universe_label, summary_path):
         (output_dir / f"{FILE_PREFIX}_house_last_run_ts.txt").write_text(
             ts + "\n", encoding="utf-8"

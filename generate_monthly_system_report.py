@@ -141,6 +141,9 @@ class TradeRow:
     pnl_pct: float
     status: str  # closed | open
     stop_price: Optional[float] = None
+    target_price: Optional[float] = None
+    stop_source: str = ""
+    target_source: str = ""
     suggested_shares: str = "—"
     size_lid: str = "—"
 
@@ -348,7 +351,8 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
     pnl_d_c = _col(df, "PNL_DOLLARS")
     pnl_p_c = _col(df, "PNL_PCT")
     current_c = _col(df, "CURRENT_PRICE")
-    stop_c = _col(df, "STOP_PRICE", "STOP PRICE", "STOP_LOSS", "STOP")
+    stop_c = _col(df, "STOP_PRICE", "STOP PRICE", "STOP_LOSS", "STOP LOSS", "STOP")
+    target_c = _col(df, "TARGET_PRICE", "TARGET PRICE", "TARGET")
 
     rows: list[TradeRow] = []
     for _, r in df.iterrows():
@@ -383,6 +387,7 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
             pnl_d = _parse_money(r.get(pnl_d_c)) if pnl_d_c else 0.0
             pnl_p = _parse_pct(r.get(pnl_p_c)) if pnl_p_c else 0.0
             stop_px = _parse_money(r.get(stop_c)) if stop_c else 0.0
+            tgt_px = _parse_money(r.get(target_c)) if target_c else 0.0
             rows.append(
                 TradeRow(
                     system=system,
@@ -397,6 +402,9 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
                     pnl_pct=pnl_p,
                     status="open",
                     stop_price=stop_px if stop_px > 0 else None,
+                    target_price=tgt_px if tgt_px > 0 else None,
+                    stop_source="Latest open book" if stop_px > 0 else "",
+                    target_source="Latest open book" if tgt_px > 0 else "",
                 )
             )
     return rows
@@ -448,6 +456,45 @@ def _load_rl_native_closed(path: Path) -> list[TradeRow]:
     return rows
 
 
+def _csv_header_has(path: Path, name: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            line = f.readline()
+    except OSError:
+        return False
+    want = name.strip().upper()
+    return any(part.strip().strip('"').upper() == want for part in line.split(","))
+
+
+def _house_slot_cash(closed: list[TradeRow], system: str) -> float:
+    """Per-slot dollars already baked into that system's Closed PNL_DOLLARS.
+
+    Closed dollars are (slot cash / entry) * price move. The median of
+    PNL_DOLLARS / (PNL_PCT/100) is that slot, after host scaling.
+    """
+    samples: list[float] = []
+    for t in closed:
+        if t.system != system or abs(t.pnl_pct) < 0.05:
+            continue
+        samples.append(t.pnl_dollars / (t.pnl_pct / 100.0))
+    if not samples:
+        return 0.0
+    samples.sort()
+    return float(samples[len(samples) // 2])
+
+
+def _mark_wrl_open_unrealized(rows: list[TradeRow], slot_cash: float) -> None:
+    """House dummy mark: shares = slot_cash / entry, unrealized = shares * (mark - entry)."""
+    if slot_cash <= 0:
+        return
+    for t in rows:
+        entry = t.entry_price
+        mark = t.exit_price or 0.0
+        if entry <= 0 or mark <= 0:
+            continue
+        t.pnl_dollars = (slot_cash / entry) * (mark - entry)
+
+
 def _load_system_trades(
     paths: dict[str, dict[str, Optional[Path]]],
 ) -> tuple[list[TradeRow], list[TradeRow], list[str]]:
@@ -473,11 +520,220 @@ def _load_system_trades(
                 # Native RL open — skip unless mirror exists; RL open mirror preferred
                 pass
             else:
-                open_rows.extend(_load_brt_style(opath, sys, status="open"))
+                loaded_open = _load_brt_style(opath, sys, status="open")
+                # WRL open files omit PNL_DOLLARS. Same formula as other systems' open MTM.
+                if sys == "WRL" and not _csv_header_has(opath, "PNL_DOLLARS"):
+                    _mark_wrl_open_unrealized(loaded_open, _house_slot_cash(closed, "WRL"))
+                open_rows.extend(loaded_open)
         else:
             sources.append(f"{sys} open: (missing)")
 
     return closed, open_rows, sources
+
+
+def _usable_level(value: Optional[float]) -> bool:
+    return value is not None and value > 0
+
+
+def _as_level(value: object) -> Optional[float]:
+    try:
+        price = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if price != price or price <= 0:
+        return None
+    return price
+
+
+def _rl_target_source(note: str) -> str:
+    """Plain-English hover text for the frozen Rocket Launcher (RL) working target."""
+    key = (note or "").strip()
+    if key == "scale_80_at_20":
+        return (
+            "Live target: sell 80% at 20% above the buy. "
+            "The high since entry has not reached that yet, so the stop stays the original signal stop."
+        )
+    if key == "runner_40_stop_at_entry":
+        return (
+            "Live target: leftover shares at 40% above the buy. "
+            "The high already reached +20%, so the stop is the buy price when that is tighter."
+        )
+    if key.startswith("SMA50"):
+        return "Live target: 50-day average times the old target multiple (SMA target is on for this lot)."
+    return "Live Rocket Launcher target from the 27 September 2026 exit."
+
+
+def _house_exit_configs(gt: object) -> dict:
+    """Percent profiles matching getTarget.py defaults (ATR multipliers left at zero)."""
+    specs = {
+        "BRT": (1.21, 0.934, "entry", 0.0),
+        "IND": (1.21, 0.903, "entry", 0.0),
+        "YH": (1.27, 0.923, "entry", 0.0),
+        "MTS": (1.22, 0.934, "signal_low", 0.0),
+        "WPBR": (1.24, 0.927, "entry", 0.0),
+        "RS": (1.25, 0.88, "entry", 0.0),
+        "SB": (1.097, 1.0, "signal_low", 0.922),
+        "MVCP": (1.25, 0.92, "entry", 0.0),
+        "CS": (1.20, 0.92, "entry", 0.0),
+    }
+    configs = {}
+    for code, (target_pct, stop_pct, anchor, fallback) in specs.items():
+        percent = gt.PercentProfile(  # type: ignore[attr-defined]
+            target_pct=target_pct,
+            stop_pct=stop_pct,
+            stop_anchor=anchor,
+            fallback_stop_pct=fallback,
+        )
+        atr = gt.AtrProfile()  # type: ignore[attr-defined]
+        mode = gt.resolve_exit_mode("auto", atr)  # type: ignore[attr-defined]
+        configs[code] = gt.SystemExitConfig(  # type: ignore[attr-defined]
+            mode_resolved=mode,
+            percent=percent,
+            atr=atr,
+        )
+    return configs
+
+
+def _load_level_ohlc(gt: object, cache: dict, symbol: str):
+    if symbol in cache:
+        return cache[symbol]
+    path = gt.DEFAULT_DATA_DIR / f"{symbol}.csv"  # type: ignore[attr-defined]
+    if not path.is_file():
+        cache[symbol] = None
+        return None
+    frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date").sort_index()
+    frame["ATR"] = gt.compute_atr(frame, 14)  # type: ignore[attr-defined]
+    cache[symbol] = frame
+    return frame
+
+
+def _live_levels_for_row(gt: object, frame, trade: TradeRow, exit_configs: dict) -> dict:
+    """Same live stop/target getTarget.compute_position_payload uses for this system."""
+    entry_price = float(trade.entry_price)
+    requested = pd.Timestamp(trade.date_opened)
+    rl_profile = gt.RlProfile()  # type: ignore[attr-defined]
+    vz_profile = gt.VzProfile(  # type: ignore[attr-defined]
+        exit_name="EXIT_atr4_s025_r15_ts20",
+        stop_atr_buffer=0.25,
+    )
+    rsi_profile = gt.RsiProfile()  # type: ignore[attr-defined]
+    if frame is None or len(frame.index) == 0:
+        return gt.compute_price_only_payload(  # type: ignore[attr-defined]
+            trade.system,
+            entry_price,
+            "OPEN_BOOK",
+            rl_profile=rl_profile,
+            exit_configs=exit_configs,
+            default_atr_pct=8.0,
+            vz_profile=vz_profile,
+            rsi_profile=rsi_profile,
+        )
+    entry_ts, entry_in_data, entry_src = gt.resolve_entry(  # type: ignore[attr-defined]
+        frame,
+        requested,
+        entry_price,
+        use_next_trading_day=False,
+        allow_synthetic_entry=True,
+    )
+    if entry_ts is None:
+        return {"error": "entry date not in price history"}
+    as_of = gt._resolve_as_of(frame, None)  # type: ignore[attr-defined]
+    return gt.compute_position_payload(  # type: ignore[attr-defined]
+        trade.system,
+        trade.symbol,
+        frame,
+        entry_ts,
+        entry_price,
+        entry_src or "OPEN_BOOK",
+        as_of,
+        atr_period=14,
+        rl_profile=rl_profile,
+        exit_configs=exit_configs,
+        entry_in_data=entry_in_data,
+        default_atr_pct=8.0,
+        vz_profile=vz_profile,
+        rsi_profile=rsi_profile,
+    )
+
+
+def _apply_live_level(trade: TradeRow, payload: dict, side: str) -> None:
+    """Fill only a missing stop or target. Leave a reason when there is still no price."""
+    key = "StopTrailing" if side == "stop" else "TargetPrice"
+    note_key = "StopNote" if side == "stop" else "TargetNote"
+    price = _as_level(payload.get(key))
+    if price is None and side == "stop":
+        price = _as_level(payload.get("StopInitial"))
+    if price is not None:
+        source = "Live level (same rules as the daily target sheet)"
+        if trade.system == "RL" and side == "target":
+            source = _rl_target_source(str(payload.get("TargetNote") or ""))
+        elif trade.system == "RL" and side == "stop":
+            source = (
+                "Live stop: signal-bar low × 0.934 until the high reaches +20%, "
+                "then the buy price if that is tighter."
+            )
+        if side == "stop":
+            trade.stop_price = price
+            trade.stop_source = source
+        else:
+            trade.target_price = price
+            trade.target_source = source
+        return
+    err = str(payload.get("error") or "").strip()
+    note = str(payload.get(note_key) or "").strip()
+    if trade.system == "RSI":
+        reason = note or err or (
+            "No fixed dollar price. Relative Strength Index (RSI) exits on the RSI reading or a time stop."
+        )
+    else:
+        reason = err or note or "Not in the open book and no live price"
+    if side == "stop":
+        trade.stop_source = reason
+    else:
+        trade.target_source = reason
+
+
+def _fill_missing_levels(open_rows: list[TradeRow]) -> None:
+    """Use getTarget live levels only where the open book has no usable stop or target."""
+    pending = [
+        row
+        for row in open_rows
+        if not _usable_level(row.stop_price) or not _usable_level(row.target_price)
+    ]
+    if not pending:
+        return
+    try:
+        import getTarget as gt
+    except Exception as exc:
+        reason = f"Live levels unavailable ({exc})"
+        for row in pending:
+            if not _usable_level(row.stop_price) and not row.stop_source:
+                row.stop_source = reason
+            if not _usable_level(row.target_price) and not row.target_source:
+                row.target_source = reason
+        return
+
+    exit_configs = _house_exit_configs(gt)
+    cache: dict = {}
+    filled = 0
+    for row in pending:
+        try:
+            frame = _load_level_ohlc(gt, cache, row.symbol)
+            payload = _live_levels_for_row(gt, frame, row, exit_configs)
+        except Exception as exc:
+            payload = {"error": f"live level failed ({exc})"}
+        before_stop = _usable_level(row.stop_price)
+        before_target = _usable_level(row.target_price)
+        if not before_stop:
+            _apply_live_level(row, payload, "stop")
+        if not before_target:
+            _apply_live_level(row, payload, "target")
+        if (not before_stop and _usable_level(row.stop_price)) or (
+            not before_target and _usable_level(row.target_price)
+        ):
+            filled += 1
+    if filled:
+        print(f"[monthly] filled live stop/target on {filled} open row(s) the open book left blank")
 
 
 def _month_key(d: date) -> tuple[int, int]:
@@ -639,7 +895,16 @@ def _open_positions_size_note() -> str:
   only get the name-cap room left after earlier systems.
   Dollar P&amp;L in the other columns is still the house dummy size.
 </p>
-<p class="small">Click column headers to sort.</p>
+<p class="small">
+  <strong>Stop loss</strong> and <strong>Target</strong> are the prices already on each system’s
+  latest open book (Stop price and Target price, or Weekly Range (WRL) Stop loss and Target).
+  Rocket Launcher (RL) records a static target: 20% above the buy until the high
+  reaches that price (sell 80% of the shares), then 40% above the buy for the leftover
+  shares. It does not use a moving 50-day average target. The stop stays the original
+  signal-bar stop until that 20% high prints, then moves to the buy price if that is tighter.
+  An older open book that still has a zero target is filled the same way.
+  Hover a price to see where it came from. Click column headers to sort.
+</p>
 """
 
 
@@ -657,6 +922,8 @@ def _open_table(trades: list[TradeRow]) -> str:
             f"<td>{t.date_opened.strftime('%Y-%m-%d')}</td>"
             f"<td>{_fmt_price(t.entry_price)}</td>"
             f"<td>{_fmt_price(t.exit_price or 0.0)}</td>"
+            f"{_level_cell(t.stop_price, t.stop_source)}"
+            f"{_level_cell(t.target_price, t.target_source)}"
             f"<td>{t.days_held}</td>"
             f"<td class=\"{_pnl_class(t.pnl_pct)}\">{_fmt_pct(t.pnl_pct)}</td>"
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"
@@ -671,6 +938,8 @@ def _open_table(trades: list[TradeRow]) -> str:
             ("Opened", "date"),
             ("Entry", "num"),
             ("Current", "num"),
+            ("Stop loss", "num"),
+            ("Target", "num"),
             ("Days", "num"),
             ("PnL %", "num"),
             ("Unrealized $", "num"),
@@ -683,6 +952,15 @@ def _open_table(trades: list[TradeRow]) -> str:
         + body
         + "</tbody></table>"
     )
+
+
+def _level_cell(price: Optional[float], source: str) -> str:
+    """Price when the engine or live exit has one; otherwise the reason the cell is blank."""
+    if _usable_level(price):
+        title = html_mod.escape(source or "Latest open book", quote=True)
+        return f'<td title="{title}">{_fmt_price(price or 0.0)}</td>'
+    reason = (source or "Not in the open book").strip()
+    return f'<td class="muted">{html_mod.escape(reason)}</td>'
 
 
 def _live_style_250k_section(year: int) -> str:
@@ -805,6 +1083,7 @@ def build_html(
     sources: list[str],
     generated: datetime,
 ) -> str:
+    _fill_missing_levels(open_rows)
     _attach_recommended_shares(open_rows)
     year_closed = [t for t in closed if t.date_closed and t.date_closed.year == year]
     now = generated.astimezone(ET)
@@ -973,6 +1252,8 @@ h1 {{ font-size:1.5rem; margin-bottom:4px; }}
 h2 {{ font-size:1.15rem; margin-top:28px; }}
 h3 {{ font-size:1rem; margin:16px 0 8px; color:#334155; }}
 .sub {{ color:#64748b; margin-bottom:20px; line-height:1.5; font-size:0.95rem; }}
+.ask {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:4px 16px 12px; margin:12px 0 20px; }}
+.ask h2 {{ font-size:1rem; }}
 .cards {{ display:flex; flex-wrap:wrap; gap:12px; margin:16px 0 24px; }}
 .card {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; min-width:200px; flex:1 1 220px; }}
 .card-total {{ background:#eef2ff; border-color:#c7d2fe; }}
@@ -1001,6 +1282,7 @@ a.sym:hover {{ text-decoration:underline; }}
 </style></head><body>
 {live_callout}
 <h1>Monthly Backtest Report — {year}</h1>
+<p class="swipe-note">Swipe sideways to see more columns.</p>
 <p class="sub">
   Paper-trading P&amp;L from latest {SYSTEMS_LABEL} backtest runs (not live broker accounts).<br>
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>

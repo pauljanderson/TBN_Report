@@ -176,6 +176,31 @@ def cfg_dict_with_overrides(
     d = {f: getattr(base_cfg, f) for f in field_names}
     overrides = overrides_for_symbol(settings, symbol, system, valid_fields=field_names)
     d.update(overrides)
+    # Research trail owns the protective stop and, on Rocket Launcher, replaces
+    # the scale ladder. Per-symbol JSON must not put the live stop or ladder back.
+    if float(getattr(base_cfg, "hwm_act_pct", 0.0) or 0.0) > 0.0:
+        for k in (
+            "hwm_act_pct",
+            "hwm_keep",
+            "stop_pct",
+            "stop_pct_is_multiplier",
+            "stop_loss_based",
+            "stop_anchor",
+            "rl_stop_pct",
+            "rl_scale_ladder",
+            "rl_entry_target_pct",
+            "rl_sma_target_off",
+            "rl_exit_percent",
+            "rl_exit_days",
+            "rl_exit_calendar_days",
+            "rl_trail_profit",
+            "rl_trail_stop",
+            "rl_trail_profit2",
+            "rl_trail_stop2",
+            "trailing_stop_increment",
+        ):
+            if k in field_names:
+                d[k] = getattr(base_cfg, k)
     return _sync_stop_loss_override_keys(d)
 
 

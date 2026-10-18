@@ -330,6 +330,9 @@ _RL_SHARED_BRT_KEYS = frozenset(
         "indicator_cache",
         "entry_start_date",
         "entry_end_date",
+        # Research high-water trail (0 = off). Same names as BRTConfig.
+        "hwm_act_pct",
+        "hwm_keep",
         # SPY TC lag-1 market filters (defaults off; match BRTConfig).
         "spy_int_tc_lag",
         "spy_tc_weak_horizon",
@@ -376,8 +379,9 @@ class RLConfig:
     rl_post_target_min_stack: float = 0.05
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
-    # When true: keep rl_target_pct for expansion-hit counting, but disable SMA50×target EXIT
-    # 1 = keep rl_target_pct for expansion hits but do not sell at the SMA envelope.
+    # When true: keep rl_target_pct for expansion-hit counting, but do not sell at the
+    # moving SMA50 envelope. Recorded target is static: entry × rl_target_pct (+20%)
+    # until the scale-out, then entry × (1 + rl_entry_target_pct) for the leftover.
     # House DailyRun freeze 2026-09-27: SMA target off.
     rl_sma_target_off: bool = True
     # Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default off).
@@ -442,6 +446,9 @@ class RLConfig:
     vol_pct_threshold: float = 0.0
     min_avg_vol: float = 0.0  # PIT shares floor vs trigger avg_vol; 0=off
     min_trigger_vol: float = 0.0  # PIT shares floor vs trigger-bar volume; 0=off
+    # Research entry gate. 0=off. Same name on BRTConfig so -v passes through.
+    # Does not enable WPBR buys. See rocket_rl._rl_wpbr_overhead_rejects.
+    rl_wpbr_overhead_band_pct: float = 0.0
     watch_min_score: int = 55
     watch_disable: bool = False
     # Optional IND-state gates (off by default). Paths resolve like BRT mandatory/exclude.
@@ -461,6 +468,9 @@ class RLConfig:
     spy_tc_weak_horizon: str = "int"
     block_entries_when_spy_int_weak: bool = False
     exit_when_spy_int_turns_weak: bool = False
+    # Research high-water trail. 0 = off (live ladder / live stop unchanged).
+    hwm_act_pct: float = 0.0
+    hwm_keep: float = 0.0
 
 
 def _brt_key_for_rl_field(rl_field_name: str) -> str:

@@ -503,7 +503,7 @@ def rl() -> str:
 <h2>3. Exit logic</h2>
 <ul>
   <li><strong>Stop:</strong> signal-bar Low × <code>rl_stop_pct</code> → prod / AWK default <strong>0.934</strong> (−6.6% vs signal low).</li>
-  <li><strong>Target:</strong> SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong>. Anchored to the 50-SMA (not entry) and <em>updated while the trade is open</em>.</li>
+  <li><strong>Target:</strong> static <code>entry × rl_target_pct</code> (default <strong>1.20</strong>, +20% from the buy) while the Simple Moving Average (SMA) envelope is off. After the 80% sale that price becomes entry × (1 + <code>rl_entry_target_pct</code>) (+40%). The old moving target (prior-day SMA50 × 1.20, updated while open) is used only when <code>rl_sma_target_off=0</code>.</li>
   <li>Shared gap-down / gap-up / intraday stop / target schedule (first match wins), matching AWK bar order.</li>
   <li>Trail / partial / flush levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
   <li><strong>Exit (house freeze 2026-09-27):</strong> sell 80% at +20% from the buy (<code>rl_scale_ladder=0.20:0.80:0</code>), move the leftover stop to the entry price, and sell that leftover at +40% (<code>rl_entry_target_pct=0.40</code>). No time clock (<code>rl_exit_percent=0</code>, <code>rl_exit_days=0</code>). SMA envelope target off (<code>rl_sma_target_off=1</code>). If one day trades both the leftover stop and the +40% target, the stop is checked first. Universe is every name under <code>data/newdata/data</code>.</li>
@@ -519,7 +519,7 @@ def rl() -> str:
             ("<code>rl_sma_qual</code>", "Require SMA stack + rising 50", "<strong>1</strong> (on)", "Off → many more unstructured dips"),
             ("<code>rl_50_sma_lookback</code>", "Bars for “50-SMA rising”", "<strong>4</strong> (config default)", "Longer lookback → slower trend confirmation"),
             ("<code>rl_stop_pct</code>", "Stop = signal Low × multiplier", "<strong>0.934</strong>", "Lower multiplier = wider stop"),
-            ("<code>rl_target_pct</code>", "Target = prior SMA50 × multiplier", "<strong>1.20</strong> (config default)", "Higher → fewer TARGET hits, longer holds"),
+            ("<code>rl_target_pct</code>", "Static target = entry × multiplier when SMA envelope is off", "<strong>1.20</strong> (+20% from the buy)", "After the 80% sale the leftover target is +40%"),
             ("<code>rl_exit_percent</code>", "Timed-exit profit gate vs entry MTM", "<strong>0.40</strong> (+40%)", "House adopt 40_30d 2026-08-31"),
             ("<code>rl_exit_days</code>", "Bars after profit gate before forced exit", "<strong>30</strong>", "10000 ≈ off; races SMA50 target"),
             ("<code>rl_too_high</code>", "Fill ceiling vs signal Low × stop", "<strong>0</strong> (off)", "On (hist 1.14) rejects opens that gap too far above the stop line"),
@@ -788,10 +788,14 @@ def wpbr() -> str:
         ),
         body="""
 <div class="callout ok">
-  <strong>Status:</strong> Production gold · DailyRun step [8/14].
-  Mag9 production universe (<span class="path">drive/universes/WPBR_universe.csv</span>).
-  Comment in the bat: AMD is out of WPBR. Seed historically used the MarkTen mega-cap set
-  (AAPL AMZN GOOGL META MSFT NVDA TSLA AU AMD NFLX) — production CSV is source of truth.
+  <strong>Status:</strong> Production · DailyRun step [8/13].
+  Full warehouse (<span class="path">data/newdata/data</span>), frozen 2 Oct 2026 from the
+  22% overhead arm of <span class="path">drive/paul_experiments/wpbr_overhead20_vs22_t20s8_ab_20261002</span>
+  (engine Closed stamp <code>261002051403</code>).
+  The 9-name file <span class="path">drive/universes/WPBR_universe.csv</span> is an optional override, not the DailyRun universe.
+  Overhead gate <code>wpbr_overhead_band_pct=0.22</code>. Sell the whole position at 20% above the buy.
+  Stop is 8% under the low of the trigger day (the session before the buy), <code>stop_pct=0.92</code>.
+  The 3-year “close must be higher” filter stays off, and this arm does not require 756 sessions of history.
 </div>
 <div class="callout">
   Product decision (2026-07-22): <strong>the sheet wins</strong> on daily-retest scan.
@@ -818,13 +822,14 @@ def wpbr() -> str:
   <li><strong>Entry window:</strong> <code>wpbr_max_days_after_retest=2</code> (inclusive) for a green daily close above the upper band; fill = next open.</li>
   <li><strong>Second chance after win:</strong> prod <code>wpbr_second_chance_after_win=true</code>.</li>
   <li><code>sheet_no_entry_same_bar_after_exit=false</code> is forced (WPBR nosamebarexit off vs some sheet defaults).</li>
-  <li>Growth filter <strong>off</strong>. SPY-compare floor neutralized (−1000). Indicators on for report columns, not as buy gates.</li>
+  <li>Overhead gate: <code>wpbr_overhead_band_pct=0.22</code>. Skip the buy when an earlier Pivot Break and Retest zone has its bottom above this zone’s top and that gap is 22% or less. A wider gap is allowed.</li>
+  <li>History: <code>min_history_bars=0</code>. This freeze does not require 756 sessions of history. Growth filter <strong>off</strong> (<code>growth_filter_enabled=false</code>; the close does not have to be higher than it was 756 sessions earlier). SPY-compare floor neutralized (−1000). Indicators on for report columns, not as buy gates.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
 <ul>
-  <li><strong>Stop:</strong> <code>stop_pct=0.91</code> (wider than BRT’s 0.934).</li>
-  <li><strong>Target:</strong> <code>target_pct=1.22</code> (+22%).</li>
+  <li><strong>Stop:</strong> <code>stop_pct=0.92</code>. That is 0.92 times the low of the trigger day (8% under the low of the day before the buy), because the default stop base is the trigger-day low. It is not 8% under the entry price.</li>
+  <li><strong>Target:</strong> <code>target_pct=1.20</code> (full sale at 20% above the buy).</li>
   <li>Host gap / stop / target schedule. HALF_UP retest compares + variant C pivot rounding live in <code>wpbr_zones.py</code>.</li>
 </ul>
 
@@ -837,19 +842,21 @@ def wpbr() -> str:
             ("<code>retest_mode</code>", "Daily scan terminate rule", "<strong>stop_looking</strong> (sheet)", "<code>keep_looking</code> is legacy A/B only"),
             ("<code>wpbr_second_chance_after_win</code>", "Re-arm after a winning exit", "<strong>true</strong>", "Off → one-and-done per zone episode"),
             ("<code>strong_pivot_mode</code>", "Pre/post/either/both", "<strong>either</strong> · 3 bars / 10%", "Stricter modes cut pivot inventory"),
-            ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.22</strong>", "Higher → fewer TARGET hits; longer holds (WPBR avg hold is multi-month)"),
-            ("<code>stop_pct</code>", "Stop multiplier", "<strong>0.91</strong>", "Wider than BRT 0.934"),
+            ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.20</strong>", "Full sale at 20% above the buy"),
+            ("<code>stop_pct</code>", "Stop vs trigger-day low", "<strong>0.92</strong>", "8% under the low of the day before the buy, not under the entry price"),
+            ("<code>wpbr_overhead_band_pct</code>", "Max gap to an older zone above", "<strong>0.22</strong>", "Skip the buy when an earlier zone sits 22% or closer above this zone"),
             ("<code>wpbr_merge_overlapping_zones</code>", "Merge overlapping weekly bands", "<strong>false</strong> (optional on)", "On → ZONE_STRENGTH = member count"),
-            ("<code>growth_filter_enabled</code>", "3-year growth gate", "<strong>false</strong>", "On would cut Mag9 history"),
+            ("<code>min_history_bars</code>", "Sessions of history before a buy", "<strong>0</strong>", "This freeze does not require 756 sessions of history"),
+            ("<code>growth_filter_enabled</code>", "3-year close-must-be-higher gate", "<strong>false</strong>", "Stays off. The close does not have to be higher than 756 sessions earlier"),
             ("<code>start_date</code>", "Entry/pivot window", "<strong>unset</strong> (full history)", "Do not add 2016 on DailyRun / reconcile freeze"),
         ])
         + """
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Production gold</strong> — DailyRun Mag9"),
+            ("Status", "<strong>Production</strong> — DailyRun full warehouse, 22% overhead, 20% target, 8% stop under the trigger-day low, growth filter off"),
             ("Runner", "<code>run_wpbr.bat</code>"),
-            ("Universe", "<code>drive/universes/WPBR_universe.csv</code>"),
+            ("Universe", "Every CSV under <span class='path'>data/newdata/data</span>"),
             ("Engine", "<span class='path'>stock_analysis/wpbr_zones.py</span> via TBN host"),
             ("Parity tools", "<span class='path'>tools/run_wpbr_*_markten.py</span>"),
             ("Outputs", "<code>drive/WPBR_*_&lt;ts&gt;.*</code>"),

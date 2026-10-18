@@ -1018,6 +1018,95 @@ def rl_retrace_12m_pct(
     return (hi - px) / (hi - lo) * 100.0
 
 
+def _load_rl_wpbr_overhead(df: pd.DataFrame, cfg: Any) -> Optional[tuple[np.ndarray, np.ndarray, float]]:
+    """WPBR zone edges for the research overhead gate. None when the gate is off.
+
+    Zone construction uses the live Weekly Pivot Break and Retest (WPBR) weekly
+    pivot rules (1.5% band, 3 bars / 10% strong pivot on either side). It does
+    not place WPBR buys.
+    """
+    band = float(getattr(cfg, "rl_wpbr_overhead_band_pct", 0.0) or 0.0)
+    if band <= 0 or df is None or len(df) == 0:
+        return None
+    try:
+        from wpbr_zones import compute_wpbr_touch_stream
+    except ImportError:
+        from stock_analysis.wpbr_zones import compute_wpbr_touch_stream  # type: ignore
+    stream = compute_wpbr_touch_stream(
+        df,
+        band_pct=0.015,
+        strong_pre_pivot_bars=3,
+        strong_pre_pivot_pct=0.10,
+        strong_post_pivot_bars=3,
+        strong_post_pivot_pct=0.10,
+        strong_pivot_mode="either",
+        breakout_confirmation=0.03,
+        max_days_after_retest=2,
+        merge_overlapping_zones=False,
+    )
+    events = list(stream.get("wpbr_zone_events") or [])
+    if not events:
+        return (
+            np.zeros(0, dtype=np.int32),
+            np.zeros(0, dtype=np.float64),
+            band,
+        )
+    born = np.fromiter(
+        (
+            int(ev.get("activation_bar") if ev.get("activation_bar") is not None else -1)
+            for ev in events
+        ),
+        dtype=np.int32,
+        count=len(events),
+    )
+    lowers = np.fromiter(
+        (
+            float(ev["zone_lower"]) if ev.get("zone_lower") is not None else float("nan")
+            for ev in events
+        ),
+        dtype=np.float64,
+        count=len(events),
+    )
+    return born, lowers, band
+
+
+def _rl_wpbr_overhead_rejects(
+    pack: Optional[tuple[np.ndarray, np.ndarray, float]],
+    *,
+    signal_idx: int,
+    entry_px: float,
+    sma50: float,
+) -> bool:
+    """True when a prior WPBR zone sits overhead of this Rocket Launcher fill.
+
+    The zone's lower edge must be above the signal bar's 50-day simple moving
+    average, strictly above the next-open entry, and no more than the band
+    fraction above that entry. Distance is measured from the entry because
+    Rocket Launcher has no active WPBR entry zone.
+    """
+    if pack is None:
+        return False
+    born, lowers, max_gap = pack
+    if (
+        max_gap <= 0
+        or born.size == 0
+        or entry_px <= 0
+        or not math.isfinite(sma50)
+        or sma50 <= 0
+    ):
+        return False
+    gap = (lowers - entry_px) / entry_px
+    hit = (
+        (born >= 0)
+        & (born < int(signal_idx))
+        & np.isfinite(lowers)
+        & (lowers > sma50)
+        & (lowers > entry_px)
+        & (gap <= max_gap)
+    )
+    return bool(np.any(hit))
+
+
 def _rl_min_retrace_12m_rejects(
     dates: Any,
     highs: Any,
@@ -1239,6 +1328,24 @@ def _rl_effective_stop_pct(
     )
 
 
+def static_rl_target_px(entry_price: float, cfg: Any, *, scale_hit: bool = False) -> float:
+    """Static Rocket Launcher target from the fill. Does not move with SMA50.
+
+    Before the scale-out, target = entry × rl_target_pct (default 1.20, +20%).
+    After that sale, if rl_entry_target_pct > 0, the leftover target is
+    entry × (1 + rl_entry_target_pct) (default +40%).
+    """
+    px = float(entry_price or 0.0)
+    if px <= 0:
+        return 0.0
+    if scale_hit:
+        leftover = float(getattr(cfg, "rl_entry_target_pct", 0.0) or 0.0)
+        if leftover > 0:
+            return px * (1.0 + leftover)
+    mult = float(getattr(cfg, "rl_target_pct", 1.20) or 1.20)
+    return px * mult
+
+
 def partial_remainder_target_px(entry_price: float, cfg: Any) -> float:
     """Remainder target after a partial scale-out (AWK PARTIAL_EXIT_FOLLOW_TARGET).
 
@@ -1279,6 +1386,7 @@ def run_symbol_rl(
     n = bars["n"]
     if n < SMA_50 + cfg.rl_50_sma_lookback + 2:
         return RLSymbolResult([], None, None, None, {}, {})
+    wpbr_overhead = _load_rl_wpbr_overhead(df, cfg)
 
     dates: list[str] = bars["dates"]
     o, h, l, c, vol = bars["o"], bars["h"], bars["l"], bars["c"], bars["vol"]
@@ -1326,6 +1434,7 @@ def run_symbol_rl(
     entry_price = 0.0
     entry_idx = 0
     rl_stop = 0.0
+    rl_prior_high = 0.0
     original_stop = 0.0
     original_target = 0.0
     rl_target = 0.0
@@ -1461,7 +1570,9 @@ def run_symbol_rl(
                 and sma50[y_idx] > 0
             ):
                 if bool(getattr(cfg, "rl_sma_target_off", False)):
-                    # Expansion still uses rl_target_pct; exit TARGET race disabled.
+                    # Expansion still uses rl_target_pct. Keep this at 0 so the
+                    # full-position TARGET race stays off; the open book records
+                    # the static +20% (then leftover) price separately.
                     rl_target = 0.0
                 else:
                     rl_target = float(sma50[y_idx]) * cfg.rl_target_pct
@@ -1512,8 +1623,24 @@ def run_symbol_rl(
             if has_hit_time == 1:
                 time_counter += 1
 
-            # Scale-out + stop ratchet (research). Exclusive of single partial / Trail-1/2.
-            if execute_exit == 0 and scale_ladder:
+            _hwm_act = float(getattr(cfg, "hwm_act_pct", 0.0) or 0.0)
+            _hwm_keep = float(getattr(cfg, "hwm_keep", 0.0) or 0.0)
+            _hwm_on = _hwm_act > 0.0 and _hwm_keep > 0.0
+            # Prior high only. Today's high raises tomorrow's stop.
+            if (
+                _hwm_on
+                and iso != entry_iso
+                and entry_price > 0.0
+                and rl_prior_high >= entry_price * (1.0 + _hwm_act / 100.0) - 1e-9
+            ):
+                _trail_px = entry_price + _hwm_keep * (rl_prior_high - entry_price)
+                if _trail_px > rl_stop:
+                    rl_stop = _trail_px
+                    if rl_trail_active == 0:
+                        rl_trail_active = 1
+
+            # Scale-out + stop ratchet. Off when the research high-water trail is on.
+            if execute_exit == 0 and scale_ladder and not _hwm_on:
                 orig = initial_shares if initial_shares > 0 else rl_inv
                 for si, (gain, sell_frac, stop_gain) in enumerate(scale_ladder):
                     if ladder_done[si] or curr_profit_pct < gain:
@@ -1563,6 +1690,7 @@ def run_symbol_rl(
 
             if (
                 not scale_ladder
+                and not _hwm_on
                 and cfg.rl_trail_profit > 0
                 and rl_trail_active == 0
                 and h[idx] >= entry_price * (1 + cfg.rl_trail_profit)
@@ -1571,6 +1699,7 @@ def run_symbol_rl(
                 rl_stop = entry_price * (1 + cfg.rl_trail_stop)
             if (
                 not scale_ladder
+                and not _hwm_on
                 and cfg.rl_trail_profit2 > 0
                 and h[idx] >= entry_price * (1 + cfg.rl_trail_profit2)
             ):
@@ -1586,8 +1715,13 @@ def run_symbol_rl(
                 entry_target_px = (
                     entry_price * (1.0 + entry_tgt_pct) if entry_tgt_pct > 0 else 0.0
                 )
+                # Research arm: the +40% leftover target is part of the live ladder.
+                if _hwm_on:
+                    entry_target_px = 0.0
                 stop_price = c[idx] if iso == entry_iso else l[idx]
-                if stop_price <= rl_stop:
+                if _hwm_on and iso == entry_iso:
+                    pass
+                elif stop_price <= rl_stop:
                     execute_exit = 1
                     gap_through_stop = float(o[idx]) <= float(rl_stop)
                     # BRT/PVH: gap → fill @open; intraday → fill @stop
@@ -1873,6 +2007,7 @@ def run_symbol_rl(
                 last_exit_idx = idx
                 last_exit_was_target = exit_type == "TARGET"
                 rl_inv = 0.0
+                rl_prior_high = 0.0
                 initial_shares = 0.0
                 rl_max_p = rl_min_p = 0.0
                 rl_trail_active = 0
@@ -1897,6 +2032,8 @@ def run_symbol_rl(
                     sym_hwm = current_trade_val
                 if sym_hwm > 0 and iso > entry_iso:
                     max_sym_dd = max(max_sym_dd, (sym_hwm - current_trade_val) / sym_hwm)
+                if float(getattr(cfg, "hwm_act_pct", 0.0) or 0.0) > 0.0 and h[idx] > rl_prior_high:
+                    rl_prior_high = float(h[idx])
 
         elif cfg.sma_qual and j > SMA_50 + cfg.rl_50_sma_lookback:
             lookback_idx = idx - cfg.rl_50_sma_lookback
@@ -2055,6 +2192,15 @@ def run_symbol_rl(
                 if filters_ok and _rl_min_retrace_12m_rejects(dates, h, l, next_idx, next_open, cfg):
                     filters_ok = False
 
+                signal_sma50 = float(sma50[idx]) if np.isfinite(sma50[idx]) else float("nan")
+                if filters_ok and _rl_wpbr_overhead_rejects(
+                    wpbr_overhead,
+                    signal_idx=idx,
+                    entry_px=next_open,
+                    sma50=signal_sma50,
+                ):
+                    filters_ok = False
+
                 # Post-TARGET re-entry quality / cooldown (modes other than stop_loss).
                 if filters_ok and _rl_post_target_blocks_entry(
                     cfg,
@@ -2068,7 +2214,13 @@ def run_symbol_rl(
                     filters_ok = False
 
                 if emit_last_bar_extras and is_last_bar and filters_ok:
-                    scan_tgt = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 and y_sma > 0 else 0.0
+                    if bool(getattr(cfg, "rl_sma_target_off", False)):
+                        # Last bar of the file: the next open is not in yet. Use the
+                        # trigger close. If a later bar is already present, use that open.
+                        scan_px = next_open if next_open > 0 else float(c[idx])
+                        scan_tgt = static_rl_target_px(scan_px, cfg) if scan_px > 0 else 0.0
+                    else:
+                        scan_tgt = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 and y_sma > 0 else 0.0
                     scan_stop_pct = _rl_effective_stop_pct(
                         cfg,
                         last_exit_idx=last_exit_idx,
@@ -2119,7 +2271,11 @@ def run_symbol_rl(
                         stop_pct=stop_pct,
                     )
                     original_stop = rl_stop
-                    original_target = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 else 0.0
+                    rl_prior_high = float(entry_price)
+                    if bool(getattr(cfg, "rl_sma_target_off", False)):
+                        original_target = static_rl_target_px(entry_price, cfg)
+                    else:
+                        original_target = float(sma50[y_idx]) * cfg.rl_target_pct if y_idx >= 0 else 0.0
                     rl_trail_active = 0
                     has_hit_time = 0
                     time_counter = 0
@@ -2215,7 +2371,16 @@ def run_symbol_rl(
     if rl_inv > 0:
         last_cl = c[-1]
         open_pnl = (rl_inv * last_cl) - cfg.rl_cash
-        dist = (last_cl - entry_price) / (rl_target - entry_price) if rl_target != entry_price else 0.0
+        book_target = rl_target
+        if bool(getattr(cfg, "rl_sma_target_off", False)):
+            if scale_ladder:
+                book_target = static_rl_target_px(
+                    entry_price, cfg, scale_hit=any(ladder_done)
+                )
+            elif not (book_target > 0):
+                book_target = static_rl_target_px(entry_price, cfg)
+        denom = book_target - entry_price
+        dist = (last_cl - entry_price) / denom if denom != 0 else 0.0
         open_row = RLOpenRow(
             symbol=symbol,
             entry_iso=entry_iso,
@@ -2224,7 +2389,7 @@ def run_symbol_rl(
             pnl_pct=(open_pnl / cfg.rl_cash) * 100,
             days_open=n - entry_idx if entry_idx > 0 else 0,
             stop=rl_stop,
-            target=rl_target,
+            target=book_target,
             dist_covered=dist,
             exp_hits=snap.get("exp_hits", 0),
             last_exp=snap.get("last_exp", "0"),

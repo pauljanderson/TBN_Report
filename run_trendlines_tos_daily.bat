@@ -35,32 +35,42 @@ set "LATEST_DIR=drive\paul_studies\trendlines_opens_latest"
 echo [trendlines_tos] stamp=%STAMP% stamp-dir=%STAMP_DIR%
 
 rem --- Collect symbol universe (same as trendlines_daily_publish) ---
+rem Do not `set /p` this list. set /p keeps only the first 1023 characters of
+rem the line. This universe is longer than that and the cut lands on FN, so
+rem FNV and every later symbol never reach the generator. Pass the file.
 set "UNIV_TMP=%TEMP%\trendlines_tos_univ_%TODAY%.txt"
-"%PY%" -c "import sys; sys.path.insert(0,'tools'); from trendlines_opens_universe import collect_opens_universe; from pathlib import Path; syms,_ = collect_opens_universe(Path('drive'), Path('gettarget_positions.csv')); print(','.join(syms))" > "%UNIV_TMP%" 2>&1
+set "UNIV_ERR=%TEMP%\trendlines_tos_univ_%TODAY%.err"
+"%PY%" -c "import sys; sys.path.insert(0,'tools'); from trendlines_opens_universe import collect_opens_universe; from pathlib import Path; syms,_ = collect_opens_universe(Path('drive'), Path('gettarget_positions.csv')); print(','.join(syms))" > "%UNIV_TMP%" 2>"%UNIV_ERR%"
 if errorlevel 1 (
   echo ERROR: failed to collect universe
-  type "%UNIV_TMP%"
+  type "%UNIV_ERR%"
   del "%UNIV_TMP%" 2>nul
+  del "%UNIV_ERR%" 2>nul
   exit /b 1
 )
-set /p SYMBOLS=<"%UNIV_TMP%"
-del "%UNIV_TMP%" 2>nul
-
-if not defined SYMBOLS (
+for %%A in ("%UNIV_TMP%") do set "UNIV_BYTES=%%~zA"
+if "%UNIV_BYTES%"=="0" (
   echo ERROR: empty symbol list from trendlines_opens_universe
+  type "%UNIV_ERR%"
+  del "%UNIV_TMP%" 2>nul
+  del "%UNIV_ERR%" 2>nul
   exit /b 1
 )
-echo [trendlines_tos] universe: %SYMBOLS%
+echo [trendlines_tos] universe file: %UNIV_TMP% ^(%UNIV_BYTES% bytes^)
 
 rem --- Generate ToS .ts files into dated stamp folder ---
 "%PY%" tools\gen_trendlines_tos_studies.py ^
-  --symbols "%SYMBOLS%" ^
+  --symbols-file "%UNIV_TMP%" ^
   --stamp "%STAMP%" ^
   --stamp-dir "%STAMP_DIR%"
 if errorlevel 1 (
   echo ERROR: gen_trendlines_tos_studies.py failed
+  del "%UNIV_TMP%" 2>nul
+  del "%UNIV_ERR%" 2>nul
   exit /b 1
 )
+del "%UNIV_TMP%" 2>nul
+del "%UNIV_ERR%" 2>nul
 
 rem --- Copy/sync .ts files to trendlines_opens_latest\studies\ ---
 if not exist "%LATEST_DIR%\studies" mkdir "%LATEST_DIR%\studies"

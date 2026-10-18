@@ -700,13 +700,14 @@ def build_thinkscript(
     lines: list[str] = [
         f"# {tos_symbol} M/W/D swing trendlines — stamp {stamp}",
         "# Offline fractal-swing lines (Python) frozen as two-point plot segments.",
-        "# Apply on a DAILY chart for this symbol.",
+        "# Apply on any aggregation (1m, 15m, Daily, Weekly). Lines use calendar",
+        "# time, not BarNumber, so both pivot dates do not have to be loaded.",
         f"# Data: {data_note}",
         "# Algorithm: last two confirmed fractal swing highs → resistance;",
         "#            last two confirmed fractal swing lows → support;",
         "#            per TF (daily k=5, weekly k=3, monthly k=2).",
         "# HTF pivots mapped to the daily date that printed the period H/L.",
-        "# Drawing: BarNumber linear interp between d1/d2; extend right of d2.",
+        "# Drawing: calendar-day linear interp between d1/d2; extend right of d2.",
         "# HV6m: AddCloud = High/Low of max-Volume day in last 6 calendar months.",
         f"# VZ HL: house build_zones lookback={VZ_LOOKBACK_DAYS} — engine trigger HL",
         "#       always drawn (Open/Watchlist ZONE_ID) + latest winner if unused;",
@@ -736,6 +737,30 @@ def build_thinkscript(
         "",
     ]
     _emit_label_prelude(lines)
+    lines.extend(
+        [
+            "# Calendar time so the same lines plot on 15m, Daily, and Weekly.",
+            "# BarNumber interpolation only draws when both pivot dates are loaded,",
+            "# and GetYYYYMMDD()==date often misses a daily bar while hitting 15m bars.",
+            "script CivilDays {",
+            "    input ymd = 20200101;",
+            "    def y = Floor(ymd / 10000);",
+            "    def m = Floor((ymd - y * 10000) / 100);",
+            "    def d = ymd - y * 10000 - m * 100;",
+            "    def a = if m <= 2 then 1 else 0;",
+            "    def yy = y + 4800 - a;",
+            "    def mm = m + 12 * a - 3;",
+            "    plot days = Floor(365 * yy + Floor(yy / 4) - Floor(yy / 100) + Floor(yy / 400) + Floor((153 * mm + 2) / 5) + d - 32045);",
+            "}",
+            "",
+            "def barYmd = GetYear() * 10000 + GetMonth() * 100 + GetDayOfMonth(GetYYYYMMDD());",
+            "def barSerial = CivilDays(barYmd);",
+            "def secsFromMidnight = SecondsFromTime(0);",
+            "def dayFrac = if IsNaN(secsFromMidnight) then 0 else secsFromMidnight / 86400;",
+            "def barT = barSerial + dayFrac;",
+            "",
+        ]
+    )
     for tf, (r, g, b) in TF_RGB.items():
         gname = tf.capitalize()
         lines.append(f'DefineGlobalColor("{gname}", CreateColor({r}, {g}, {b}));')
@@ -795,20 +820,15 @@ def build_thinkscript(
         lines.append(
             f"# {label}: {seg.d1.isoformat()} @ {p1}  →  {seg.d2.isoformat()} @ {p2}"
         )
-        lines.append(f"def b{i}Hit1 = GetYYYYMMDD() == {d1};")
-        lines.append(f"def b{i}Hit2 = GetYYYYMMDD() == {d2};")
-        lines.append(f"def b{i}N1 = if b{i}Hit1 then BarNumber() else Double.NaN;")
-        lines.append(f"def b{i}N2 = if b{i}Hit2 then BarNumber() else Double.NaN;")
-        lines.append(f"def b{i}B1 = HighestAll(b{i}N1);")
-        lines.append(f"def b{i}B2 = HighestAll(b{i}N2);")
+        lines.append(f"def t{i}1 = CivilDays({d1});")
+        lines.append(f"def t{i}2 = CivilDays({d2});")
         lines.append(
-            f"def b{i}On = {show_tf} and {show_side} and !IsNaN(b{i}B1) and !IsNaN(b{i}B2) "
-            f"and b{i}B2 != b{i}B1 and GetYYYYMMDD() >= {d1} "
-            f"and (extendRight or GetYYYYMMDD() <= {d2});"
+            f"def on{i} = {show_tf} and {show_side} and t{i}2 != t{i}1 "
+            f"and barYmd >= {d1} and (extendRight or barYmd <= {d2});"
         )
         lines.append(
-            f"plot TL{i} = if b{i}On then {p1} + ({p2} - {p1}) * "
-            f"(BarNumber() - b{i}B1) / (b{i}B2 - b{i}B1) else Double.NaN;"
+            f"plot TL{i} = if on{i} then {p1} + ({p2} - {p1}) * "
+            f"(barT - t{i}1) / (t{i}2 - t{i}1) else Double.NaN;"
         )
         lines.append(f'TL{i}.SetDefaultColor(GlobalColor("{gname}"));')
         lines.append(f"TL{i}.SetLineWeight({weight});")
@@ -987,9 +1007,9 @@ def write_readme(
             "",
             "1. Define an **objective** swing algorithm in Python on OHLC.",
             "2. Freeze the resulting two-point geometry into ThinkScript `plot` "
-            "segments using **BarNumber** linear interpolation (same frozen-geometry "
-            "pattern as RL stop segments / LT zone studies).",
-            "3. Overlay those segments on a **Daily** chart so dates line up.",
+            "segments using **calendar-day** interpolation so the same lines plot "
+            "on 15-minute, Daily, and Weekly charts.",
+            "3. Overlay those segments on any aggregation of that symbol.",
             "4. Add an **HV6m** volume-day High/Low box (frozen `AddCloud`, same date-gate "
             "pattern as zone boxes in `tos/ts_common.py`).",
             "5. Add **house Vol Zone (VZ) HL** overlays matching HTML charts: engine "
@@ -1080,8 +1100,8 @@ def write_readme(
             "For each segment with dates `d1`/`d2` and prices `p1`/`p2`:",
             "",
             "```text",
-            "B1 = BarNumber on d1;  B2 = BarNumber on d2",
-            "price(bar) = p1 + (p2-p1) * (BarNumber - B1) / (B2 - B1)",
+            "t1 = CivilDays(d1);  t2 = CivilDays(d2)",
+            "price(bar) = p1 + (p2-p1) * (barCalendarTime - t1) / (t2 - t1)",
             "```",
             "",
             "Support = firm line; resistance = short dash. Colors: monthly violet, "
@@ -1106,7 +1126,9 @@ def write_readme(
             "1. Open ToS → Charts → Studies → Edit Studies → **Create** (or Import).",
             "2. Paste the contents of the matching `.ts` file (or copy from shared drive).",
             "3. Name it e.g. `Paul TL NVDA MWD`.",
-            "4. Apply on a **Daily** aggregation chart for that symbol.",
+            "4. Apply on any aggregation (15-minute, Daily, Weekly) for that symbol. "
+            "Re-import this file if an older copy was saved; the old script only "
+            "drew when both pivot dates were loaded as bars.",
             "5. Toggles: `showMonthly` / `showWeekly` / `showDaily`, "
             "`showSupport` / `showResistance`, `showLabels`, `extendRight`, "
             "`showHV6m`, `showVzTrigger`, `showVzCurrent`, `showVzNearest`, `showSMA`, "
@@ -1127,7 +1149,7 @@ def write_readme(
         if sym in seen:
             continue
         seen.add(sym)
-        study = r.get("study") or f"{sym}_trendlines_mwd.ts"
+        study = r.get("study") or f"{sym}_trendlines_mwd_Study.ts"
         sym_order.append((sym, study))
     for sym, study in sym_order:
         if sym == "BTC":
@@ -1142,7 +1164,7 @@ def write_readme(
             )
     if not sym_order:
         lines.append(
-            f"| `NVDA_trendlines_mwd.ts` | `data/newdata/data/NVDA.csv` | `NVDA` |"
+            f"| `NVDA_trendlines_mwd_Study.ts` | `data/newdata/data/NVDA.csv` | `NVDA` |"
         )
     lines.extend(
         [
@@ -1153,8 +1175,8 @@ def write_readme(
             "(frozen geometry). SMAs are live.",
             "- Weekly/monthly AggregationPeriod live HTF inside ThinkScript is brittle "
             "across chart types (same lesson as RL closed studies); offline freeze is intentional.",
-            "- If a pivot date is missing on the chart (holiday mapping edge case), that "
-            "segment will not plot (`HighestAll` of BarNumber stays NaN).",
+            "- Lines use calendar time, so a short Daily window still shows them. "
+            "An older imported copy that used BarNumber stays blank on Daily until you replace the script.",
             "- Only the **latest** support + resistance per TF (two pivots each) — not a fan of all historical swings.",
             "- VZ embeds **trigger + latest unused + nearest above/below**, not the full zone history.",
             "- HV6m / VZ need a Volume column; missing/zero volume → no box/zones for that symbol.",
@@ -1362,7 +1384,7 @@ Click column headers to sort.</p>
 <li>HV6m box = High/Low of the max-Volume daily bar in the trailing 6 months (ties → most recent).</li>
 <li>VZ HL = house <code>build_zones</code> ({VZ_LOOKBACK_DAYS}d) — engine <strong>trigger</strong> (Open/Watchlist <code>ZONE_ID</code>) always drawn + latest unused winner + nearest above/below last close.</li>
 <li>SMA20/50/100 = native <code>Average(close, N)</code> (live).</li>
-<li>Use on a <strong>Daily</strong> chart; BarNumber interpolation matches trading bars.</li>
+<li>Same lines on 15-minute, Daily, and Weekly. Drawing is calendar time, not bar count.</li>
 <li>Names: <strong>AddLabel</strong> strip (not mid-chart). Optional <code>showChartBubbles</code> (default <strong>no</strong>) places bubbles at the <strong>far-left</strong> of loaded history — a right-edge clear zone still lands inside a recent-years zoom. Color-key <code>showLegend</code> default <strong>no</strong>.</li>
 </ul>
 </section>
@@ -1560,7 +1582,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         segs = trendlines_for_symbol(df)
         hv6m = find_hv6m_box(df)
         vz = find_vz_overlays(df, trigger_spec=trigger_specs.get(key))
-        ts_name = f"{key}_trendlines_mwd.ts"
+        ts_name = f"{key}_trendlines_mwd_Study.ts"
         ts_path = studies_dir / ts_name
         text = build_thinkscript(
             symbol=key,

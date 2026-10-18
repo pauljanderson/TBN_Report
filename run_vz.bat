@@ -83,6 +83,8 @@ if not defined VZ_REQUIRE_HVN_OVERLAP set "VZ_REQUIRE_HVN_OVERLAP=false"
 if not defined VZ_TRADE_SIDE set "VZ_TRADE_SIDE=long"
 if not defined VZ_COOLDOWN_AFTER_TARGET_DAYS set "VZ_COOLDOWN_AFTER_TARGET_DAYS=10"
 if not defined VZ_AGGRESSIVE set "VZ_AGGRESSIVE=true"
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 12. Explicit VZ_WORKERS wins.
+if not defined VZ_WORKERS if defined DAILYRUN_WORKERS set "VZ_WORKERS=%DAILYRUN_WORKERS%"
 if not defined VZ_WORKERS set "VZ_WORKERS=12"
 
 set "VZ_AGG_FLAG="

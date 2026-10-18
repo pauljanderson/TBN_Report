@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import sys
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
@@ -2593,7 +2594,9 @@ def write_outputs(
         }
     )
     (output_dir / f"{FILE_PREFIX}_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
-    (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
+    # Shared pointer. A DailyRun wave skips it so siblings do not write the same path.
+    if os.environ.get("DAILYRUN_WAVE", "").strip() != "1":
+        (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
     return paths
 
 

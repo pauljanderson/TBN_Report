@@ -56,6 +56,8 @@ if not defined RSI_ENTRY_ON set "RSI_ENTRY_ON=next_open"
 if not defined RSI_SHEET_NOTIONAL set "RSI_SHEET_NOTIONAL=10000"
 if not defined RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER set "RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER=0"
 if not defined RSI_AGGRESSIVE set "RSI_AGGRESSIVE=true"
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 12. Explicit RSI_WORKERS wins.
+if not defined RSI_WORKERS if defined DAILYRUN_WORKERS set "RSI_WORKERS=%DAILYRUN_WORKERS%"
 if not defined RSI_WORKERS set "RSI_WORKERS=12"
 
 set "RSI_AGG_FLAG="

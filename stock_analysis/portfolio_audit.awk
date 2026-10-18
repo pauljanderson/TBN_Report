@@ -27,7 +27,9 @@
 # RL_POST_TARGET_UNDER_SMA20: For mode=under_sma_limit: max depth under SMA20; reject if
 #                      close < SMA20*(1-limit) (default 0.03).
 # RL_TARGET_PCT:     Profit target multiplier (e.g., 1.20 for 20%).
-# RL_SMA_TARGET_OFF: When 1, keep RL_TARGET_PCT for expansion hits but disable SMA TARGET exits.
+# RL_SMA_TARGET_OFF: When 1, keep RL_TARGET_PCT for expansion hits but do not sell
+# at the moving SMA50 envelope. Recorded target is static: entry × RL_TARGET_PCT
+# (+20% at the default 1.20) until the scale-out, then entry × (1 + RL_ENTRY_TARGET_PCT).
 # SMA_QUAL:            Toggle for SMA Qualifier (1=On, 0=Off).
 # INSTRUMENT:          If set (e.g. 1), enables throughput instrumentation (instrument.txt, per-symbol timing). Default: 0.
 # RL_INPUT_MANIFEST:   Optional path to a text file (one input CSV path per line, UTF-8). When set by run_audit.ps1,
@@ -1501,7 +1503,15 @@ function perform_audit(sym) {
                               }
                               if (j == d_ptr[sym]) {
                                     pred_iso_scan = dates[sym, j - 1]
-                                    scan_tgt = (pred_iso_scan != "" && sma50[pred_iso_scan] > 0) ? (sma50[pred_iso_scan] * RL_TARGET_PCT) : 0
+                                    nxop_scan_early = (next_day_iso != "" && raw_op[sym, next_day_iso] > 0) ? raw_op[sym, next_day_iso] : 0
+                                    # Last bar: next open is not in the file. Use the trigger close.
+                                    if (RL_SMA_TARGET_OFF + 0) {
+                                        if (nxop_scan_early > 0)
+                                            scan_tgt = nxop_scan_early * RL_TARGET_PCT
+                                        else
+                                            scan_tgt = raw_cl[sym, iso] * RL_TARGET_PCT
+                                    } else
+                                        scan_tgt = (pred_iso_scan != "" && sma50[pred_iso_scan] > 0) ? (sma50[pred_iso_scan] * RL_TARGET_PCT) : 0
                                     entry_bar_idx_scan = j + 1
                                     stop_pct_scan = RL_STOP_PCT + 0
                                     pt_mode_scan = tolower(RL_POST_TARGET_REENTRY_MODE)
@@ -1561,7 +1571,10 @@ function perform_audit(sym) {
                                     entry_prev_pl_pr[sym] = (prev_pivot_low_price[sym, next_day_iso] != "") ? prev_pivot_low_price[sym, next_day_iso] + 0 : ""
                                     entry_close = raw_cl[sym, iso]
                                     rl_close_to_high = 1 - ((raw_hi[sym, iso] - raw_cl[sym, iso]) / (raw_hi[sym, iso] - raw_lo[sym, iso]))
-                                    original_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
+                                    if ((RL_SMA_TARGET_OFF + 0) && rl_entry_p[sym] > 0)
+                                        original_target = rl_entry_p[sym] * RL_TARGET_PCT
+                                    else
+                                        original_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
                                     current_target[sym] = rl_entry_p[sym] * (1 + RL_EXIT_PERCENT)
                                     original_stop = rl_stop
                                     partial_exit_date[sym] = ""
@@ -2004,11 +2017,24 @@ function perform_audit(sym) {
       if (rl_inv > 0) {
             last_cl = raw_cl[sym, dates[sym, d_ptr[sym]]]
             _open_val = (rl_inv * last_cl) - RL_CASH
-            distance_covered_to_target = (last_cl-rl_entry_p[sym])/(rl_target-rl_entry_p[sym])
+            book_tgt = rl_target
+            if ((RL_SMA_TARGET_OFF + 0) && rl_entry_p[sym] > 0) {
+                if (n_ladder > 0) {
+                    book_tgt = rl_entry_p[sym] * RL_TARGET_PCT
+                    if (ladder_done[sym, 1] == 1 && (RL_ENTRY_TARGET_PCT + 0) > 0)
+                        book_tgt = rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)
+                } else if (!(book_tgt > 0)) {
+                    book_tgt = rl_entry_p[sym] * RL_TARGET_PCT
+                }
+            }
+            if (book_tgt != rl_entry_p[sym])
+                distance_covered_to_target = (last_cl-rl_entry_p[sym])/(book_tgt-rl_entry_p[sym])
+            else
+                distance_covered_to_target = 0
             
             if (_open_val > 0) { rl_open_wins++; rl_val_open_wins += _open_val }
             else { rl_open_losses++; rl_val_open_losses += _open_val }
-            rl_open_list[++rl_open_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f%%,%d,50-trigger,%.2f,%.2f,%.4f,%.0f,%s,%s", sym, rl_entry_iso[sym], rl_entry_p[sym], last_cl, (_open_val/RL_CASH)*100, (d_ptr[sym] - rl_entry_idx[sym]), rl_stop, rl_target, distance_covered_to_target, entry_hist_hits[sym], entry_hist_exp[sym], entry_hist_reset[sym])
+            rl_open_list[++rl_open_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f%%,%d,50-trigger,%.2f,%.2f,%.4f,%.0f,%s,%s", sym, rl_entry_iso[sym], rl_entry_p[sym], last_cl, (_open_val/RL_CASH)*100, (d_ptr[sym] - rl_entry_idx[sym]), rl_stop, book_tgt, distance_covered_to_target, entry_hist_hits[sym], entry_hist_exp[sym], entry_hist_reset[sym])
       }
       # Persistence for 100-day Open trades
       if (rl100_inv > 0) {

@@ -6,6 +6,7 @@ Report / Audit / EquityCurve). Host: ``rocket_tbn.py``.
 from __future__ import annotations
 
 import csv
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, replace
@@ -193,6 +194,7 @@ WRL_OPEN_HEADER = [
     "SWING_LOW",
     "WATCH_DATE",
     "SIGNAL_DATE",
+    "PNL_DOLLARS",
 ]
 
 WRL_WATCHLIST_HEADER = [
@@ -794,13 +796,18 @@ def write_wrl_outputs(
     with open_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(WRL_OPEN_HEADER)
+        slot_cash = float(getattr(cfg, "brt_cash", 0) or 0)
         for r in open_rows:
+            entry = float(r["entry_price"] or 0)
+            cur = float(r["current_price"] or 0)
+            # Same house dummy as Closed: shares = brt_cash / entry (post host scale).
+            pnl_d = (slot_cash / entry) * (cur - entry) if entry > 0 else 0.0
             w.writerow(
                 [
                     r["symbol"],
                     r["date_opened"],
-                    f"{r['entry_price']:.4f}",
-                    f"{r['current_price']:.4f}",
+                    f"{entry:.4f}",
+                    f"{cur:.4f}",
                     f"{r['pnl_pct']:.4f}",
                     r["days_open"],
                     f"{r['stop']:.4f}",
@@ -812,6 +819,7 @@ def write_wrl_outputs(
                     f"{r['swing_low']:.4f}",
                     r["watch_date"],
                     r["signal_date"],
+                    f"{pnl_d:.2f}",
                 ]
             )
 
@@ -1138,7 +1146,9 @@ def write_wrl_outputs(
             dest.write_bytes(src.read_bytes())
 
     (output_dir / "WRL_last_run_ts.txt").write_text(ts + "\n", encoding="utf-8")
-    (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
+    # Shared pointer. A DailyRun wave skips it so siblings do not write the same path.
+    if os.environ.get("DAILYRUN_WAVE", "").strip() != "1":
+        (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
     return {
         "closed": closed_path,
         "open": open_path,

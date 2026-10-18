@@ -42,6 +42,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from report_page_extras import ENSURE_TABLE_WRAP_JS, RESPONSIVE_TABLE_CSS  # noqa: E402
+
 _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
@@ -109,11 +114,12 @@ th.sortable-th:hover { background:#e2e8f0; }
 th.sortable-th .sort-ind::after { content:" \\2195"; opacity:0.35; font-size:0.85em; }
 th.sortable-th.sort-asc .sort-ind::after { content:" \\2191"; opacity:0.9; }
 th.sortable-th.sort-desc .sort-ind::after { content:" \\2193"; opacity:0.9; }
-"""
+""" + "\n" + RESPONSIVE_TABLE_CSS
 
 _SORTABLE_TABLE_SCRIPT = """
 <script>
 (function () {
+""" + ENSURE_TABLE_WRAP_JS + """
   function parseSortValue(text, type) {
     var s = String(text || "").trim();
     if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;

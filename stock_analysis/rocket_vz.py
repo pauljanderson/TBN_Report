@@ -213,6 +213,10 @@ WATCH_HEADER = [
     "ZONE_KIND",
     "ZONE_LO",
     "ZONE_HI",
+    # Aliases matching TBN scanner dialect (investment report / shared zone columns)
+    "ZONE_LOW",
+    "ZONE_HIGH",
+    "BREAK_DATE",
     "POC",
     "HVN $",
     "HVN pass?",
@@ -1077,6 +1081,11 @@ def vz_closed_to_brt_trade(r: dict[str, Any]) -> Any:
     except ImportError:
         from stock_analysis.rocket_tbn import BRTTrade  # type: ignore
 
+    _zhi = r.get("ZONE_HI")
+    try:
+        _zone_high = float(_zhi) if _zhi not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        _zone_high = 0.0
     t = BRTTrade(
         symbol=str(r["SYMBOL"]).upper(),
         side=str(r.get("SIDE") or "LONG").upper(),
@@ -1092,6 +1101,8 @@ def vz_closed_to_brt_trade(r: dict[str, Any]) -> Any:
         pnl_dollars=float(r.get("PNL_DOLLARS") or 0.0),
         max_price=float(r.get("MAX_PRICE") or r.get("ENTRY_PRICE") or 0.0),
         zone_low=float(r.get("ZONE_LO") or 0.0),
+        zone_high=_zone_high if _zone_high == _zone_high else 0.0,
+        wpbr_zone_id=str(r.get("ZONE_ID") or ""),
         touch_count=int(r.get("TOUCH_COUNT_ALL") or 0),
         breakout_date=str(r.get("BREAK_DATE") or ""),
         days_since_breakout=int(r.get("BARS_AFTER_BREAK") or 0)
@@ -1571,6 +1582,9 @@ def write_outputs(
                     str(r.get("ZONE_KIND", "") or ""),
                     r.get("ZONE_LO", ""),
                     r.get("ZONE_HI", ""),
+                    r.get("ZONE_LO", ""),  # ZONE_LOW alias
+                    r.get("ZONE_HI", ""),  # ZONE_HIGH alias
+                    r.get("BREAK_DATE", ""),
                     poc_s,
                     hvn_s,
                     pass_s,
@@ -1903,7 +1917,9 @@ def write_outputs(
             flush=True,
         )
     (output_dir / f"{FILE_PREFIX}_last_run_ts.txt").write_text(stamp + "\n", encoding="utf-8")
-    (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
+    # Shared pointer. A DailyRun wave skips it so siblings do not write the same path.
+    if os.environ.get("DAILYRUN_WAVE", "").strip() != "1":
+        (output_dir / "last_run_ts.txt").write_text(stamp, encoding="utf-8")
     paths["closed"] = closed_path
     paths["open"] = open_path
     paths["watchlist"] = watch_path

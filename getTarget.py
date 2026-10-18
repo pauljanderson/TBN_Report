@@ -1438,37 +1438,67 @@ def compute_price_only_payload(
     }
 
 
-def compute_wrl_system(
-    sym: str,
-    df: pd.DataFrame,
-    entry_ts: pd.Timestamp,
-    entry_price: float,
-    entry_src: str,
-    as_of_effective: pd.Timestamp,
+_WRL_OPEN_BY_SYMBOL: Optional[dict[str, dict[str, str]]] = None
+
+
+def _wrl_open_csv_path() -> Path:
+    return Path(__file__).resolve().parent / "drive" / "WRL_LatestRun_Open.csv"
+
+
+def _load_wrl_open_by_symbol() -> dict[str, dict[str, str]]:
+    """Latest WRL open book. Locked swing levels live on these rows for the life of the trade."""
+    global _WRL_OPEN_BY_SYMBOL
+    if _WRL_OPEN_BY_SYMBOL is not None:
+        return _WRL_OPEN_BY_SYMBOL
+    path = _wrl_open_csv_path()
+    found: dict[str, dict[str, str]] = {}
+    if path.exists():
+        frame = pd.read_csv(path, dtype=str)
+        frame.columns = [str(c).strip().upper() for c in frame.columns]
+        for rec in frame.to_dict(orient="records"):
+            sym = str(rec.get("SYMBOL", "") or "").strip().upper()
+            if sym:
+                found[sym] = {str(k): "" if v is None else str(v) for k, v in rec.items()}
+    _WRL_OPEN_BY_SYMBOL = found
+    return found
+
+
+def _wrl_float(row: dict[str, str], *keys: str) -> Optional[float]:
+    for key in keys:
+        raw = str(row.get(key, "") or "").strip()
+        if not raw:
+            continue
+        try:
+            val = float(raw)
+        except ValueError:
+            continue
+        if math.isfinite(val):
+            return val
+    return None
+
+
+def _wrl_dash_date(raw: object) -> str:
+    s = str(raw or "").strip().replace("-", "")[:8]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return str(raw or "").strip()
+
+
+def _wrl_levels_payload(
     *,
-    entry_in_data: bool = True,
+    entry_src: str,
+    entry_in_data: bool,
+    as_of_effective: Optional[pd.Timestamp],
+    target_price: float,
+    stop_initial: float,
+    range_high: float,
+    range_low: float,
+    swing_high: float,
+    swing_low: float,
+    level_source: str,
+    watch_date: str,
+    note: str,
 ) -> dict[str, Any]:
-    """Weekly Range / Swing (WRL) levels frozen from the completed-week structure as of entry.
-
-    House default 2026-09-22: TargetPrice = swing high (sell 100%). Stop = swing low.
-    Target2Price is unused on the live swing book. RangeHigh stays on the row so a
-    leftover scale lot can still see last week's high.
-    """
-    try:
-        from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
-    except ImportError:
-        from wrl_zones import attach_daily_levels, levels_for_bar  # type: ignore
-
-    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[:entry_ts]
-    if hist is None or len(hist) < 15:
-        return {"error": f"{sym}: insufficient history for WRL levels"}
-    _weekly, swings, week_idx = attach_daily_levels(hist)
-    bar = len(hist) - 1
-    lv = levels_for_bar(swings, week_idx, bar)
-    if lv is None:
-        return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
-    target_price = float(lv.swing_high)
-    stop_initial = float(lv.swing_low)
     return {
         "System": "WRL",
         "EntrySource": entry_src,
@@ -1479,10 +1509,13 @@ def compute_wrl_system(
         "Target2Price": None,
         "StopInitial": stop_initial,
         "StopTrailing": stop_initial,
-        "RangeHigh": float(lv.range_high),
-        "RangeLow": float(lv.range_low),
-        "SwingHigh": float(lv.swing_high),
-        "SwingLow": float(lv.swing_low),
+        "RangeHigh": range_high,
+        "RangeLow": range_low,
+        "SwingHigh": swing_high,
+        "SwingLow": swing_low,
+        "WrlLevelSource": level_source,
+        "WrlWatchDate": watch_date or None,
+        "WrlNote": note,
         "atr_target": None,
         "atr_stop": None,
         "atr_increment": 0.0,
@@ -1493,6 +1526,165 @@ def compute_wrl_system(
         "SMA50": None,
         "AsOfDate": str(as_of_effective.date()) if as_of_effective is not None else None,
     }
+
+
+def _wrl_payload_from_open_file(
+    sym: str,
+    entry_src: str,
+    entry_in_data: bool,
+    as_of_effective: Optional[pd.Timestamp],
+) -> Optional[dict[str, Any]]:
+    row = _load_wrl_open_by_symbol().get(str(sym).strip().upper())
+    if not row:
+        return None
+    stop = _wrl_float(row, "STOP_LOSS", "STOP")
+    target = _wrl_float(row, "TARGET")
+    swing_high = _wrl_float(row, "SWING_HIGH")
+    swing_low = _wrl_float(row, "SWING_LOW")
+    range_high = _wrl_float(row, "RANGE_HIGH")
+    range_low = _wrl_float(row, "RANGE_LOW")
+    if stop is None:
+        stop = swing_low
+    if target is None:
+        target = swing_high
+    if swing_high is None:
+        swing_high = target
+    if swing_low is None:
+        swing_low = stop
+    if None in (stop, target, range_high, range_low, swing_high, swing_low):
+        return None
+    watch = _wrl_dash_date(row.get("WATCH_DATE"))
+    return _wrl_levels_payload(
+        entry_src=entry_src,
+        entry_in_data=entry_in_data,
+        as_of_effective=as_of_effective,
+        target_price=float(target),
+        stop_initial=float(stop),
+        range_high=float(range_high),
+        range_low=float(range_low),
+        swing_high=float(swing_high),
+        swing_low=float(swing_low),
+        level_source="open_file",
+        watch_date=watch,
+        note="Locked WRL levels from drive/WRL_LatestRun_Open.csv (trigger watch day).",
+    )
+
+
+def _latest_wrl_trigger_levels(
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+):
+    """Most recent watch day at or before entry whose next session breaks out.
+
+    Returns (levels, watch_timestamp) or None. Levels stay frozen on that watch day.
+    """
+    try:
+        from stock_analysis.wrl_zones import (
+            attach_daily_levels,
+            breakout_up_from_demand,
+            close_in_demand_zone,
+            levels_for_bar,
+        )
+    except ImportError:
+        from wrl_zones import (  # type: ignore
+            attach_daily_levels,
+            breakout_up_from_demand,
+            close_in_demand_zone,
+            levels_for_bar,
+        )
+
+    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[df.index <= entry_ts]
+    if hist is None or len(hist) < 16:
+        return None
+    _weekly, swings, week_idx = attach_daily_levels(hist)
+    opens = hist["Open"].to_numpy(dtype=float)
+    highs = hist["High"].to_numpy(dtype=float)
+    closes = hist["Close"].to_numpy(dtype=float)
+    for brk in range(len(hist) - 1, 0, -1):
+        watch_i = brk - 1
+        lv = levels_for_bar(swings, week_idx, watch_i)
+        if lv is None:
+            continue
+        if not close_in_demand_zone(float(closes[watch_i]), lv):
+            continue
+        if breakout_up_from_demand(float(opens[brk]), float(highs[brk]), lv):
+            return lv, pd.Timestamp(hist.index[watch_i])
+    return None
+
+
+def compute_wrl_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """Weekly Range / Swing (WRL) levels.
+
+    WRL stop/target come from the trigger watch day (open file if the symbol is open),
+    not from the purchase date's latest completed week.
+
+    House default 2026-09-22: TargetPrice = swing high (sell 100%). Stop = swing low.
+    Limit price stays the stop. RangeHigh / RangeLow are the watch-day prior-week range.
+    The typed entry price is unchanged. If no watch exists at or before the purchase
+    date and the symbol is not open, fall back to the purchase date's latest completed
+    week and label that row so a manual symbol is not a silent made-up watch.
+    """
+    locked = _wrl_payload_from_open_file(sym, entry_src, entry_in_data, as_of_effective)
+    if locked is not None:
+        return locked
+
+    try:
+        from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
+    except ImportError:
+        from wrl_zones import attach_daily_levels, levels_for_bar  # type: ignore
+
+    trigger = _latest_wrl_trigger_levels(df, entry_ts)
+    if trigger is not None:
+        lv, watch_ts = trigger
+        return _wrl_levels_payload(
+            entry_src=entry_src,
+            entry_in_data=entry_in_data,
+            as_of_effective=as_of_effective,
+            target_price=float(lv.swing_high),
+            stop_initial=float(lv.swing_low),
+            range_high=float(lv.range_high),
+            range_low=float(lv.range_low),
+            swing_high=float(lv.swing_high),
+            swing_low=float(lv.swing_low),
+            level_source="watch_day",
+            watch_date=str(pd.Timestamp(watch_ts).date()),
+            note="WRL levels frozen on the trigger watch day (close in the demand zone; next session broke out).",
+        )
+
+    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[df.index <= entry_ts]
+    if hist is None or len(hist) < 15:
+        return {"error": f"{sym}: insufficient history for WRL levels"}
+    _weekly, swings, week_idx = attach_daily_levels(hist)
+    bar = len(hist) - 1
+    lv = levels_for_bar(swings, week_idx, bar)
+    if lv is None:
+        return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
+    return _wrl_levels_payload(
+        entry_src=entry_src,
+        entry_in_data=entry_in_data,
+        as_of_effective=as_of_effective,
+        target_price=float(lv.swing_high),
+        stop_initial=float(lv.swing_low),
+        range_high=float(lv.range_high),
+        range_low=float(lv.range_low),
+        swing_high=float(lv.swing_high),
+        swing_low=float(lv.swing_low),
+        level_source="purchase_date_latest_week",
+        watch_date="",
+        note=(
+            "No WRL watch at or before the purchase date. "
+            "Stop and target are the purchase date's latest completed week, not a system trigger."
+        ),
+    )
 
 
 def compute_position_payload(
@@ -2411,6 +2603,15 @@ def main() -> None:
             extra += f" [SMA50={_format_dollar(row_out.get('SMA50'))}]"
         if row_out.get("SignalLow") is not None:
             extra += f" [signal_low={_format_dollar(row_out.get('SignalLow'))}]"
+        if system == "WRL":
+            extra += (
+                f" [wrl {payload.get('WrlLevelSource')}"
+                f" watch={payload.get('WrlWatchDate') or '—'}"
+                f" RH={_format_dollar(row_out.get('RangeHigh'))}"
+                f" RL={_format_dollar(row_out.get('RangeLow'))}]"
+            )
+            if payload.get("WrlLevelSource") == "purchase_date_latest_week":
+                extra += f" [{payload.get('WrlNote')}]"
         if system == "VZ" and row_out.get("vz_zone_lo") is not None:
             extra += (
                 f" [vz zone.lo={_format_dollar(row_out.get('vz_zone_lo'))}"
