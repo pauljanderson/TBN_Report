@@ -2,8 +2,9 @@
 """Generate the historical system and $500k allocation GitHub Pages report.
 
 Live sleeve list comes from tools/dailyrun_system_status.live_wired_systems()
-(DailyRun registry), not a frozen tuple. RSI (Relative Strength Index) is the
-house pin / LatestRun / rsi_universe.csv book — never RSIN_PaulScore5_IS.
+(DailyRun registry), plus PERFORMANCE_EXTRA_SYSTEMS (deprecated IND). RSI
+(Relative Strength Index) is the house pin / LatestRun / rsi_universe.csv book —
+never RSIN_PaulScore5_IS.
 """
 from __future__ import annotations
 
@@ -26,11 +27,28 @@ DEFAULT_OUTPUT = ROOT / "docs" / "system_performance.html"
 DRIVE_LATEST_NAME = "System_Performance_Latest.html"
 ET = ZoneInfo("America/New_York")
 
+# Deprecated sleeves still shown on historical performance (same as monthly /
+# investment). Not DailyRun-wired — leave wired=False in DAILYRUN_REGISTRY.
+_PERFORMANCE_EXTRA_SYSTEMS = ("IND",)
+
 # Fallback only if the DailyRun registry helper cannot be imported.
-# Keep RSI here so a missing import cannot drop the sleeve again.
-_FALLBACK_ACTIVE_SYSTEMS = ("BRT", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
+# Keep RSI / IND here so a missing import cannot drop those sleeves again.
+_FALLBACK_ACTIVE_SYSTEMS = (
+    "BRT",
+    "IND",
+    "RL",
+    "YH",
+    "MTS",
+    "WPBR",
+    "RS",
+    "SB",
+    "VZ",
+    "RSI",
+    "WRL",
+)
 LABELS: dict[str, str] = {
     "SPY": "SPY ($500k buy-and-hold)",
+    "IND": "IND (Indicators / Trend Condition, deprecated)",
     "RS": "RS (Relative Strength vs SPY)",
     "SB": "SB (StockBee)",
     "VZ": "VZ (Volume Zone)",
@@ -42,6 +60,7 @@ LABELS: dict[str, str] = {
 }
 COLORS = {
     "BRT": "#2563eb",
+    "IND": "#b45309",
     "RL": "#7c3aed",
     "MTS": "#0891b2",
     "WPBR": "#d97706",
@@ -83,23 +102,51 @@ def _dailyrun_status_mod():
     return mod
 
 
-def live_performance_systems() -> tuple[str, ...]:
-    """Wired DailyRun sleeves in report order.
+def _merge_performance_systems(
+    wired: Iterable[str],
+    report_order: Optional[Iterable[str]] = None,
+    extras: Iterable[str] = _PERFORMANCE_EXTRA_SYSTEMS,
+) -> tuple[str, ...]:
+    """Wired DailyRun sleeves plus explicit performance extras (e.g. IND).
 
-    Source of truth: tools/dailyrun_system_status.live_wired_systems().
-    To put a new system on this page: wire it in DailyRun.bat and
-    DAILYRUN_REGISTRY / REPORT_ORDER. Deprecated IND and research-only
-    stamps (RSIN, MVCP) stay out until they are wired. WRL is DailyRun-wired
+    Order follows REPORT_ORDER when available, then any remaining wired ids,
+    then extras not already listed.
+    """
+    wired_list = [str(s).upper() for s in wired if str(s).strip()]
+    extra_list = [str(s).upper() for s in extras if str(s).strip()]
+    wanted = {*(wired_list), *extra_list}
+    if not wanted:
+        return ()
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for sys in list(report_order or ()) + wired_list + extra_list:
+        key = str(sys).upper()
+        if key not in wanted or key in seen:
+            continue
+        ordered.append(key)
+        seen.add(key)
+    return tuple(ordered)
+
+
+def live_performance_systems() -> tuple[str, ...]:
+    """Historical-performance sleeves in report order.
+
+    Base set: tools/dailyrun_system_status.live_wired_systems().
+    Also includes _PERFORMANCE_EXTRA_SYSTEMS (deprecated IND) when Closed
+    books still exist — same coverage as monthly / investment. Research-only
+    stamps (RSIN, MVCP) stay out until DailyRun-wired. WRL is DailyRun-wired
     (official 6-sys mix) — not gold.
     """
     try:
         mod = _dailyrun_status_mod()
-        if mod is not None and hasattr(mod, "live_wired_systems"):
-            systems = tuple(str(s).upper() for s in mod.live_wired_systems())
-            if systems:
-                return systems
-        if mod is not None and hasattr(mod, "wired_system_ids"):
-            systems = tuple(str(s).upper() for s in mod.wired_system_ids())
+        if mod is not None:
+            wired: tuple[str, ...] = ()
+            if hasattr(mod, "live_wired_systems"):
+                wired = tuple(str(s).upper() for s in mod.live_wired_systems())
+            elif hasattr(mod, "wired_system_ids"):
+                wired = tuple(str(s).upper() for s in mod.wired_system_ids())
+            order = getattr(mod, "REPORT_ORDER", None)
+            systems = _merge_performance_systems(wired, report_order=order)
             if systems:
                 return systems
     except Exception:
@@ -200,6 +247,23 @@ def _house_closed(drive: Path, system: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
+def _newest_stamped_closed(drive: Path, system: str) -> Optional[Path]:
+    """Newest PREFIX_Closed_YYMMDDHHMMSS.csv (for deprecated extras without LatestRun)."""
+    sys = system.upper()
+    stamped = re.compile(rf"^{re.escape(sys)}_Closed_(\d{{12}})\.csv$", re.I)
+    best: Optional[Path] = None
+    best_ts = ""
+    for path in drive.glob(f"{sys}_Closed_*.csv"):
+        m = stamped.match(path.name)
+        if not m:
+            continue
+        ts = m.group(1)
+        if ts > best_ts:
+            best_ts = ts
+            best = path
+    return best
+
+
 def resolve_closed_path(drive: Path, system: str) -> Optional[Path]:
     """One closed book per sleeve. House pin first for VZ / RSI; no newest-glob."""
     sys = system.upper()
@@ -221,6 +285,9 @@ def resolve_closed_path(drive: Path, system: str) -> Optional[Path]:
         )
         if mirrors:
             return mirrors[0]
+    # Deprecated performance extras (IND) may only have stamped Closed left.
+    if sys in _PERFORMANCE_EXTRA_SYSTEMS:
+        return _newest_stamped_closed(drive, sys)
     return None
 
 
@@ -1570,9 +1637,10 @@ def build_report(drive: Path, output: Path = DEFAULT_OUTPUT) -> tuple[Path, dict
     rec = scenario_stats["Recommended"]
     rsi_house_ts = _read_ts_file(drive / "RSI_house_last_run_ts.txt") if "RSI" in systems else None
     missing_note = (
-        f"<div class='notice'><strong>Wired but not on this page yet:</strong> "
+        f"<div class='notice'><strong>Wanted but not on this page yet:</strong> "
         f"{html.escape(', '.join(missing_systems))} (no LatestRun / house Closed book). "
-        "They will appear after the first DailyRun copy.</div>"
+        "Wired sleeves appear after the next DailyRun copy; deprecated IND needs an "
+        "<code>IND_LatestRun_Closed.csv</code> (or last stamped Closed) on Drive.</div>"
         if missing_systems
         else ""
     )
@@ -1636,7 +1704,7 @@ th.sortable-th{{cursor:pointer;user-select:none;white-space:nowrap}} th.sortable
 {sections}
 <section id="method"><h2>Methodology &amp; caveats</h2><ul>
 <li><strong>Live-style $250k vs S&amp;P 500:</strong> the top section is the official <strong>6-sleeve</strong> compound wallet (SB / RSI / VZ / MTS / RL / WRL; stamp <code>risk_1pct_50k_adv_17name_20260917</code> lids, name cap 17.5%) using official shares × house Closed fill prices. DailyRun wire / official mix change — not gold. Parent 5-vs-6 was HOLD on quality (6-sys more $, Max DD 10.4%→17.2%, WR/Avg/PF softened). The old 5-sys pin is leftover in the year-path table. The <em>realistic vs S&amp;P 500 (SPY)</em> headline turns $7,500/mo wires off (those are 2026 personal transfers). Allocation / standalone Closed rows below stay on house dummy notionals for reconcile.</li>
-<li><strong>Live systems:</strong> sleeves come from <code>tools/dailyrun_system_status.live_wired_systems()</code> (DailyRun registry). Add a new system there and in DailyRun.bat — this page picks it up on the next generate. Deprecated IND and research-only stamps (including RSIN_PaulScore5_IS) stay off until they are DailyRun-wired. Weekly Range / Swing (WRL) is DailyRun-wired on the 29-name house universe.</li>
+<li><strong>Live systems:</strong> sleeves come from <code>tools/dailyrun_system_status.live_wired_systems()</code> (DailyRun registry) plus deprecated <strong>IND</strong> for historical Closed comparison (same as monthly / investment; DailyRun step still skipped). Add a new wired system there and in DailyRun.bat — this page picks it up on the next generate. Research-only stamps (including RSIN_PaulScore5_IS) stay off until they are DailyRun-wired. Weekly Range / Swing (WRL) is DailyRun-wired on the 29-name house universe.</li>
 <li><strong>RSI (Relative Strength Index):</strong> house book only — <code>RSI_house_last_run_ts.txt</code>{f" ({rsi_house_ts})" if rsi_house_ts else ""} / <code>RSI_LatestRun_Closed.csv</code> / <code>drive/universes/rsi_universe.csv</code> (149 names). Not RS (Relative Strength vs SPY). Not a research ALL-universe replay.</li>
 <li><strong>Capital basis:</strong> position notional is inferred as |dollar P&amp;L ÷ percentage P&amp;L|; RL uses its native $47,500 sizing. Each denominator is that system's observed peak overlapping gross notional. Scaling allocation ÷ basis preserves trade economics and proportionally reduces all simultaneous positions when a sleeve is smaller than its standalone basis.</li>
 <li><strong>Common period:</strong> begins at the latest first-open date and ends at the earliest last-close date among {', '.join(systems)}. Only trades opened and closed inside it are used. The $500k allocation chart is a single aligned series: sleeves and SPY on that chart share {common_start}–{common_end}.</li>
