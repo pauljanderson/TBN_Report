@@ -41,6 +41,9 @@ SCOPES = (
     "playlist-read-private",
     "playlist-modify-private",
     "playlist-modify-public",
+    # Used by report_spotify_year_playlists.py (shared token cache).
+    "user-top-read",
+    "user-read-recently-played",
 )
 
 # Playlist display names for --name-style spaced (user default).
