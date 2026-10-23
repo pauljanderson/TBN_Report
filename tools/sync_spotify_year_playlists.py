@@ -4,7 +4,7 @@
 Buckets (per album released in --year):
   1 liked track  -> "{year} light"
   2-3 liked      -> "{year} medium"
-  4+ liked      -> "heavy {year}"
+  4+ liked      -> "{year} heavy"
 
 Each playlist is filled with *all* tracks from albums in that bucket (not only
 the liked ones). Re-run after likes/unlikes; contents are replaced to match.
@@ -47,7 +47,7 @@ SCOPES = (
 SPACED_NAMES = {
     "light": "{year} light",
     "medium": "{year} medium",
-    "heavy": "heavy {year}",
+    "heavy": "{year} heavy",
 }
 # Matches tools/organize_spotify_playlists.py CSV task naming.
 UNDERSCORE_NAMES = {
@@ -321,7 +321,7 @@ def self_test() -> None:
     assert release_year("") is None
 
     names = playlist_names(2026, "spaced")
-    assert names == {"light": "2026 light", "medium": "2026 medium", "heavy": "heavy 2026"}
+    assert names == {"light": "2026 light", "medium": "2026 medium", "heavy": "2026 heavy"}
     assert playlist_names(2026, "underscore")["heavy"] == "2026_heavy"
 
     a1 = AlbumBucket("a", "Album", "Artist", "2026-01-01", {"t1"})
@@ -352,7 +352,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--name-style",
         choices=("spaced", "underscore"),
         default="spaced",
-        help='Playlist names: spaced="2026 light" / "heavy 2026" (default); '
+        help='Playlist names: spaced="2026 light" / "2026 medium" / "2026 heavy" (default); '
         'underscore="2026_light" (matches CSV organizer)',
     )
     parser.add_argument(
