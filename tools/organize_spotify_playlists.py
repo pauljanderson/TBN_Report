@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Create read-only Spotify playlist add/remove tasks from CSV exports."""
+"""Create read-only Spotify playlist add/remove tasks from CSV exports.
+
+For a live Spotify API sync of the same light/medium/heavy rules, see
+tools/sync_spotify_year_playlists.py (run_sync_spotify_year_playlists.bat).
+"""
 
 from __future__ import annotations
 
