@@ -13,6 +13,9 @@ Rules:
      the matching engine Closed row has already exited (stop / target / time /
      gap, including same-day buy+stop). Flag an immediate pending sell so the
      live book can catch up (e.g. SB ALGM stopped out while still held).
+  5) Profit lock (optional) — open winners at/through target, or ≥ trim / full
+     unlock % unrealized: recommend trim or sell to lock gains (not a system
+     exit rule; investment-report action only).
 """
 from __future__ import annotations
 
@@ -43,6 +46,11 @@ DEFAULT_SB_NO_FT_DAYS = 3
 # VZ research freeze zone_atr05_ts40.
 DEFAULT_VZ_TIME_STOP_DAYS = 40
 DEFAULT_VZ_APPROACH_BARS = 3
+
+# Profit-lock suggestions for open winners (investment report).
+PROFIT_LOCK_TRIM_PCT = 8.0
+PROFIT_LOCK_FULL_PCT = 15.0
+PROFIT_LOCK_TARGET_FRAC = 0.5  # ≥50% of entry→target move also triggers trim
 
 
 @dataclass
@@ -833,6 +841,96 @@ def find_pending_system_closed_sells(
     return pending, as_of
 
 
+def profit_lock_action(
+    *,
+    entry: float,
+    current: float,
+    target: Optional[float] = None,
+    trim_pct: float = PROFIT_LOCK_TRIM_PCT,
+    full_pct: float = PROFIT_LOCK_FULL_PCT,
+    target_frac: float = PROFIT_LOCK_TARGET_FRAC,
+) -> Optional[tuple[str, str]]:
+    """Return (exit_reason, sell_when) for an open winner, or None if no lock yet."""
+    if entry is None or current is None or entry <= 0 or current <= 0:
+        return None
+    gain_pct = (current / entry - 1.0) * 100.0
+    if gain_pct <= 0:
+        return None
+    at_target = False
+    halfway = False
+    if target is not None and target > entry:
+        span = target - entry
+        if span > 0:
+            progress = (current - entry) / span
+            at_target = current >= target - 1e-9
+            halfway = progress >= target_frac
+    if at_target or gain_pct >= full_pct:
+        return (
+            f"Profit lock — sell (gain {gain_pct:+.1f}%"
+            + ("; at/through target" if at_target else "")
+            + ")",
+            "Sell now (market / limit near last) to lock gains",
+        )
+    if halfway or gain_pct >= trim_pct:
+        return (
+            f"Profit lock — trim 50% (gain {gain_pct:+.1f}%"
+            + ("; ≥50% to target" if halfway else "")
+            + ")",
+            "Sell half now; trail stop on the rest to entry or higher",
+        )
+    return None
+
+
+def find_profit_lock_sells(
+    open_lots: list,
+    *,
+    as_of_date: date,
+    get_quote,  # (lot) -> tuple[entry, current, optional target]
+    trim_pct: float = PROFIT_LOCK_TRIM_PCT,
+    full_pct: float = PROFIT_LOCK_FULL_PCT,
+    target_frac: float = PROFIT_LOCK_TARGET_FRAC,
+) -> list[PendingSell]:
+    """Build pending-sell rows for open winners that should lock profits."""
+    pending: list[PendingSell] = []
+    for lot in open_lots:
+        try:
+            entry, current, target = get_quote(lot)
+        except Exception:
+            continue
+        action = profit_lock_action(
+            entry=float(entry or 0),
+            current=float(current or 0),
+            target=float(target) if target not in (None, "") else None,
+            trim_pct=trim_pct,
+            full_pct=full_pct,
+            target_frac=target_frac,
+        )
+        if action is None:
+            continue
+        reason, when = action
+        sym = str(getattr(lot, "symbol", "") or "").strip().upper()
+        sys_u = str(getattr(lot, "system", "") or "").strip().upper()
+        entry_d = getattr(lot, "buy_date", None)
+        if not sym or entry_d is None:
+            continue
+        days = (as_of_date - entry_d).days if hasattr(entry_d, "year") else None
+        pending.append(
+            PendingSell(
+                symbol=sym,
+                system=sys_u,
+                entry_date=entry_d,
+                as_of_date=as_of_date,
+                exit_reason=reason,
+                sell_when=when,
+                entry_price=float(entry),
+                current_price=float(current),
+                days_held=days,
+            )
+        )
+    pending.sort(key=lambda x: (x.system, x.symbol, x.exit_reason))
+    return pending
+
+
 def find_all_pending_sells(
     *,
     positions_path: Path,
@@ -841,11 +939,13 @@ def find_all_pending_sells(
     as_of_date: Optional[date] = None,
     data_dir: Path = DEFAULT_DATA_DIR,
     thresholds: Optional[dict[str, float]] = None,
+    profit_locks: Optional[list[PendingSell]] = None,
 ) -> tuple[list[PendingSell], dict[str, float], dict[str, int], date]:
-    """Merge system-closed + low-vol + time-based pending sells.
+    """Merge system-closed + low-vol + time-based (+ optional profit-lock) sells.
 
     System-closed wins per (symbol, system, entry): the engine already exited
-    that lot, so a separate time/low-vol flag for the same live hold is redundant.
+    that lot, so a separate time/low-vol/profit-lock flag for the same live hold
+    is redundant.
     """
     closed_pending, as_of_closed = find_pending_system_closed_sells(
         positions_path=positions_path,
@@ -872,7 +972,7 @@ def find_all_pending_sells(
     pending = list(closed_pending)
     seen_lots = {(p.symbol, p.system, p.entry_date) for p in pending}
     seen = {(p.symbol, p.system, p.entry_date, p.exit_reason) for p in pending}
-    for p in list(low_vol) + list(timed):
+    for p in list(low_vol) + list(timed) + list(profit_locks or []):
         lot = (p.symbol, p.system, p.entry_date)
         if lot in seen_lots:
             continue
@@ -991,14 +1091,16 @@ def sell_report_html_section(
         "watch this section after each DailyRun / investment report refresh. "
         "Low-vol BRT/IND exits: next session open when REL_VOL_AT_ENTRY &lt; threshold. "
         "If the engine already closed a lot (stop/target/time) but gettarget still shows "
-        "you holding it — including same-day buy+stop — it appears here as an immediate sell."
+        "you holding it — including same-day buy+stop — it appears here as an immediate sell. "
+        f"Profit lock: trim 50% at ≥{PROFIT_LOCK_TRIM_PCT:g}% unrealized (or ≥50% of the way "
+        f"to target); sell to lock at ≥{PROFIT_LOCK_FULL_PCT:g}% or at/through target."
     )
     if not pending:
         return f"""
 <section>
 <h2>Pending sells</h2>
 <p class="small">{thr_note}</p>
-<p>No open positions currently flagged for system-closed, low-vol, or time-based exits.</p>
+<p>No open positions currently flagged for system-closed, low-vol, time-based, or profit-lock exits.</p>
 <p class="small">{rule_note}</p>
 </section>
 """

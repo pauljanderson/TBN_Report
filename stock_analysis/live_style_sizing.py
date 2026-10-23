@@ -8,10 +8,18 @@ Locked freeze (Paul 2026-09-17 — stamp risk_1pct_50k_adv_17name_20260917):
   notional ≤ 17.5% × current equity (minus already-open notional in that name)
   RSI invested = risk_dollar / 0.06509607  (IS average-loss freeze; do not retune OOS)
 
+Book-guard overlay (2026-10-23 — after live −$200k reconciliation; stamp
+book_guard_25k_8name_20261023) applied on top of the freeze for live Suggested
+shares / getTarget:
+
+  notional ≤ $25,000 per new buy
+  max 8 distinct open names (allotment ranks extras → SKIP / NONE if full)
+  open cost basis ≤ 100% of current equity
+
 Live buy size applies to every getTarget / DailyRun system (RS, BRT, YH, WPBR,
 WRL, CS, MVCP, IND, and the official 6-sys sleeve SB / RSI / VZ / MTS / RL / WRL).
-The 6-sys compound-wallet backtest is a separate freeze — do not skip shares
-because a name is outside that sleeve. Old 5-sys pin is leftover only.
+The 6-sys compound-wallet backtest keeps the pre-guard freeze — do not skip
+shares because a name is outside that sleeve. Old 5-sys pin is leftover only.
 Engine Closed CSVs stay on house dummy notionals for reconcile — this module is
 for live buy size (getTarget / investment report / watchlist Suggested shares).
 
@@ -20,6 +28,7 @@ Index: drive/paul_experiments/LIVE_STYLE_FREEZE.md
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -35,6 +44,7 @@ REPO = Path(__file__).resolve().parents[1]
 ACCOUNT_JSON = REPO / "drive" / "live_style_account.json"
 OHLCV_DIR = REPO / "data" / "newdata" / "data"
 FREEZE_STAMP = "risk_1pct_50k_adv_17name_20260917"
+BOOK_GUARD_STAMP = "book_guard_25k_8name_20261023"
 
 # --- Locked freeze knobs (do not retune casually) ---
 RISK_FRAC = 0.01
@@ -48,6 +58,24 @@ ACCOUNT_START = 250_000.0
 WITHDRAW_MONTHLY = 7_500.0
 MARGIN_RATE = 0.105
 LEVERAGE = 2.0
+# --- Book-guard lids (live Suggested shares / getTarget; wallet HTML unchanged) ---
+MAX_NOTIONAL_PER_TRADE = 25_000.0
+MAX_OPEN_NAMES = 8
+MAX_GROSS_LONG_FRAC = 1.0
+# Fill-order preference when ranking surplus triggers (official wallet first).
+ALLOT_SYSTEM_RANK = (
+    "RL",
+    "MTS",
+    "SB",
+    "VZ",
+    "RSI",
+    "WRL",
+    "BRT",
+    "YH",
+    "WPBR",
+    "RS",
+    "IND",
+)
 # Every getTarget system — not only the official 6-sys compound-wallet sleeve.
 GETTARGET_SYSTEMS = frozenset(
     {"RL", "BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS", "WRL", "VZ", "RSI"}
@@ -105,12 +133,16 @@ class SizeResult:
 def freeze_dict() -> dict[str, Any]:
     return {
         "stamp": FREEZE_STAMP,
+        "book_guard_stamp": BOOK_GUARD_STAMP,
         "risk": "min(1% BOM equity, $50000)",
         "risk_frac": RISK_FRAC,
         "max_risk_dollar": MAX_RISK_DOLLAR,
         "adv_frac": ADV_FRAC,
         "adv_window": ADV_WINDOW,
         "name_cap_frac": NAME_CAP_FRAC,
+        "max_notional_per_trade": MAX_NOTIONAL_PER_TRADE,
+        "max_open_names": MAX_OPEN_NAMES,
+        "max_gross_long_frac": MAX_GROSS_LONG_FRAC,
         "rsi_avg_loss_frac": RSI_AVG_LOSS_FRAC,
         "rsi_avg_loss_pct_freeze": RSI_AVG_LOSS_PCT_FREEZE,
         "systems": sorted(GETTARGET_SYSTEMS),
@@ -174,7 +206,9 @@ def ensure_account_json(path: Path = ACCOUNT_JSON) -> AccountState:
             asof=date.today().isoformat(),
             notes=(
                 "Edit bom_equity (1st-of-month) and current_equity for live share sizing. "
-                "BOM drives risk = min(1%, $50k). Current equity drives the 17.5% name lid."
+                "BOM drives risk = min(1%, $50k). Current equity drives the 17.5% name lid. "
+                f"Book guard {BOOK_GUARD_STAMP}: max ${MAX_NOTIONAL_PER_TRADE:,.0f}/buy, "
+                f"≤{MAX_OPEN_NAMES} open names."
             ),
             source="bootstrap",
         )
@@ -523,14 +557,23 @@ def size_trade(
         base.binding_lid = "name_cap"
         return base
 
-    shares = min(shares_risk, shares_adv, shares_name)
+    # 4) Book-guard: hard $ notional lid per new buy
+    shares_max_n = (
+        MAX_NOTIONAL_PER_TRADE / entry_f if entry_f > 0 else 0.0
+    )
+    base.details["shares_max_notional"] = shares_max_n
+    base.details["max_notional_per_trade"] = MAX_NOTIONAL_PER_TRADE
+
+    shares = min(shares_risk, shares_adv, shares_name, shares_max_n)
     if shares <= 0 or not math.isfinite(shares):
         base.skip_reason = "bad_size"
         return base
 
     # Binding lid label
     eps = 1e-9
-    if abs(shares - shares_name) <= eps * max(1.0, shares_name):
+    if abs(shares - shares_max_n) <= eps * max(1.0, shares_max_n):
+        lid = "max_notional"
+    elif abs(shares - shares_name) <= eps * max(1.0, shares_name):
         lid = "name_cap"
     elif abs(shares - shares_adv) <= eps * max(1.0, shares_adv):
         lid = "adv"
@@ -703,6 +746,274 @@ def enrich_scan_dataframe(
     work["ADV20"] = adv_c
     work["SIZE_LID"] = lid_c
     return work
+
+
+def _parse_notional_mid(raw: object) -> float:
+    """Best-effort mid notional from Suggested $ cell ('12,345' or '10,000–12,000')."""
+    text = str(raw or "").strip().replace("$", "").replace(",", "")
+    if not text or text in {"—", "-", "nan", "None"}:
+        return 0.0
+    if "–" in text or "-" in text:
+        parts = re.split(r"[–-]", text)
+        vals: list[float] = []
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            try:
+                vals.append(float(p))
+            except ValueError:
+                continue
+        return sum(vals) / len(vals) if vals else 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _row_is_sized(shares_raw: object) -> bool:
+    text = str(shares_raw or "").strip()
+    return bool(text) and text not in {"—", "-", "nan", "None", "0"}
+
+
+def _scan_symbol(row: Mapping[str, Any]) -> str:
+    return str(row.get("SYMBOL", row.get("Symbol", ""))).strip().upper()
+
+
+def _allot_rank_key(system: str, row: Mapping[str, Any]) -> tuple:
+    """Higher is better. Official wallet fill-order first, then quality proxies."""
+    sys_u = str(system).strip().upper()
+    try:
+        sys_rank = -ALLOT_SYSTEM_RANK.index(sys_u)
+    except ValueError:
+        sys_rank = -len(ALLOT_SYSTEM_RANK)
+    rr = _fnum(row.get("REWARD_RISK") or row.get("reward_risk")) or 0.0
+    ind_diff = _fnum(row.get("IND_DIFF")) or 0.0
+    ind_score = _fnum(row.get("IND_SCORE")) or 0.0
+    adv_raw = str(row.get("ADV20", "")).replace(",", "")
+    adv = _fnum(adv_raw) or 0.0
+    return (sys_rank, rr, ind_diff, ind_score, adv)
+
+
+def _clear_suggested(work: pd.DataFrame, idx: Any, *, rec: str, lid: str) -> None:
+    work.at[idx, "BUY_REC"] = rec
+    work.at[idx, "SUGGESTED_SHARES"] = "—"
+    work.at[idx, "SUGGESTED_NOTIONAL"] = "—"
+    work.at[idx, "SIZE_LID"] = lid
+
+
+def allot_scan_buys(
+    scans: Mapping[str, pd.DataFrame],
+    *,
+    open_symbols: set[str] | frozenset[str],
+    open_gross_notional: float,
+    current_equity: float,
+    max_open_names: int = MAX_OPEN_NAMES,
+    max_gross_frac: float = MAX_GROSS_LONG_FRAC,
+) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    """Rank surplus scanner triggers into TAKE / SKIP / NONE under book-guard capacity.
+
+    Returns copies of each scan frame with BUY_REC set. Non-TAKE sized rows have
+    Suggested shares cleared. When the book is already at max names or gross long,
+    every new trigger is NONE (recommend no buys).
+    """
+    open_syms = {str(s).strip().upper() for s in open_symbols if str(s).strip()}
+    slots_left = max(0, int(max_open_names) - len(open_syms))
+    gross_cap = max_gross_frac * max(float(current_equity), 0.0)
+    gross_room = max(0.0, gross_cap - max(float(open_gross_notional), 0.0))
+    book_full = slots_left <= 0 or gross_room < MIN_DEPLOY
+
+    out: dict[str, pd.DataFrame] = {}
+    # (rank_key, system, idx, symbol, notional, shares_txt)
+    pool: list[tuple[tuple, str, Any, str, float, str]] = []
+
+    for sys_code, df in scans.items():
+        sys_u = str(sys_code).strip().upper()
+        if df is None or getattr(df, "empty", True):
+            out[sys_u] = df
+            continue
+        work = df.copy()
+        work["BUY_REC"] = "—"
+        out[sys_u] = work
+        for idx, row in work.iterrows():
+            sym = _scan_symbol(row)
+            if not sym or not _row_is_sized(row.get("SUGGESTED_SHARES")):
+                continue
+            if sym in open_syms:
+                _clear_suggested(
+                    work, idx, rec="SKIP (already open)", lid="already_open"
+                )
+                continue
+            if book_full:
+                _clear_suggested(
+                    work, idx, rec="NONE (book full)", lid="book_full"
+                )
+                continue
+            notion = _parse_notional_mid(row.get("SUGGESTED_NOTIONAL"))
+            pool.append(
+                (
+                    _allot_rank_key(sys_u, row),
+                    sys_u,
+                    idx,
+                    sym,
+                    notion,
+                    str(row.get("SUGGESTED_SHARES") or ""),
+                )
+            )
+
+    take_keys: set[tuple[str, Any]] = set()
+    taken_syms: set[str] = set()
+    deployed = 0.0
+    take_list: list[dict[str, Any]] = []
+    for _rank, sys_u, idx, sym, notion, shares_txt in sorted(
+        pool, key=lambda c: c[0], reverse=True
+    ):
+        if sym in taken_syms or sym in open_syms:
+            continue
+        if len(take_keys) >= slots_left:
+            break
+        use_n = notion if notion > 0 else MIN_DEPLOY
+        if deployed + use_n > gross_room + 1e-6:
+            continue
+        take_keys.add((sys_u, idx))
+        taken_syms.add(sym)
+        deployed += use_n
+        out[sys_u].at[idx, "BUY_REC"] = "TAKE"
+        take_list.append(
+            {
+                "symbol": sym,
+                "system": sys_u,
+                "rec": "TAKE",
+                "shares": shares_txt,
+                "notional": notion,
+            }
+        )
+
+    skip_list: list[dict[str, Any]] = []
+    for _rank, sys_u, idx, sym, notion, _shares in pool:
+        if (sys_u, idx) in take_keys:
+            continue
+        work = out[sys_u]
+        # May already be book_full / already_open from first pass.
+        if str(work.at[idx, "BUY_REC"]).startswith(("NONE", "SKIP")):
+            skip_list.append(
+                {
+                    "symbol": sym,
+                    "system": sys_u,
+                    "rec": str(work.at[idx, "BUY_REC"]),
+                    "notional": 0.0,
+                }
+            )
+            continue
+        _clear_suggested(
+            work, idx, rec="SKIP (over allotment)", lid="over_allotment"
+        )
+        skip_list.append(
+            {
+                "symbol": sym,
+                "system": sys_u,
+                "rec": "SKIP (over allotment)",
+                "notional": 0.0,
+            }
+        )
+
+    # Collect already-open / book-full skips that never entered the pool.
+    for sys_u, work in out.items():
+        if work is None or getattr(work, "empty", True):
+            continue
+        for idx, row in work.iterrows():
+            rec = str(row.get("BUY_REC", "—"))
+            if not rec.startswith(("SKIP (already", "NONE")):
+                continue
+            sym = _scan_symbol(row)
+            if any(s["symbol"] == sym and s["system"] == sys_u for s in skip_list):
+                continue
+            skip_list.append(
+                {"symbol": sym, "system": sys_u, "rec": rec, "notional": 0.0}
+            )
+
+    summary: dict[str, Any] = {
+        "book_guard_stamp": BOOK_GUARD_STAMP,
+        "max_open_names": int(max_open_names),
+        "open_names": len(open_syms),
+        "slots_left": int(slots_left),
+        "open_gross_notional": float(open_gross_notional),
+        "gross_cap": float(gross_cap),
+        "gross_room": float(gross_room),
+        "book_full": bool(book_full),
+        "max_notional_per_trade": float(MAX_NOTIONAL_PER_TRADE),
+        "take": take_list,
+        "skip": skip_list,
+        "take_count": len(take_list),
+        "skip_count": len(skip_list),
+    }
+    return out, summary
+
+
+def format_allotment_html(summary: Mapping[str, Any]) -> str:
+    """Investment-report callout: which new buys to take under book-guard capacity."""
+    esc = html.escape
+    open_n = int(summary.get("open_names", 0) or 0)
+    max_n = int(summary.get("max_open_names", MAX_OPEN_NAMES) or MAX_OPEN_NAMES)
+    slots = int(summary.get("slots_left", 0) or 0)
+    max_notion = float(summary.get("max_notional_per_trade", MAX_NOTIONAL_PER_TRADE) or 0)
+    gross_room = float(summary.get("gross_room", 0) or 0)
+    book_full = bool(summary.get("book_full"))
+    take = list(summary.get("take") or [])
+    skip = list(summary.get("skip") or [])
+    guard = esc(str(summary.get("book_guard_stamp") or BOOK_GUARD_STAMP))
+
+    if book_full:
+        body = (
+            f"<p><strong>Recommend NONE.</strong> Book is full "
+            f"({open_n}/{max_n} names open, or gross long room "
+            f"${gross_room:,.0f}). Do not add new buys until a name is closed "
+            f"or equity rises.</p>"
+        )
+    elif not take and not skip:
+        body = (
+            "<p>No sized scanner/watchlist triggers right now. "
+            "Nothing to allot.</p>"
+        )
+    else:
+        take_bits = (
+            ", ".join(
+                f"<strong>{esc(str(t['symbol']))}</strong> "
+                f"({esc(str(t['system']))}, "
+                f"{esc(str(t.get('shares') or '—'))} sh / "
+                f"~${float(t.get('notional') or 0):,.0f})"
+                for t in take
+            )
+            if take
+            else "<em>none</em>"
+        )
+        skip_bits = (
+            ", ".join(
+                f"{esc(str(s['symbol']))} "
+                f"({esc(str(s['system']))}: {esc(str(s['rec']))})"
+                for s in skip[:24]
+            )
+            if skip
+            else "<em>none</em>"
+        )
+        if skip and len(skip) > 24:
+            skip_bits += f", … +{len(skip) - 24} more"
+        body = (
+            f"<p><strong>Take ({len(take)} of {slots} slot"
+            f"{'' if slots == 1 else 's'} left):</strong> {take_bits}</p>"
+            f"<p class='small'><strong>Skip:</strong> {skip_bits}</p>"
+        )
+
+    return f"""
+<div class="ask" id="buy-allotment" style="margin:16px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fdba74;border-radius:10px;">
+<h2 style="margin:0 0 8px;font-size:1.05rem;color:#9a3412;">Buy allotment (book guard)</h2>
+<p class="small" style="margin:0 0 8px;">Stamp <code>{guard}</code> · max {max_n} names ·
+max ${max_notion:,.0f}/buy · open cost ≤ 100% equity · open now {open_n}/{max_n} ·
+gross room ${gross_room:,.0f}. Scanner <strong>Buy?</strong> column matches this list;
+SKIP/NONE rows show Suggested shares as —.</p>
+{body}
+</div>
+"""
 
 
 # --- Published-page helpers (investment / monthly / system_performance) ---
