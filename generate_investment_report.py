@@ -22,7 +22,8 @@ Data sources:
   - Per-system Closed CSVs supply Prior avg days held (mean DAYS_HELD) on scanner/watchlist rows
   - Live-style Suggested shares on every Scanner/Watchlist (BRT/IND/RL/YH/MTS/WPBR/RS/SB/VZ/RSI)
     (stock_analysis/live_style_sizing.py + drive/live_style_account.json):
-    risk=min(1% BOM equity, $50k), shares≤1% ADV20, notional≤17.5% current equity.
+    risk=min(1% BOM equity, $50k), shares≤1% ADV20, notional≤17.5% current equity,
+    plus book guard max $25k/buy and ≤8 open names with TAKE/SKIP/NONE allotment.
     Engine Closed CSVs stay on house dummy notionals for reconcile.
 
 Personal vs system (open book):
@@ -59,6 +60,8 @@ import pandas as pd
 
 from sell_report_lib import (
     find_all_pending_sells,
+    find_profit_lock_sells,
+    profit_lock_action,
     sell_report_html_section,
     write_sell_report_csv,
 )
@@ -73,15 +76,25 @@ from vec_zones import hvn_gate_fields_at_bar
 
 try:
     from live_style_sizing import (  # type: ignore
+        BOOK_GUARD_STAMP as _BOOK_GUARD_STAMP,
+        MAX_NOTIONAL_PER_TRADE as _MAX_NOTIONAL_PER_TRADE,
+        MAX_OPEN_NAMES as _MAX_OPEN_NAMES,
+        allot_scan_buys as _allot_scan_buys,
         enrich_scan_dataframe as _enrich_live_style_scan,
         ensure_account_json as _ensure_live_style_account,
+        format_allotment_html as _format_allotment_html,
         open_notional_by_symbol as _open_notional_by_symbol,
         risk_dollar as _live_style_risk_dollar,
     )
 except ImportError:
     from stock_analysis.live_style_sizing import (  # type: ignore
+        BOOK_GUARD_STAMP as _BOOK_GUARD_STAMP,
+        MAX_NOTIONAL_PER_TRADE as _MAX_NOTIONAL_PER_TRADE,
+        MAX_OPEN_NAMES as _MAX_OPEN_NAMES,
+        allot_scan_buys as _allot_scan_buys,
         enrich_scan_dataframe as _enrich_live_style_scan,
         ensure_account_json as _ensure_live_style_account,
+        format_allotment_html as _format_allotment_html,
         open_notional_by_symbol as _open_notional_by_symbol,
         risk_dollar as _live_style_risk_dollar,
     )
@@ -2785,6 +2798,7 @@ _SCAN_COL_LABELS = {
     "CLOSE_FOR_RSI_LT_60": "Close for RSI&lt;60",
     "RANGE_FOR_ATR_PCT_GE_5": "Range for ATR%≥5",
     "RANGE_TODAY": "Range today",
+    "BUY_REC": "Buy?",
     "SUGGESTED_SHARES": "Suggested shares (range until fill)",
     "SUGGESTED_NOTIONAL": "Suggested $",
     "RISK_DOLLAR": "Risk $",
@@ -4273,12 +4287,18 @@ def build_report(
             continue
         r = _gettarget_row_for_lot(open_df, lot)
         zone_cells = _open_zone_cells(lot)
+        action_txt = "—"
         if r is not None:
             entry = float(lot.buy_price)
             cur = float(r["CurrentPrice"])
             gain_pct = (cur / entry - 1.0) * 100.0 if entry else float("nan")
             pnl_d = (cur - entry) * lot.qty
             open_gain_total += pnl_d
+            tgt_raw = r["TargetPrice"] if "TargetPrice" in r.index else None
+            tgt = float(tgt_raw) if pd.notna(tgt_raw) else None
+            lock = profit_lock_action(entry=entry, current=cur, target=tgt)
+            if lock is not None:
+                action_txt = lock[0]
             open_rows.append(
                 [
                     _symbol_link(lot.symbol),
@@ -4322,6 +4342,7 @@ def build_report(
                             else ""
                         )
                     ),
+                    action_txt,
                     *zone_cells,
                 ]
             )
@@ -4338,11 +4359,29 @@ def build_report(
                     "—",
                     "",
                     "",
+                    action_txt,
                     *zone_cells,
                 ]
             )
     open_footer = (
-        ["Total", "", "", "", "", "", "", _fmt_money(open_gain_total), "", "", "", "", "", "", ""]
+        [
+            "Total",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            _fmt_money(open_gain_total),
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
         if open_rows
         else None
     )
@@ -4427,6 +4466,7 @@ def build_report(
                 "MUST_OPEN_ABOVE",
                 "MUST_OPEN_AT_OR_BELOW",
                 "MAX_RISK_PCT",
+                "BUY_REC",
                 "SUGGESTED_SHARES",
                 "SUGGESTED_NOTIONAL",
                 "RISK_DOLLAR",
@@ -4549,9 +4589,14 @@ def build_report(
 
     # Official live-style Suggested shares — every DailyRun/getTarget scanner, not only 5-sys.
     live_acct = _ensure_live_style_account()
-    open_notional = _open_notional_by_symbol(
-        [lot for key, lot in open_agg.items() if key in open_keys]
-    )
+    _open_lots_for_size = [lot for key, lot in open_agg.items() if key in open_keys]
+    open_notional = _open_notional_by_symbol(_open_lots_for_size)
+    open_gross_notional = float(sum(open_notional.values()))
+    open_symbols = {
+        str(lot.symbol).strip().upper()
+        for lot in _open_lots_for_size
+        if str(getattr(lot, "symbol", "") or "").strip()
+    }
     _live_scan_asof = date.today()
     _scan_enrich = {
         "IND": ind_scan,
@@ -4575,6 +4620,14 @@ def build_report(
             data_dir=DEFAULT_OHLCV_DATA_DIR,
             asof=_live_scan_asof,
         )
+    _scan_enrich, allot_summary = _allot_scan_buys(
+        _scan_enrich,
+        open_symbols=open_symbols,
+        open_gross_notional=open_gross_notional,
+        current_equity=live_acct.current_equity,
+        max_open_names=_MAX_OPEN_NAMES,
+    )
+    allotment_html = _format_allotment_html(allot_summary)
     ind_scan = _scan_enrich["IND"]
     brt_scan = _scan_enrich["BRT"]
     rl_scan = _scan_enrich["RL"]
@@ -4592,7 +4645,11 @@ def build_report(
         f"risk = min(1% BOM equity, $50k) = "
         f"${live_risk:,.0f} (BOM ${live_acct.bom_equity:,.0f}); "
         f"shares ≤ 1% ADV20; notional ≤ 17.5% of current equity "
-        f"(${live_acct.current_equity:,.0f}). Edit drive/live_style_account.json. "
+        f"(${live_acct.current_equity:,.0f}); "
+        f"book guard {_BOOK_GUARD_STAMP} caps each new buy at "
+        f"${_MAX_NOTIONAL_PER_TRADE:,.0f} and at most {_MAX_OPEN_NAMES} open names "
+        f"(open cost ≤ 100% equity). See Buy allotment for TAKE / SKIP / NONE. "
+        f"Edit drive/live_style_account.json. "
         f"Suggested shares are a fill-band range until the order fills; "
         f"getTarget locks exact shares after the paid price. "
         f"Engine Closed PnL still uses house dummy notionals for reconcile."
@@ -4634,10 +4691,29 @@ def build_report(
         reward_risk=True,
     )
 
+    def _profit_lock_quote(lot: Lot) -> tuple[float, float, Optional[float]]:
+        r = _gettarget_row_for_lot(open_df, lot)
+        entry = float(lot.buy_price)
+        if r is None:
+            return entry, entry, None
+        cur = float(r["CurrentPrice"]) if pd.notna(r["CurrentPrice"]) else entry
+        tgt = (
+            float(r["TargetPrice"])
+            if "TargetPrice" in r.index and pd.notna(r["TargetPrice"])
+            else None
+        )
+        return entry, cur, tgt
+
+    profit_lock_pending = find_profit_lock_sells(
+        [open_agg[k] for k in open_keys if k in open_agg],
+        as_of_date=date.today(),
+        get_quote=_profit_lock_quote,
+    )
     pending_sells, sell_thresholds, sell_time_params, sell_as_of = find_all_pending_sells(
         positions_path=positions_path,
         gettarget_path=gettarget_path,
         drive_dir=drive_dir,
+        profit_locks=profit_lock_pending,
     )
     sell_section_html = sell_report_html_section(
         pending_sells,
@@ -4784,7 +4860,7 @@ def build_report(
     dailyrun_status_html = _dailyrun_status_section_html(drive_dir)
     live_size_html = f"""
 <div class="ask live-size">
-  <h2>Live buy size (official)</h2>
+  <h2>Live buy size (official + book guard)</h2>
   <p>{html_mod.escape(live_size_note)}</p>
   <p class="small">Suggested shares appear on every Scanner/Watchlist — Breakout (BRT),
   Industry (IND), Rocket Launcher (RL), Year-High (YH), Magic Touch (MTS),
@@ -4793,12 +4869,16 @@ def build_report(
   — not only the official 6-sys sleeve.
   Suggested shares are a <strong>range until fill</strong> (next-open band, day’s high–low,
   or last close ± ATR). getTarget prints the exact share count after the paid price.
-  Size lid = which rule bound the size (risk_1pct / risk_50k / adv / name_cap); a
+  Size lid = which rule bound the size (risk_1pct / risk_50k / adv / name_cap /
+  <strong>max_notional</strong>); a
   <code>range:</code> prefix means the two fill-band edges bound differently.
   Average Daily Volume (ADV20) = 20-session mean volume. Beginning-of-month (BOM) equity
   from <code>drive/live_style_account.json</code>. Freeze stamp
-  <code>risk_1pct_50k_adv_17name_20260917</code> (name cap <strong>17.5%</strong>; 10% was the prior research freeze).</p>
-</div>"""
+  <code>risk_1pct_50k_adv_17name_20260917</code> (name cap <strong>17.5%</strong>) plus
+  book guard <code>{html_mod.escape(_BOOK_GUARD_STAMP)}</code>
+  (max <strong>${_MAX_NOTIONAL_PER_TRADE:,.0f}</strong>/buy, ≤{_MAX_OPEN_NAMES} names).</p>
+</div>
+{allotment_html}"""
 
     filter_script = (
         _SYSTEM_FILTER_SCRIPT.replace("__METRICS_JSON__", json.dumps(metrics_by_key))
@@ -4951,8 +5031,8 @@ details.closed-fold[open] > summary .fold-shut {{ display:none; }}
 
 <section>
 <h2>Open Positions</h2>
-<p class="small">Open is one row per symbol+system: average cost across add-on buys, first buy date. Trims reduce shares only (no Closed row) until remaining shares hit zero. Rows come from <code>gettarget_positions.csv</code> (system purchases) plus any other open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. Relative Strength Index (RSI) Target/Stop are implied what-if closes (RSI&gt;=70 / roll8); fill is still next open. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
-<div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop","Zone low","Zone center","Zone high","Zone id","Breakout / zone date"], open_rows, ["text","text","date","num","num","date","num","num","num","num","num","num","num","text","date"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
+<p class="small">Open is one row per symbol+system: average cost across add-on buys, first buy date. Trims reduce shares only (no Closed row) until remaining shares hit zero. Rows come from <code>gettarget_positions.csv</code> (system purchases) plus any other open lots ≥ {_fmt_money(min_position_value)} that are not listed in <code>personal_holdings_exclude.csv</code> or <code>sold_symbols_blocklist.csv</code>. Sold blocklist permanently hides a ticker from Open (even if a stub Fidelity export or engine map would resurrect it) until you delete it from the blocklist and re-add gettarget. Older buys are recovered from sibling Accounts_History exports when the newest file is a partial re-download. Prices refresh via yfinance when stale (&gt;{STALE_PRICE_MINUTES} min) during 9:30 AM–5:00 PM ET; after 5 PM ET/weekends uses {gettarget_path.name}. Target/stop from getTarget. <strong>Action</strong> flags profit-lock trim/sell when unrealized ≥8% (or ≥50% of the way to target) / ≥15% or at target — also listed under Pending sells. Relative Strength Index (RSI) Target/Stop are implied what-if closes (RSI&gt;=70 / roll8); fill is still next open. Tickers in Open, Scanner, and Watchlist link to that symbol’s <a href="{TRENDLINES_CHART_HREF}">trendline chart</a>.</p>
+<div class="table-wrap">{_html_table(["Symbol","System","Buy Date","Entry","Current","Price As Of (ET)","Gain/Loss %","Gain/Loss $","Target","Stop","Action","Zone low","Zone center","Zone high","Zone id","Breakout / zone date"], open_rows, ["text","text","date","num","num","date","num","num","num","num","text","num","num","num","text","date"], system_col=1, footer_row=open_footer, table_id="open-positions-table", footer_pnl_cell_id="open-footer-pnl", footer_pnl_col=7) if open_rows else '<p>No open positions at or above the size threshold.</p>'}</div>
 </section>
 
 {showcase_section_html}
