@@ -152,6 +152,17 @@ def main() -> int:
         action="store_true",
         help="Include tribute/cover-like titles (default: filter them out)",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Print every matching show (default: first 8, then '+N more')",
+    )
+    parser.add_argument(
+        "--max-shows",
+        type=int,
+        default=8,
+        help="Max shows to print per artist unless --all (default: 8)",
+    )
     args = parser.parse_args()
 
     load_env_file(args.env_file)
@@ -193,13 +204,14 @@ def main() -> int:
         else:
             any_hits = True
             print(f"{artist}: {len(hits)} show(s)")
-            for event in hits[:8]:
+            shown = hits if args.all else hits[: max(0, args.max_shows)]
+            for event in shown:
                 print(
                     f"  - {event.get('start_utc')} | {event.get('city')} | "
                     f"{event.get('venue_name')} | {event.get('title')}"
                 )
-            if len(hits) > 8:
-                print(f"  … +{len(hits) - 8} more")
+            if not args.all and len(hits) > len(shown):
+                print(f"  … +{len(hits) - len(shown)} more")
         time.sleep(0.15)
 
     if not any_hits:
