@@ -162,13 +162,13 @@ def main() -> int:
         filtered = filter_events(events, args.days, states)
         if args.raw:
             print(json.dumps({"band": band, "events": filtered}, indent=2))
-        elif not filtered:
-            print(f"{band}: (no matching shows)")
-        else:
+            any_hits = bool(filtered) or any_hits
+        elif filtered:
             any_hits = True
             print(f"{band}: {len(filtered)} show(s)")
             for event in filtered:
                 print(f"  - {format_event(event)}")
+        # Skip bands with no matching shows (keeps output short).
         time.sleep(0.15)
 
     if not any_hits and not args.raw:
