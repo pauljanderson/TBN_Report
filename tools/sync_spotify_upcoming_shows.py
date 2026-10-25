@@ -7,7 +7,8 @@ Artist sources (union):
   - artists on "{year} light|medium|heavy" playlists
 
 Shows: StungEvents search, filtered by US state codes and upcoming days.
-Songs (path 1): each artist's Spotify top tracks (fallback: search), up to 10.
+Songs (path 1): up to 10 tracks per artist — liked songs first, then Spotify
+search. (/artists/{id}/top-tracks returns 403 on Dev Mode apps.)
 Playlist: "upcoming shows" — replaced each run; artists drop off when all
 their tracked show dates have passed.
 
@@ -140,9 +141,12 @@ def fetch_followed_artists(sp) -> dict[str, Artist]:
     return bucket
 
 
-def fetch_liked_artists(sp, min_liked: int) -> dict[str, Artist]:
+def fetch_liked_artists(sp, min_liked: int) -> tuple[dict[str, Artist], dict[str, list[str]]]:
+    """Return (artists with >= min_liked primary credits, liked track URIs by artist id)."""
     counts: dict[str, set[str]] = {}
     meta: dict[str, dict] = {}
+    liked_uris: dict[str, list[str]] = {}
+    seen_uri: dict[str, set[str]] = {}
     offset = 0
     while True:
         page = sp.current_user_saved_tracks(limit=50, offset=offset)
@@ -154,16 +158,27 @@ def fetch_liked_artists(sp, min_liked: int) -> dict[str, Artist]:
             if not track or track.get("is_local"):
                 continue
             track_id = track.get("id")
+            track_uri = track.get("uri")
             artists = track.get("artists") or []
             if not track_id or not artists:
                 continue
-            # Count against primary (first-listed) artist.
+            # Count against primary (first-listed) artist for inclusion threshold.
             primary = artists[0]
             artist_id = primary.get("id")
-            if not artist_id:
-                continue
-            counts.setdefault(artist_id, set()).add(track_id)
-            meta[artist_id] = primary
+            if artist_id:
+                counts.setdefault(artist_id, set()).add(track_id)
+                meta[artist_id] = primary
+            # Keep liked URIs for every credited artist (used for playlist songs).
+            if track_uri:
+                for artist in artists:
+                    aid = artist.get("id")
+                    if not aid:
+                        continue
+                    already = seen_uri.setdefault(aid, set())
+                    if track_uri in already:
+                        continue
+                    already.add(track_uri)
+                    liked_uris.setdefault(aid, []).append(track_uri)
         offset += len(items)
         if page.get("next") is None:
             break
@@ -172,7 +187,7 @@ def fetch_liked_artists(sp, min_liked: int) -> dict[str, Artist]:
     for artist_id, track_ids in counts.items():
         if len(track_ids) >= min_liked:
             add_artist(bucket, meta[artist_id], f"liked>={min_liked}")
-    return bucket
+    return bucket, liked_uris
 
 
 def fetch_playlist_artists(sp, playlist_name: str) -> dict[str, Artist]:
@@ -264,33 +279,50 @@ def stung_shows_for_artist(name: str, days: int, states: set[str]) -> list[Show]
     return shows
 
 
-def artist_top_track_uris(sp, artist_id: str, artist_name: str, market: str, limit: int) -> list[str]:
-    """Prefer artist top-tracks; fall back to track search if endpoint is unavailable."""
-    try:
-        page = sp.artist_top_tracks(artist_id, country=market)
-        uris = [t["uri"] for t in (page.get("tracks") or []) if t and t.get("uri")]
-        if uris:
-            return uris[:limit]
-    except Exception:
-        pass
+def artist_track_uris(
+    sp,
+    artist_id: str,
+    artist_name: str,
+    market: str,
+    limit: int,
+    liked_uris_by_artist: dict[str, list[str]],
+) -> list[str]:
+    """Build up to `limit` tracks without /artists/{id}/top-tracks (403 on Dev Mode).
 
-    # Fallback: search tracks by artist name.
+    Prefer the user's liked songs for that artist, then fill via Spotify search.
+    """
+    uris: list[str] = []
+    seen: set[str] = set()
+    for uri in liked_uris_by_artist.get(artist_id, []):
+        if uri in seen:
+            continue
+        seen.add(uri)
+        uris.append(uri)
+        if len(uris) >= limit:
+            return uris
+
     try:
-        page = sp.search(q=f'artist:"{artist_name}"', type="track", limit=min(limit, 10), market=market)
+        page = sp.search(
+            q=f'artist:"{artist_name}"',
+            type="track",
+            limit=min(10, max(limit, 1)),
+            market=market,
+        )
         items = ((page.get("tracks") or {}).get("items")) or []
-        uris: list[str] = []
         for track in items:
-            if not track or not track.get("uri"):
+            uri = track.get("uri") if track else None
+            if not uri or uri in seen:
                 continue
-            # Keep only if this artist is credited.
             credited = {a.get("id") for a in (track.get("artists") or [])}
-            if artist_id in credited:
-                uris.append(track["uri"])
+            if artist_id not in credited:
+                continue
+            seen.add(uri)
+            uris.append(uri)
             if len(uris) >= limit:
                 break
-        return uris
     except Exception:
-        return []
+        pass
+    return uris[:limit]
 
 
 def load_state(path: Path) -> dict:
@@ -321,7 +353,7 @@ def sync(
 
     print("Collecting artists (followed / liked / year playlists) …")
     followed = fetch_followed_artists(sp)
-    liked = fetch_liked_artists(sp, min_liked)
+    liked, liked_uris_by_artist = fetch_liked_artists(sp, min_liked)
     names = playlist_names(year, "spaced")
     from_playlists: dict[str, Artist] = {}
     for tier in ("light", "medium", "heavy"):
@@ -334,6 +366,7 @@ def sync(
         f"year-playlists={len(from_playlists)})"
     )
     print(f"Searching StungEvents in {sorted(states)} for next {days} day(s) …")
+    print("Song source: liked tracks first, then Spotify search (top-tracks API is blocked).")
 
     upcoming: list[tuple[Artist, list[Show], list[str]]] = []
     for artist in sorted(artists.values(), key=lambda a: a.name.casefold()):
@@ -344,7 +377,14 @@ def sync(
             continue
         if not shows:
             continue
-        uris = artist_top_track_uris(sp, artist.artist_id, artist.name, market, TRACKS_PER_ARTIST)
+        uris = artist_track_uris(
+            sp,
+            artist.artist_id,
+            artist.name,
+            market,
+            TRACKS_PER_ARTIST,
+            liked_uris_by_artist,
+        )
         upcoming.append((artist, shows, uris))
         soonest = shows[0]
         place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
@@ -383,7 +423,7 @@ def sync(
         "states": sorted(states),
         "days": days,
         "year": year,
-        "song_source": "spotify_top_tracks",
+        "song_source": "liked_plus_search",
         "artists": {
             artist.artist_id: {
                 "name": artist.name,
