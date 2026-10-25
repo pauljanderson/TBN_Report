@@ -16,6 +16,9 @@ Exclude an album if:
 Playlist: "Favorites not listened to yet"
   - rebuilt each run (replace contents) with all tracks from remaining albums
 
+Caches Spotify list responses under drive/spotify_favorites_unlistened/ to reduce
+rate-limit pressure on re-runs.
+
 Examples:
   python tools/sync_spotify_favorites_unlistened.py --dry-run
   python tools/sync_spotify_favorites_unlistened.py
@@ -25,10 +28,11 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -51,6 +55,8 @@ from sync_spotify_year_playlists import (  # noqa: E402
 
 PLAYLIST_NAME = "Favorites not listened to yet"
 TOP_RANGES = ("short_term", "medium_term", "long_term")
+DEFAULT_DATA_DIR = REPO_ROOT / "drive" / "spotify_favorites_unlistened"
+DEFAULT_SPOTIFY_SLEEP = 0.35
 
 
 @dataclass
@@ -62,24 +68,127 @@ class CandidateAlbum:
     artist_ids: set[str]
 
 
-def fetch_top_album_ids(sp) -> set[str]:
-    """Album IDs appearing in top tracks across short/medium/long term."""
+class SpotifyRateLimitError(RuntimeError):
+    def __init__(self, retry_after: float | None = None, message: str = "") -> None:
+        self.retry_after = retry_after
+        hours = (retry_after or 0) / 3600.0
+        detail = message or "Spotify rate limit (429)."
+        if retry_after and retry_after > 0:
+            detail += f" Retry-After ≈ {retry_after:.0f}s ({hours:.1f}h)."
+        detail += " Stop the script and try again after that window; use cache on re-run."
+        super().__init__(detail)
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    headers = getattr(exc, "headers", None) or {}
+    raw = None
+    if isinstance(headers, dict):
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    else:
+        try:
+            raw = headers.get("Retry-After")  # type: ignore[attr-defined]
+        except Exception:
+            raw = None
+    if raw is None:
+        # spotipy sometimes puts it in the message: "Retry will occur after: 80317 s"
+        text = str(exc)
+        marker = "Retry will occur after:"
+        if marker in text:
+            try:
+                return float(text.split(marker, 1)[1].split("s", 1)[0].strip())
+            except ValueError:
+                return None
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def spotify_call(fn, *args, **kwargs):
+    """Call a spotipy method; convert 429 into a fast, clear failure."""
+    try:
+        from spotipy.exceptions import SpotifyException
+    except ImportError:
+        SpotifyException = Exception  # type: ignore[misc, assignment]
+    try:
+        return fn(*args, **kwargs)
+    except SpotifyException as exc:  # type: ignore[misc]
+        status = getattr(exc, "http_status", None) or getattr(exc, "code", None)
+        if status == 429 or "rate/request limit" in str(exc).casefold():
+            raise SpotifyRateLimitError(_retry_after_seconds(exc), str(exc)) from exc
+        raise
+
+
+class JsonCache:
+    def __init__(self, path: Path, ttl_hours: float) -> None:
+        self.path = path
+        self.ttl_hours = ttl_hours
+        self.data = self._load()
+
+    def _load(self) -> dict:
+        if not self.path.is_file():
+            return {}
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data) + "\n", encoding="utf-8")
+
+    def get(self, key: str):
+        row = self.data.get(key)
+        if not isinstance(row, dict) or "fetched_at" not in row or "value" not in row:
+            return None
+        try:
+            fetched = datetime.fromisoformat(row["fetched_at"])
+        except ValueError:
+            return None
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - fetched > timedelta(hours=self.ttl_hours):
+            return None
+        return row["value"]
+
+    def set(self, key: str, value) -> None:
+        self.data[key] = {
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "value": value,
+        }
+        self.save()
+
+
+def fetch_top_album_ids(sp, cache: JsonCache, sleep_s: float) -> set[str]:
+    cached = cache.get("top_album_ids")
+    if isinstance(cached, list):
+        print(f"  cache hit: top-track albums ({len(cached)})")
+        return set(cached)
+
     album_ids: set[str] = set()
     for time_range in TOP_RANGES:
-        page = sp.current_user_top_tracks(limit=50, offset=0, time_range=time_range)
+        page = spotify_call(sp.current_user_top_tracks, limit=50, offset=0, time_range=time_range)
         for track in page.get("items") or []:
             album_id = ((track.get("album") or {}).get("id")) if track else None
             if album_id:
                 album_ids.add(album_id)
-        time.sleep(0.05)
+        time.sleep(sleep_s)
+    cache.set("top_album_ids", sorted(album_ids))
     return album_ids
 
 
-def fetch_liked_track_ids(sp) -> set[str]:
+def fetch_liked_track_ids(sp, cache: JsonCache, sleep_s: float) -> set[str]:
+    cached = cache.get("liked_track_ids")
+    if isinstance(cached, list):
+        print(f"  cache hit: liked tracks ({len(cached)})")
+        return set(cached)
+
     liked: set[str] = set()
     offset = 0
     while True:
-        page = sp.current_user_saved_tracks(limit=50, offset=offset)
+        page = spotify_call(sp.current_user_saved_tracks, limit=50, offset=offset)
         items = page.get("items") or []
         if not items:
             break
@@ -91,7 +200,8 @@ def fetch_liked_track_ids(sp) -> set[str]:
         offset += len(items)
         if page.get("next") is None:
             break
-        time.sleep(0.05)
+        time.sleep(sleep_s)
+    cache.set("liked_track_ids", sorted(liked))
     return liked
 
 
@@ -101,12 +211,29 @@ def fetch_artist_year_albums(
     year: int,
     market: str,
     include_singles: bool,
+    cache: JsonCache,
+    sleep_s: float,
 ) -> list[CandidateAlbum]:
+    cache_key = f"artist_albums:{artist.artist_id}:{year}:{'singles' if include_singles else 'album'}:{market}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, list):
+        return [
+            CandidateAlbum(
+                album_id=row["album_id"],
+                name=row["name"],
+                artists=row["artists"],
+                release_date=row["release_date"],
+                artist_ids=set(row.get("artist_ids") or []),
+            )
+            for row in cached
+        ]
+
     include_groups = "album,single" if include_singles else "album"
     albums: dict[str, CandidateAlbum] = {}
     offset = 0
     while True:
-        page = sp.artist_albums(
+        page = spotify_call(
+            sp.artist_albums,
             artist.artist_id,
             include_groups=include_groups,
             country=market,
@@ -138,16 +265,35 @@ def fetch_artist_year_albums(
         offset += len(items)
         if page.get("next") is None:
             break
-        time.sleep(0.05)
+        time.sleep(sleep_s)
+
+    rows = [
+        {
+            "album_id": a.album_id,
+            "name": a.name,
+            "artists": a.artists,
+            "release_date": a.release_date,
+            "artist_ids": sorted(a.artist_ids),
+        }
+        for a in albums.values()
+    ]
+    cache.set(cache_key, rows)
     return list(albums.values())
 
 
-def album_track_ids_and_uris(sp, album_id: str, market: str) -> tuple[list[str], list[str]]:
+def album_track_ids_and_uris(
+    sp, album_id: str, market: str, cache: JsonCache, sleep_s: float
+) -> tuple[list[str], list[str]]:
+    cache_key = f"album_tracks:{album_id}:{market}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict):
+        return list(cached.get("ids") or []), list(cached.get("uris") or [])
+
     ids: list[str] = []
     uris: list[str] = []
     offset = 0
     while True:
-        page = sp.album_tracks(album_id, limit=50, offset=offset, market=market)
+        page = spotify_call(sp.album_tracks, album_id, limit=50, offset=offset, market=market)
         items = page.get("items") or []
         if not items:
             break
@@ -163,6 +309,8 @@ def album_track_ids_and_uris(sp, album_id: str, market: str) -> tuple[list[str],
         offset += len(items)
         if page.get("next") is None:
             break
+        time.sleep(sleep_s)
+    cache.set(cache_key, {"ids": ids, "uris": uris})
     return ids, uris
 
 
@@ -174,13 +322,20 @@ def sync(
     include_singles: bool,
     dry_run: bool,
     cache_path: Path,
+    data_dir: Path,
+    cache_hours: float,
+    spotify_sleep: float,
 ) -> int:
     sp = build_client(cache_path)
-    me = sp.current_user()
+    me = spotify_call(sp.current_user)
     print(f"Authenticated as {me.get('display_name') or me.get('id')}")
+
+    cache = JsonCache(data_dir / "spotify_cache.json", ttl_hours=cache_hours)
+    print(f"Spotify response cache: {cache.path} (ttl {cache_hours:g}h)")
 
     print("Collecting favorite artists (followed / liked) …")
     followed = fetch_followed_artists(sp)
+    time.sleep(spotify_sleep)
     liked_artists, _liked_uris = fetch_liked_artists(sp, min_liked)
     artists = merge_artists(followed, liked_artists)
     print(
@@ -189,21 +344,25 @@ def sync(
     )
 
     print("Loading top-track albums (short / medium / long) and Liked Songs …")
-    top_album_ids = fetch_top_album_ids(sp)
-    liked_track_ids = fetch_liked_track_ids(sp)
+    top_album_ids = fetch_top_album_ids(sp, cache, spotify_sleep)
+    liked_track_ids = fetch_liked_track_ids(sp, cache, spotify_sleep)
     print(f"Top-track albums: {len(top_album_ids)}; liked tracks: {len(liked_track_ids)}")
 
     print(f"Scanning {year} albums for favorite artists …")
     candidates: dict[str, CandidateAlbum] = {}
     for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
         try:
-            for album in fetch_artist_year_albums(sp, artist, year, market, include_singles):
+            for album in fetch_artist_year_albums(
+                sp, artist, year, market, include_singles, cache, spotify_sleep
+            ):
                 candidates.setdefault(album.album_id, album)
+        except SpotifyRateLimitError:
+            raise
         except Exception as exc:  # noqa: BLE001
             print(f"  ! {artist.name}: {exc}")
         if index % 25 == 0:
             print(f"  … artists {index}/{len(artists)}; candidate albums so far: {len(candidates)}")
-        time.sleep(0.05)
+        time.sleep(spotify_sleep)
 
     print(f"Candidate {year} albums before filters: {len(candidates)}")
 
@@ -215,7 +374,11 @@ def sync(
             skipped_top += 1
             continue
         try:
-            track_ids, track_uris = album_track_ids_and_uris(sp, album.album_id, market)
+            track_ids, track_uris = album_track_ids_and_uris(
+                sp, album.album_id, market, cache, spotify_sleep
+            )
+        except SpotifyRateLimitError:
+            raise
         except Exception as exc:  # noqa: BLE001
             print(f"  ! album {album.artists} — {album.name}: {exc}")
             continue
@@ -226,7 +389,7 @@ def sync(
             continue
         kept.append((album, track_uris))
         print(f"  KEEP {album.artists} — {album.name} ({album.release_date}) [{len(track_uris)} tracks]")
-        time.sleep(0.05)
+        time.sleep(spotify_sleep)
 
     print(
         f"\nKept {len(kept)} album(s); "
@@ -267,6 +430,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_PATH)
     parser.add_argument("--cache-path", type=Path, default=DEFAULT_CACHE_PATH)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument(
+        "--cache-hours",
+        type=float,
+        default=24.0,
+        help="Reuse cached Spotify list responses for this many hours (default 24)",
+    )
+    parser.add_argument(
+        "--spotify-sleep",
+        type=float,
+        default=DEFAULT_SPOTIFY_SLEEP,
+        help=f"Seconds between Spotify calls (default {DEFAULT_SPOTIFY_SLEEP})",
+    )
     return parser.parse_args(argv)
 
 
@@ -282,7 +458,13 @@ def main(argv: list[str] | None = None) -> int:
             include_singles=args.include_singles,
             dry_run=args.dry_run,
             cache_path=args.cache_path,
+            data_dir=args.data_dir,
+            cache_hours=args.cache_hours,
+            spotify_sleep=args.spotify_sleep,
         )
+    except SpotifyRateLimitError as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130
