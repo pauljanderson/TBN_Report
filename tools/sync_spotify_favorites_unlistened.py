@@ -28,18 +28,22 @@ Examples:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from spotify_json_cache import (  # noqa: E402
+    JsonCache,
+    library_cache,
+)
 from sync_spotify_upcoming_shows import (  # noqa: E402
     Artist,
     fetch_followed_artists,
     fetch_liked_artists,
+    liked_track_ids_from_cache,
     merge_artists,
 )
 from sync_spotify_year_playlists import (  # noqa: E402
@@ -120,47 +124,6 @@ def spotify_call(fn, *args, **kwargs):
         raise
 
 
-class JsonCache:
-    def __init__(self, path: Path, ttl_hours: float) -> None:
-        self.path = path
-        self.ttl_hours = ttl_hours
-        self.data = self._load()
-
-    def _load(self) -> dict:
-        if not self.path.is_file():
-            return {}
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return raw if isinstance(raw, dict) else {}
-
-    def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.data) + "\n", encoding="utf-8")
-
-    def get(self, key: str):
-        row = self.data.get(key)
-        if not isinstance(row, dict) or "fetched_at" not in row or "value" not in row:
-            return None
-        try:
-            fetched = datetime.fromisoformat(row["fetched_at"])
-        except ValueError:
-            return None
-        if fetched.tzinfo is None:
-            fetched = fetched.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - fetched > timedelta(hours=self.ttl_hours):
-            return None
-        return row["value"]
-
-    def set(self, key: str, value) -> None:
-        self.data[key] = {
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "value": value,
-        }
-        self.save()
-
-
 def fetch_top_album_ids(sp, cache: JsonCache, sleep_s: float) -> set[str]:
     cached = cache.get("top_album_ids")
     if isinstance(cached, list):
@@ -179,7 +142,13 @@ def fetch_top_album_ids(sp, cache: JsonCache, sleep_s: float) -> set[str]:
     return album_ids
 
 
-def fetch_liked_track_ids(sp, cache: JsonCache, sleep_s: float) -> set[str]:
+def fetch_liked_track_ids(sp, cache: JsonCache, lib_cache: JsonCache, sleep_s: float) -> set[str]:
+    # Prefer the shared library scan cache (same data as followed/liked>=4).
+    from_lib = liked_track_ids_from_cache(lib_cache)
+    if from_lib is not None:
+        print(f"  cache hit: liked tracks from library cache ({len(from_lib)})")
+        return from_lib
+
     cached = cache.get("liked_track_ids")
     if isinstance(cached, list):
         print(f"  cache hit: liked tracks ({len(cached)})")
@@ -331,12 +300,16 @@ def sync(
     print(f"Authenticated as {me.get('display_name') or me.get('id')}")
 
     cache = JsonCache(data_dir / "spotify_cache.json", ttl_hours=cache_hours)
+    lib_cache = library_cache(ttl_hours=cache_hours)
     print(f"Spotify response cache: {cache.path} (ttl {cache_hours:g}h)")
+    print(f"Library cache: {lib_cache.path} (followed + liked>=N)")
 
     print("Collecting favorite artists (followed / liked) …")
-    followed = fetch_followed_artists(sp)
+    followed = fetch_followed_artists(sp, cache=lib_cache, sleep_s=spotify_sleep)
     time.sleep(spotify_sleep)
-    liked_artists, _liked_uris = fetch_liked_artists(sp, min_liked)
+    liked_artists, _liked_uris = fetch_liked_artists(
+        sp, min_liked, cache=lib_cache, sleep_s=spotify_sleep
+    )
     artists = merge_artists(followed, liked_artists)
     print(
         f"Artist pool: {len(artists)} "
@@ -345,7 +318,7 @@ def sync(
 
     print("Loading top-track albums (short / medium / long) and Liked Songs …")
     top_album_ids = fetch_top_album_ids(sp, cache, spotify_sleep)
-    liked_track_ids = fetch_liked_track_ids(sp, cache, spotify_sleep)
+    liked_track_ids = fetch_liked_track_ids(sp, cache, lib_cache, spotify_sleep)
     print(f"Top-track albums: {len(top_album_ids)}; liked tracks: {len(liked_track_ids)}")
 
     print(f"Scanning {year} albums for favorite artists …")

@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from spotify_json_cache import DEFAULT_LIBRARY_CACHE_HOURS, library_cache  # noqa: E402
 from sync_spotify_year_playlists import (  # noqa: E402
     DEFAULT_CACHE_PATH,
     DEFAULT_ENV_PATH,
@@ -131,8 +132,31 @@ def add_artist(bucket: dict[str, Artist], artist_obj: dict | None, source: str) 
         row.sources.add(source)
 
 
-def fetch_followed_artists(sp) -> dict[str, Artist]:
-    bucket: dict[str, Artist] = {}
+def fetch_followed_artists(
+    sp,
+    *,
+    cache=None,
+    sleep_s: float = 0.2,
+    force_refresh: bool = False,
+) -> dict[str, Artist]:
+    """Followed artists, cached on disk when a JsonCache is provided."""
+    if cache is not None and not force_refresh:
+        cached = cache.get("followed_artists")
+        if isinstance(cached, list):
+            print(f"  cache hit: followed artists ({len(cached)})")
+            bucket: dict[str, Artist] = {}
+            for row in cached:
+                artist_id = row.get("artist_id")
+                name = row.get("name")
+                if artist_id and name:
+                    bucket[artist_id] = Artist(
+                        artist_id=artist_id,
+                        name=name,
+                        sources=set(row.get("sources") or ["followed"]),
+                    )
+            return bucket
+
+    bucket = {}
     after = None
     while True:
         page = sp.current_user_followed_artists(limit=50, after=after)
@@ -144,57 +168,123 @@ def fetch_followed_artists(sp) -> dict[str, Artist]:
         after = cursors.get("after")
         if not after or not items:
             break
-        time.sleep(0.05)
+        time.sleep(sleep_s)
+
+    if cache is not None:
+        cache.set(
+            "followed_artists",
+            [
+                {
+                    "artist_id": artist.artist_id,
+                    "name": artist.name,
+                    "sources": sorted(artist.sources),
+                }
+                for artist in bucket.values()
+            ],
+        )
+        print(f"  cached followed artists ({len(bucket)}) → {cache.path}")
     return bucket
 
 
-def fetch_liked_artists(sp, min_liked: int) -> tuple[dict[str, Artist], dict[str, list[str]]]:
-    """Return (artists with >= min_liked primary credits, liked track URIs by artist id)."""
-    counts: dict[str, set[str]] = {}
-    meta: dict[str, dict] = {}
-    liked_uris: dict[str, list[str]] = {}
-    seen_uri: dict[str, set[str]] = {}
-    offset = 0
-    while True:
-        page = sp.current_user_saved_tracks(limit=50, offset=offset)
-        items = page.get("items") or []
-        if not items:
-            break
-        for entry in items:
-            track = entry.get("track") or {}
-            if not track or track.get("is_local"):
-                continue
-            track_id = track.get("id")
-            track_uri = track.get("uri")
-            artists = track.get("artists") or []
-            if not track_id or not artists:
-                continue
-            # Count against primary (first-listed) artist for inclusion threshold.
-            primary = artists[0]
-            artist_id = primary.get("id")
-            if artist_id:
-                counts.setdefault(artist_id, set()).add(track_id)
-                meta[artist_id] = primary
-            # Keep liked URIs for every credited artist (used for playlist songs).
-            if track_uri:
-                for artist in artists:
-                    aid = artist.get("id")
-                    if not aid:
-                        continue
-                    already = seen_uri.setdefault(aid, set())
-                    if track_uri in already:
-                        continue
-                    already.add(track_uri)
-                    liked_uris.setdefault(aid, []).append(track_uri)
-        offset += len(items)
-        if page.get("next") is None:
-            break
-        time.sleep(0.05)
+def fetch_liked_artists(
+    sp,
+    min_liked: int,
+    *,
+    cache=None,
+    sleep_s: float = 0.2,
+    force_refresh: bool = False,
+) -> tuple[dict[str, Artist], dict[str, list[str]]]:
+    """Return (artists with >= min_liked primary credits, liked track URIs by artist id).
+
+    The full Liked Songs scan is cached; min_liked filtering is applied in memory.
+    """
+    scan = None
+    if cache is not None and not force_refresh:
+        cached = cache.get("liked_library_scan")
+        if isinstance(cached, dict):
+            scan = cached
+            print(
+                f"  cache hit: liked library scan "
+                f"(primary_artists={len(cached.get('primary_meta') or {})}, "
+                f"liked_tracks={len(cached.get('liked_track_ids') or [])})"
+            )
+
+    if scan is None:
+        counts: dict[str, set[str]] = {}
+        meta: dict[str, dict] = {}
+        liked_uris: dict[str, list[str]] = {}
+        liked_track_ids: list[str] = []
+        seen_uri: dict[str, set[str]] = {}
+        offset = 0
+        while True:
+            page = sp.current_user_saved_tracks(limit=50, offset=offset)
+            items = page.get("items") or []
+            if not items:
+                break
+            for entry in items:
+                track = entry.get("track") or {}
+                if not track or track.get("is_local"):
+                    continue
+                track_id = track.get("id")
+                track_uri = track.get("uri")
+                artists = track.get("artists") or []
+                if not track_id or not artists:
+                    continue
+                liked_track_ids.append(track_id)
+                primary = artists[0]
+                artist_id = primary.get("id")
+                if artist_id:
+                    counts.setdefault(artist_id, set()).add(track_id)
+                    meta[artist_id] = {"id": artist_id, "name": primary.get("name") or ""}
+                if track_uri:
+                    for artist in artists:
+                        aid = artist.get("id")
+                        if not aid:
+                            continue
+                        already = seen_uri.setdefault(aid, set())
+                        if track_uri in already:
+                            continue
+                        already.add(track_uri)
+                        liked_uris.setdefault(aid, []).append(track_uri)
+            offset += len(items)
+            if page.get("next") is None:
+                break
+            time.sleep(sleep_s)
+
+        scan = {
+            "primary_counts": {aid: len(ids) for aid, ids in counts.items()},
+            "primary_meta": meta,
+            "liked_uris": liked_uris,
+            "liked_track_ids": liked_track_ids,
+        }
+        if cache is not None:
+            cache.set("liked_library_scan", scan)
+            print(f"  cached liked library scan → {cache.path}")
+
+    primary_counts = scan.get("primary_counts") or {}
+    primary_meta = scan.get("primary_meta") or {}
+    liked_uris = {aid: list(uris) for aid, uris in (scan.get("liked_uris") or {}).items()}
+
     bucket: dict[str, Artist] = {}
-    for artist_id, track_ids in counts.items():
-        if len(track_ids) >= min_liked:
-            add_artist(bucket, meta[artist_id], f"liked>={min_liked}")
+    for artist_id, count in primary_counts.items():
+        if int(count) < min_liked:
+            continue
+        meta_row = primary_meta.get(artist_id) or {"id": artist_id, "name": ""}
+        add_artist(bucket, meta_row, f"liked>={min_liked}")
     return bucket, liked_uris
+
+
+def liked_track_ids_from_cache(cache) -> set[str] | None:
+    """Return liked track IDs from library cache if present/fresh."""
+    if cache is None:
+        return None
+    scan = cache.get("liked_library_scan")
+    if not isinstance(scan, dict):
+        return None
+    ids = scan.get("liked_track_ids")
+    if not isinstance(ids, list):
+        return None
+    return set(ids)
 
 
 def fetch_playlist_artists(sp, playlist_name: str) -> dict[str, Artist]:
@@ -608,8 +698,10 @@ def sync(
             save_state(state_path, state)
 
     print("Collecting artists (followed / liked / year playlists) …")
-    followed = fetch_followed_artists(sp)
-    liked, liked_uris_by_artist = fetch_liked_artists(sp, min_liked)
+    lib_cache = library_cache(ttl_hours=DEFAULT_LIBRARY_CACHE_HOURS)
+    print(f"Library cache: {lib_cache.path} (ttl {DEFAULT_LIBRARY_CACHE_HOURS:g}h)")
+    followed = fetch_followed_artists(sp, cache=lib_cache, sleep_s=0.2)
+    liked, liked_uris_by_artist = fetch_liked_artists(sp, min_liked, cache=lib_cache, sleep_s=0.2)
     names = playlist_names(year, "spaced")
     from_playlists: dict[str, Artist] = {}
     for tier in ("light", "medium", "heavy"):
