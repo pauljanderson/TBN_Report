@@ -17,6 +17,10 @@ State file tracks artists, show dates, and track URIs for later setlist.fm work.
 Examples:
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 60 --dry-run
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 60
+
+StungEvents free tier is ~1000 requests/day. This tool paces calls, caches
+results for 24h, backs off on HTTP 429, and stops at a daily budget so a 900+
+artist pool can be completed across multiple runs.
 """
 
 from __future__ import annotations
@@ -460,6 +464,74 @@ def save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def artist_state_record(artist: Artist, shows: list[Show], uris: list[str]) -> dict:
+    return {
+        "name": artist.name,
+        "sources": sorted(artist.sources),
+        "shows": [
+            {
+                "start_utc": s.start_utc,
+                "city": s.city,
+                "state": s.state,
+                "country": s.country,
+                "venue": s.venue,
+                "title": s.title,
+            }
+            for s in shows
+        ],
+        "track_uris": uris,
+        "setlistfm": None,  # reserved for path 2
+    }
+
+
+def shows_all_past(shows: list[dict]) -> bool:
+    if not shows:
+        return True
+    now = datetime.now(timezone.utc)
+    for show in shows:
+        start = parse_start(show.get("start_utc"))
+        if start is not None and start >= now:
+            return False
+    return True
+
+
+def uris_used_by_other_artists(state: dict, artist_id: str) -> set[str]:
+    used: set[str] = set()
+    for other_id, row in (state.get("artists") or {}).items():
+        if other_id == artist_id:
+            continue
+        for uri in row.get("track_uris") or []:
+            used.add(uri)
+    return used
+
+
+def playlist_add_uris(sp, playlist_id: str, uris: list[str]) -> None:
+    for batch in chunked(uris, 100):
+        sp.playlist_add_items(playlist_id, batch)
+        time.sleep(0.05)
+
+
+def playlist_remove_uris(sp, playlist_id: str, uris: list[str]) -> None:
+    if not uris:
+        return
+    for batch in chunked(uris, 100):
+        sp.playlist_remove_all_occurrences_of_items(playlist_id, batch)
+        time.sleep(0.05)
+
+
+def ensure_playlist(sp, state: dict) -> str:
+    playlist_id = state.get("playlist_id")
+    if playlist_id:
+        try:
+            sp.playlist(playlist_id, fields="id,name")
+            return playlist_id
+        except Exception:
+            pass
+    playlist_id = find_or_create_playlist(sp, PLAYLIST_NAME, dry_run=False)
+    assert playlist_id
+    return playlist_id
+
+
 def sync(
     *,
     year: int,
@@ -479,6 +551,38 @@ def sync(
     sp = build_client(cache_path)
     me = sp.current_user()
     print(f"Authenticated as {me.get('display_name') or me.get('id')}")
+
+    state = load_state(state_path)
+    state.setdefault("artists", {})
+    state["playlist_name"] = PLAYLIST_NAME
+    state["states"] = sorted(states)
+    state["days"] = days
+    state["year"] = year
+    state["song_source"] = "liked_plus_search"
+
+    playlist_id: str | None = None
+    if not dry_run:
+        playlist_id = ensure_playlist(sp, state)
+        state["playlist_id"] = playlist_id
+        print(f"Playlist ready: {PLAYLIST_NAME!r} ({playlist_id})")
+        # Drop artists whose stored show dates are all in the past.
+        expired = [
+            aid
+            for aid, row in list((state.get("artists") or {}).items())
+            if shows_all_past(row.get("shows") or [])
+        ]
+        for aid in expired:
+            row = state["artists"].pop(aid)
+            removable = [
+                uri
+                for uri in (row.get("track_uris") or [])
+                if uri not in uris_used_by_other_artists(state, aid)
+            ]
+            if removable:
+                playlist_remove_uris(sp, playlist_id, removable)
+            print(f"  removed expired: {row.get('name') or aid}")
+        if expired:
+            save_state(state_path, state)
 
     print("Collecting artists (followed / liked / year playlists) …")
     followed = fetch_followed_artists(sp)
@@ -505,6 +609,10 @@ def sync(
         f"budget {stung_daily_budget}/day, cache {stung_cache_hours:g}h."
     )
     print("Song source: liked tracks first, then Spotify search (top-tracks API is blocked).")
+    if dry_run:
+        print("Dry run — matches print only; playlist/state not updated live.")
+    else:
+        print("Live mode — adding each match to the playlist as soon as it's found.")
 
     stung = StungClient(
         cache_path=stung_cache_path,
@@ -514,7 +622,8 @@ def sync(
         api_key=stung_api_key,
     )
 
-    upcoming: list[tuple[Artist, list[Show], list[str]]] = []
+    matched_this_run = 0
+    removed_this_run = 0
     budget_hit = False
     for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
         try:
@@ -527,13 +636,30 @@ def sync(
         except Exception as exc:  # noqa: BLE001
             print(f"  ! {artist.name}: StungEvents error: {exc}")
             continue
+
         if not shows:
-            if index % 50 == 0:
+            # Confirmed no upcoming local shows: remove if we had them before.
+            if artist.artist_id in (state.get("artists") or {}):
+                row = state["artists"].pop(artist.artist_id)
+                removable = [
+                    uri
+                    for uri in (row.get("track_uris") or [])
+                    if uri not in uris_used_by_other_artists(state, artist.artist_id)
+                ]
+                if not dry_run and playlist_id and removable:
+                    playlist_remove_uris(sp, playlist_id, removable)
+                removed_this_run += 1
+                print(f"  removed (no upcoming local shows): {artist.name}")
+                if not dry_run:
+                    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    save_state(state_path, state)
+            elif index % 50 == 0:
                 print(
                     f"  … progress {index}/{len(artists)} "
                     f"(network={stung.network_calls}, cache_hits={stung.cache_hits})"
                 )
             continue
+
         uris = artist_track_uris(
             sp,
             artist.artist_id,
@@ -542,7 +668,8 @@ def sync(
             TRACKS_PER_ARTIST,
             liked_uris_by_artist,
         )
-        upcoming.append((artist, shows, uris))
+        prev = (state.get("artists") or {}).get(artist.artist_id) or {}
+        prev_uris = list(prev.get("track_uris") or [])
         soonest = shows[0]
         place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
         print(
@@ -550,88 +677,55 @@ def sync(
             f"({len(uris)} tracks) [{', '.join(sorted(artist.sources))}]"
         )
 
+        if dry_run:
+            matched_this_run += 1
+            continue
+
+        assert playlist_id
+        # Replace this artist's tracks if the set changed; otherwise keep as-is.
+        if uris != prev_uris:
+            obsolete = [
+                uri
+                for uri in prev_uris
+                if uri not in uris and uri not in uris_used_by_other_artists(state, artist.artist_id)
+            ]
+            if obsolete:
+                playlist_remove_uris(sp, playlist_id, obsolete)
+            to_add = [uri for uri in uris if uri not in prev_uris]
+            # Also add URIs that somehow vanished from the playlist but are desired.
+            if to_add:
+                playlist_add_uris(sp, playlist_id, to_add)
+                print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
+            elif not prev_uris and uris:
+                playlist_add_uris(sp, playlist_id, uris)
+                print(f"    → added {len(uris)} track(s) to {PLAYLIST_NAME!r}")
+        elif not prev_uris and uris:
+            playlist_add_uris(sp, playlist_id, uris)
+            print(f"    → added {len(uris)} track(s) to {PLAYLIST_NAME!r}")
+        else:
+            print("    → already on playlist; show dates refreshed")
+
+        state.setdefault("artists", {})[artist.artist_id] = artist_state_record(artist, shows, uris)
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        save_state(state_path, state)
+        matched_this_run += 1
+
     stung.save_cache()
     print(
-        f"StungEvents calls this run: network={stung.network_calls}, "
+        f"\nStungEvents calls this run: network={stung.network_calls}, "
         f"cache_hits={stung.cache_hits}, budget_used_today={stung._budget_used}/{stung.daily_budget}"
     )
-    if budget_hit:
-        print("Partial run OK — re-run later to refresh remaining artists from cache/budget.")
-
-    upcoming.sort(key=lambda row: row[1][0].start_utc if row[1] else "")
-
-    track_uris: list[str] = []
-    seen_uri: set[str] = set()
-    for _artist, _shows, uris in upcoming:
-        for uri in uris:
-            if uri not in seen_uri:
-                seen_uri.add(uri)
-                track_uris.append(uri)
-
     print(
-        f"\nMatched {len(upcoming)} artist(s) with nearby shows; "
-        f"{len(track_uris)} unique track(s) for playlist {PLAYLIST_NAME!r}."
+        f"Matched/added this run: {matched_this_run}; removed this run: {removed_this_run}; "
+        f"artists currently tracked: {len(state.get('artists') or {})}"
     )
-
-    state = load_state(state_path)
-    prev_ids = set(state.get("artists") or {})
-    next_ids = {a.artist_id for a, _, _ in upcoming}
-    removed = sorted(prev_ids - next_ids)
-    if removed:
-        print(f"Dropping {len(removed)} artist(s) with no remaining nearby dates.")
-
-    new_state = {
-        "playlist_name": PLAYLIST_NAME,
-        "playlist_id": state.get("playlist_id"),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "states": sorted(states),
-        "days": days,
-        "year": year,
-        "song_source": "liked_plus_search",
-        "artists": {
-            artist.artist_id: {
-                "name": artist.name,
-                "sources": sorted(artist.sources),
-                "shows": [
-                    {
-                        "start_utc": s.start_utc,
-                        "city": s.city,
-                        "state": s.state,
-                        "country": s.country,
-                        "venue": s.venue,
-                        "title": s.title,
-                    }
-                    for s in shows
-                ],
-                "track_uris": uris,
-                "setlistfm": None,  # reserved for path 2
-            }
-            for artist, shows, uris in upcoming
-        },
-    }
-
+    if budget_hit:
+        print("Partial run OK — playlist already has whatever was found; re-run to continue.")
     if dry_run:
-        print("Dry run — playlist not modified; state not written.")
-        save_state(state_path.with_suffix(".dry-run.json"), new_state)
-        print(f"Wrote dry-run state preview: {state_path.with_suffix('.dry-run.json')}")
-        return 0
-
-    playlist_id = state.get("playlist_id")
-    if not playlist_id:
-        playlist_id = find_or_create_playlist(sp, PLAYLIST_NAME, dry_run=False)
+        print("Dry run complete — no playlist changes.")
     else:
-        # Ensure it still exists / recreate by name if missing.
-        try:
-            sp.playlist(playlist_id, fields="id,name")
-        except Exception:
-            playlist_id = find_or_create_playlist(sp, PLAYLIST_NAME, dry_run=False)
-
-    assert playlist_id
-    replace_playlist_tracks(sp, playlist_id, track_uris)
-    new_state["playlist_id"] = playlist_id
-    save_state(state_path, new_state)
-    print(f"Updated playlist {PLAYLIST_NAME!r} ({playlist_id})")
-    print(f"Wrote state {state_path}")
+        print(f"Live playlist: {PLAYLIST_NAME!r} ({state.get('playlist_id')})")
+        print(f"State file: {state_path}")
     return 0
 
 
