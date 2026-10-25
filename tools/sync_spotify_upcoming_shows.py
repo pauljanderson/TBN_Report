@@ -9,18 +9,24 @@ Artist sources (union):
 Shows: StungEvents search, filtered by US state codes and upcoming days.
 Songs (path 1): up to 10 tracks per artist — liked songs first, then Spotify
 search. (/artists/{id}/top-tracks returns 403 on Dev Mode apps.)
-Playlist: "upcoming shows" — replaced each run; artists drop off when all
-their tracked show dates have passed.
+Playlist: "upcoming shows" — created up front; each match is added as soon as
+it's found (so long rate-limited runs still fill the playlist). Artists drop
+off when re-checked with no local dates, or when stored dates are all past.
 
 State file tracks artists, show dates, and track URIs for later setlist.fm work.
 
 Examples:
-  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 60 --dry-run
-  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 60
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --dry-run
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120
 
-StungEvents free tier is ~1000 requests/day. This tool paces calls, caches
-results for 24h, backs off on HTTP 429, and stops at a daily budget so a 900+
-artist pool can be completed across multiple runs.
+  # Fill playlist from StungEvents results already on disk (no new Stung calls):
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --cache-only
+
+  # Later, continue fetching only uncached artists (cached names are skipped):
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120
+
+StungEvents free tier is ~1000 requests/day. Results are cached under
+drive/spotify_upcoming_shows/stung_cache.json. Re-runs reuse that cache.
 """
 
 from __future__ import annotations
@@ -47,7 +53,6 @@ from sync_spotify_year_playlists import (  # noqa: E402
     find_or_create_playlist,
     load_env_file,
     playlist_names,
-    replace_playlist_tracks,
 )
 
 DEFAULT_STATE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "state.json"
@@ -256,15 +261,20 @@ class StungClient:
         delay_sec: float,
         daily_budget: int,
         api_key: str | None = None,
+        cache_only: bool = False,
+        ignore_ttl: bool = False,
     ) -> None:
         self.cache_path = cache_path
         self.cache_hours = cache_hours
         self.delay_sec = delay_sec
         self.daily_budget = daily_budget
         self.api_key = (api_key or "").strip() or None
+        self.cache_only = cache_only
+        self.ignore_ttl = ignore_ttl
         self.cache = self._load_cache()
         self.network_calls = 0
         self.cache_hits = 0
+        self.cache_misses = 0
         self._last_call = 0.0
         today = datetime.now(timezone.utc).date().isoformat()
         usage = self.cache.setdefault("_meta", {})
@@ -272,6 +282,9 @@ class StungClient:
             usage["budget_date"] = today
             usage["budget_used"] = 0
         self._budget_used = int(usage.get("budget_used") or 0)
+
+    def cached_artist_count(self) -> int:
+        return sum(1 for key, row in self.cache.items() if key != "_meta" and isinstance(row, dict))
 
     def _load_cache(self) -> dict:
         if not self.cache_path.is_file():
@@ -302,11 +315,15 @@ class StungClient:
         fetched = parse_start(row.get("fetched_at"))
         if fetched is None:
             return None
-        age = datetime.now(timezone.utc) - fetched
-        if age > timedelta(hours=self.cache_hours):
-            return None
+        if not self.ignore_ttl:
+            age = datetime.now(timezone.utc) - fetched
+            if age > timedelta(hours=self.cache_hours):
+                return None
         events = row.get("events")
         return list(events) if isinstance(events, list) else []
+
+    def has_cache_entry(self, name: str) -> bool:
+        return self._get_cached_events(name) is not None
 
     def _put_cache(self, name: str, events: list[dict]) -> None:
         self.cache[self._cache_key(name)] = {
@@ -322,11 +339,16 @@ class StungClient:
         if elapsed < self.delay_sec:
             time.sleep(self.delay_sec - elapsed)
 
-    def fetch_events(self, name: str) -> list[dict]:
+    def fetch_events(self, name: str) -> list[dict] | None:
+        """Return events list, or None if cache-only and this artist was never cached."""
         cached = self._get_cached_events(name)
         if cached is not None:
             self.cache_hits += 1
             return cached
+
+        if self.cache_only:
+            self.cache_misses += 1
+            return None
 
         if self._budget_used >= self.daily_budget:
             raise StungRateLimitError(
@@ -352,8 +374,8 @@ class StungClient:
                 self._budget_used += 1
                 events = list(data.get("events") or [])
                 self._put_cache(name, events)
-                if self.network_calls % 25 == 0:
-                    self.save_cache()
+                # Save after every successful call so Ctrl+C / pauses keep progress.
+                self.save_cache()
                 return events
             except urllib.error.HTTPError as exc:
                 self._last_call = time.monotonic()
@@ -547,6 +569,7 @@ def sync(
     stung_cache_hours: float,
     stung_daily_budget: int,
     stung_api_key: str | None,
+    cache_only: bool,
 ) -> int:
     sp = build_client(cache_path)
     me = sp.current_user()
@@ -609,7 +632,9 @@ def sync(
         f"budget {stung_daily_budget}/day, cache {stung_cache_hours:g}h."
     )
     print("Song source: liked tracks first, then Spotify search (top-tracks API is blocked).")
-    if dry_run:
+    if cache_only:
+        print("Cache-only mode — no new StungEvents HTTP calls; fill playlist from disk cache.")
+    elif dry_run:
         print("Dry run — matches print only; playlist/state not updated live.")
     else:
         print("Live mode — adding each match to the playlist as soon as it's found.")
@@ -620,112 +645,134 @@ def sync(
         delay_sec=stung_delay_sec,
         daily_budget=stung_daily_budget,
         api_key=stung_api_key,
+        cache_only=cache_only,
+        # In cache-only rebuilds, use whatever we already fetched even if > TTL.
+        ignore_ttl=cache_only,
     )
+    print(f"StungEvents disk cache: {stung_cache_path} ({stung.cached_artist_count()} artist entries)")
 
     matched_this_run = 0
     removed_this_run = 0
+    skipped_uncached = 0
     budget_hit = False
-    for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
-        try:
-            events = stung.fetch_events(artist.name)
-            shows = shows_from_events(events, days, states)
-        except StungRateLimitError as exc:
-            print(f"\n{exc}")
-            budget_hit = True
-            break
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ! {artist.name}: StungEvents error: {exc}")
-            continue
+    try:
+        for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
+            try:
+                events = stung.fetch_events(artist.name)
+                if events is None:
+                    # cache-only miss: do not treat as "no shows" and do not remove.
+                    skipped_uncached += 1
+                    continue
+                shows = shows_from_events(events, days, states)
+            except StungRateLimitError as exc:
+                print(f"\n{exc}")
+                budget_hit = True
+                break
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! {artist.name}: StungEvents error: {exc}")
+                continue
 
-        if not shows:
-            # Confirmed no upcoming local shows: remove if we had them before.
-            if artist.artist_id in (state.get("artists") or {}):
-                row = state["artists"].pop(artist.artist_id)
-                removable = [
+            if not shows:
+                # Confirmed no upcoming local shows: remove if we had them before.
+                # (Only when we actually had event data — never on cache-only miss.)
+                if artist.artist_id in (state.get("artists") or {}):
+                    row = state["artists"].pop(artist.artist_id)
+                    removable = [
+                        uri
+                        for uri in (row.get("track_uris") or [])
+                        if uri not in uris_used_by_other_artists(state, artist.artist_id)
+                    ]
+                    if not dry_run and playlist_id and removable:
+                        playlist_remove_uris(sp, playlist_id, removable)
+                    removed_this_run += 1
+                    print(f"  removed (no upcoming local shows): {artist.name}")
+                    if not dry_run:
+                        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        save_state(state_path, state)
+                elif index % 50 == 0:
+                    print(
+                        f"  … progress {index}/{len(artists)} "
+                        f"(network={stung.network_calls}, cache_hits={stung.cache_hits})"
+                    )
+                continue
+
+            uris = artist_track_uris(
+                sp,
+                artist.artist_id,
+                artist.name,
+                market,
+                TRACKS_PER_ARTIST,
+                liked_uris_by_artist,
+            )
+            prev = (state.get("artists") or {}).get(artist.artist_id) or {}
+            prev_uris = list(prev.get("track_uris") or [])
+            soonest = shows[0]
+            place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
+            print(
+                f"  {artist.name}: {len(shows)} show(s); soonest {soonest.start_utc} @ {place} "
+                f"({len(uris)} tracks) [{', '.join(sorted(artist.sources))}]"
+            )
+
+            if dry_run:
+                matched_this_run += 1
+                continue
+
+            assert playlist_id
+            if uris != prev_uris:
+                obsolete = [
                     uri
-                    for uri in (row.get("track_uris") or [])
-                    if uri not in uris_used_by_other_artists(state, artist.artist_id)
+                    for uri in prev_uris
+                    if uri not in uris and uri not in uris_used_by_other_artists(state, artist.artist_id)
                 ]
-                if not dry_run and playlist_id and removable:
-                    playlist_remove_uris(sp, playlist_id, removable)
-                removed_this_run += 1
-                print(f"  removed (no upcoming local shows): {artist.name}")
-                if not dry_run:
-                    state["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    save_state(state_path, state)
-            elif index % 50 == 0:
-                print(
-                    f"  … progress {index}/{len(artists)} "
-                    f"(network={stung.network_calls}, cache_hits={stung.cache_hits})"
-                )
-            continue
+                if obsolete:
+                    playlist_remove_uris(sp, playlist_id, obsolete)
+                to_add = [uri for uri in uris if uri not in prev_uris]
+                if to_add:
+                    playlist_add_uris(sp, playlist_id, to_add)
+                    print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
+                elif obsolete:
+                    print(f"    → refreshed tracks on {PLAYLIST_NAME!r}")
+                else:
+                    print("    → show dates refreshed")
+            else:
+                print("    → already on playlist; show dates refreshed")
 
-        uris = artist_track_uris(
-            sp,
-            artist.artist_id,
-            artist.name,
-            market,
-            TRACKS_PER_ARTIST,
-            liked_uris_by_artist,
-        )
-        prev = (state.get("artists") or {}).get(artist.artist_id) or {}
-        prev_uris = list(prev.get("track_uris") or [])
-        soonest = shows[0]
-        place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
-        print(
-            f"  {artist.name}: {len(shows)} show(s); soonest {soonest.start_utc} @ {place} "
-            f"({len(uris)} tracks) [{', '.join(sorted(artist.sources))}]"
-        )
-
-        if dry_run:
+            state.setdefault("artists", {})[artist.artist_id] = artist_state_record(artist, shows, uris)
+            state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_state(state_path, state)
             matched_this_run += 1
-            continue
-
-        assert playlist_id
-        # Replace this artist's tracks if the set changed; otherwise keep as-is.
-        if uris != prev_uris:
-            obsolete = [
-                uri
-                for uri in prev_uris
-                if uri not in uris and uri not in uris_used_by_other_artists(state, artist.artist_id)
-            ]
-            if obsolete:
-                playlist_remove_uris(sp, playlist_id, obsolete)
-            to_add = [uri for uri in uris if uri not in prev_uris]
-            # Also add URIs that somehow vanished from the playlist but are desired.
-            if to_add:
-                playlist_add_uris(sp, playlist_id, to_add)
-                print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
-            elif not prev_uris and uris:
-                playlist_add_uris(sp, playlist_id, uris)
-                print(f"    → added {len(uris)} track(s) to {PLAYLIST_NAME!r}")
-        elif not prev_uris and uris:
-            playlist_add_uris(sp, playlist_id, uris)
-            print(f"    → added {len(uris)} track(s) to {PLAYLIST_NAME!r}")
-        else:
-            print("    → already on playlist; show dates refreshed")
-
-        state.setdefault("artists", {})[artist.artist_id] = artist_state_record(artist, shows, uris)
-        state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        save_state(state_path, state)
-        matched_this_run += 1
+    except KeyboardInterrupt:
+        print("\nInterrupted — saving StungEvents cache/progress …")
+        stung.save_cache()
+        if not dry_run:
+            state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_state(state_path, state)
+        raise
 
     stung.save_cache()
     print(
         f"\nStungEvents calls this run: network={stung.network_calls}, "
-        f"cache_hits={stung.cache_hits}, budget_used_today={stung._budget_used}/{stung.daily_budget}"
+        f"cache_hits={stung.cache_hits}, cache_misses={stung.cache_misses}, "
+        f"budget_used_today={stung._budget_used}/{stung.daily_budget}"
     )
     print(
         f"Matched/added this run: {matched_this_run}; removed this run: {removed_this_run}; "
+        f"skipped (uncached): {skipped_uncached}; "
         f"artists currently tracked: {len(state.get('artists') or {})}"
     )
     if budget_hit:
         print("Partial run OK — playlist already has whatever was found; re-run to continue.")
+    if cache_only:
+        print(
+            "Cache-only done. To fetch remaining uncached artists later:\n"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120"
+        )
     if dry_run:
         print("Dry run complete — no playlist changes.")
     else:
         print(f"Live playlist: {PLAYLIST_NAME!r} ({state.get('playlist_id')})")
         print(f"State file: {state_path}")
+        print(f"Stung cache: {stung_cache_path}")
     return 0
 
 
@@ -773,6 +820,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="",
         help="Optional StungEvents publisher API key (or set STUNGEVENTS_API_KEY in env)",
     )
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help=(
+            "One-off/rebuild: use only disk-cached StungEvents results (no new HTTP calls). "
+            "Fills the playlist from artists already fetched; skips uncached artists."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -799,6 +854,7 @@ def main(argv: list[str] | None = None) -> int:
             stung_cache_hours=args.stung_cache_hours,
             stung_daily_budget=args.stung_daily_budget,
             stung_api_key=api_key or None,
+            cache_only=args.cache_only,
         )
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
