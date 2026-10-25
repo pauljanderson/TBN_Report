@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -45,9 +47,14 @@ from sync_spotify_year_playlists import (  # noqa: E402
 )
 
 DEFAULT_STATE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "state.json"
+DEFAULT_STUNG_CACHE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "stung_cache.json"
 PLAYLIST_NAME = "upcoming shows"
 STUNG = "https://api.stungevents.com"
 TRACKS_PER_ARTIST = 10
+# Unauthenticated StungEvents cap is 1,000/day; leave headroom for retries.
+DEFAULT_STUNG_DAILY_BUDGET = 900
+DEFAULT_STUNG_DELAY_SEC = 0.75
+DEFAULT_STUNG_CACHE_HOURS = 24
 
 
 @dataclass
@@ -65,15 +72,6 @@ class Show:
     country: str
     venue: str
     title: str
-
-
-def http_json(url: str) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json", "User-Agent": "tbn-upcoming-shows/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.load(resp)
 
 
 def parse_start(value: str | None) -> datetime | None:
@@ -239,13 +237,140 @@ def merge_artists(*groups: dict[str, Artist]) -> dict[str, Artist]:
     return out
 
 
-def stung_shows_for_artist(name: str, days: int, states: set[str]) -> list[Show]:
-    data = http_json(f"{STUNG}/search?q={urllib.parse.quote(name)}")
+class StungRateLimitError(RuntimeError):
+    """Raised when the daily StungEvents request budget is exhausted."""
+
+
+class StungClient:
+    """StungEvents search with disk cache, pacing, and 429 backoff."""
+
+    def __init__(
+        self,
+        *,
+        cache_path: Path,
+        cache_hours: float,
+        delay_sec: float,
+        daily_budget: int,
+        api_key: str | None = None,
+    ) -> None:
+        self.cache_path = cache_path
+        self.cache_hours = cache_hours
+        self.delay_sec = delay_sec
+        self.daily_budget = daily_budget
+        self.api_key = (api_key or "").strip() or None
+        self.cache = self._load_cache()
+        self.network_calls = 0
+        self.cache_hits = 0
+        self._last_call = 0.0
+        today = datetime.now(timezone.utc).date().isoformat()
+        usage = self.cache.setdefault("_meta", {})
+        if usage.get("budget_date") != today:
+            usage["budget_date"] = today
+            usage["budget_used"] = 0
+        self._budget_used = int(usage.get("budget_used") or 0)
+
+    def _load_cache(self) -> dict:
+        if not self.cache_path.is_file():
+            return {"_meta": {}}
+        try:
+            data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"_meta": {}}
+        if not isinstance(data, dict):
+            return {"_meta": {}}
+        data.setdefault("_meta", {})
+        return data
+
+    def save_cache(self) -> None:
+        self.cache.setdefault("_meta", {})
+        self.cache["_meta"]["budget_date"] = datetime.now(timezone.utc).date().isoformat()
+        self.cache["_meta"]["budget_used"] = self._budget_used
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(json.dumps(self.cache) + "\n", encoding="utf-8")
+
+    def _cache_key(self, name: str) -> str:
+        return name.strip().casefold()
+
+    def _get_cached_events(self, name: str) -> list[dict] | None:
+        row = self.cache.get(self._cache_key(name))
+        if not isinstance(row, dict):
+            return None
+        fetched = parse_start(row.get("fetched_at"))
+        if fetched is None:
+            return None
+        age = datetime.now(timezone.utc) - fetched
+        if age > timedelta(hours=self.cache_hours):
+            return None
+        events = row.get("events")
+        return list(events) if isinstance(events, list) else []
+
+    def _put_cache(self, name: str, events: list[dict]) -> None:
+        self.cache[self._cache_key(name)] = {
+            "name": name,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "events": events,
+        }
+
+    def _throttle(self) -> None:
+        if self.delay_sec <= 0:
+            return
+        elapsed = time.monotonic() - self._last_call
+        if elapsed < self.delay_sec:
+            time.sleep(self.delay_sec - elapsed)
+
+    def fetch_events(self, name: str) -> list[dict]:
+        cached = self._get_cached_events(name)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
+
+        if self._budget_used >= self.daily_budget:
+            raise StungRateLimitError(
+                f"StungEvents daily budget exhausted ({self._budget_used}/{self.daily_budget}). "
+                "Re-run tomorrow (cache will reuse today's results) or raise --stung-daily-budget / get an API key."
+            )
+
+        url = f"{STUNG}/search?q={urllib.parse.quote(name)}"
+        headers = {"Accept": "application/json", "User-Agent": "tbn-upcoming-shows/1.1"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        attempts = 0
+        while True:
+            attempts += 1
+            self._throttle()
+            req = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.load(resp)
+                self._last_call = time.monotonic()
+                self.network_calls += 1
+                self._budget_used += 1
+                events = list(data.get("events") or [])
+                self._put_cache(name, events)
+                if self.network_calls % 25 == 0:
+                    self.save_cache()
+                return events
+            except urllib.error.HTTPError as exc:
+                self._last_call = time.monotonic()
+                if exc.code == 429 and attempts <= 6:
+                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    try:
+                        wait = float(retry_after) if retry_after else min(60.0, 5.0 * attempts)
+                    except ValueError:
+                        wait = min(60.0, 5.0 * attempts)
+                    print(f"  … StungEvents 429; sleeping {wait:.0f}s then retrying ({name})")
+                    time.sleep(wait)
+                    continue
+                raise
+
+
+def shows_from_events(events: list[dict], days: int, states: set[str]) -> list[Show]:
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=days)
     shows: list[Show] = []
     seen: set[tuple[str, str, str]] = set()
-    for event in data.get("events") or []:
+    for event in events:
         start = parse_start(event.get("start_utc"))
         if start is None or start < now or start > end:
             continue
@@ -253,7 +378,6 @@ def stung_shows_for_artist(name: str, days: int, states: set[str]) -> list[Show]
         if states and state not in states:
             continue
         title = event.get("title") or ""
-        # Light noise filter: skip obvious tribute/cover nights.
         low = title.casefold()
         if any(tok in low for tok in ("tribute", "cover band", "karaoke", "candlelight")):
             continue
@@ -346,6 +470,11 @@ def sync(
     dry_run: bool,
     state_path: Path,
     cache_path: Path,
+    stung_cache_path: Path,
+    stung_delay_sec: float,
+    stung_cache_hours: float,
+    stung_daily_budget: int,
+    stung_api_key: str | None,
 ) -> int:
     sp = build_client(cache_path)
     me = sp.current_user()
@@ -365,17 +494,45 @@ def sync(
         f"(followed={len(followed)}, liked>={min_liked}={len(liked)}, "
         f"year-playlists={len(from_playlists)})"
     )
+    if len(artists) > stung_daily_budget:
+        print(
+            f"Note: {len(artists)} artists > StungEvents daily budget {stung_daily_budget}. "
+            "Cache + re-runs will cover the rest; or register for a StungEvents API key (10k/day)."
+        )
     print(f"Searching StungEvents in {sorted(states)} for next {days} day(s) …")
+    print(
+        f"StungEvents pacing: {stung_delay_sec:.2f}s between calls, "
+        f"budget {stung_daily_budget}/day, cache {stung_cache_hours:g}h."
+    )
     print("Song source: liked tracks first, then Spotify search (top-tracks API is blocked).")
 
+    stung = StungClient(
+        cache_path=stung_cache_path,
+        cache_hours=stung_cache_hours,
+        delay_sec=stung_delay_sec,
+        daily_budget=stung_daily_budget,
+        api_key=stung_api_key,
+    )
+
     upcoming: list[tuple[Artist, list[Show], list[str]]] = []
-    for artist in sorted(artists.values(), key=lambda a: a.name.casefold()):
+    budget_hit = False
+    for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
         try:
-            shows = stung_shows_for_artist(artist.name, days, states)
+            events = stung.fetch_events(artist.name)
+            shows = shows_from_events(events, days, states)
+        except StungRateLimitError as exc:
+            print(f"\n{exc}")
+            budget_hit = True
+            break
         except Exception as exc:  # noqa: BLE001
             print(f"  ! {artist.name}: StungEvents error: {exc}")
             continue
         if not shows:
+            if index % 50 == 0:
+                print(
+                    f"  … progress {index}/{len(artists)} "
+                    f"(network={stung.network_calls}, cache_hits={stung.cache_hits})"
+                )
             continue
         uris = artist_track_uris(
             sp,
@@ -392,7 +549,14 @@ def sync(
             f"  {artist.name}: {len(shows)} show(s); soonest {soonest.start_utc} @ {place} "
             f"({len(uris)} tracks) [{', '.join(sorted(artist.sources))}]"
         )
-        time.sleep(0.12)
+
+    stung.save_cache()
+    print(
+        f"StungEvents calls this run: network={stung.network_calls}, "
+        f"cache_hits={stung.cache_hits}, budget_used_today={stung._budget_used}/{stung.daily_budget}"
+    )
+    if budget_hit:
+        print("Partial run OK — re-run later to refresh remaining artists from cache/budget.")
 
     upcoming.sort(key=lambda row: row[1][0].start_utc if row[1] else "")
 
@@ -486,6 +650,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE_PATH)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_PATH)
     parser.add_argument("--cache-path", type=Path, default=DEFAULT_CACHE_PATH)
+    parser.add_argument(
+        "--stung-cache-file",
+        type=Path,
+        default=DEFAULT_STUNG_CACHE_PATH,
+        help="Disk cache for StungEvents search JSON (avoids re-querying same artists)",
+    )
+    parser.add_argument(
+        "--stung-delay",
+        type=float,
+        default=DEFAULT_STUNG_DELAY_SEC,
+        help=f"Seconds between StungEvents HTTP calls (default {DEFAULT_STUNG_DELAY_SEC})",
+    )
+    parser.add_argument(
+        "--stung-cache-hours",
+        type=float,
+        default=DEFAULT_STUNG_CACHE_HOURS,
+        help=f"Reuse cached StungEvents results for this many hours (default {DEFAULT_STUNG_CACHE_HOURS})",
+    )
+    parser.add_argument(
+        "--stung-daily-budget",
+        type=int,
+        default=DEFAULT_STUNG_DAILY_BUDGET,
+        help=f"Max StungEvents HTTP calls per UTC day (default {DEFAULT_STUNG_DAILY_BUDGET}; free tier is 1000)",
+    )
+    parser.add_argument(
+        "--stung-api-key",
+        default="",
+        help="Optional StungEvents publisher API key (or set STUNGEVENTS_API_KEY in env)",
+    )
     return parser.parse_args(argv)
 
 
@@ -496,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
     states = {s.strip().upper() for s in args.states.split(",") if s.strip()}
     if not states:
         raise SystemExit("--states is required (e.g. MA,RI)")
+    api_key = args.stung_api_key or os.environ.get("STUNGEVENTS_API_KEY") or ""
     try:
         return sync(
             year=args.year,
@@ -506,6 +700,11 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             state_path=args.state_file,
             cache_path=args.cache_path,
+            stung_cache_path=args.stung_cache_file,
+            stung_delay_sec=args.stung_delay,
+            stung_cache_hours=args.stung_cache_hours,
+            stung_daily_budget=args.stung_daily_budget,
+            stung_api_key=api_key or None,
         )
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
