@@ -155,9 +155,9 @@ def build_client(cache_path: Path):
         cache_path=str(cache_path),
         open_browser=True,
     )
-    # status_retries=0: do not sleep on Spotify 429 Retry-After (can be many hours).
-    # Callers should catch 429 and exit/retry later instead of blocking the terminal.
-    return spotipy.Spotify(auth_manager=auth, retries=2, status_retries=0, backoff_factor=0.4)
+    # retries=0 / status_retries=0: fail immediately on Spotify 429 (Retry-After can be
+    # many hours). Callers catch and continue from caches instead of blocking the terminal.
+    return spotipy.Spotify(auth_manager=auth, retries=0, status_retries=0, backoff_factor=0.0)
 
 
 def fetch_liked_albums_for_year(sp, year: int) -> dict[str, AlbumBucket]:
