@@ -31,7 +31,7 @@ class JsonCache:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self.data) + "\n", encoding="utf-8")
 
-    def get(self, key: str):
+    def get(self, key: str, *, allow_stale: bool = False):
         row = self.data.get(key)
         if not isinstance(row, dict) or "fetched_at" not in row or "value" not in row:
             return None
@@ -41,7 +41,11 @@ class JsonCache:
             return None
         if fetched.tzinfo is None:
             fetched = fetched.replace(tzinfo=timezone.utc)
-        if self.ttl_hours >= 0 and datetime.now(timezone.utc) - fetched > timedelta(hours=self.ttl_hours):
+        expired = (
+            self.ttl_hours >= 0
+            and datetime.now(timezone.utc) - fetched > timedelta(hours=self.ttl_hours)
+        )
+        if expired and not allow_stale:
             return None
         return row["value"]
 

@@ -19,14 +19,15 @@ Examples:
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --dry-run
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120
 
+  # Continue from cached favorites + keep calling StungEvents / updating Spotify:
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --continue-cached
+
   # Fill playlist from StungEvents results already on disk (no new Stung calls):
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --cache-only
 
-  # Later, continue fetching only uncached artists (cached names are skipped):
-  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120
-
 StungEvents free tier is ~1000 requests/day. Results are cached under
-drive/spotify_upcoming_shows/stung_cache.json. Re-runs reuse that cache.
+drive/spotify_upcoming_shows/stung_cache.json. Favorite artists come from
+drive/spotify_library_cache/library.json when using --continue-cached.
 """
 
 from __future__ import annotations
@@ -133,17 +134,23 @@ def add_artist(bucket: dict[str, Artist], artist_obj: dict | None, source: str) 
 
 
 def fetch_followed_artists(
-    sp,
+    sp=None,
     *,
     cache=None,
     sleep_s: float = 0.2,
     force_refresh: bool = False,
+    allow_stale: bool = False,
 ) -> dict[str, Artist]:
     """Followed artists, cached on disk when a JsonCache is provided."""
     if cache is not None and not force_refresh:
         cached = cache.get("followed_artists")
+        stale = False
+        if cached is None and allow_stale:
+            cached = cache.get("followed_artists", allow_stale=True)
+            stale = cached is not None
         if isinstance(cached, list):
-            print(f"  cache hit: followed artists ({len(cached)})")
+            label = "stale cache hit" if stale else "cache hit"
+            print(f"  {label}: followed artists ({len(cached)})")
             bucket: dict[str, Artist] = {}
             for row in cached:
                 artist_id = row.get("artist_id")
@@ -155,6 +162,17 @@ def fetch_followed_artists(
                         sources=set(row.get("sources") or ["followed"]),
                     )
             return bucket
+        if allow_stale:
+            raise SystemExit(
+                "Library cache missing followed artists. "
+                "Need a prior successful library scan in drive/spotify_library_cache/library.json."
+            )
+
+    if sp is None:
+        raise SystemExit(
+            "No followed-artists cache found and Spotify client unavailable. "
+            "Run once with Spotify access to populate drive/spotify_library_cache/library.json."
+        )
 
     bucket = {}
     after = None
@@ -187,12 +205,13 @@ def fetch_followed_artists(
 
 
 def fetch_liked_artists(
-    sp,
-    min_liked: int,
+    sp=None,
+    min_liked: int = 4,
     *,
     cache=None,
     sleep_s: float = 0.2,
     force_refresh: bool = False,
+    allow_stale: bool = False,
 ) -> tuple[dict[str, Artist], dict[str, list[str]]]:
     """Return (artists with >= min_liked primary credits, liked track URIs by artist id).
 
@@ -201,15 +220,30 @@ def fetch_liked_artists(
     scan = None
     if cache is not None and not force_refresh:
         cached = cache.get("liked_library_scan")
+        stale = False
+        if cached is None and allow_stale:
+            cached = cache.get("liked_library_scan", allow_stale=True)
+            stale = cached is not None
         if isinstance(cached, dict):
             scan = cached
+            label = "stale cache hit" if stale else "cache hit"
             print(
-                f"  cache hit: liked library scan "
+                f"  {label}: liked library scan "
                 f"(primary_artists={len(cached.get('primary_meta') or {})}, "
                 f"liked_tracks={len(cached.get('liked_track_ids') or [])})"
             )
+        elif allow_stale:
+            raise SystemExit(
+                "Library cache missing liked library scan. "
+                "Need a prior successful library scan in drive/spotify_library_cache/library.json."
+            )
 
     if scan is None:
+        if sp is None:
+            raise SystemExit(
+                "No liked-library cache found and Spotify client unavailable. "
+                "Run once with Spotify access to populate drive/spotify_library_cache/library.json."
+            )
         counts: dict[str, set[str]] = {}
         meta: dict[str, dict] = {}
         liked_uris: dict[str, list[str]] = {}
@@ -274,17 +308,29 @@ def fetch_liked_artists(
     return bucket, liked_uris
 
 
-def liked_track_ids_from_cache(cache) -> set[str] | None:
+def liked_track_ids_from_cache(cache, *, allow_stale: bool = False) -> set[str] | None:
     """Return liked track IDs from library cache if present/fresh."""
     if cache is None:
         return None
-    scan = cache.get("liked_library_scan")
+    scan = cache.get("liked_library_scan", allow_stale=allow_stale)
     if not isinstance(scan, dict):
         return None
     ids = scan.get("liked_track_ids")
     if not isinstance(ids, list):
         return None
     return set(ids)
+
+
+def prioritize_artists_for_stung(artists: dict[str, Artist], stung: "StungClient") -> list[Artist]:
+    """Fetch StungEvents for never-cached artists first, then refresh/use cached ones."""
+    missing: list[Artist] = []
+    cached: list[Artist] = []
+    for artist in sorted(artists.values(), key=lambda a: a.name.casefold()):
+        if stung.has_any_cache(artist.name):
+            cached.append(artist)
+        else:
+            missing.append(artist)
+    return missing + cached
 
 
 def fetch_playlist_artists(sp, playlist_name: str) -> dict[str, Artist]:
@@ -414,6 +460,11 @@ class StungClient:
 
     def has_cache_entry(self, name: str) -> bool:
         return self._get_cached_events(name) is not None
+
+    def has_any_cache(self, name: str) -> bool:
+        """True if we have any disk entry for this artist (even if TTL expired)."""
+        row = self.cache.get(self._cache_key(name))
+        return isinstance(row, dict) and "events" in row
 
     def _put_cache(self, name: str, events: list[dict]) -> None:
         self.cache[self._cache_key(name)] = {
@@ -660,6 +711,8 @@ def sync(
     stung_daily_budget: int,
     stung_api_key: str | None,
     cache_only: bool,
+    favorites_only: bool,
+    library_cache_only: bool,
 ) -> int:
     sp = build_client(cache_path)
     me = sp.current_user()
@@ -697,15 +750,30 @@ def sync(
         if expired:
             save_state(state_path, state)
 
-    print("Collecting artists (followed / liked / year playlists) …")
+    print("Collecting artists …")
     lib_cache = library_cache(ttl_hours=DEFAULT_LIBRARY_CACHE_HOURS)
     print(f"Library cache: {lib_cache.path} (ttl {DEFAULT_LIBRARY_CACHE_HOURS:g}h)")
-    followed = fetch_followed_artists(sp, cache=lib_cache, sleep_s=0.2)
-    liked, liked_uris_by_artist = fetch_liked_artists(sp, min_liked, cache=lib_cache, sleep_s=0.2)
-    names = playlist_names(year, "spaced")
-    from_playlists: dict[str, Artist] = {}
-    for tier in ("light", "medium", "heavy"):
-        from_playlists.update(fetch_playlist_artists(sp, names[tier]))
+    if library_cache_only:
+        print("Library cache-only — using followed/liked from disk (no Spotify library paging).")
+        followed = fetch_followed_artists(
+            None, cache=lib_cache, allow_stale=True, force_refresh=False
+        )
+        liked, liked_uris_by_artist = fetch_liked_artists(
+            None, min_liked, cache=lib_cache, allow_stale=True, force_refresh=False
+        )
+        from_playlists: dict[str, Artist] = {}
+    else:
+        followed = fetch_followed_artists(sp, cache=lib_cache, sleep_s=0.2, allow_stale=True)
+        liked, liked_uris_by_artist = fetch_liked_artists(
+            sp, min_liked, cache=lib_cache, sleep_s=0.2, allow_stale=True
+        )
+        from_playlists = {}
+        if not favorites_only:
+            names = playlist_names(year, "spaced")
+            for tier in ("light", "medium", "heavy"):
+                from_playlists.update(fetch_playlist_artists(sp, names[tier]))
+        else:
+            print("Favorites-only — skipping year light/medium/heavy playlist artists.")
 
     artists = merge_artists(followed, liked, from_playlists)
     print(
@@ -742,13 +810,16 @@ def sync(
         ignore_ttl=cache_only,
     )
     print(f"StungEvents disk cache: {stung_cache_path} ({stung.cached_artist_count()} artist entries)")
+    ordered = prioritize_artists_for_stung(artists, stung)
+    missing_stung = sum(1 for a in ordered if not stung.has_any_cache(a.name))
+    print(f"Stung queue: {missing_stung} never-fetched first, then {len(ordered) - missing_stung} cached.")
 
     matched_this_run = 0
     removed_this_run = 0
     skipped_uncached = 0
     budget_hit = False
     try:
-        for index, artist in enumerate(sorted(artists.values(), key=lambda a: a.name.casefold()), start=1):
+        for index, artist in enumerate(ordered, start=1):
             try:
                 events = stung.fetch_events(artist.name)
                 if events is None:
@@ -783,19 +854,24 @@ def sync(
                         save_state(state_path, state)
                 elif index % 50 == 0:
                     print(
-                        f"  … progress {index}/{len(artists)} "
+                        f"  … progress {index}/{len(ordered)} "
                         f"(network={stung.network_calls}, cache_hits={stung.cache_hits})"
                     )
                 continue
 
-            uris = artist_track_uris(
-                sp,
-                artist.artist_id,
-                artist.name,
-                market,
-                TRACKS_PER_ARTIST,
-                liked_uris_by_artist,
-            )
+            try:
+                uris = artist_track_uris(
+                    sp,
+                    artist.artist_id,
+                    artist.name,
+                    market,
+                    TRACKS_PER_ARTIST,
+                    liked_uris_by_artist,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! {artist.name}: Spotify track lookup failed ({exc}); saving show without new tracks")
+                uris = list(((state.get("artists") or {}).get(artist.artist_id) or {}).get("track_uris") or [])
+
             prev = (state.get("artists") or {}).get(artist.artist_id) or {}
             prev_uris = list(prev.get("track_uris") or [])
             soonest = shows[0]
@@ -820,8 +896,11 @@ def sync(
                     playlist_remove_uris(sp, playlist_id, obsolete)
                 to_add = [uri for uri in uris if uri not in prev_uris]
                 if to_add:
-                    playlist_add_uris(sp, playlist_id, to_add)
-                    print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
+                    try:
+                        playlist_add_uris(sp, playlist_id, to_add)
+                        print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"    ! playlist add failed ({exc}); show saved in state for retry")
                 elif obsolete:
                     print(f"    → refreshed tracks on {PLAYLIST_NAME!r}")
                 else:
@@ -853,11 +932,15 @@ def sync(
         f"artists currently tracked: {len(state.get('artists') or {})}"
     )
     if budget_hit:
-        print("Partial run OK — playlist already has whatever was found; re-run to continue.")
+        print(
+            "Partial run OK — playlist already has whatever was found.\n"
+            "Continue tomorrow with:\n"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --continue-cached"
+        )
     if cache_only:
         print(
             "Cache-only done. To fetch remaining uncached artists later:\n"
-            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --continue-cached"
         )
     if dry_run:
         print("Dry run complete — no playlist changes.")
@@ -920,6 +1003,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Fills the playlist from artists already fetched; skips uncached artists."
         ),
     )
+    parser.add_argument(
+        "--continue-cached",
+        action="store_true",
+        help=(
+            "Resume from disk: use cached favorite artists (followed + liked≥min), skip year "
+            "playlists, keep calling StungEvents for never-fetched artists first, and keep "
+            "updating the Spotify upcoming-shows playlist. Implies --favorites-only and "
+            "--library-cache-only."
+        ),
+    )
+    parser.add_argument(
+        "--favorites-only",
+        action="store_true",
+        help="Only use followed + liked≥min artists (skip year light/medium/heavy playlists).",
+    )
+    parser.add_argument(
+        "--library-cache-only",
+        action="store_true",
+        help=(
+            "Load followed/liked artists from drive/spotify_library_cache/library.json only "
+            "(no Spotify library paging). Still uses Spotify for playlist/track updates."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -931,6 +1037,8 @@ def main(argv: list[str] | None = None) -> int:
     if not states:
         raise SystemExit("--states is required (e.g. MA,RI)")
     api_key = args.stung_api_key or os.environ.get("STUNGEVENTS_API_KEY") or ""
+    favorites_only = bool(args.favorites_only or args.continue_cached)
+    library_cache_only = bool(args.library_cache_only or args.continue_cached)
     try:
         return sync(
             year=args.year,
@@ -947,6 +1055,8 @@ def main(argv: list[str] | None = None) -> int:
             stung_daily_budget=args.stung_daily_budget,
             stung_api_key=api_key or None,
             cache_only=args.cache_only,
+            favorites_only=favorites_only,
+            library_cache_only=library_cache_only,
         )
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
