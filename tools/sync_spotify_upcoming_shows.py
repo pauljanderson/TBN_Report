@@ -1395,6 +1395,7 @@ def sync(
                         sp = None
                         spotify_ok = False
                         playlist_id = None
+                        playlist_mirror = None
                         uris = list(liked_uris_by_artist.get(artist.artist_id, []))[:TRACKS_PER_ARTIST] or prev_uris
                     else:
                         print(
