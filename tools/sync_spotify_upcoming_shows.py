@@ -64,6 +64,7 @@ from sync_spotify_year_playlists import (  # noqa: E402
     find_or_create_playlist,
     load_env_file,
     playlist_names,
+    replace_playlist_tracks,
 )
 
 DEFAULT_STATE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "state.json"
@@ -702,6 +703,140 @@ def playlist_remove_uris(sp, playlist_id: str, uris: list[str]) -> None:
         time.sleep(0.05)
 
 
+class PlaylistMirror:
+    """Live + local URI index for the upcoming-shows playlist (prevents duplicate adds)."""
+
+    def __init__(self, uris: list[str] | None = None) -> None:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for uri in uris or []:
+            if not uri or uri in seen:
+                continue
+            seen.add(uri)
+            ordered.append(uri)
+        self.ordered = ordered
+        self.uris = seen
+
+    def __contains__(self, uri: str) -> bool:
+        return uri in self.uris
+
+    def missing(self, uris: list[str]) -> list[str]:
+        out: list[str] = []
+        seen_batch: set[str] = set()
+        for uri in uris:
+            if not uri or uri in self.uris or uri in seen_batch:
+                continue
+            seen_batch.add(uri)
+            out.append(uri)
+        return out
+
+    def note_added(self, uris: list[str]) -> None:
+        for uri in uris:
+            if not uri or uri in self.uris:
+                continue
+            self.uris.add(uri)
+            self.ordered.append(uri)
+
+    def note_removed(self, uris: list[str]) -> None:
+        drop = {uri for uri in uris if uri}
+        if not drop:
+            return
+        self.uris -= drop
+        self.ordered = [uri for uri in self.ordered if uri not in drop]
+
+    def save_to_state(self, state: dict) -> None:
+        state["playlist_track_uris"] = list(self.ordered)
+        state["playlist_track_uri_count"] = len(self.ordered)
+
+
+def playlist_items_ordered(sp, playlist_id: str) -> list[str]:
+    """Download playlist track URIs in order (includes duplicate occurrences)."""
+    ordered: list[str] = []
+    offset = 0
+    while True:
+        page = sp.playlist_items(
+            playlist_id,
+            fields="items(track(uri)),next",
+            limit=100,
+            offset=offset,
+            additional_types=["track"],
+        )
+        items = page.get("items") or []
+        for entry in items:
+            track = playlist_entry_track(entry)
+            uri = track.get("uri") if track else None
+            if uri:
+                ordered.append(uri)
+        if not page.get("next"):
+            break
+        offset += len(items)
+        if not items:
+            break
+        time.sleep(0.05)
+    return ordered
+
+
+def load_playlist_mirror(sp, playlist_id: str, state: dict | None = None) -> PlaylistMirror:
+    """Fetch the live playlist into a mirror (preferred over stale state copy)."""
+    ordered = playlist_items_ordered(sp, playlist_id)
+    mirror = PlaylistMirror(ordered)
+    if state is not None:
+        mirror.save_to_state(state)
+    print(f"  playlist mirror loaded: {len(ordered)} item(s), {len(mirror.uris)} unique URI(s)")
+    return mirror
+
+
+def playlist_add_missing(
+    sp,
+    playlist_id: str,
+    uris: list[str],
+    mirror: PlaylistMirror,
+) -> list[str]:
+    """Add only URIs not already on the playlist; update mirror."""
+    missing = mirror.missing(uris)
+    if not missing:
+        return []
+    playlist_add_uris(sp, playlist_id, missing)
+    mirror.note_added(missing)
+    return missing
+
+
+def playlist_remove_tracked(
+    sp,
+    playlist_id: str,
+    uris: list[str],
+    mirror: PlaylistMirror | None = None,
+) -> None:
+    playlist_remove_uris(sp, playlist_id, uris)
+    if mirror is not None:
+        mirror.note_removed(uris)
+
+
+def dedupe_playlist(sp, playlist_id: str, mirror: PlaylistMirror | None = None) -> int:
+    """Collapse duplicate track occurrences; keep first-seen order. Returns removed count."""
+    # Always re-read live playlist so duplicate occurrences are visible.
+    ordered = playlist_items_ordered(sp, playlist_id)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for uri in ordered:
+        if uri in seen:
+            continue
+        seen.add(uri)
+        unique.append(uri)
+    removed = len(ordered) - len(unique)
+    if removed <= 0:
+        if mirror is not None:
+            mirror.ordered = list(unique)
+            mirror.uris = set(unique)
+        return 0
+    replace_playlist_tracks(sp, playlist_id, unique)
+    if mirror is not None:
+        mirror.ordered = list(unique)
+        mirror.uris = set(unique)
+    print(f"  deduped playlist: removed {removed} duplicate occurrence(s); now {len(unique)} track(s)")
+    return removed
+
+
 def ensure_playlist(sp, state: dict) -> str:
     playlist_id = state.get("playlist_id")
     if playlist_id:
@@ -811,6 +946,7 @@ def scrub_title_mismatch_artists(
     sp=None,
     playlist_id: str | None = None,
     dry_run: bool = False,
+    mirror: PlaylistMirror | None = None,
 ) -> int:
     """Drop tracked artists whose stored show titles don't include the artist name.
 
@@ -844,37 +980,11 @@ def scrub_title_mismatch_artists(
         ]
         if sp is not None and playlist_id and removable:
             try:
-                playlist_remove_uris(sp, playlist_id, removable)
+                playlist_remove_tracked(sp, playlist_id, removable, mirror)
             except Exception as exc:  # noqa: BLE001
                 print(f"  ! playlist remove failed for {label}: {exc}")
         print(f"  removed (no title match): {label}")
     return removed
-
-
-def playlist_track_uris(sp, playlist_id: str) -> set[str]:
-    on_playlist: set[str] = set()
-    offset = 0
-    while True:
-        page = sp.playlist_items(
-            playlist_id,
-            fields="items(track(uri)),next",
-            limit=100,
-            offset=offset,
-            additional_types=["track"],
-        )
-        items = page.get("items") or []
-        for entry in items:
-            track = playlist_entry_track(entry)
-            uri = track.get("uri") if track else None
-            if uri:
-                on_playlist.add(uri)
-        if not page.get("next"):
-            break
-        offset += len(items)
-        if not items:
-            break
-        time.sleep(0.05)
-    return on_playlist
 
 
 def flush_pending_playlist_artists(
@@ -886,13 +996,16 @@ def flush_pending_playlist_artists(
     liked_uris_by_artist: dict[str, list[str]] | None = None,
     market: str = "US",
     fill_missing_tracks: bool = False,
+    mirror: PlaylistMirror | None = None,
 ) -> dict[str, int]:
     """Push tracked artists onto the Spotify playlist.
 
     By default only artists with needs_playlist_sync. With force_all=True, every
     tracked artist is reconciled (used by --apply-playlist).
+    Downloads the live playlist first (or reuses mirror) so adds never duplicate.
     """
-    on_playlist = playlist_track_uris(sp, playlist_id)
+    if mirror is None:
+        mirror = load_playlist_mirror(sp, playlist_id, state)
     liked_uris_by_artist = liked_uris_by_artist or {}
     stats = {"synced": 0, "added_tracks": 0, "already_ok": 0, "no_tracks": 0, "failed": 0}
 
@@ -914,30 +1027,30 @@ def flush_pending_playlist_artists(
                 uris = filled
                 row["track_uris"] = uris
 
-        missing = [uri for uri in uris if uri not in on_playlist]
         if not uris:
             row["needs_playlist_sync"] = False
             stats["no_tracks"] += 1
             print(f"  ! {name}: no track URIs in state (liked cache empty / search failed)")
             continue
+        missing = mirror.missing(uris)
         if not missing:
             row["needs_playlist_sync"] = False
             stats["already_ok"] += 1
             stats["synced"] += 1
             continue
         try:
-            playlist_add_uris(sp, playlist_id, missing)
-            on_playlist.update(missing)
+            added = playlist_add_missing(sp, playlist_id, missing, mirror)
             row["needs_playlist_sync"] = False
             stats["synced"] += 1
-            stats["added_tracks"] += len(missing)
-            print(f"  → playlist add: {name} ({len(missing)} track(s))")
+            stats["added_tracks"] += len(added)
+            print(f"  → playlist add: {name} ({len(added)} track(s))")
         except Exception as exc:  # noqa: BLE001
             if is_spotify_rate_limit(exc):
                 print("  ! Spotify rate-limited while syncing playlist; stopping playlist pushes.")
                 raise
             stats["failed"] += 1
             print(f"  ! playlist sync failed for {name}: {exc}")
+    mirror.save_to_state(state)
     return stats
 
 
@@ -972,9 +1085,15 @@ def apply_playlist_from_state(
     playlist_id = ensure_playlist(sp, state)
     state["playlist_id"] = playlist_id
     print(f"Playlist ready: {PLAYLIST_NAME!r} ({playlist_id})")
+    mirror = load_playlist_mirror(sp, playlist_id, state)
+    deduped = dedupe_playlist(sp, playlist_id, mirror)
+    if deduped:
+        mirror.save_to_state(state)
 
     print("Scrubbing artists whose show titles don't match the artist name …")
-    scrubbed = scrub_title_mismatch_artists(state, sp=sp, playlist_id=playlist_id, dry_run=False)
+    scrubbed = scrub_title_mismatch_artists(
+        state, sp=sp, playlist_id=playlist_id, dry_run=False, mirror=mirror
+    )
     if scrubbed:
         print(f"Removed {scrubbed} title-mismatch artist(s).")
 
@@ -996,7 +1115,9 @@ def apply_playlist_from_state(
         liked_uris_by_artist=liked_uris_by_artist,
         market=market,
         fill_missing_tracks=True,
+        mirror=mirror,
     )
+    mirror.save_to_state(state)
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_state(state_path, state)
 
@@ -1050,26 +1171,40 @@ def sync(
     state["song_source"] = "liked_plus_search"
 
     playlist_id: str | None = None
+    playlist_mirror: PlaylistMirror | None = None
     if not dry_run and spotify_ok:
         try:
             playlist_id = ensure_playlist(sp, state)
             state["playlist_id"] = playlist_id
             print(f"Playlist ready: {PLAYLIST_NAME!r} ({playlist_id})")
+            playlist_mirror = load_playlist_mirror(sp, playlist_id, state)
+            deduped = dedupe_playlist(sp, playlist_id, playlist_mirror)
+            if deduped:
+                playlist_mirror.save_to_state(state)
+                save_state(state_path, state)
             # Drop false positives from before title-match filtering existed.
             print("Scrubbing artists whose show titles don't match the artist name …")
             scrubbed = scrub_title_mismatch_artists(
-                state, sp=sp, playlist_id=playlist_id, dry_run=False
+                state,
+                sp=sp,
+                playlist_id=playlist_id,
+                dry_run=False,
+                mirror=playlist_mirror,
             )
             if scrubbed:
                 print(f"Removed {scrubbed} title-mismatch artist(s) from state/playlist.")
+                playlist_mirror.save_to_state(state)
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_state(state_path, state)
-            pending_stats = flush_pending_playlist_artists(sp, playlist_id, state)
+            pending_stats = flush_pending_playlist_artists(
+                sp, playlist_id, state, mirror=playlist_mirror
+            )
             if pending_stats["synced"] or pending_stats["added_tracks"]:
                 print(
                     f"Flushed pending playlist sync: "
                     f"artists={pending_stats['synced']}, tracks_added={pending_stats['added_tracks']}"
                 )
+                playlist_mirror.save_to_state(state)
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_state(state_path, state)
             # Drop artists whose stored show dates are all in the past.
@@ -1086,9 +1221,11 @@ def sync(
                     if uri not in uris_used_by_other_artists(state, aid)
                 ]
                 if removable:
-                    playlist_remove_uris(sp, playlist_id, removable)
+                    playlist_remove_tracked(sp, playlist_id, removable, playlist_mirror)
                 print(f"  removed expired: {row.get('name') or aid}")
             if expired:
+                if playlist_mirror is not None:
+                    playlist_mirror.save_to_state(state)
                 save_state(state_path, state)
         except Exception as exc:  # noqa: BLE001
             if library_cache_only and is_spotify_rate_limit(exc):
@@ -1097,6 +1234,7 @@ def sync(
                 sp = None
                 spotify_ok = False
                 playlist_id = None
+                playlist_mirror = None
             else:
                 raise
     elif dry_run:
@@ -1215,13 +1353,16 @@ def sync(
                     ]
                     if not dry_run and spotify_ok and playlist_id and removable:
                         try:
-                            playlist_remove_uris(sp, playlist_id, removable)
+                            playlist_remove_tracked(sp, playlist_id, removable, playlist_mirror)
+                            if playlist_mirror is not None:
+                                playlist_mirror.save_to_state(state)
                         except Exception as exc:  # noqa: BLE001
                             if is_spotify_rate_limit(exc):
                                 print("  ! Spotify rate-limited on remove; continuing Stung-only.")
                                 sp = None
                                 spotify_ok = False
                                 playlist_id = None
+                                playlist_mirror = None
                             else:
                                 print(f"  ! playlist remove failed ({exc})")
                     removed_this_run += 1
@@ -1275,11 +1416,12 @@ def sync(
                 matched_this_run += 1
                 continue
 
-            # Always mark pending here; end-of-run reconcile verifies against the live playlist.
-            # (Older logic incorrectly assumed uris==prev_uris meant tracks were already on Spotify.)
+            # Only add URIs missing from the live playlist mirror (downloaded at start).
             needs_playlist_sync = True
             if spotify_ok and playlist_id and sp is not None and uris:
                 try:
+                    if playlist_mirror is None:
+                        playlist_mirror = load_playlist_mirror(sp, playlist_id, state)
                     obsolete = [
                         uri
                         for uri in prev_uris
@@ -1287,26 +1429,25 @@ def sync(
                         and uri not in uris_used_by_other_artists(state, artist.artist_id)
                     ]
                     if obsolete:
-                        playlist_remove_uris(sp, playlist_id, obsolete)
-                    to_add = [uri for uri in uris if uri not in prev_uris] or (
-                        list(uris) if prev.get("needs_playlist_sync") else []
-                    )
-                    if to_add:
-                        playlist_add_uris(sp, playlist_id, to_add)
-                        print(f"    → added {len(to_add)} track(s) to {PLAYLIST_NAME!r}")
+                        playlist_remove_tracked(sp, playlist_id, obsolete, playlist_mirror)
+                    added = playlist_add_missing(sp, playlist_id, uris, playlist_mirror)
+                    if added:
+                        print(f"    → added {len(added)} track(s) to {PLAYLIST_NAME!r}")
                         needs_playlist_sync = False
                     elif obsolete:
                         print(f"    → refreshed tracks on {PLAYLIST_NAME!r}")
                         needs_playlist_sync = False
                     else:
-                        # Dates-only refresh — still reconcile at end to be sure.
-                        print("    → show dates refreshed (will verify playlist at end)")
+                        print("    → already on playlist; show dates refreshed")
+                        needs_playlist_sync = False
+                    playlist_mirror.save_to_state(state)
                 except Exception as exc:  # noqa: BLE001
                     if is_spotify_rate_limit(exc):
                         print("    ! Spotify rate-limited on playlist write; saving for later sync")
                         sp = None
                         spotify_ok = False
                         playlist_id = None
+                        playlist_mirror = None
                     else:
                         print(f"    ! playlist update failed ({exc}); show saved in state for retry")
                     needs_playlist_sync = True
@@ -1345,8 +1486,15 @@ def sync(
                 playlist_id = ensure_playlist(sp, state)
                 state["playlist_id"] = playlist_id
                 print(f"\nFinal playlist reconcile → {PLAYLIST_NAME!r} ({playlist_id})")
+                if playlist_mirror is None:
+                    playlist_mirror = load_playlist_mirror(sp, playlist_id, state)
+                    dedupe_playlist(sp, playlist_id, playlist_mirror)
                 scrubbed = scrub_title_mismatch_artists(
-                    state, sp=sp, playlist_id=playlist_id, dry_run=False
+                    state,
+                    sp=sp,
+                    playlist_id=playlist_id,
+                    dry_run=False,
+                    mirror=playlist_mirror,
                 )
                 if scrubbed:
                     print(f"Removed {scrubbed} title-mismatch artist(s) before reconcile.")
@@ -1358,7 +1506,9 @@ def sync(
                     liked_uris_by_artist=liked_uris_by_artist,
                     market=market,
                     fill_missing_tracks=True,
+                    mirror=playlist_mirror,
                 )
+                playlist_mirror.save_to_state(state)
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_state(state_path, state)
                 print(
