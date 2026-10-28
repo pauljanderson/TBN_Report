@@ -531,20 +531,40 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
         raise RuntimeError(status.stderr.strip() or "git status failed")
     branch = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "HEAD"
 
+    if branch != "main":
+        print(
+            f"[pages] WARNING: HEAD is on {branch}, not main. "
+            "DailyRun/publish should normally run on main. "
+            "Will still commit locally and push HEAD → origin/main for Pages "
+            "(skipping a bare `git push` of this feature branch, which fails when "
+            "the remote branch has moved)."
+        )
+
     if not status.stdout.strip():
         print("[pages] No changes under docs/ or closed_positions_log.csv — skip commit.")
         push_origin_main(repo_root, branch)
         return
 
+    # Commit on the current branch. Do NOT bare-`git push` when off main — a stale
+    # feature branch (e.g. cursor/spotify-…) is often behind its remote and rejects
+    # non-fast-forward, aborting before Pages can update. Pages only needs origin/main.
     for step in (
         ["add", "--", *paths_to_add],
         ["commit", "-m", message],
-        ["push"],
     ):
         proc = _git(step, repo_root)
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout).strip()
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
+
+    if branch == "main":
+        # Fast path: push the branch itself (same tip as HEAD:main).
+        proc = _git(["push", "origin", "main"], repo_root)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).strip()
+            raise RuntimeError(f"git push origin main failed: {err}")
+        print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
+        return
 
     push_origin_main(repo_root, branch)
 
