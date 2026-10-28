@@ -23,8 +23,12 @@ Examples:
   # Continue from cached favorites + keep calling StungEvents / updating Spotify:
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --continue-cached
 
-  # If Spotify is rate-limited (429), the same flag still runs StungEvents and saves
-  # matches to state; re-run later to push pending tracks to the playlist.
+  # Force-push everything already in state.json onto the Spotify playlist
+  # (no StungEvents calls; requires Spotify API access):
+  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --apply-playlist
+
+  # If Spotify is rate-limited (429), --continue-cached still runs StungEvents and saves
+  # matches to state; use --apply-playlist once Spotify recovers.
 
   # Fill playlist from StungEvents results already on disk (no new Stung calls):
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --cache-only
@@ -753,16 +757,25 @@ def connect_spotify(cache_path: Path, *, required: bool):
     except SystemExit:
         raise
     except Exception as exc:  # noqa: BLE001
-        if required or not is_spotify_rate_limit(exc):
+        if is_spotify_rate_limit(exc):
+            retry_after = spotify_retry_after_seconds(exc)
+            hours = (retry_after or 0) / 3600.0
+            detail = "Spotify rate-limited (429)."
+            if retry_after and retry_after > 0:
+                detail += f" Retry-After ≈ {retry_after:.0f}s ({hours:.1f}h)."
+            if required:
+                raise SystemExit(
+                    f"{detail}\n"
+                    "Cannot update the Spotify playlist until that window passes.\n"
+                    "StungEvents matches are kept in drive/spotify_upcoming_shows/state.json — "
+                    "re-run with --apply-playlist after the wait."
+                ) from exc
+            print(detail)
+            print("Continuing without Spotify — StungEvents + state only; playlist sync deferred.")
+            return None, None
+        if required:
             raise
-        retry_after = spotify_retry_after_seconds(exc)
-        hours = (retry_after or 0) / 3600.0
-        detail = "Spotify rate-limited (429)."
-        if retry_after and retry_after > 0:
-            detail += f" Retry-After ≈ {retry_after:.0f}s ({hours:.1f}h)."
-        print(f"{detail}")
-        print("Continuing without Spotify — StungEvents + state only; playlist sync deferred.")
-        return None, None
+        raise
 
 
 def artist_state_record(
@@ -838,8 +851,7 @@ def scrub_title_mismatch_artists(
     return removed
 
 
-def flush_pending_playlist_artists(sp, playlist_id: str, state: dict) -> int:
-    """Push artists marked needs_playlist_sync. Skips URIs already present on the playlist."""
+def playlist_track_uris(sp, playlist_id: str) -> set[str]:
     on_playlist: set[str] = set()
     offset = 0
     while True:
@@ -862,32 +874,146 @@ def flush_pending_playlist_artists(sp, playlist_id: str, state: dict) -> int:
         if not items:
             break
         time.sleep(0.05)
+    return on_playlist
 
-    synced = 0
+
+def flush_pending_playlist_artists(
+    sp,
+    playlist_id: str,
+    state: dict,
+    *,
+    force_all: bool = False,
+    liked_uris_by_artist: dict[str, list[str]] | None = None,
+    market: str = "US",
+    fill_missing_tracks: bool = False,
+) -> dict[str, int]:
+    """Push tracked artists onto the Spotify playlist.
+
+    By default only artists with needs_playlist_sync. With force_all=True, every
+    tracked artist is reconciled (used by --apply-playlist).
+    """
+    on_playlist = playlist_track_uris(sp, playlist_id)
+    liked_uris_by_artist = liked_uris_by_artist or {}
+    stats = {"synced": 0, "added_tracks": 0, "already_ok": 0, "no_tracks": 0, "failed": 0}
+
     for artist_id, row in list((state.get("artists") or {}).items()):
-        if not row.get("needs_playlist_sync"):
+        if not force_all and not row.get("needs_playlist_sync"):
             continue
-        uris = [uri for uri in (row.get("track_uris") or []) if uri not in on_playlist]
-        if not uris and row.get("track_uris"):
-            row["needs_playlist_sync"] = False
-            synced += 1
-            continue
+        name = row.get("name") or artist_id
+        uris = list(row.get("track_uris") or [])
+        if fill_missing_tracks and len(uris) < TRACKS_PER_ARTIST:
+            filled = artist_track_uris(
+                sp,
+                artist_id,
+                name if isinstance(name, str) else str(name),
+                market,
+                TRACKS_PER_ARTIST,
+                liked_uris_by_artist,
+            )
+            if filled:
+                uris = filled
+                row["track_uris"] = uris
+
+        missing = [uri for uri in uris if uri not in on_playlist]
         if not uris:
             row["needs_playlist_sync"] = False
-            synced += 1
+            stats["no_tracks"] += 1
+            print(f"  ! {name}: no track URIs in state (liked cache empty / search failed)")
+            continue
+        if not missing:
+            row["needs_playlist_sync"] = False
+            stats["already_ok"] += 1
+            stats["synced"] += 1
             continue
         try:
-            playlist_add_uris(sp, playlist_id, uris)
-            on_playlist.update(uris)
+            playlist_add_uris(sp, playlist_id, missing)
+            on_playlist.update(missing)
             row["needs_playlist_sync"] = False
-            synced += 1
-            print(f"  → pending sync: {row.get('name') or artist_id} ({len(uris)} track(s))")
+            stats["synced"] += 1
+            stats["added_tracks"] += len(missing)
+            print(f"  → playlist add: {name} ({len(missing)} track(s))")
         except Exception as exc:  # noqa: BLE001
             if is_spotify_rate_limit(exc):
-                print("  ! Spotify rate-limited while syncing pending playlist; stopping playlist pushes.")
+                print("  ! Spotify rate-limited while syncing playlist; stopping playlist pushes.")
                 raise
-            print(f"  ! pending sync failed for {row.get('name') or artist_id}: {exc}")
-    return synced
+            stats["failed"] += 1
+            print(f"  ! playlist sync failed for {name}: {exc}")
+    return stats
+
+
+def apply_playlist_from_state(
+    *,
+    state_path: Path,
+    cache_path: Path,
+    market: str,
+    min_liked: int,
+    dry_run: bool,
+) -> int:
+    """Force Spotify playlist to match drive/.../state.json (no StungEvents calls)."""
+    sp, display_name = connect_spotify(cache_path, required=True)
+    assert sp is not None
+    print(f"Authenticated as {display_name}")
+    print("Mode: --apply-playlist (push state.json → Spotify 'upcoming shows', no StungEvents)")
+
+    state = load_state(state_path)
+    state.setdefault("artists", {})
+    state["playlist_name"] = PLAYLIST_NAME
+    tracked = len(state.get("artists") or {})
+    pending = sum(1 for row in (state.get("artists") or {}).values() if row.get("needs_playlist_sync"))
+    with_tracks = sum(1 for row in (state.get("artists") or {}).values() if row.get("track_uris"))
+    print(f"State: {state_path}")
+    print(f"Tracked artists: {tracked}; with track URIs: {with_tracks}; marked pending: {pending}")
+
+    if dry_run:
+        print("Dry run — scrub preview only; playlist not modified.")
+        scrub_title_mismatch_artists(state, dry_run=True)
+        return 0
+
+    playlist_id = ensure_playlist(sp, state)
+    state["playlist_id"] = playlist_id
+    print(f"Playlist ready: {PLAYLIST_NAME!r} ({playlist_id})")
+
+    print("Scrubbing artists whose show titles don't match the artist name …")
+    scrubbed = scrub_title_mismatch_artists(state, sp=sp, playlist_id=playlist_id, dry_run=False)
+    if scrubbed:
+        print(f"Removed {scrubbed} title-mismatch artist(s).")
+
+    lib_cache = library_cache(ttl_hours=DEFAULT_LIBRARY_CACHE_HOURS)
+    liked_uris_by_artist: dict[str, list[str]] = {}
+    try:
+        _, liked_uris_by_artist = fetch_liked_artists(
+            None, min_liked, cache=lib_cache, allow_stale=True, force_refresh=False
+        )
+    except SystemExit as exc:
+        print(f"  note: could not load liked-track cache ({exc}); using state track_uris only")
+
+    print(f"Reconciling all {len(state.get('artists') or {})} tracked artist(s) onto playlist …")
+    stats = flush_pending_playlist_artists(
+        sp,
+        playlist_id,
+        state,
+        force_all=True,
+        liked_uris_by_artist=liked_uris_by_artist,
+        market=market,
+        fill_missing_tracks=True,
+    )
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_state(state_path, state)
+
+    print(
+        f"\nPlaylist update done: added_tracks={stats['added_tracks']}, "
+        f"artists_synced={stats['synced']}, already_ok={stats['already_ok']}, "
+        f"no_tracks={stats['no_tracks']}, failed={stats['failed']}"
+    )
+    print(f"Open Spotify playlist: {PLAYLIST_NAME!r} ({playlist_id})")
+    if stats["added_tracks"] == 0 and stats["no_tracks"] and not stats["already_ok"]:
+        print(
+            "Nothing was added — state has artists but no track URIs. "
+            "Re-run without --apply-playlist once Spotify search works, or check library cache."
+        )
+    elif stats["added_tracks"] == 0 and stats["already_ok"]:
+        print("Playlist already contained the tracked tracks; nothing new to add.")
+    return 0 if stats["failed"] == 0 else 1
 
 
 def sync(
@@ -938,9 +1064,12 @@ def sync(
                 print(f"Removed {scrubbed} title-mismatch artist(s) from state/playlist.")
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_state(state_path, state)
-            pending = flush_pending_playlist_artists(sp, playlist_id, state)
-            if pending:
-                print(f"Flushed {pending} artist(s) previously deferred from playlist sync.")
+            pending_stats = flush_pending_playlist_artists(sp, playlist_id, state)
+            if pending_stats["synced"] or pending_stats["added_tracks"]:
+                print(
+                    f"Flushed pending playlist sync: "
+                    f"artists={pending_stats['synced']}, tracks_added={pending_stats['added_tracks']}"
+                )
                 state["updated_at"] = datetime.now(timezone.utc).isoformat()
                 save_state(state_path, state)
             # Drop artists whose stored show dates are all in the past.
@@ -1227,7 +1356,8 @@ def sync(
     if pending_left:
         print(
             "Playlist sync pending (Spotify was unavailable or rate-limited).\n"
-            "After the Spotify Retry-After window, re-run the same command to push tracks."
+            "When Spotify works again, force-push with:\n"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --apply-playlist"
         )
     if cache_only:
         print(
@@ -1320,6 +1450,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "(no Spotify library paging). Still uses Spotify for playlist/track updates."
         ),
     )
+    parser.add_argument(
+        "--apply-playlist",
+        action="store_true",
+        help=(
+            "Force-update the Spotify 'upcoming shows' playlist from state.json only "
+            "(no StungEvents). Requires working Spotify API access. Scrubs title mismatches, "
+            "fills missing track URIs from liked cache/search, and adds any missing tracks."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1334,6 +1473,14 @@ def main(argv: list[str] | None = None) -> int:
     favorites_only = bool(args.favorites_only or args.continue_cached)
     library_cache_only = bool(args.library_cache_only or args.continue_cached)
     try:
+        if args.apply_playlist:
+            return apply_playlist_from_state(
+                state_path=args.state_file,
+                cache_path=args.cache_path,
+                market=args.market,
+                min_liked=args.min_liked,
+                dry_run=args.dry_run,
+            )
         return sync(
             year=args.year,
             states=states,
