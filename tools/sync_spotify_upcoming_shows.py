@@ -6,7 +6,8 @@ Artist sources (union):
   - artists with >= N liked songs (default 4)
   - artists on "{year} light|medium|heavy" playlists
 
-Shows: StungEvents search, filtered by US state codes and upcoming days.
+Shows: StungEvents search, filtered by US state codes, upcoming days, and
+artist name appearing in the event title (description-only hits are ignored).
 Songs (path 1): up to 10 tracks per artist — liked songs first, then Spotify
 search. (/artists/{id}/top-tracks returns 403 on Dev Mode apps.)
 Playlist: "upcoming shows" — created up front; each match is added as soon as
@@ -38,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -535,7 +537,32 @@ class StungClient:
                 raise
 
 
-def shows_from_events(events: list[dict], days: int, states: set[str]) -> list[Show]:
+def title_matches_artist(title: str, artist_name: str) -> bool:
+    """True when the search query/artist appears in the event title.
+
+    StungEvents search matches descriptions too (bio name-drops, openers, etc.).
+    Only count a band as on tour when their name is actually in the title.
+    """
+    title_cf = (title or "").casefold()
+    artist_cf = (artist_name or "").strip().casefold()
+    if not title_cf or not artist_cf:
+        return False
+    if artist_cf in title_cf:
+        return True
+    tokens = re.findall(r"[a-z0-9]+", artist_cf)
+    significant = [tok for tok in tokens if len(tok) > 2]
+    if not significant:
+        significant = tokens
+    return bool(significant) and all(tok in title_cf for tok in significant)
+
+
+def shows_from_events(
+    events: list[dict],
+    days: int,
+    states: set[str],
+    *,
+    artist_name: str,
+) -> list[Show]:
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=days)
     shows: list[Show] = []
@@ -548,6 +575,8 @@ def shows_from_events(events: list[dict], days: int, states: set[str]) -> list[S
         if states and state not in states:
             continue
         title = event.get("title") or ""
+        if not title_matches_artist(title, artist_name):
+            continue
         low = title.casefold()
         if any(tok in low for tok in ("tribute", "cover band", "karaoke", "candlelight")):
             continue
@@ -972,7 +1001,7 @@ def sync(
                     # cache-only miss: do not treat as "no shows" and do not remove.
                     skipped_uncached += 1
                     continue
-                shows = shows_from_events(events, days, states)
+                shows = shows_from_events(events, days, states, artist_name=artist.name)
             except StungRateLimitError as exc:
                 print(f"\n{exc}")
                 budget_hit = True

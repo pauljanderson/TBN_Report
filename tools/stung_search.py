@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -59,7 +60,28 @@ def search_stung(query: str) -> list[dict]:
     return list(data.get("events") or [])
 
 
-def filter_events(events: list[dict], days: int, states: set[str]) -> list[dict]:
+def title_matches_query(title: str, query: str) -> bool:
+    """Require the search query to appear in the event title (not just description)."""
+    title_cf = (title or "").casefold()
+    query_cf = (query or "").strip().casefold()
+    if not title_cf or not query_cf:
+        return False
+    if query_cf in title_cf:
+        return True
+    tokens = re.findall(r"[a-z0-9]+", query_cf)
+    significant = [tok for tok in tokens if len(tok) > 2]
+    if not significant:
+        significant = tokens
+    return bool(significant) and all(tok in title_cf for tok in significant)
+
+
+def filter_events(
+    events: list[dict],
+    days: int,
+    states: set[str],
+    *,
+    query: str,
+) -> list[dict]:
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=days) if days > 0 else None
     out: list[dict] = []
@@ -72,6 +94,9 @@ def filter_events(events: list[dict], days: int, states: set[str]) -> list[dict]
             st = event_state(event)
             if st not in states:
                 continue
+        title = event.get("title") or ""
+        if not title_matches_query(title, query):
+            continue
         out.append(event)
     out.sort(key=lambda e: e.get("start_utc") or "")
     return out
@@ -159,7 +184,7 @@ def main() -> int:
             time.sleep(0.15)
             continue
 
-        filtered = filter_events(events, args.days, states)
+        filtered = filter_events(events, args.days, states, query=band)
         if args.raw:
             print(json.dumps({"band": band, "events": filtered}, indent=2))
             any_hits = bool(filtered) or any_hits
