@@ -792,6 +792,52 @@ def artist_state_record(
     }
 
 
+def scrub_title_mismatch_artists(
+    state: dict,
+    *,
+    sp=None,
+    playlist_id: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Drop tracked artists whose stored show titles don't include the artist name.
+
+    Cleans false positives from older runs that counted description-only StungEvents hits.
+    Returns how many artists were removed (or would be, in dry-run).
+    """
+    removed = 0
+    for artist_id, row in list((state.get("artists") or {}).items()):
+        name = (row.get("name") or "").strip()
+        shows = row.get("shows") or []
+        if name and any(title_matches_artist(show.get("title") or "", name) for show in shows):
+            # Keep only title-matching shows on the record.
+            kept = [s for s in shows if title_matches_artist(s.get("title") or "", name)]
+            if len(kept) != len(shows):
+                row["shows"] = kept
+                print(
+                    f"  pruned non-title shows for {name}: "
+                    f"{len(shows) - len(kept)} dropped, {len(kept)} kept"
+                )
+            continue
+        removed += 1
+        label = name or artist_id
+        if dry_run:
+            print(f"  would remove (no title match): {label}")
+            continue
+        state["artists"].pop(artist_id, None)
+        removable = [
+            uri
+            for uri in (row.get("track_uris") or [])
+            if uri not in uris_used_by_other_artists(state, artist_id)
+        ]
+        if sp is not None and playlist_id and removable:
+            try:
+                playlist_remove_uris(sp, playlist_id, removable)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! playlist remove failed for {label}: {exc}")
+        print(f"  removed (no title match): {label}")
+    return removed
+
+
 def flush_pending_playlist_artists(sp, playlist_id: str, state: dict) -> int:
     """Push artists marked needs_playlist_sync. Skips URIs already present on the playlist."""
     on_playlist: set[str] = set()
@@ -883,6 +929,15 @@ def sync(
             playlist_id = ensure_playlist(sp, state)
             state["playlist_id"] = playlist_id
             print(f"Playlist ready: {PLAYLIST_NAME!r} ({playlist_id})")
+            # Drop false positives from before title-match filtering existed.
+            print("Scrubbing artists whose show titles don't match the artist name …")
+            scrubbed = scrub_title_mismatch_artists(
+                state, sp=sp, playlist_id=playlist_id, dry_run=False
+            )
+            if scrubbed:
+                print(f"Removed {scrubbed} title-mismatch artist(s) from state/playlist.")
+                state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                save_state(state_path, state)
             pending = flush_pending_playlist_artists(sp, playlist_id, state)
             if pending:
                 print(f"Flushed {pending} artist(s) previously deferred from playlist sync.")
@@ -915,8 +970,17 @@ def sync(
                 playlist_id = None
             else:
                 raise
+    elif dry_run:
+        print("Dry-run scrub preview (title mismatches):")
+        scrub_title_mismatch_artists(state, dry_run=True)
     elif not dry_run and not spotify_ok:
-        print("Skipping Spotify playlist setup (rate-limited). Matches will be saved to state.")
+        print("Skipping Spotify playlist setup (rate-limited). Scrubbing state only …")
+        scrubbed = scrub_title_mismatch_artists(state, dry_run=False)
+        if scrubbed:
+            state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_state(state_path, state)
+            print(f"Removed {scrubbed} title-mismatch artist(s) from state (playlist when Spotify is back).")
+        print("Matches will be saved to state; playlist sync deferred.")
 
     print("Collecting artists …")
     lib_cache = library_cache(ttl_hours=DEFAULT_LIBRARY_CACHE_HOURS)
