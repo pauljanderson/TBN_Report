@@ -61,18 +61,11 @@ def search_stung(query: str) -> list[dict]:
 
 
 def title_matches_query(title: str, query: str) -> bool:
-    """Require the search query to appear in the event title (not just description)."""
-    title_cf = (title or "").casefold()
-    query_cf = (query or "").strip().casefold()
-    if not title_cf or not query_cf:
-        return False
-    if query_cf in title_cf:
-        return True
-    tokens = re.findall(r"[a-z0-9]+", query_cf)
-    significant = [tok for tok in tokens if len(tok) > 2]
-    if not significant:
-        significant = tokens
-    return bool(significant) and all(tok in title_cf for tok in significant)
+    """Calendar-style match (headliner or tribute/related)."""
+    sys.path.insert(0, str(REPO_TOOLS))
+    from sync_spotify_upcoming_shows import should_track_show  # noqa: WPS433
+
+    return should_track_show(title, query)
 
 
 def filter_events(
@@ -82,6 +75,9 @@ def filter_events(
     *,
     query: str,
 ) -> list[dict]:
+    sys.path.insert(0, str(REPO_TOOLS))
+    from sync_spotify_upcoming_shows import classify_show  # noqa: WPS433
+
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=days) if days > 0 else None
     out: list[dict] = []
@@ -95,8 +91,12 @@ def filter_events(
             if st not in states:
                 continue
         title = event.get("title") or ""
-        if not title_matches_query(title, query):
+        classified = classify_show(title, query)
+        if classified is None:
             continue
+        event = dict(event)
+        event["_playlist_eligible"] = classified[0]
+        event["_kind"] = classified[1]
         out.append(event)
     out.sort(key=lambda e: e.get("start_utc") or "")
     return out
@@ -108,9 +108,10 @@ def format_event(event: dict) -> str:
     if state:
         place = f"{place}, {state}" if place else state
     country = event.get("country") or ""
+    kind = event.get("_kind") or ("headliner" if event.get("_playlist_eligible") else "related")
     return (
         f"{event.get('start_utc')} | {place} | {country} | "
-        f"{event.get('venue_name')} | {event.get('title')}"
+        f"{event.get('venue_name')} | [{kind}] {event.get('title')}"
     )
 
 

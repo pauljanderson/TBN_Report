@@ -8,11 +8,13 @@ Artist sources (union):
 
 Shows: StungEvents search, filtered by US state codes, upcoming days, and
 artist name appearing in the event title (description-only hits are ignored).
+Tribute / fusion / "experience" shows are kept for calendar/state, but only
+real headliner matches get songs on the Spotify playlist.
 Songs (path 1): up to 10 tracks per artist — liked songs first, then Spotify
 search. (/artists/{id}/top-tracks returns 403 on Dev Mode apps.)
-Playlist: "upcoming shows" — created up front; each match is added as soon as
-it's found (so long rate-limited runs still fill the playlist). Artists drop
-off when re-checked with no local dates, or when stored dates are all past.
+Playlist: "upcoming shows" — created up front; each headliner match is added
+as soon as it's found. Artists drop off when re-checked with no local dates,
+or when stored dates are all past.
 
 State file tracks artists, show dates, and track URIs for later setlist.fm work.
 
@@ -93,6 +95,8 @@ class Show:
     country: str
     venue: str
     title: str
+    playlist_eligible: bool = False
+    kind: str = "headliner"  # headliner | tribute | related
 
 
 def parse_start(value: str | None) -> datetime | None:
@@ -542,23 +546,131 @@ class StungClient:
                 raise
 
 
-def title_matches_artist(title: str, artist_name: str) -> bool:
-    """True when the search query/artist appears in the event title.
+# Shows with these hints stay on the calendar/state but never get playlist tracks.
+PLAYLIST_BLOCK_HINTS = (
+    "tribute",
+    "cover band",
+    "cover show",
+    "karaoke",
+    "candlelight",
+    "fusion",
+    "experience",
+    "project",
+    "celebration of",
+    "symphony",
+    "in the style of",
+    "salute to",
+    "plays the music of",
+    "music of",
+)
 
-    StungEvents search matches descriptions too (bio name-drops, openers, etc.).
-    Only count a band as on tour when their name is actually in the title.
-    """
-    title_cf = (title or "").casefold()
-    artist_cf = (artist_name or "").strip().casefold()
-    if not title_cf or not artist_cf:
+
+def _normalize_name(text: str) -> str:
+    text = (text or "").casefold()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _strip_leading_the(text: str) -> str:
+    return re.sub(r"^the\s+", "", text).strip()
+
+
+def artist_phrase_pattern(artist_name: str) -> re.Pattern[str]:
+    parts = re.findall(r"[a-z0-9]+", (artist_name or "").casefold())
+    if not parts:
+        return re.compile(r"(?!)")  # never matches
+    body = r"[\s\-_/·]+".join(re.escape(p) for p in parts)
+    return re.compile(rf"(?<![a-z0-9]){body}(?![a-z0-9])", re.IGNORECASE)
+
+
+def title_references_artist(title: str, artist_name: str) -> bool:
+    """True when the artist phrase appears as whole words in the title."""
+    if not (title or "").strip() or not (artist_name or "").strip():
         return False
-    if artist_cf in title_cf:
+    return artist_phrase_pattern(artist_name).search(title) is not None
+
+
+def title_matches_artist(title: str, artist_name: str) -> bool:
+    """Backward-compatible alias: calendar/track eligibility uses should_track_show."""
+    return should_track_show(title, artist_name)
+
+
+def headliner_segment(title: str) -> str:
+    """Best-effort primary headliner from an event title."""
+    text = (title or "").strip()
+    text = re.sub(r"(?i)^(presents?|live\s*at)\s*:\s*", "", text).strip()
+    for sep in (
+        r"\s+w/\s+",
+        r"\s+with\s+",
+        r"\s+feat\.?\s+",
+        r"\s+ft\.?\s+",
+        r"\s+@\s+",
+        r"\s+at\s+",
+        r"\s+[—–\-]\s+",
+        r"\s*:\s*",
+    ):
+        parts = re.split(sep, text, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) > 1 and parts[0].strip():
+            text = parts[0].strip()
+            break
+    return text
+
+
+def looks_like_tribute_or_related(title: str, artist_name: str) -> bool:
+    """Tribute / fusion / experience / themed show related to the artist."""
+    low = (title or "").casefold()
+    if not low:
+        return False
+    if any(hint in low for hint in PLAYLIST_BLOCK_HINTS):
         return True
-    tokens = re.findall(r"[a-z0-9]+", artist_cf)
-    significant = [tok for tok in tokens if len(tok) > 2]
-    if not significant:
-        significant = tokens
-    return bool(significant) and all(tok in title_cf for tok in significant)
+    if title_references_artist(title, artist_name) and re.search(
+        r"\b(australian|ultimate|world'?s?\s+famous|famous|best)\b",
+        low,
+    ):
+        return True
+    return False
+
+
+def is_real_headliner(title: str, artist_name: str) -> bool:
+    """True when the title's headliner is the actual artist (playlist-safe)."""
+    if not (title or "").strip() or not (artist_name or "").strip():
+        return False
+    low = title.casefold()
+    if any(hint in low for hint in PLAYLIST_BLOCK_HINTS):
+        return False
+    head = _strip_leading_the(_normalize_name(headliner_segment(title)))
+    art = _strip_leading_the(_normalize_name(artist_name))
+    if not head or not art:
+        return False
+    if head == art:
+        return True
+    # "Artist Live", "Artist Tour 2026", "Artist Soft Opening", etc.
+    return head.startswith(art + " ")
+
+
+def should_track_show(title: str, artist_name: str) -> bool:
+    """Keep for calendar/state: real headliner OR tribute/related mention.
+
+    Drops false friends like query 'Pulp' vs title 'Slow Pulp'.
+    """
+    if is_real_headliner(title, artist_name):
+        return True
+    if title_references_artist(title, artist_name) and looks_like_tribute_or_related(
+        title, artist_name
+    ):
+        return True
+    return False
+
+
+def classify_show(title: str, artist_name: str) -> tuple[bool, str] | None:
+    """Return (playlist_eligible, kind) or None if the show should be ignored."""
+    if is_real_headliner(title, artist_name):
+        return True, "headliner"
+    if title_references_artist(title, artist_name) and looks_like_tribute_or_related(
+        title, artist_name
+    ):
+        return False, "tribute"
+    return None
 
 
 def shows_from_events(
@@ -580,11 +692,10 @@ def shows_from_events(
         if states and state not in states:
             continue
         title = event.get("title") or ""
-        if not title_matches_artist(title, artist_name):
+        classified = classify_show(title, artist_name)
+        if classified is None:
             continue
-        low = title.casefold()
-        if any(tok in low for tok in ("tribute", "cover band", "karaoke", "candlelight")):
-            continue
+        playlist_eligible, kind = classified
         key = (
             (event.get("start_utc") or "")[:10],
             (event.get("city") or "").casefold(),
@@ -601,10 +712,27 @@ def shows_from_events(
                 country=event.get("country") or "",
                 venue=event.get("venue_name") or "",
                 title=title,
+                playlist_eligible=playlist_eligible,
+                kind=kind,
             )
         )
     shows.sort(key=lambda s: s.start_utc)
     return shows
+
+
+def show_row_playlist_eligible(show: dict, artist_name: str) -> bool:
+    """Re-evaluate a stored show dict for playlist eligibility."""
+    if "playlist_eligible" in show:
+        return bool(show.get("playlist_eligible"))
+    title = show.get("title") or ""
+    classified = classify_show(title, artist_name)
+    return bool(classified and classified[0])
+
+
+def artist_has_playlist_eligible_show(row: dict) -> bool:
+    name = (row.get("name") or "").strip()
+    shows = row.get("shows") or []
+    return any(show_row_playlist_eligible(show, name) for show in shows)
 
 
 def artist_track_uris(
@@ -931,6 +1059,8 @@ def artist_state_record(
                 "country": s.country,
                 "venue": s.venue,
                 "title": s.title,
+                "playlist_eligible": bool(s.playlist_eligible),
+                "kind": s.kind,
             }
             for s in shows
         ],
@@ -948,42 +1078,74 @@ def scrub_title_mismatch_artists(
     dry_run: bool = False,
     mirror: PlaylistMirror | None = None,
 ) -> int:
-    """Drop tracked artists whose stored show titles don't include the artist name.
+    """Drop false-friend shows; strip playlist tracks for tribute-only artists.
 
-    Cleans false positives from older runs that counted description-only StungEvents hits.
-    Returns how many artists were removed (or would be, in dry-run).
+    - Removes artists with no calendar-eligible shows
+    - Keeps tribute/related shows in state for calendar
+    - Removes Spotify tracks when no show is playlist-eligible (real headliner)
+    Returns how many artists were fully removed (or would be, in dry-run).
     """
     removed = 0
     for artist_id, row in list((state.get("artists") or {}).items()):
         name = (row.get("name") or "").strip()
         shows = row.get("shows") or []
-        if name and any(title_matches_artist(show.get("title") or "", name) for show in shows):
-            # Keep only title-matching shows on the record.
-            kept = [s for s in shows if title_matches_artist(s.get("title") or "", name)]
-            if len(kept) != len(shows):
-                row["shows"] = kept
-                print(
-                    f"  pruned non-title shows for {name}: "
-                    f"{len(shows) - len(kept)} dropped, {len(kept)} kept"
-                )
-            continue
-        removed += 1
+        kept: list[dict] = []
+        for show in shows:
+            title = show.get("title") or ""
+            classified = classify_show(title, name) if name else None
+            if classified is None:
+                continue
+            playlist_eligible, kind = classified
+            updated = dict(show)
+            updated["playlist_eligible"] = playlist_eligible
+            updated["kind"] = kind
+            kept.append(updated)
+
         label = name or artist_id
-        if dry_run:
-            print(f"  would remove (no title match): {label}")
+        if not kept:
+            removed += 1
+            if dry_run:
+                print(f"  would remove (no title match): {label}")
+                continue
+            state["artists"].pop(artist_id, None)
+            removable = [
+                uri
+                for uri in (row.get("track_uris") or [])
+                if uri not in uris_used_by_other_artists(state, artist_id)
+            ]
+            if sp is not None and playlist_id and removable:
+                try:
+                    playlist_remove_tracked(sp, playlist_id, removable, mirror)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  ! playlist remove failed for {label}: {exc}")
+            print(f"  removed (no title match): {label}")
             continue
-        state["artists"].pop(artist_id, None)
-        removable = [
-            uri
-            for uri in (row.get("track_uris") or [])
-            if uri not in uris_used_by_other_artists(state, artist_id)
-        ]
-        if sp is not None and playlist_id and removable:
-            try:
-                playlist_remove_tracked(sp, playlist_id, removable, mirror)
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ! playlist remove failed for {label}: {exc}")
-        print(f"  removed (no title match): {label}")
+
+        row["shows"] = kept
+        if not any(s.get("playlist_eligible") for s in kept):
+            # Calendar-only (tribute/related): do not keep this artist's songs on the playlist.
+            uris = list(row.get("track_uris") or [])
+            if uris:
+                if dry_run:
+                    print(f"  would strip playlist tracks (tribute/related only): {label} ({len(uris)})")
+                else:
+                    removable = [
+                        uri for uri in uris if uri not in uris_used_by_other_artists(state, artist_id)
+                    ]
+                    if sp is not None and playlist_id and removable:
+                        try:
+                            playlist_remove_tracked(sp, playlist_id, removable, mirror)
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"  ! playlist remove failed for {label}: {exc}")
+                    row["track_uris"] = []
+                    row["needs_playlist_sync"] = False
+                    print(f"  stripped playlist tracks (tribute/related only): {label}")
+            else:
+                row["needs_playlist_sync"] = False
+        elif dry_run and len(kept) != len(shows):
+            print(f"  would prune shows for {label}: {len(shows) - len(kept)} dropped, {len(kept)} kept")
+        elif len(kept) != len(shows):
+            print(f"  pruned shows for {label}: {len(shows) - len(kept)} dropped, {len(kept)} kept")
     return removed
 
 
@@ -1013,6 +1175,27 @@ def flush_pending_playlist_artists(
         if not force_all and not row.get("needs_playlist_sync"):
             continue
         name = row.get("name") or artist_id
+        if not artist_has_playlist_eligible_show(row):
+            # Tribute/related calendar entries: ensure songs aren't on the playlist.
+            uris_existing = list(row.get("track_uris") or [])
+            if uris_existing:
+                removable = [
+                    uri
+                    for uri in uris_existing
+                    if uri not in uris_used_by_other_artists(state, artist_id)
+                ]
+                if removable:
+                    try:
+                        playlist_remove_tracked(sp, playlist_id, removable, mirror)
+                        print(f"  → stripped tribute/related tracks: {name} ({len(removable)})")
+                    except Exception as exc:  # noqa: BLE001
+                        if is_spotify_rate_limit(exc):
+                            raise
+                        print(f"  ! strip failed for {name}: {exc}")
+                row["track_uris"] = []
+            row["needs_playlist_sync"] = False
+            stats["already_ok"] += 1
+            continue
         uris = list(row.get("track_uris") or [])
         if fill_missing_tracks and len(uris) < TRACKS_PER_ARTIST:
             filled = artist_track_uris(
@@ -1379,6 +1562,55 @@ def sync(
 
             prev = (state.get("artists") or {}).get(artist.artist_id) or {}
             prev_uris = list(prev.get("track_uris") or [])
+            playlist_shows = [s for s in shows if s.playlist_eligible]
+            calendar_only = not playlist_shows
+
+            soonest = shows[0]
+            place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
+            kinds = ",".join(sorted({s.kind for s in shows}))
+            print(
+                f"  {artist.name}: {len(shows)} show(s) [{kinds}]; "
+                f"soonest {soonest.start_utc} @ {place} "
+                f"[{', '.join(sorted(artist.sources))}]"
+            )
+
+            uris: list[str] = []
+            if calendar_only:
+                print("    → calendar only (tribute/related) — no playlist tracks")
+                # Drop any songs previously added for false headliner matches.
+                if not dry_run and spotify_ok and playlist_id and prev_uris and sp is not None:
+                    try:
+                        if playlist_mirror is None:
+                            playlist_mirror = load_playlist_mirror(sp, playlist_id, state)
+                        removable = [
+                            uri
+                            for uri in prev_uris
+                            if uri not in uris_used_by_other_artists(state, artist.artist_id)
+                        ]
+                        if removable:
+                            playlist_remove_tracked(sp, playlist_id, removable, playlist_mirror)
+                            playlist_mirror.save_to_state(state)
+                            print(f"    → stripped {len(removable)} track(s) from {PLAYLIST_NAME!r}")
+                    except Exception as exc:  # noqa: BLE001
+                        if is_spotify_rate_limit(exc):
+                            print("    ! Spotify rate-limited while stripping tribute tracks")
+                            sp = None
+                            spotify_ok = False
+                            playlist_id = None
+                            playlist_mirror = None
+                        else:
+                            print(f"    ! strip failed ({exc})")
+                if dry_run:
+                    matched_this_run += 1
+                    continue
+                state.setdefault("artists", {})[artist.artist_id] = artist_state_record(
+                    artist, shows, [], needs_playlist_sync=False
+                )
+                state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                save_state(state_path, state)
+                matched_this_run += 1
+                continue
+
             if spotify_ok and sp is not None:
                 try:
                     uris = artist_track_uris(
@@ -1406,12 +1638,7 @@ def sync(
             else:
                 uris = list(liked_uris_by_artist.get(artist.artist_id, []))[:TRACKS_PER_ARTIST] or prev_uris
 
-            soonest = shows[0]
-            place = f"{soonest.city}, {soonest.state}" if soonest.state else soonest.city
-            print(
-                f"  {artist.name}: {len(shows)} show(s); soonest {soonest.start_utc} @ {place} "
-                f"({len(uris)} tracks) [{', '.join(sorted(artist.sources))}]"
-            )
+            print(f"    → {len(uris)} playlist track(s) for headliner show(s)")
 
             if dry_run:
                 matched_this_run += 1
