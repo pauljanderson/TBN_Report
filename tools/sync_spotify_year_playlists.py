@@ -41,6 +41,10 @@ SCOPES = (
     "playlist-read-private",
     "playlist-modify-private",
     "playlist-modify-public",
+    # Used by report / upcoming-shows tools (shared token cache).
+    "user-top-read",
+    "user-read-recently-played",
+    "user-follow-read",
 )
 
 # Playlist display names for --name-style spaced (user default).
@@ -151,7 +155,9 @@ def build_client(cache_path: Path):
         cache_path=str(cache_path),
         open_browser=True,
     )
-    return spotipy.Spotify(auth_manager=auth, retries=5, status_retries=5)
+    # retries=0 / status_retries=0: fail immediately on Spotify 429 (Retry-After can be
+    # many hours). Callers catch and continue from caches instead of blocking the terminal.
+    return spotipy.Spotify(auth_manager=auth, retries=0, status_retries=0, backoff_factor=0.0)
 
 
 def fetch_liked_albums_for_year(sp, year: int) -> dict[str, AlbumBucket]:
