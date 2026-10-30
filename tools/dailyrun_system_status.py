@@ -65,10 +65,11 @@ REPORT_ORDER = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI"
 def live_wired_systems() -> tuple[str, ...]:
     """DailyRun-wired sleeves in report order (skips deprecated / not-wired, e.g. IND).
 
-    Live reports (historical performance, and others that want the same set)
-    should call this instead of a stale hardcoded tuple.
+    Live DailyRun / convergence / trendline callers should use this.
+    Historical performance also merges PERFORMANCE_EXTRA_SYSTEMS (IND) in
+    generate_system_performance_report.py — do not set wired=True for IND.
 
-    To add a system to this list: wire it in DailyRun.bat and this
+    To add a wired system: wire it in DailyRun.bat and this
     DAILYRUN_REGISTRY (plus REPORT_ORDER for display order). Research-only
     stamps stay out until they are DailyRun-wired.
     """
