@@ -1071,6 +1071,11 @@ def print_status(snap: dict) -> None:
     lock_sender = snap.get("lock_sender")
     print(f"Merged poller (--poll-all): {_job_bits(poll_all, snap.get('poll_all_extra') or [])}")
     print(f"Lock sender (A): {_job_bits(lock_sender, snap.get('lock_sender_extra') or [])}")
+    if snap.get("supervisor") and not lock_sender:
+        print(
+            "NOTE: Supervisor is up but Lock sender (A) is DOWN — A is not sending. "
+            "Wait ~60s for the supervisor loop, or re-run: python tools/prediction_job_control.py restart-lock"
+        )
     print(f"Leftover --poll-one helpers: {actual_n}")
     print(f"Intended live set (supervisor status file): {intended_n}")
     compare = snap.get("poller_compare") or []

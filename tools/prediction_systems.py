@@ -934,9 +934,14 @@ def status_rows(jobs: dict | None = None, *, snapshot=None, positions=None) -> l
         cfg = cfgs[sid]
         pids = pids_for(sid, jobs) if sid != "lock" else []
         if sid == "lock":
+            # A sends via live_lock_sender.py (supervisor child). Do not fall
+            # back to the supervisor PID — that made "On + PID" look live while
+            # Lock sender (A) was DOWN.
             sender = (jobs.get("lock_sender") or [None])[0]
-            sup = (jobs.get("supervisor") or [None])[0]
-            pid_text = str((sender or sup or {}).get("pid") or "-") if (sender or sup) else "-"
+            if sender and sender.get("pid"):
+                pid_text = str(sender.get("pid"))
+            else:
+                pid_text = "-"
             extra = ""
         else:
             pid_text = str(pids[0]) if pids else "-"
@@ -966,7 +971,11 @@ def status_rows(jobs: dict | None = None, *, snapshot=None, positions=None) -> l
             "pid": pid_text,
             "extra_pids": extra,
             "last": last_action(sid),
-            "alive": bool(pids) if sid != "lock" else bool((jobs.get("supervisor") or [])),
+            "alive": (
+                bool(pids)
+                if sid != "lock"
+                else bool(jobs.get("lock_sender") or [])
+            ),
         })
     return rows
 

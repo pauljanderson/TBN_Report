@@ -30,6 +30,8 @@ def run() -> None:
     lgp.write_json(PID_PATH, {"pid": me, "started_at": lgp.iso_now(), "role": "lock_sender"})
     lgp.log(f"lock sender start pid {me}")
     try:
+        # Older leftover-IOC resume (may be absent after GTC adopt). Keep the
+        # ensure_watch_ticker name for kitchen tests; GTC ticks run below.
         live_lock_orders.maybe_resume_one_leg_watch(lgp.log)
         live_lock_orders.ensure_watch_ticker(lgp.log)
     except Exception as exc:
@@ -37,6 +39,10 @@ def run() -> None:
     seen: dict[str, str] = {}
     while lgp.keep_running():
         try:
+            try:
+                live_lock_orders.tick_one_leg_gtc_watches(lgp.log)
+            except Exception as exc:
+                lgp.log(f"one-leg GTC watch tick {type(exc).__name__}")
             live = lgp.live_games(scan)
             live_keys = {row["key"] for row in live}
             by_key = {row["key"]: row for row in live}
