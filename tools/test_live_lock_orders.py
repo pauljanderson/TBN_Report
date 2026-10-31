@@ -89,6 +89,11 @@ def test_kalshi_no_is_a_yes_ask_at_one_minus_price():
     yes = live_lock_orders.kalshi_order_body("KX-TEST", "yes", Decimal("0.40"), "cid")
     assert yes["side"] == "bid"
     assert yes["price"] == "0.4000"
+    gtc = live_lock_orders.kalshi_order_body("KX-TEST", "yes", Decimal("0.40"), "cid", tif="gtc")
+    assert gtc["time_in_force"] == "good_till_canceled"
+    assert live_lock_orders.gemini_order_payload("GEMI", "yes", Decimal("0.40"), tif="gtc")["timeInForce"] == "good-till-cancel"
+    poly = live_lock_orders.polymarket_order_body("slug", "ORDER_INTENT_BUY_LONG", Decimal("0.40"), tif="gtc")
+    assert poly["tif"] == "TIME_IN_FORCE_GOOD_TILL_CANCEL"
 
 
 def test_polymarket_short_price_does_not_pay_more():
@@ -115,11 +120,77 @@ def test_filled_and_blocked():
 def test_one_leg_message_is_separate_from_the_under_1_ping():
     first = {"venue": "kalshi", "outcome": "yes", "instrument": "KX-TEST", "pay": "0.36"}
     second = {"venue": "gemini", "outcome": "no", "instrument": "GEMI-TEST", "pay": "0.34"}
-    text = live_lock_orders.one_leg_message("Carolina vs Philadelphia", first, {"yes_price_dollars": "0.1100", "order_id": "abc"}, second, 201, "no message", {"order_id": "999"})
+    text = live_lock_orders.one_leg_message(
+        "Carolina vs Philadelphia",
+        first,
+        {"yes_price_dollars": "0.1100", "order_id": "abc"},
+        second,
+        201,
+        "no message",
+        {"order_id": "999"},
+        gtc_resting=True,
+    )
     assert text.startswith("one leg filled, other leg did not.")
     assert "Pair under $1" not in text
     assert "fill 0.1100" in text
-    assert "No repair order was sent." in text
+    assert "Second leg GTC resting" in text
+    assert "No repair order was sent." not in text
+
+
+def test_one_leg_deadline_actions():
+    cheap = live_lock_orders.one_leg_deadline_action(
+        held_pay=Decimal("0.20"), gtc_filled=False, waited_sec=180
+    )
+    assert cheap == "exit_cheap"
+    waiting = live_lock_orders.one_leg_deadline_action(
+        held_pay=Decimal("0.40"), gtc_filled=False, waited_sec=60
+    )
+    assert waiting == "keep_waiting"
+    filled = live_lock_orders.one_leg_deadline_action(
+        held_pay=Decimal("0.40"), gtc_filled=True, waited_sec=10
+    )
+    assert filled == "done_gtc_filled"
+    hold = live_lock_orders.one_leg_deadline_action(
+        held_pay=Decimal("0.40"),
+        gtc_filled=False,
+        waited_sec=180,
+        be_complete_available=False,
+    )
+    assert hold == "hold_to_settle"
+    complete = live_lock_orders.one_leg_deadline_action(
+        held_pay=Decimal("0.40"),
+        gtc_filled=False,
+        waited_sec=180,
+        be_complete_available=True,
+    )
+    assert complete == "try_be_complete"
+
+
+def test_choose_cheap_exit_prefers_tighter_loss():
+    # flatten all-in 0.80 on a 0.20 hold → round-trip 1.00 → 0 loss; sell proceeds 0.05 → 0.15 loss
+    assert (
+        live_lock_orders.choose_cheap_exit(
+            flatten_all_in=Decimal("0.80"),
+            market_sell_proceeds=Decimal("0.05"),
+            held_pay=Decimal("0.20"),
+        )
+        == "flatten"
+    )
+    assert (
+        live_lock_orders.choose_cheap_exit(
+            flatten_all_in=Decimal("0.95"),
+            market_sell_proceeds=Decimal("0.18"),
+            held_pay=Decimal("0.20"),
+        )
+        == "market_sell"
+    )
+
+
+def test_break_even_miss_pay_above_intended_l():
+    # Filled 0.40 + ~1.7¢ fee → BE miss near 0.58, above a 0.53 L with edge
+    be = live_lock_orders.break_even_miss_pay(Decimal("0.40"))
+    assert be > Decimal("0.50")
+    assert be < Decimal("0.60")
 
 
 def test_send_returns_before_order_http_when_off():
@@ -172,6 +243,9 @@ if __name__ == "__main__":
     test_polymarket_short_price_does_not_pay_more()
     test_filled_and_blocked()
     test_one_leg_message_is_separate_from_the_under_1_ping()
+    test_one_leg_deadline_actions()
+    test_choose_cheap_exit_prefers_tighter_loss()
+    test_break_even_miss_pay_above_intended_l()
     test_send_returns_before_order_http_when_off()
     test_spot_order_path_is_refused()
     print("ok")
