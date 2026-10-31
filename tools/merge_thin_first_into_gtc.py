@@ -77,12 +77,13 @@ CONFLICT_START = re.compile(r"^<<<<<<< .*$")
 CONFLICT_MID = re.compile(r"^=======\s*$")
 CONFLICT_END = re.compile(r"^>>>>>>> .*$")
 
+# Allow trailing comments — trading-PC lines often end with "# thin-first".
 ORDERED_CALL_RE = re.compile(
-    r"^([ \t]*)outcomes\s*=\s*ordered_outcomes\(([^)]*)\)\s*$",
+    r"^([ \t]*)outcomes\s*=\s*ordered_outcomes\(([^)]*)\)\s*(?:#.*)?$",
     re.M,
 )
 PICK_CALL_RE = re.compile(
-    r"^([ \t]*)outcomes\s*=\s*_pick_hard_leg\(([^)]*)\)\s*$",
+    r"^([ \t]*)outcomes\s*=\s*_pick_hard_leg\(([^)]*)\)\s*(?:#.*)?$",
     re.M,
 )
 # Backup may call pick differently, e.g. hard, easy = _pick_hard_leg(...)
@@ -95,6 +96,99 @@ class MergeError(RuntimeError):
 
 def _count_hits(text: str, symbols: tuple[str, ...]) -> int:
     return sum(text.count(sym) for sym in symbols)
+
+
+def _match_is_def_signature(src: str, match: re.Match) -> bool:
+    """True when `_pick_hard_leg(` is the function *definition*, not a call."""
+    line_start = src.rfind("\n", 0, match.start()) + 1
+    prefix = src[line_start : match.start()]
+    return bool(re.search(r"(?m)^\s*def\s+$", prefix)) or prefix.lstrip().startswith(
+        "def "
+    )
+
+
+def _bare_call_args(args: str) -> str:
+    """Turn typed def params into call-safe names.
+
+    `cand: dict, fresh: list[dict]` → `cand, fresh`
+    `cand, fresh` → `cand, fresh`
+    """
+    args = (args or "").strip().rstrip(",")
+    if not args:
+        return ""
+    if ":" not in args and "->" not in args:
+        return args
+    names: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in args:
+        if ch in "([{":
+            depth += 1
+            cur.append(ch)
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+            cur.append(ch)
+        elif ch == "," and depth == 0:
+            part = "".join(cur).strip()
+            cur = []
+            if not part:
+                continue
+            name = part.split(":", 1)[0].strip().split("=", 1)[0].strip()
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                names.append(name)
+        else:
+            cur.append(ch)
+    part = "".join(cur).strip()
+    if part:
+        name = part.split(":", 1)[0].strip().split("=", 1)[0].strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            names.append(name)
+    return ", ".join(names)
+
+
+def _extract_pick_call_args(backup_src: str) -> str | None:
+    """Args for `outcomes = _pick_hard_leg(...)` — never a typed def signature.
+
+    Prefer a real call site. If the only hit is `def _pick_hard_leg(cand: dict, ...)`,
+    strip annotations to bare names (or return None so the patch uses GTC's
+    ordered_outcomes args). Using typed params verbatim produces:
+      outcomes = _pick_hard_leg(cand: dict, fresh: list[dict])  # SyntaxError
+    which previously failed around the shifted execute_locks line (~1228).
+    """
+    pick_calls = list(PICK_CALL_RE.finditer(backup_src))
+    if pick_calls:
+        return _bare_call_args(pick_calls[0].group(2))
+
+    for m in PICK_ANY_CALL_RE.finditer(backup_src):
+        if _match_is_def_signature(backup_src, m):
+            continue
+        return _bare_call_args(m.group(1))
+
+    # Only the def existed (call site still ordered_outcomes after conflict strip).
+    for m in PICK_ANY_CALL_RE.finditer(backup_src):
+        if _match_is_def_signature(backup_src, m):
+            bare = _bare_call_args(m.group(1))
+            return bare or None
+    return None
+
+
+def _syntax_error_context(src: str, exc: SyntaxError, radius: int = 5) -> str:
+    """Render ±radius lines around a SyntaxError for the FAIL message."""
+    lineno = exc.lineno or 0
+    lines = src.splitlines()
+    if not lineno or not lines:
+        return f"{exc}"
+    start = max(1, lineno - radius)
+    end = min(len(lines), lineno + radius)
+    out = [
+        f"{exc} (line {lineno})",
+        f"----- merged source lines {start}-{end} -----",
+    ]
+    for i in range(start, end + 1):
+        mark = ">>" if i == lineno else "  "
+        out.append(f"{mark} {i}: {lines[i - 1]}")
+    out.append("-----")
+    return "\n".join(out)
 
 
 def strip_conflict_markers(text: str) -> tuple[str, int, list[str]]:
@@ -237,18 +331,7 @@ def extract_thin_pieces(backup_src: str) -> dict:
         if name in helper_names and name.startswith("_"):
             pieces[name] = text
 
-    pick_calls = list(PICK_CALL_RE.finditer(backup_src))
-    any_calls = list(PICK_ANY_CALL_RE.finditer(backup_src))
-    call_args = None
-    if pick_calls:
-        call_args = pick_calls[0].group(2).strip()
-    elif any_calls:
-        # Prefer a call that is not the def line
-        for m in any_calls:
-            args = m.group(1).strip()
-            # Skip def signature if somehow matched — PICK_ANY is only calls, ok
-            call_args = args
-            break
+    call_args = _extract_pick_call_args(backup_src)
 
     flatten_present = "flatten_filled_leg" in backup_src
     return {
@@ -295,12 +378,26 @@ def _patch_send_order(gtc_src: str, call_args: str | None) -> tuple[str, str]:
             "Paste thin-first call site manually, then re-check with findstr."
         )
     indent = m.group(1)
-    args = call_args if call_args is not None else m.group(2).strip()
+    gtc_args = _bare_call_args(m.group(2))
+    args = _bare_call_args(call_args) if call_args is not None else gtc_args
     # Common trading-PC signature mirrors ordered_outcomes(cand, fresh)
     if not args:
-        args = m.group(2).strip()
+        args = gtc_args or "cand, fresh"
+    # Guard: never emit typed-parameter call syntax.
+    if ":" in args:
+        raise MergeError(
+            f"Refusing to patch send order with typed args {args!r}. "
+            "Expected bare names like 'cand, fresh'."
+        )
     replacement = f"{indent}outcomes = _pick_hard_leg({args})"
     new_src = ORDERED_CALL_RE.sub(replacement, gtc_src, count=1)
+    try:
+        ast.parse(replacement.lstrip())
+    except SyntaxError as exc:
+        raise MergeError(
+            "Patched send-order line is not valid Python: "
+            f"{replacement!r} ({exc})"
+        ) from exc
     return new_src, f"patched send order → outcomes = _pick_hard_leg({args})"
 
 
@@ -342,8 +439,33 @@ def merge(backup_src: str, gtc_src: str) -> tuple[str, list[str]]:
             )
 
     merged = gtc_src
+    # Inject constants before defs so readers see VENUE_MISS_RANK above helpers.
+    assign_names = [n for n in pieces if n in EXTRACT_ASSIGNS]
+    def_names = [n for n in pieces if n not in EXTRACT_ASSIGNS]
+    # Prefer known helper order: size helpers before _pick_hard_leg before flatten.
+    preferred_defs = [
+        n
+        for n in (
+            "_leg_size",
+            "_hard_leg_key",
+            "_hard_leg_size",
+            "_venue_miss_rank",
+            "_quote_size_for_leg",
+            "_leg_quote_size",
+            "_thin_first_outcomes",
+            "hard_first_outcomes",
+            "_pick_hard_leg",
+            "flatten_filled_leg",
+        )
+        if n in pieces
+    ]
+    for n in def_names:
+        if n not in preferred_defs:
+            preferred_defs.append(n)
+
     insert_blocks: list[str] = []
-    for name, text in pieces.items():
+    for name in assign_names + preferred_defs:
+        text = pieces[name]
         if _already_has_def(merged, name):
             notes.append(f"skip inject {name}: already present in GTC file")
             continue
@@ -365,13 +487,15 @@ def merge(backup_src: str, gtc_src: str) -> tuple[str, list[str]]:
         if sym not in merged:
             raise MergeError(f"Post-merge sanity failed: missing {sym!r}")
 
-    # Syntax check
+    # Syntax check — include ±5 lines so the FAIL message shows what broke.
     try:
         ast.parse(merged)
     except SyntaxError as exc:
+        ctx = _syntax_error_context(merged, exc, radius=5)
         raise MergeError(
-            f"Merged file has syntax error: {exc}. Refusing to write. "
-            "Restore from tools/_merge_backup/live_lock_orders.before_thin_merge.py"
+            f"Merged file has syntax error: {ctx}\n"
+            "Refusing to write. Restore from "
+            "tools/_merge_backup/live_lock_orders.before_thin_merge.py"
         ) from exc
 
     if extracted["flatten_present"] and "flatten_filled_leg" not in merged:
@@ -411,7 +535,7 @@ NET_MAX = Decimal("0.984")
 VENUE_MISS_RANK = {"gemini": 0, "kalshi": 1, "polymarket": 2}
 
 <<<<<<< HEAD
-def _leg_size(cand, outcome):
+def _leg_size(cand: dict, outcome: str):
     key = "yes_size" if outcome == "yes" else "no_size"
     try:
         return Decimal(str(cand.get(key) or "0"))
@@ -419,7 +543,7 @@ def _leg_size(cand, outcome):
         return Decimal("0")
 
 
-def _pick_hard_leg(cand, fresh):
+def _pick_hard_leg(cand: dict, fresh: list[dict]) -> list[str]:
     """Thin/hard first: smaller size, then miss-venue rank, then pricier cash."""
     yes_sz = _leg_size(cand, "yes")
     no_sz = _leg_size(cand, "no")
@@ -442,7 +566,7 @@ def _pick_hard_leg(cand, fresh):
     return ["no", "yes"]
 
 
-def flatten_filled_leg(log, filled_spec):
+def flatten_filled_leg(log, filled_spec: dict):
     """Same-shop opposite IOC (synthetic stub)."""
     return None
 =======
@@ -454,12 +578,105 @@ ONE_LEG_GTC_WAIT_SEC = 180
 
 def execute_locks(cand, fresh):
 <<<<<<< HEAD
-    outcomes = _pick_hard_leg(cand, fresh)
+    outcomes = _pick_hard_leg(cand, fresh)  # thin-first
 =======
     outcomes = ordered_outcomes(cand, fresh)
 >>>>>>> origin/main
     return outcomes
 '''
+
+# Realistic full-file-shaped backup: annotated def + trailing-comment call +
+# conflict markers around pick / flatten / send path. Used to catch the class of
+# bug that produced "invalid syntax (... line 1228)" on Paul's trading PC.
+REALISTIC_THIN_DEFS = '''\
+VENUE_MISS_RANK = {"gemini": 0, "kalshi": 1, "polymarket": 2}
+
+
+def _leg_size(cand: dict, outcome: str):
+    key = "yes_size" if outcome == "yes" else "no_size"
+    try:
+        return Decimal(str(cand.get(key) or "0"))
+    except Exception:
+        return Decimal("0")
+
+
+def _pick_hard_leg(cand: dict, fresh: list[dict]) -> list[str]:
+    """Thin/hard first: smaller size, then miss-venue rank, then pricier cash."""
+    yes_sz = _leg_size(cand, "yes")
+    no_sz = _leg_size(cand, "no")
+    if yes_sz < no_sz:
+        return ["yes", "no"]
+    if no_sz < yes_sz:
+        return ["no", "yes"]
+    yv = str(cand.get("yes_venue") or "").lower()
+    nv = str(cand.get("no_venue") or "").lower()
+    yr = VENUE_MISS_RANK.get(yv, 99)
+    nr = VENUE_MISS_RANK.get(nv, 99)
+    if yr < nr:
+        return ["yes", "no"]
+    if nr < yr:
+        return ["no", "yes"]
+    yp = Decimal(str(cand.get("yes_price") or "0"))
+    np_ = Decimal(str(cand.get("no_price") or "0"))
+    if yp >= np_:
+        return ["yes", "no"]
+    return ["no", "yes"]
+
+
+def flatten_filled_leg(log, filled_spec: dict):
+    """Same-shop opposite IOC (synthetic stub)."""
+    return None
+'''
+
+
+def build_realistic_conflicted_backup(gtc_src: str) -> str:
+    """Wrap thin-first defs + send-path call as conflict hunks inside a GTC body.
+
+    Mirrors a mid-merge `tools/_merge_backup/live_lock_orders.py` without needing
+    Paul's private backup: conflict around `_pick_hard_leg` / `flatten_filled_leg`
+    vs `ordered_outcomes`, and around the execute_locks send-order line.
+    """
+    try:
+        tree = ast.parse(gtc_src)
+    except SyntaxError as exc:
+        raise MergeError(f"GTC source not valid Python for fixture build: {exc}") from exc
+    lines = gtc_src.splitlines(keepends=True)
+    oo = next(
+        (
+            n
+            for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == "ordered_outcomes"
+        ),
+        None,
+    )
+    if oo is None:
+        raise MergeError("GTC fixture build: ordered_outcomes not found")
+    start, end = oo.lineno, getattr(oo, "end_lineno", None) or oo.lineno
+    theirs = "".join(lines[start - 1 : end])
+    conflicted = (
+        lines[: start - 1]
+        + ["<<<<<<< HEAD\n"]
+        + [REALISTIC_THIN_DEFS if REALISTIC_THIN_DEFS.endswith("\n") else REALISTIC_THIN_DEFS + "\n"]
+        + ["=======\n"]
+        + [theirs]
+        + [">>>>>>> origin/main\n"]
+        + lines[end:]
+    )
+    text = "".join(conflicted)
+    old_call = "        outcomes = ordered_outcomes(cand, fresh)\n"
+    new_call = (
+        "<<<<<<< HEAD\n"
+        "        outcomes = _pick_hard_leg(cand, fresh)  # thin-first\n"
+        "=======\n"
+        "        outcomes = ordered_outcomes(cand, fresh)\n"
+        ">>>>>>> origin/main\n"
+    )
+    if old_call not in text:
+        raise MergeError(
+            "GTC fixture build: execute_locks ordered_outcomes call not found"
+        )
+    return text.replace(old_call, new_call, 1)
 
 SYNTHETIC_GTC = '''\
 """Synthetic clean GTC stub (mirrors symbols the merger requires)."""
@@ -548,6 +765,75 @@ def self_test() -> int:
         fail = True
     except MergeError:
         print("  [OK] loud fail when backup lacks _pick_hard_leg")
+
+    # Regression: annotated def + trailing-comment call must NOT patch typed args.
+    annotated_only = (
+        "def _pick_hard_leg(cand: dict, fresh: list[dict]) -> list[str]:\n"
+        "    return ['yes', 'no']\n"
+        "\n"
+        "def execute_locks():\n"
+        "    outcomes = _pick_hard_leg(cand, fresh)  # thin-first\n"
+    )
+    args = _extract_pick_call_args(annotated_only)
+    if args != "cand, fresh":
+        print(f"  [FAIL] call_args from annotated+comment expected 'cand, fresh' got {args!r}")
+        fail = True
+    else:
+        print("  [OK] call_args strips/ignores typed def when call has trailing comment")
+
+    def_only = (
+        "def _pick_hard_leg(cand: dict, fresh: list[dict]) -> list[str]:\n"
+        "    return ['yes', 'no']\n"
+    )
+    args2 = _extract_pick_call_args(def_only)
+    if args2 != "cand, fresh":
+        print(f"  [FAIL] def-only call_args expected bare names got {args2!r}")
+        fail = True
+    else:
+        print("  [OK] def-only annotated signature → bare call args")
+
+    # Realistic full-file conflicted backup → clean GTC must ast.parse.
+    gtc_path = DEFAULT_GTC
+    if gtc_path.is_file():
+        gtc_full = gtc_path.read_text(encoding="utf-8")
+        try:
+            realistic_backup = build_realistic_conflicted_backup(gtc_full)
+            merged_full, notes_full = merge(realistic_backup, gtc_full)
+            ast.parse(merged_full)
+            if "outcomes = _pick_hard_leg(cand, fresh)" not in merged_full:
+                print("  [FAIL] realistic merge missing patched send order")
+                fail = True
+            elif "cand: dict" in merged_full.split("outcomes = _pick_hard_leg", 1)[-1][:80]:
+                print("  [FAIL] realistic merge patched typed args into call")
+                fail = True
+            elif "def _pick_hard_leg" not in merged_full or "def flatten_filled_leg" not in merged_full:
+                print("  [FAIL] realistic merge missing injected defs")
+                fail = True
+            else:
+                print("  [OK] realistic full-file conflicted backup merges + ast.parse")
+                for n in notes_full:
+                    if n.startswith("patched") or n.startswith("inject"):
+                        print(f"    note: {n}")
+        except MergeError as exc:
+            print(f"  [FAIL] realistic full-file merge: {exc}")
+            fail = True
+        except SyntaxError as exc:
+            print(f"  [FAIL] realistic merged output SyntaxError: {exc}")
+            fail = True
+    else:
+        print("  [MISS] skip realistic full-file test (no tools/live_lock_orders.py)")
+
+    # Syntax-error reporter must include context lines
+    try:
+        bad = "a = 1\nburst (\n"
+        ast.parse(bad)
+    except SyntaxError as se:
+        ctx = _syntax_error_context(bad, se, radius=5)
+        if ">>" not in ctx or "burst" not in ctx:
+            print(f"  [FAIL] syntax context missing markers: {ctx!r}")
+            fail = True
+        else:
+            print("  [OK] syntax-error context includes ± lines")
 
     if fail:
         print("SELF-TEST FAIL")
