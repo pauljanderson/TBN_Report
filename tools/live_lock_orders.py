@@ -50,6 +50,7 @@ ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
 ONE = Decimal("1")
 CENT = Decimal("0.01")
 NET_MAX = Decimal("0.95")
+_DEFAULT_NET_MAX = Decimal("0.95")
 SIZE = Decimal("1")
 KALSHI_TICK = Decimal("0.0001")
 POLY_TICK = Decimal("0.001")
@@ -66,6 +67,77 @@ _capability: dict[str, tuple[float, bool, str]] = {}
 # Module flag (default False). Prefer orders_enabled() which also honors env + stamps.
 # Tests and local overrides may assign ORDERS_ENABLED = True.
 ORDERS_ENABLED = False
+
+
+def effective_net_max() -> Decimal:
+    """systems.json lock.net_max when Paul set it; else NET_MAX / module default.
+
+    Tests that assign NET_MAX away from the default pin that cap.
+    """
+    current = Decimal(str(NET_MAX))
+    if current != _DEFAULT_NET_MAX:
+        return current
+    try:
+        import prediction_systems
+
+        raw = getattr(prediction_systems.get_system("lock"), "net_max", None)
+        if raw is not None:
+            val = Decimal(str(raw))
+            if val > 0:
+                return val
+    except Exception:
+        pass
+    return current
+
+
+def send_line() -> str:
+    """User-facing send cap from systems.json lock.net_max, else NET_MAX."""
+    return format(effective_net_max(), "f")
+
+
+def rewrite_send_line_copy(text: str) -> str:
+    """Show the live NET_MAX in skip/status copy that still names a prior cap."""
+    import re
+
+    line = send_line()
+    cap = effective_net_max()
+    out = str(text or "")
+
+    def _amt(raw: str) -> Decimal | None:
+        try:
+            return Decimal(raw)
+        except Exception:
+            return None
+
+    def swap(pattern: str, repl: str) -> None:
+        nonlocal out
+
+        def sub(match: re.Match) -> str:
+            if match.group("n") == "0.99":
+                return match.group(0)
+            return repl
+
+        out = re.sub(pattern, sub, out)
+
+    def cost_above_line(match: re.Match) -> str:
+        if match.group("n") == "0.99":
+            return match.group(0)
+        amount = _amt(match.group("amt"))
+        if amount is None or amount <= cap:
+            return match.group(0)
+        return f"{match.group('lead')}{match.group('amt')} is above the {line} send line"
+
+    out = re.sub(
+        r"(?P<lead>After-fee cost )(?P<amt>\d+\.\d+) is above the (?P<n>\d+\.\d+) send line",
+        cost_above_line,
+        out,
+    )
+    swap(r"(?<!above the )(?P<n>\d+\.\d+) send line", f"{line} send line")
+    swap(r"the (?P<n>\d+\.\d+) cap", f"the {line} cap")
+    swap(r"net at or under (?P<n>\d+\.\d+)", f"net at or under {line}")
+    swap(r"net <= (?P<n>\d+\.\d+)", f"net <= {line}")
+    swap(r"net is \$(?P<n>\d+\.\d+)", f"net is ${line}")
+    return out
 
 
 def orders_enabled() -> bool:
@@ -183,8 +255,9 @@ def qualifies(scan, cand: dict, title: str, game: dict) -> tuple[bool, str]:
     net = pair_net(scan, cand)
     if net is None:
         return False, "fee unknown"
-    if net > NET_MAX:
-        return False, f"net {_money(net)} is above 0.95"
+    cap = effective_net_max()
+    if net > cap:
+        return False, f"net {_money(net)} is above {send_line()}"
     return True, f"net {_money(net)}"
 
 
@@ -1225,17 +1298,18 @@ def execute_locks(scan, sport: str, title: str, game: dict, result: dict, fresh:
     now = time.time()
     for cand, reason in ready:
         key = scan._trade_bet_key(sport, game, cand)
-        outcomes = _pick_hard_leg(built_a, built_b)
-        legs = []
-        for outcome in outcomes:
+        built: list[dict] = []
+        for outcome in ("yes", "no"):
             spec = _leg_spec(cand, outcome)
             if spec is None:
                 log(f"order skip {title} {reason} missing order fields for {outcome}")
-                legs = []
+                built = []
                 break
-            legs.append(spec)
-        if len(legs) != 2:
+            built.append(spec)
+        if len(built) != 2:
             continue
+        hard, easy = _pick_hard_leg(built[0], built[1])
+        legs = [hard, easy]
         venues = [leg["venue"] for leg in legs]
         blocked_reason = ""
         for venue in venues:
