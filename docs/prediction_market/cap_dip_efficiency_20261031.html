@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Strategy B T0 cap × dip efficiency — 31 Oct 2026</title>
+<style>
+body { font-family: Georgia, "Times New Roman", serif; margin: 24px; color: #1e293b; line-height: 1.45; max-width: 1100px; }
+h1, h2, h3 { font-family: "Segoe UI", sans-serif; }
+.callout { background: #f8fafc; border: 1px solid #d8dee9; padding: 12px 14px; margin: 12px 0 18px; }
+.ok { background: #f0fdf4; border-color: #86efac; }
+.note { color: #475569; font-size: 0.95rem; }
+code { font-family: Consolas, monospace; font-size: 0.92em; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0 18px; }
+th, td { border: 1px solid #d8dee9; padding: 6px 8px; }
+th { background: #f8fafc; text-align: left; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.good { color: #166534; font-weight: 600; }
+.bad { color: #991b1b; }
+</style>
+</head>
+<body>
+<h1>Strategy B — most efficient start cap and biggest efficient dip</h1>
+<p class="note">Written 2026-10-31 (America/New_York). Research only. Not gold. Not DailyRun. Live B stays <strong>C≤1.05</strong>, <strong>D=25¢</strong> (HOLD — do not retune from this OOS tape).</p>
+
+<div class="callout ok">
+<h2>Verdict</h2>
+<ul>
+<li><strong>Most efficient start cap: C ≤ 1.04.</strong> Dense in-play B book (N=115 at that cap) peaks expectancy and total dollars at 1.04; all-sports tighten slice C≤1.04 beats C≤1.09 / 1.20. Tennis live-B path book (already filtered to ≤1.05) has no 1.01–1.02 settled door charges — first rung is 1.03 (best EV, small N) then 1.05 (best total). Caps 1.06–1.10 add nothing useful once you are already at 1.05.</li>
+<li><strong>Biggest dip still efficient: ~35–40¢ on EV; practical HOLD stays 25¢.</strong> On settled tennis C≤1.05 (N=86, 52 crossed), D=40¢ maximizes average P&amp;L (+3.3¢/game) but hit rate is only 33%. D=35¢ is close with 48% hit. D=25¢ is +1.8¢/game at 60% hit. D=0 (no wait) is inefficient (−5.6¢). D=45–50¢ never fills on this tape.</li>
+</ul>
+</div>
+
+<h2>What was measured</h2>
+<p>Full Strategy B path, not T0-only:</p>
+<ol>
+<li><strong>T0 both-Yes</strong> — after-fee all-in C (door charge 1–5¢ when C is 1.01–1.05).</li>
+<li><strong>Crossover</strong> — T0 dog Yes through 50¢ from below; buy one extra dog.</li>
+<li><strong>Dip</strong> — original favorite Yes at or below <code>1 − cross_fill − D</code>; lock the extra pair.</li>
+</ol>
+<p>Sources (Drive stamp <code>prediction_market_arb_exhaustive_20261017</code>):</p>
+<ul>
+<li>Primary path replay: <code>tennis_crossover_dip_d_sweep_20261028</code> — 1,078 T0-qualified tennis books, <strong>86 settled</strong>, 52 crossed. Already C≤1.05.</li>
+<li>Wider C: <code>dense_inplay_fav_lock_cross_smalld_20261021</code> — 182 books, <strong>119 settled</strong>, C up to ~1.14, B arms D=5…25¢.</li>
+<li>All-sports: <code>strategy_b_tighten_fav70_c104_c109_20261024</code> — control C_HI 1.20 vs slices 1.04 / 1.09, D=25¢ fixed.</li>
+<li>Fresh T0 clock inventory: <code>b_t0_window_and_cheapest_across_20261031.json</code> (2,866 usable games) — timing only, not full path P&amp;L.</li>
+</ul>
+<p class="note">Raw <code>price_memory</code> / Kalshi in-play paths are on the Windows local stamp, not this cloud VM. This job replays the published per-game tables (cross fill + min fav print) so D and C can be re-swept without the multi-GB tape.</p>
+
+<h2>1. Start cap — T0 prices</h2>
+<p>Live-B tennis T0-qualified door charges on the Oct 28 book (all-in already after fee):</p>
+<table>
+<thead><tr><th>All-in C</th><th>Door</th><th>N T0-qualified</th><th>N settled</th></tr></thead>
+<tbody>
+<tr><td>1.03</td><td>3¢</td><td class="n">422</td><td class="n">25</td></tr>
+<tr><td>1.04</td><td>4¢</td><td class="n">79</td><td class="n">5</td></tr>
+<tr><td>1.05</td><td>5¢</td><td class="n">577</td><td class="n">56</td></tr>
+</tbody>
+</table>
+<p>No T0-qualified rows at 1.01 or 1.02 on that live-B filter (asks+fees land on 3–5¢). Dense book <em>does</em> have C≈1.01–1.02.</p>
+
+<h3>Tennis settled path P&amp;L by C cap (D=25¢)</h3>
+<table>
+<thead><tr><th>C ≤</th><th>N settled</th><th>Crossed</th><th>Dip hits</th><th>EV $/game</th><th>Total $</th><th>Win %</th></tr></thead>
+<tbody>
+<tr><td>1.03</td><td class="n">25</td><td class="n">11</td><td class="n">8</td><td class="n good">+0.031</td><td class="n">+0.77</td><td class="n">36.0</td></tr>
+<tr><td>1.04</td><td class="n">30</td><td class="n">14</td><td class="n">8</td><td class="n">−0.001</td><td class="n">−0.02</td><td class="n">33.3</td></tr>
+<tr class="good"><td>1.05 … 1.10</td><td class="n">86</td><td class="n">52</td><td class="n">31</td><td class="n">+0.018</td><td class="n good">+1.57</td><td class="n">46.5</td></tr>
+</tbody>
+</table>
+
+<h3>Dense B book by C cap (D=25¢) — wider C</h3>
+<table>
+<thead><tr><th>C ≤</th><th>N</th><th>EV $/game</th><th>Total $</th><th>T0-both EV</th></tr></thead>
+<tbody>
+<tr><td>1.01</td><td class="n">79</td><td class="n">+0.025</td><td class="n">+2.01</td><td class="n">−0.009</td></tr>
+<tr><td>1.02</td><td class="n">106</td><td class="n">+0.030</td><td class="n">+3.15</td><td class="n">−0.011</td></tr>
+<tr><td>1.03</td><td class="n">114</td><td class="n">+0.032</td><td class="n">+3.66</td><td class="n">−0.012</td></tr>
+<tr class="good"><td>1.04</td><td class="n">115</td><td class="n good">+0.034</td><td class="n good">+3.87</td><td class="n">−0.013</td></tr>
+<tr><td>1.05</td><td class="n">116</td><td class="n">+0.033</td><td class="n">+3.83</td><td class="n">−0.013</td></tr>
+<tr><td>1.10</td><td class="n">118</td><td class="n">+0.031</td><td class="n">+3.62</td><td class="n">−0.014</td></tr>
+</tbody>
+</table>
+<p>All-sports tighten (D=25¢, through 24 Oct): slice <strong>C≤1.04</strong> expectancy <strong>+0.085</strong> vs control/C≤1.09 <strong>+0.080</strong> (N≈143–146).</p>
+
+<h2>2. Dip — crossover then favorite wait</h2>
+
+<h3>At C≤1.04 (follow-up)</h3>
+<p>Settled tennis live-B books with after-fee all-in ≤1.04 only: <strong>N=30</strong> (25×1.03, 5×1.04), <strong>14 crossed</strong>. Peak is <strong>D=35¢</strong>, not 40¢.</p>
+<table>
+<thead><tr><th>D</th><th>Hit / cross</th><th>Hit %</th><th>EV $/ T0 game</th><th>Total $</th></tr></thead>
+<tbody>
+<tr><td>0¢</td><td class="n">14/14</td><td class="n">100</td><td class="n bad">−0.041</td><td class="n bad">−1.23</td></tr>
+<tr><td>5¢</td><td class="n">11/14</td><td class="n">78.6</td><td class="n bad">−0.040</td><td class="n bad">−1.21</td></tr>
+<tr><td>10¢</td><td class="n">10/14</td><td class="n">71.4</td><td class="n bad">−0.042</td><td class="n bad">−1.27</td></tr>
+<tr><td>15¢</td><td class="n">10/14</td><td class="n">71.4</td><td class="n bad">−0.026</td><td class="n bad">−0.77</td></tr>
+<tr><td>20¢</td><td class="n">8/14</td><td class="n">57.1</td><td class="n bad">−0.023</td><td class="n bad">−0.69</td></tr>
+<tr><td>25¢ (live)</td><td class="n">8/14</td><td class="n">57.1</td><td class="n">−0.001</td><td class="n">−0.02</td></tr>
+<tr><td>30¢</td><td class="n">7/14</td><td class="n">50.0</td><td class="n">+0.010</td><td class="n">+0.30</td></tr>
+<tr class="good"><td>35¢</td><td class="n">7/14</td><td class="n">50.0</td><td class="n good">+0.022</td><td class="n good">+0.65</td></tr>
+<tr><td>40¢</td><td class="n">4/14</td><td class="n">28.6</td><td class="n">+0.007</td><td class="n">+0.21</td></tr>
+<tr><td>45¢</td><td class="n">0/14</td><td class="n">0.0</td><td class="n bad">−0.048</td><td class="n bad">−1.44</td></tr>
+<tr><td>50¢</td><td class="n">0/14</td><td class="n">0.0</td><td class="n bad">−0.048</td><td class="n bad">−1.44</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<h2>Should we move live D 25¢ → 40¢?</h2>
+<p><strong>No — do not adopt.</strong></p>
+<ol>
+<li><strong>Wrong peak under the efficient cap.</strong> At C≤1.04, 35¢ beats 40¢ (+0.022 vs +0.007).</li>
+<li><strong>Tiny N.</strong> Only 4 dip fills at 40¢ on this slice.</li>
+<li><strong>Hit-rate collapse.</strong> 57% → 29%; missed dips leave a naked extra dog (Alexandrova miss ≈ −87¢ vs 25¢ hit).</li>
+<li><strong>Path artifact.</strong> Some deeper-D EV comes from skipping a losing favorite when the dog already won the extra — not a better lock.</li>
+<li><strong>OOS selection.</strong> Same October tape / IS N=0 issue as the Oct 28 HOLD. Live IOC/FOK misses deep targets more than tape asks.</li>
+</ol>
+<p>HOLD live <code>D=0.25</code>.</p>
+</div>
+
+<h3>At C≤1.05 (prior book)</h3>
+<p>Replay on settled tennis C≤1.05 (N=86). Fav fill optimistic at <code>1 − cross − D</code> when min fav print ≤ target. D=25 matches the published table exactly (mean diff ~0).</p>
+<table>
+<thead><tr><th>D</th><th>Hit / cross</th><th>Hit %</th><th>EV $/ T0 game</th><th>EV $/ crossed</th><th>Total $</th></tr></thead>
+<tbody>
+<tr><td>0¢</td><td class="n">50/52</td><td class="n">96.2</td><td class="n bad">−0.056</td><td class="n bad">−0.066</td><td class="n bad">−4.83</td></tr>
+<tr><td>5¢</td><td class="n">41/52</td><td class="n">78.8</td><td class="n bad">−0.040</td><td class="n bad">−0.039</td><td class="n bad">−3.42</td></tr>
+<tr><td>10¢</td><td class="n">38/52</td><td class="n">73.1</td><td class="n bad">−0.026</td><td class="n bad">−0.016</td><td class="n bad">−2.21</td></tr>
+<tr><td>15¢</td><td class="n">35/52</td><td class="n">67.3</td><td class="n bad">−0.015</td><td class="n">+0.002</td><td class="n bad">−1.30</td></tr>
+<tr><td>20¢</td><td class="n">32/52</td><td class="n">61.5</td><td class="n">+0.004</td><td class="n">+0.033</td><td class="n">+0.32</td></tr>
+<tr><td>25¢ (live)</td><td class="n">31/52</td><td class="n">59.6</td><td class="n">+0.018</td><td class="n">+0.057</td><td class="n">+1.57</td></tr>
+<tr><td>30¢</td><td class="n">27/52</td><td class="n">51.9</td><td class="n">+0.017</td><td class="n">+0.054</td><td class="n">+1.42</td></tr>
+<tr><td>35¢</td><td class="n">25/52</td><td class="n">48.1</td><td class="n">+0.023</td><td class="n">+0.066</td><td class="n">+2.02</td></tr>
+<tr class="good"><td>40¢</td><td class="n">17/52</td><td class="n">32.7</td><td class="n good">+0.033</td><td class="n good">+0.082</td><td class="n good">+2.85</td></tr>
+<tr><td>45¢</td><td class="n">0/52</td><td class="n">0.0</td><td class="n bad">−0.020</td><td class="n bad">−0.006</td><td class="n bad">−1.69</td></tr>
+<tr><td>50¢</td><td class="n">0/52</td><td class="n">0.0</td><td class="n bad">−0.020</td><td class="n bad">−0.006</td><td class="n bad">−1.69</td></tr>
+</tbody>
+</table>
+<p>Dense B (C≤1.04): D=25¢ EV +0.034 ≥ D=15¢ +0.029 ≥ D=5¢ +0.006 — waiting for a deeper lock still helps on that book too.</p>
+
+<h2>3. How to read “efficient”</h2>
+<ul>
+<li><strong>Start cap:</strong> after-fee both-Yes closer to $1 leaves less door charge. Efficiency here = highest path EV / total without collapsing N. <strong>1.04</strong> wins on the wider books; <strong>1.03</strong> wins EV on the tiny tennis settled 3¢ door set; <strong>1.05</strong> is live HOLD and still the volume peak inside the live-B filter.</li>
+<li><strong>Dip:</strong> larger D means a cheaper favorite target and a fatter locked extra pair when it fills, but more crossed games never dip. Efficiency = best EV while dips still print. <strong>40¢</strong> is the EV max; <strong>35¢</strong> is the last rung with ~half the crosses still hitting; below <strong>20¢</strong> the book goes red; <strong>0¢</strong> is not efficient.</li>
+</ul>
+
+<div class="callout">
+<h2>HOLD live knobs</h2>
+<p>Do not wire a new C or D from this page. The October 2026 tape is all OOS with IS N=0; ranking 40¢ over 25¢ or 1.04 over 1.05 on the same book is in-sample selection. Live B: <code>C_HI=1.05</code>, <code>D=0.25</code>.</p>
+</div>
+
+<p class="note">Artifacts: <code>docs/prediction_market/cap_dip_efficiency_20261031.json</code>, grids CSV, runner <code>tools/pm_cap_dip_efficiency_backtest.py</code> (expects the HTML inputs under a local work dir when re-run).</p>
+</body>
+</html>
