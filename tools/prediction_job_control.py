@@ -43,12 +43,15 @@ from report_page_extras import (  # noqa: E402
 import win_hidden  # noqa: E402
 STATUS_PAGE = STAMP / "job_status.html"
 SUPERVISOR_SCRIPT = ROOT / "tools" / "live_game_pollers.py"
+LOCK_SENDER_SCRIPT = ROOT / "tools" / "live_lock_sender.py"
 SCAN_SCRIPT = STAMP / "overnight_scan.py"
 STRATEGY_B_SCRIPT = ROOT / "tools" / "live_strategy_b.py"
 SETTLE_RECONCILE_SCRIPT = ROOT / "tools" / "live_pm_settle_reconcile.py"
 SUPERVISOR_LOG = RAW / "live_supervisor.log"
 SCAN_LOG = RAW / "overnight_scan.log"
 STRATEGY_B_LOG = RAW / "strategy_b.log"
+LOCK_SENDER_LOG = RAW / "live_supervisor.log"
+LOCK_SENDER_CONSOLE = RAW / "live_lock_sender.console.log"
 POLLER_STATUS = RAW / "live_pollers_status.json"
 STRATEGY_B_STATE = RAW / "strategy_b_watch.json"
 ET = ZoneInfo("America/New_York")
@@ -1074,7 +1077,8 @@ def print_status(snap: dict) -> None:
     if snap.get("supervisor") and not lock_sender:
         print(
             "NOTE: Supervisor is up but Lock sender (A) is DOWN — A is not sending. "
-            "Wait ~60s for the supervisor loop, or re-run: python tools/prediction_job_control.py restart-lock"
+            "Force-start now: python tools/prediction_job_control.py start-lock-sender "
+            "(or restart-lock). Check local raw live_lock_sender.console.log + live_supervisor.log."
         )
     print(f"Leftover --poll-one helpers: {actual_n}")
     print(f"Intended live set (supervisor status file): {intended_n}")
@@ -1629,6 +1633,33 @@ def _wait_until_clear(timeout: float = 20.0, *, include_strategy_b: bool = True,
     return jobs
 
 
+def ensure_lock_sender(jobs: dict | None = None) -> bool:
+    """Start live_lock_sender.py if missing. Never a second copy.
+
+    Supervisor normally spawns this, but start/restart used to leave A DOWN when
+    the supervisor was already up and the child had crashed (stderr was DEVNULL).
+    """
+    jobs = jobs or classify(_ps_rows())
+    if jobs.get("lock_sender"):
+        return False
+    _spawn(LOCK_SENDER_SCRIPT, LOCK_SENDER_CONSOLE, hidden=True)
+    return True
+
+
+def ensure_poll_all(jobs: dict | None = None) -> bool:
+    """Start --poll-all if supervisor is up and merged poller is missing."""
+    jobs = jobs or classify(_ps_rows())
+    if not jobs.get("supervisor"):
+        return False
+    if jobs.get("poll_all"):
+        return False
+    _spawn_argv(
+        [sys.executable, "-u", str(SUPERVISOR_SCRIPT), "--poll-all"],
+        RAW / "live_poll_all.console.log",
+    )
+    return True
+
+
 def start_missing(jobs: dict | None = None) -> int:
     _, note = deadline_ok()
     print(note)
@@ -1643,6 +1674,18 @@ def start_missing(jobs: dict | None = None) -> int:
         started.append("supervisor")
     else:
         print(f"Supervisor already running pid {jobs['supervisor'][0]['pid']}. Left it.")
+        # Supervisor already up will not re-enter ensure_tracked for ~60s if its
+        # Tracked handle is confused; force the kitchen children now.
+        if ensure_poll_all(jobs):
+            started.append("merged poller")
+            jobs = classify(_ps_rows())
+        if ensure_lock_sender(jobs):
+            started.append("lock sender")
+            jobs = classify(_ps_rows())
+        else:
+            row = (jobs.get("lock_sender") or [{}])[0]
+            if row.get("pid"):
+                print(f"Lock sender already running pid {row.get('pid')}. Left it.")
     if not jobs["scan"]:
         _spawn(SCAN_SCRIPT, RAW / "overnight_scan.console.log")
         started.append("catalog scan")
@@ -1678,6 +1721,10 @@ def start_missing(jobs: dict | None = None) -> int:
         rec_row = (jobs.get("settle_reconcile") or [{}])[0]
         if rec_row.get("pid"):
             print(f"Settle reconcile already running pid {rec_row.get('pid')}. Left it.")
+    # Cold supervisor spawn has not reached ensure_tracked yet — start A now.
+    jobs = classify(_ps_rows())
+    if ensure_lock_sender(jobs) and "lock sender" not in started:
+        started.append("lock sender")
     if started:
         time.sleep(2)
         print("Started: " + ", ".join(started))
@@ -1686,15 +1733,36 @@ def start_missing(jobs: dict | None = None) -> int:
     return 0
 
 
-def _spawn(script: Path, console_log: Path, *, hidden: bool = True) -> None:
-    """Start a job with no visible console. hidden=True is the only path; the flag stays for callers."""
+def start_lock_sender_only() -> int:
+    """Force one lock sender. Leaves supervisor / poller / B–G alone."""
+    jobs = classify(_ps_rows())
+    if jobs.get("lock_sender"):
+        print(f"Lock sender already running pid {jobs['lock_sender'][0]['pid']}. Left it.")
+        return 0
+    _spawn(LOCK_SENDER_SCRIPT, LOCK_SENDER_CONSOLE, hidden=True)
+    time.sleep(1.5)
+    after = classify(_ps_rows())
+    rows = after.get("lock_sender") or []
+    if rows:
+        print(f"Started lock sender pid {rows[0]['pid']}.")
+        return 0
+    print(
+        "Lock sender still DOWN after spawn. Check "
+        f"{LOCK_SENDER_CONSOLE} and {LOCK_SENDER_LOG} for crash lines."
+    )
+    return 1
+
+
+def _spawn_argv(argv: list[str], console_log: Path, *, hidden: bool = True) -> None:
+    """Start argv with no visible console. hidden=True is the only path; the flag stays for callers."""
+    del hidden
     ensure_dirs()
     handle = console_log.open("a", encoding="utf-8")
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPYCACHEPREFIX"] = str(PYCACHE_DIR)
     win_hidden.popen(
-        [sys.executable, "-u", str(script)],
+        argv,
         cwd=str(ROOT),
         stdin=subprocess.DEVNULL,
         stdout=handle,
@@ -1703,6 +1771,11 @@ def _spawn(script: Path, console_log: Path, *, hidden: bool = True) -> None:
         env=env,
         new_group=True,
     )
+
+
+def _spawn(script: Path, console_log: Path, *, hidden: bool = True) -> None:
+    """Start a job with no visible console. hidden=True is the only path; the flag stays for callers."""
+    _spawn_argv([sys.executable, "-u", str(script)], console_log, hidden=hidden)
 
 
 def ensure_settle_reconcile(jobs: dict | None = None) -> bool:
@@ -1933,6 +2006,12 @@ def main(argv: list[str]) -> int:
         write_page(snap)
         print_status(snap)
         return code
+    if action in ("start-lock-sender", "start_lock_sender"):
+        code = start_lock_sender_only()
+        snap = snapshot()
+        write_page(snap)
+        print_status(snap)
+        return code
     if action == "restart":
         code = restart()
         snap = snapshot()
@@ -1964,7 +2043,7 @@ def main(argv: list[str]) -> int:
             )
         )
         return 0
-    print("Use status, start, restart, restart-lock, reload-lock, or systems.")
+    print("Use status, start, start-lock-sender, restart, restart-lock, reload-lock, or systems.")
     return 2
 
 

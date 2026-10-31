@@ -1320,19 +1320,38 @@ def spawn(spec: dict, supervisor_pid: int) -> Tracked:
     return Tracked(proc.pid, proc)
 
 
-def _spawn_hidden(argv: list[str], state_path: Path, label: str) -> Tracked:
+def _spawn_hidden(
+    argv: list[str],
+    state_path: Path,
+    label: str,
+    *,
+    console_log: Path | None = None,
+) -> Tracked:
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONPYCACHEPREFIX"] = str(PYCACHE_DIR)
+    stdout = subprocess.DEVNULL
+    stderr = subprocess.DEVNULL
+    handle = None
+    if console_log is not None:
+        RAW.mkdir(parents=True, exist_ok=True)
+        handle = console_log.open("a", encoding="utf-8")
+        stdout = handle
+        stderr = subprocess.STDOUT
     proc = win_hidden.popen(
         argv,
         cwd=str(ROOT),
         env=env,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
         new_group=True,
     )
+    if handle is not None:
+        try:
+            handle.close()
+        except OSError:
+            pass
     write_json(state_path, {
         "pid": proc.pid,
         "started_at": iso_now(),
@@ -1348,7 +1367,13 @@ def spawn_merged() -> Tracked:
 
 
 def spawn_lock_sender() -> Tracked:
-    return _spawn_hidden(command_for_lock_sender(), RAW / "live_lock_sender.pid", "lock-sender")
+    # Console log catches import/start crashes (stderr was DEVNULL before).
+    return _spawn_hidden(
+        command_for_lock_sender(),
+        RAW / "live_lock_sender.pid",
+        "lock-sender",
+        console_log=RAW / "live_lock_sender.console.log",
+    )
 
 
 def ensure_tracked(proc: Tracked | None, running_pid: int, spawner, me: int) -> Tracked | None:

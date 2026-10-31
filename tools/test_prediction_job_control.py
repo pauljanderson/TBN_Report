@@ -436,20 +436,92 @@ def test_start_not_blocked_by_old_collection_clock():
 def test_start_after_friday_8am_still_spawns():
     spawned = []
     saved_spawn = prediction_job_control._spawn
+    saved_classify = prediction_job_control.classify
+    saved_ps = prediction_job_control._ps_rows
     prediction_job_control._spawn = lambda *a, **k: spawned.append((a, k))
+    prediction_job_control._ps_rows = lambda: []
+    prediction_job_control.classify = lambda _rows=None: {
+        "supervisor": [],
+        "scan": [],
+        "children": [],
+        "poll_all": [],
+        "lock_sender": [],
+        "strategy_b": [],
+        "settle_reconcile": [],
+    }
     try:
         code = prediction_job_control.start_missing(
             {
                 "supervisor": [],
                 "scan": [],
                 "children": [],
+                "poll_all": [],
+                "lock_sender": [],
                 "strategy_b": [],
+                "settle_reconcile": [],
             }
         )
     finally:
         prediction_job_control._spawn = saved_spawn
+        prediction_job_control.classify = saved_classify
+        prediction_job_control._ps_rows = saved_ps
     assert code == 0
     assert len(spawned) >= 3
+
+
+def test_start_force_spawns_lock_sender_when_supervisor_up():
+    """Regression: start left A DOWN when supervisor was already running."""
+    spawned = []
+    saved = (
+        prediction_job_control._spawn,
+        prediction_job_control._spawn_argv,
+        prediction_job_control.classify,
+        prediction_job_control._ps_rows,
+        prediction_job_control.ensure_strategy_b,
+        prediction_job_control.ensure_settle_reconcile,
+        prediction_job_control.time.sleep,
+    )
+
+    def fake_classify(_rows=None):
+        return {
+            "supervisor": [{"pid": 10}],
+            "scan": [{"pid": 20}],
+            "children": [],
+            "poll_all": [{"pid": 30}],
+            "lock_sender": [],
+            "strategy_b": [{"pid": 40}],
+            "settle_reconcile": [{"pid": 50}],
+            "cfb_favorite": [],
+            "spread_t0": [],
+            "tennis_t0_dog": [],
+            "tennis_t0_spread": [],
+            "soccer_t0_total": [],
+        }
+
+    prediction_job_control._spawn = lambda *a, **k: spawned.append(("spawn", a, k))
+    prediction_job_control._spawn_argv = lambda *a, **k: spawned.append(("argv", a, k))
+    prediction_job_control.classify = fake_classify
+    prediction_job_control._ps_rows = lambda: []
+    prediction_job_control.ensure_strategy_b = lambda jobs=None: False
+    prediction_job_control.ensure_settle_reconcile = lambda jobs=None: False
+    prediction_job_control.time.sleep = lambda _s: None
+    try:
+        code = prediction_job_control.start_missing(fake_classify())
+    finally:
+        (
+            prediction_job_control._spawn,
+            prediction_job_control._spawn_argv,
+            prediction_job_control.classify,
+            prediction_job_control._ps_rows,
+            prediction_job_control.ensure_strategy_b,
+            prediction_job_control.ensure_settle_reconcile,
+            prediction_job_control.time.sleep,
+        ) = saved
+    assert code == 0
+    assert any(
+        item[0] == "spawn" and "live_lock_sender.py" in str(item[1][0])
+        for item in spawned
+    )
 
 
 def test_status_page_says_bats_control_start():
@@ -685,6 +757,7 @@ if __name__ == "__main__":
     test_status_page_shows_updated_stamp_at_top()
     test_start_not_blocked_by_old_collection_clock()
     test_start_after_friday_8am_still_spawns()
+    test_start_force_spawns_lock_sender_when_supervisor_up()
     test_status_page_says_bats_control_start()
     test_overnight_scan_has_no_collection_deadline()
     test_poller_pid_compare_flags_missing_and_extra()
