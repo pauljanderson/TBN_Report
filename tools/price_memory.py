@@ -83,6 +83,9 @@ PREFIX_SPORT = {
     "mma": "mma",
     "nhl": "pro hockey",
     "chess": "chess",
+    "tennis": "tennis",
+    "tt": "table tennis",
+    "tabletennis": "table tennis",
 }
 DURING_MINUTES = {
     "college football": 240,
@@ -94,6 +97,8 @@ DURING_MINUTES = {
     "golf": 360,
     "motorsports": 180,
     "chess": 180,
+    "tennis": 180,
+    "table tennis": 90,
 }
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -127,7 +132,8 @@ PLAIN = (
     "A move of 5 cents or more since the prior saved price is a drastic move. "
     "Before means the quote is earlier than the listed start. During means the quote is after the start "
     "and still inside a typical game length (about four hours for college football, three and a half for pro football, "
-    "two hours for soccer, three hours for hockey, three and a half for baseball). "
+    "two hours for soccer, three hours for hockey, three and a half for baseball, "
+    "about three hours for tennis or MMA or chess, about ninety minutes for table tennis). "
     "If the start time is not in the ticker or the event text, the phase stays unknown. "
     "A Gemini No that is only one dollar minus the Yes bid, with no No contracts behind it, is left out. The Yes ask is kept."
 )
