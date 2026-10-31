@@ -465,6 +465,20 @@ def _maybe_lock_orders(scan, sport: str, title: str, game: dict, result: dict, f
         if any(word in lowered for word in ("signature", "secret", "bearer", "payload", "api key")):
             text = ""
         log(f"order path error {type(exc).__name__} {text[:180]}")
+    try:
+        # Advance resting second-leg GTCs past the 180s cheap-exit / BE-complete / hold deadline.
+        live_lock_orders.tick_one_leg_gtc_watches(log)
+    except Exception as exc:
+        text = str(exc)
+        lowered = text.lower()
+        if any(word in lowered for word in ("signature", "secret", "bearer", "payload", "api key")):
+            text = ""
+        log(f"one-leg GTC watch tick error {type(exc).__name__} {text[:180]}")
+    if result.get("closed"):
+        try:
+            live_lock_orders.cancel_second_leg_gtc_on_resolve(log, reason=f"closed:{title}")
+        except Exception as exc:
+            log(f"one-leg GTC resolve-cancel error {type(exc).__name__}")
 
 
 def seed_quotes(scan, spec: dict):

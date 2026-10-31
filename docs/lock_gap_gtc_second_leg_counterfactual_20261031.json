@@ -1,0 +1,47 @@
+{
+  "policy": {
+    "hard": "IOC",
+    "easy": "GTC at L",
+    "wait_sec": 180,
+    "cheap_exit_max": "0.25",
+    "after_deadline_gt_25": "IOC complete \u2264 BE(+1\u00a2) else hold",
+    "cancel_on_resolve": true
+  },
+  "inputs": {
+    "gtc_comeback_pct": 48.1,
+    "gtc_n_known": 27,
+    "gtc_n_yes": 13,
+    "median_touch_sec": 82,
+    "complementary_lock_pnl_c": 60.52,
+    "immediate_flatten_pnl_c": -40.9,
+    "leftover_buckets": {
+      "le_25": {
+        "n": 7,
+        "wins": 0,
+        "pnl": -1.13
+      },
+      "gt_25": {
+        "n": 15,
+        "wins": 10,
+        "pnl": 2.4
+      }
+    },
+    "note": "Ask-touch counterfactual, not queue-guaranteed. Re-run with Kalshi in-game minutes for exact BE/+1\u00a2 ladders and per-row held prices."
+  },
+  "counterfactual": {
+    "gtc_fill_n": 13,
+    "gtc_miss_n": 14,
+    "gtc_lock_pnl_c": 60.52,
+    "immediate_flatten_pnl_c": -40.9,
+    "conservative_policy_floor_c": 60.52,
+    "policy_minus_flatten_c": 101.42,
+    "kitchen_leftover_le_25_pnl": -1.13,
+    "kitchen_leftover_gt_25_pnl": 2.4,
+    "interpretation": "Even crediting only the +60.52\u00a2 complementary GTC locks (and $0 for the other 20 non-lock/miss rows) beats the \u221240.9\u00a2 flatten book on that page by +101.4\u00a2. Kitchen leftovers say exit \u226425\u00a2 (0/7) and holding >25\u00a2 was +$2.40 on 15 tickets."
+  },
+  "decision_checks": {
+    "held_0.20_at_180s": "exit_cheap",
+    "held_0.40_at_60s": "keep_waiting",
+    "held_0.40_at_180s_no_be": "hold_to_settle"
+  }
+}
