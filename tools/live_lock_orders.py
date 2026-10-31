@@ -21,8 +21,9 @@ Adopted one-leg policy (2026-10-31, Paul):
 Secrets stay in secrets/. This module logs status, instrument, side, limit, and
 size. It does not log keys, signatures, or auth headers.
 
-Paul turned placing orders off for now (2026-10-18). The send code stays.
-ORDERS_ENABLED must be True before any venue order call.
+Orders stay off by default in bare clones and cloud VMs. Trading PC turns them
+on with env LOCK_ORDERS_ENABLED=1 and/or stamp file raw/orders_enabled.on
+(orders_enabled.off always wins). See orders_enabled().
 """
 from __future__ import annotations
 
@@ -38,15 +39,14 @@ import kalshi_private
 import polymarket_us_live
 import venue_pace
 
-# Hard switch. False: log a skip and return before any venue order HTTP.
-ORDERS_ENABLED = False
-
 ROOT = Path(__file__).resolve().parents[1]
 STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
 RAW = STAMP / "raw"
 ORDERS = RAW / "orders.jsonl"
 ORDER_LOCK = RAW / "orders.lock"
 ONE_LEG_WATCH = RAW / "one_leg_gtc_watch.jsonl"
+ORDERS_ENABLED_STAMP_ON = RAW / "orders_enabled.on"
+ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
 ONE = Decimal("1")
 CENT = Decimal("0.01")
 NET_MAX = Decimal("0.95")
@@ -57,8 +57,36 @@ POLY_TICK = Decimal("0.001")
 ONE_LEG_GTC_WAIT_SEC = 180
 CHEAP_EXIT_MAX = Decimal("0.25")
 BE_COMPLETE_SLIP = Decimal("0.01")  # allow BE + 1¢ on the optional complete IOC
+# Aggressive exit limits when a live quote is not passed in.
+MARKET_SELL_FLOOR = Decimal("0.01")
+MARKET_BUY_CEILING = Decimal("0.99")
 CLOSED = {"closed", "settled", "determined", "finalized", "inactive"}
 _capability: dict[str, tuple[float, bool, str]] = {}
+
+# Module flag (default False). Prefer orders_enabled() which also honors env + stamps.
+# Tests and local overrides may assign ORDERS_ENABLED = True.
+ORDERS_ENABLED = False
+
+
+def orders_enabled() -> bool:
+    """True only when venue order HTTP is allowed.
+
+    Priority (first match wins):
+      1. raw/orders_enabled.off exists → False
+      2. LOCK_ORDERS_ENABLED env: 1/true/yes/on → True; 0/false/no/off → False
+      3. raw/orders_enabled.on exists → True
+      4. ORDERS_ENABLED module flag (default False)
+    """
+    if ORDERS_ENABLED_STAMP_OFF.exists():
+        return False
+    env = os.environ.get("LOCK_ORDERS_ENABLED", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    if ORDERS_ENABLED_STAMP_ON.exists():
+        return True
+    return bool(ORDERS_ENABLED)
 
 
 def _money(value: Decimal) -> str:
@@ -284,6 +312,8 @@ def polymarket_api_price(intent: str, pay: Decimal) -> Decimal:
 
 
 def polymarket_order_body(slug: str, intent: str, api_price: Decimal, tif: str = "ioc") -> dict:
+    # GTC must rest on the book — sync execution would treat a partial like IOC.
+    sync = tif != "gtc"
     return {
         "marketSlug": slug,
         "type": "ORDER_TYPE_LIMIT",
@@ -293,9 +323,208 @@ def polymarket_order_body(slug: str, intent: str, api_price: Decimal, tif: str =
         "intent": intent,
         "participateDontInitiate": False,
         "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC",
-        "synchronousExecution": True,
-        "maxBlockTime": "3",
+        "synchronousExecution": sync,
+        "maxBlockTime": "3" if sync else "0",
     }
+
+
+def _opposite_outcome(outcome: str) -> str:
+    if outcome == "yes":
+        return "no"
+    if outcome == "no":
+        return "yes"
+    raise ValueError("outcome")
+
+
+def _poly_sell_intent(buy_intent: str) -> str | None:
+    mapping = {
+        "ORDER_INTENT_BUY_LONG": "ORDER_INTENT_SELL_LONG",
+        "ORDER_INTENT_BUY_SHORT": "ORDER_INTENT_SELL_SHORT",
+    }
+    return mapping.get(str(buy_intent or ""))
+
+
+def _poly_flip_intent(intent: str) -> str | None:
+    mapping = {
+        "ORDER_INTENT_BUY_LONG": "ORDER_INTENT_BUY_SHORT",
+        "ORDER_INTENT_BUY_SHORT": "ORDER_INTENT_BUY_LONG",
+        "ORDER_INTENT_SELL_LONG": "ORDER_INTENT_SELL_SHORT",
+        "ORDER_INTENT_SELL_SHORT": "ORDER_INTENT_SELL_LONG",
+    }
+    return mapping.get(str(intent or ""))
+
+
+def build_buy_leg_spec(
+    *,
+    venue: str,
+    instrument: str,
+    outcome: str,
+    pay: Decimal,
+    tif: str = "ioc",
+    intent: str | None = None,
+) -> dict | None:
+    """Build a buy-leg order spec from watch/raw fields (not a candidate row)."""
+    venue = str(venue or "").lower()
+    outcome = str(outcome or "").lower()
+    if pay is None or pay <= 0 or pay >= 1:
+        return None
+    if venue == "kalshi":
+        if not instrument:
+            return None
+        body = kalshi_order_body(instrument, outcome, pay, str(uuid.uuid4()), tif=tif)
+        return {
+            "venue": "kalshi",
+            "instrument": instrument,
+            "outcome": outcome,
+            "pay": format(pay, "f"),
+            "limit": body["price"],
+            "tif": tif,
+            "body": body,
+        }
+    if venue == "gemini":
+        if not instrument:
+            return None
+        payload = gemini_order_payload(instrument, outcome, pay, tif=tif)
+        return {
+            "venue": "gemini",
+            "instrument": instrument,
+            "outcome": outcome,
+            "pay": format(pay, "f"),
+            "limit": payload["price"],
+            "tif": tif,
+            "body": payload,
+        }
+    if venue == "polymarket":
+        if not instrument or not intent:
+            return None
+        try:
+            api_price = polymarket_api_price(intent, pay)
+        except ValueError:
+            return None
+        if api_price < Decimal("0.01") or api_price > Decimal("0.99"):
+            return None
+        body = polymarket_order_body(instrument, intent, api_price, tif=tif)
+        return {
+            "venue": "polymarket",
+            "instrument": instrument,
+            "outcome": outcome,
+            "pay": format(pay, "f"),
+            "limit": body["price"]["value"],
+            "tif": tif,
+            "body": body,
+        }
+    return None
+
+
+def build_flatten_spec(
+    *,
+    venue: str,
+    instrument: str,
+    held_side: str,
+    opposite_pay: Decimal | None = None,
+    held_intent: str | None = None,
+    tif: str = "ioc",
+) -> dict | None:
+    """Same-shop IOC buy of the opposite outcome (flatten_filled_leg shape)."""
+    pay = opposite_pay if opposite_pay is not None else MARKET_BUY_CEILING
+    opp = _opposite_outcome(str(held_side or "").lower())
+    intent = _poly_flip_intent(held_intent) if str(venue or "").lower() == "polymarket" else None
+    return build_buy_leg_spec(
+        venue=venue,
+        instrument=instrument,
+        outcome=opp,
+        pay=pay,
+        tif=tif,
+        intent=intent,
+    )
+
+
+def build_market_sell_spec(
+    *,
+    venue: str,
+    instrument: str,
+    held_side: str,
+    held_intent: str | None = None,
+    tif: str = "ioc",
+) -> dict | None:
+    """Aggressive IOC to dump the held ticket (hit bids / lift asks)."""
+    venue = str(venue or "").lower()
+    held_side = str(held_side or "").lower()
+    if not instrument or held_side not in ("yes", "no"):
+        return None
+    if venue == "kalshi":
+        # Held Yes → ask low (sell Yes). Held No → bid high (buy Yes closes No).
+        if held_side == "yes":
+            price = MARKET_SELL_FLOOR.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+            side = "ask"
+            pay = MARKET_SELL_FLOOR
+        else:
+            price = MARKET_BUY_CEILING.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+            side = "bid"
+            pay = MARKET_BUY_CEILING
+        body = {
+            "ticker": instrument,
+            "client_order_id": str(uuid.uuid4()),
+            "side": side,
+            "count": "1.00",
+            "price": format(price, "f"),
+            "time_in_force": _kalshi_tif(tif),
+            "self_trade_prevention_type": "taker_at_cross",
+            "post_only": False,
+        }
+        return {
+            "venue": "kalshi",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(pay, "f"),
+            "limit": body["price"],
+            "tif": tif,
+            "body": body,
+            "exit": "market_sell",
+        }
+    if venue == "gemini":
+        price = MARKET_SELL_FLOOR.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+        body = {
+            "symbol": instrument,
+            "orderType": "limit",
+            "side": "sell",
+            "quantity": "1",
+            "price": format(price, "f"),
+            "outcome": held_side,
+            "timeInForce": _gemini_tif(tif),
+        }
+        return {
+            "venue": "gemini",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(MARKET_SELL_FLOOR, "f"),
+            "limit": body["price"],
+            "tif": tif,
+            "body": body,
+            "exit": "market_sell",
+        }
+    if venue == "polymarket":
+        sell_intent = _poly_sell_intent(held_intent or "")
+        if not sell_intent:
+            return None
+        # Sell long hits bids at floor; sell short lifts asks near ceiling of long price.
+        cash_pay = MARKET_SELL_FLOOR if sell_intent == "ORDER_INTENT_SELL_LONG" else MARKET_BUY_CEILING
+        try:
+            api_price = polymarket_api_price(sell_intent, cash_pay)
+        except ValueError:
+            return None
+        body = polymarket_order_body(instrument, sell_intent, api_price, tif=tif)
+        return {
+            "venue": "polymarket",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(cash_pay, "f"),
+            "limit": body["price"]["value"],
+            "tif": tif,
+            "body": body,
+            "exit": "market_sell",
+        }
+    return None
 
 
 def fee_kalshi_style(pay: Decimal) -> Decimal:
@@ -622,7 +851,7 @@ def _read_balances() -> dict[str, Decimal]:
 
 
 def _preview(spec: dict) -> tuple[bool, str]:
-    if not ORDERS_ENABLED:
+    if not orders_enabled():
         return False, "placing orders is off"
     if spec["venue"] != "polymarket":
         return True, "no preview endpoint"
@@ -633,7 +862,7 @@ def _preview(spec: dict) -> tuple[bool, str]:
 
 
 def _send(spec: dict) -> tuple[int, dict | None, str]:
-    if not ORDERS_ENABLED:
+    if not orders_enabled():
         return 0, None, "placing orders is off"
     if spec["venue"] == "kalshi":
         status, body = kalshi_private.signed_call("POST", "/trade-api/v2/portfolio/events/orders", spec["body"])
@@ -662,6 +891,8 @@ def _order_id(payload) -> str:
 
 
 def _cancel(spec: dict, payload) -> tuple[int, str]:
+    if not orders_enabled():
+        return 0, "placing orders is off"
     order_id = _order_id(payload)
     if not order_id:
         return 0, "no order id"
@@ -859,7 +1090,7 @@ def execute_locks(scan, sport: str, title: str, game: dict, result: dict, fresh:
             ready.append((cand, reason))
     if not ready:
         return
-    if not ORDERS_ENABLED:
+    if not orders_enabled():
         for cand, _reason in ready:
             key = scan._trade_bet_key(sport, game, cand)
             _note_orders_off(log, key)
@@ -1006,17 +1237,54 @@ def cancel_second_leg_gtc_on_resolve(log, *, bet_key: str | None = None, reason:
     return n
 
 
-def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str, Decimal] | None = None) -> list[str]:
+def _send_watch_exit(log, *, key: str, kind: str, spec: dict | None) -> tuple[int, dict | None, str]:
+    """Send a cheap-exit / BE-complete IOC when orders are on. Returns (http, payload, note)."""
+    if spec is None:
+        log(f"one-leg {kind} bet={key} skip: could not build order spec")
+        return 0, None, "no order spec"
+    status, payload, note = _send(spec)
+    _log_sent(log, spec, status)
+    _append({
+        "event": f"one_leg_{kind}_sent",
+        "bet_key": key,
+        "venue": spec.get("venue"),
+        "instrument": spec.get("instrument"),
+        "side": spec.get("outcome"),
+        "limit_price": spec.get("limit"),
+        "tif": spec.get("tif") or "ioc",
+        "size": "1",
+        "http_status": status,
+        "note": note,
+        "order_id": _order_id(payload),
+        "exit": spec.get("exit") or kind,
+    })
+    return status, payload, note
+
+
+def tick_one_leg_gtc_watches(
+    log,
+    *,
+    now: float | None = None,
+    be_ask: dict[str, Decimal] | None = None,
+    flatten_ask: dict[str, Decimal] | None = None,
+    market_sell_bid: dict[str, Decimal] | None = None,
+) -> list[str]:
     """Advance open second-leg GTC watches past the 180s deadline.
 
     be_ask: optional map bet_key → current complementary ask (cash pay) for BE-complete.
-    Returns action labels taken. Does not place exit/complete orders when ORDERS_ENABLED is False;
-    it still records the decided action so the supervisor can see intent.
+    flatten_ask / market_sell_bid: optional cash quotes so choose_cheap_exit can pick
+    the tighter path; when missing, prefer market_sell (policy default without quotes).
+
+    When orders_enabled(): cancel the resting GTC, then actually send flatten /
+    market-sell / BE-complete IOC. When off: cancel is skipped and decisions are
+    logged+recorded only.
     """
     now = time.time() if now is None else now
+    enabled = orders_enabled()
     actions: list[str] = []
     for row in open_second_leg_gtc_watches():
-        opened = float(row.get("opened_at") or now)
+        opened_raw = row.get("opened_at")
+        opened = float(now if opened_raw is None else opened_raw)
         waited = now - opened
         held = _dec(row.get("held_pay")) or Decimal("0")
         miss_l = _dec(row.get("miss_limit_l"))
@@ -1025,6 +1293,8 @@ def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str,
             be = break_even_miss_pay(held)
         key = str(row.get("bet_key") or "")
         ask = None if be_ask is None else be_ask.get(key)
+        flat_q = None if flatten_ask is None else flatten_ask.get(key)
+        sell_q = None if market_sell_bid is None else market_sell_bid.get(key)
         be_available = None
         if ask is not None and be is not None:
             be_available = ask <= (be + BE_COMPLETE_SLIP)
@@ -1036,17 +1306,17 @@ def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str,
         )
         if action == "keep_waiting":
             continue
-        # Deadline: cancel resting GTC first.
-        spec = {
+        # Deadline: cancel resting GTC first (no-op HTTP when orders are off).
+        cancel_spec = {
             "venue": row.get("second_venue"),
             "instrument": row.get("second_instrument"),
         }
         payload = {"order_id": row.get("second_order_id")}
-        if row.get("second_order_id") and spec["venue"]:
-            status, note = _cancel(spec, payload)
+        if row.get("second_order_id") and cancel_spec["venue"]:
+            status, note = _cancel(cancel_spec, payload)
             log(
-                f"second-leg GTC deadline-cancel bet={key} venue={spec['venue']} "
-                f"http={status} {note} action={action}"
+                f"second-leg GTC deadline-cancel bet={key} venue={cancel_spec['venue']} "
+                f"http={status} {note} action={action} orders_enabled={enabled}"
             )
             _append_watch({
                 "event": "second_leg_gtc_cancelled",
@@ -1054,24 +1324,48 @@ def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str,
                 "http_status": status,
                 "note": note,
                 "action": action,
+                "orders_enabled": enabled,
                 "ts": now,
             })
         if action == "exit_cheap":
             exit_kind = choose_cheap_exit(
-                flatten_all_in=None,
-                market_sell_proceeds=None,
+                flatten_all_in=flat_q,
+                market_sell_proceeds=sell_q,
                 held_pay=held,
             )
             log(
                 f"one-leg cheap exit bet={key} held={held} prefer={exit_kind} "
-                f"(flatten if same-shop opposite tighter, else market sell)"
+                f"orders_enabled={enabled}"
             )
+            send_status, send_note = 0, "orders off"
+            if enabled:
+                held_intent = row.get("held_intent")
+                if exit_kind == "flatten":
+                    exit_spec = build_flatten_spec(
+                        venue=str(row.get("held_venue") or ""),
+                        instrument=str(row.get("held_instrument") or ""),
+                        held_side=str(row.get("held_side") or ""),
+                        opposite_pay=flat_q if flat_q is not None else MARKET_BUY_CEILING,
+                        held_intent=held_intent,
+                    )
+                else:
+                    exit_spec = build_market_sell_spec(
+                        venue=str(row.get("held_venue") or ""),
+                        instrument=str(row.get("held_instrument") or ""),
+                        held_side=str(row.get("held_side") or ""),
+                        held_intent=held_intent,
+                    )
+                send_status, _payload, send_note = _send_watch_exit(
+                    log, key=key, kind=f"exit_cheap_{exit_kind}", spec=exit_spec
+                )
             _append_watch({
                 "event": "one_leg_exit_cheap",
                 "bet_key": key,
                 "held_pay": str(held),
                 "prefer": exit_kind,
-                "orders_enabled": ORDERS_ENABLED,
+                "orders_enabled": enabled,
+                "http_status": send_status,
+                "note": send_note,
                 "ts": now,
             })
             _append({
@@ -1079,15 +1373,19 @@ def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str,
                 "bet_key": key,
                 "held_pay": str(held),
                 "prefer": exit_kind,
-                "orders_enabled": ORDERS_ENABLED,
+                "orders_enabled": enabled,
+                "http_status": send_status,
+                "note": send_note,
             })
             actions.append(f"{key}:exit_cheap:{exit_kind}")
             continue
         if action == "try_be_complete":
             cap = (be + BE_COMPLETE_SLIP) if be is not None else miss_l
+            if ask is not None and cap is not None:
+                cap = min(cap, ask)
             log(
                 f"one-leg BE-complete attempt bet={key} held={held} "
-                f"be={be} cap={cap} ask={ask} orders_enabled={ORDERS_ENABLED}"
+                f"be={be} cap={cap} ask={ask} orders_enabled={enabled}"
             )
             _append_watch({
                 "event": "one_leg_be_complete",
@@ -1096,26 +1394,93 @@ def tick_one_leg_gtc_watches(log, *, now: float | None = None, be_ask: dict[str,
                 "break_even_pay": str(be) if be is not None else None,
                 "cap": str(cap) if cap is not None else None,
                 "ask": str(ask) if ask is not None else None,
-                "orders_enabled": ORDERS_ENABLED,
+                "orders_enabled": enabled,
                 "ts": now,
             })
-            if be_available is False or not ORDERS_ENABLED:
+            if be_available is False:
                 _append_watch({
                     "event": "one_leg_hold_to_settle",
                     "bet_key": key,
                     "held_pay": str(held),
-                    "reason": "be_complete_unavailable_or_orders_off",
+                    "reason": "be_complete_unavailable",
                     "ts": now,
                 })
                 _append({
                     "event": "one_leg_hold_to_settle",
                     "bet_key": key,
                     "held_pay": str(held),
-                    "reason": "be_complete_unavailable_or_orders_off",
+                    "reason": "be_complete_unavailable",
+                })
+                actions.append(f"{key}:hold_to_settle")
+            elif not enabled:
+                _append_watch({
+                    "event": "one_leg_hold_to_settle",
+                    "bet_key": key,
+                    "held_pay": str(held),
+                    "reason": "orders_off_recorded_be_intent",
+                    "ts": now,
+                })
+                _append({
+                    "event": "one_leg_hold_to_settle",
+                    "bet_key": key,
+                    "held_pay": str(held),
+                    "reason": "orders_off_recorded_be_intent",
                 })
                 actions.append(f"{key}:hold_to_settle")
             else:
-                actions.append(f"{key}:try_be_complete")
+                if cap is None:
+                    actions.append(f"{key}:hold_to_settle")
+                    _append_watch({
+                        "event": "one_leg_hold_to_settle",
+                        "bet_key": key,
+                        "held_pay": str(held),
+                        "reason": "no_be_cap",
+                        "ts": now,
+                    })
+                else:
+                    be_spec = build_buy_leg_spec(
+                        venue=str(row.get("second_venue") or ""),
+                        instrument=str(row.get("second_instrument") or ""),
+                        outcome=str(row.get("second_side") or ""),
+                        pay=cap,
+                        tif="ioc",
+                        intent=row.get("second_intent"),
+                    )
+                    send_status, payload, send_note = _send_watch_exit(
+                        log, key=key, kind="be_complete", spec=be_spec
+                    )
+                    filled = filled_contracts(payload) if send_status in (200, 201) else Decimal("0")
+                    if be_spec is None or filled < SIZE:
+                        _append_watch({
+                            "event": "one_leg_hold_to_settle",
+                            "bet_key": key,
+                            "held_pay": str(held),
+                            "reason": "be_complete_miss_or_error",
+                            "http_status": send_status,
+                            "note": send_note,
+                            "ts": now,
+                        })
+                        _append({
+                            "event": "one_leg_hold_to_settle",
+                            "bet_key": key,
+                            "held_pay": str(held),
+                            "reason": "be_complete_miss_or_error",
+                            "http_status": send_status,
+                            "note": send_note,
+                        })
+                        actions.append(f"{key}:hold_to_settle")
+                    else:
+                        _append({
+                            "event": "filled",
+                            "bet_key": key,
+                            "venue": be_spec.get("venue"),
+                            "instrument": be_spec.get("instrument"),
+                            "side": be_spec.get("outcome"),
+                            "size": "1",
+                            "price": be_spec.get("pay"),
+                            "note": "be_complete",
+                        })
+                        actions.append(f"{key}:try_be_complete")
             continue
         if action == "hold_to_settle":
             log(f"one-leg hold-to-settle bet={key} held={held}")
@@ -1225,6 +1590,8 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     })
     if resting:
         opened = time.time()
+        held_intent = (first.get("body") or {}).get("intent")
+        second_intent = (second.get("body") or {}).get("intent")
         watch = {
             "event": "second_leg_gtc_open",
             "bet_key": key,
@@ -1233,9 +1600,11 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
             "held_instrument": first["instrument"],
             "held_side": first["outcome"],
             "held_pay": first["pay"],
+            "held_intent": held_intent,
             "second_venue": second["venue"],
             "second_instrument": second["instrument"],
             "second_side": second["outcome"],
+            "second_intent": second_intent,
             "miss_limit_l": str(miss_l) if miss_l is not None else None,
             "break_even_pay": str(be_pay),
             "second_order_id": _order_id(payload2),

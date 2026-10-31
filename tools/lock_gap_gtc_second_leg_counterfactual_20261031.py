@@ -127,9 +127,10 @@ code {{ font-size: 0.92em; }}
 </style>
 </head>
 <body>
-<h1>Lock gap — adopt second-leg GTC (31 Oct 2026)</h1>
-<p class="banner"><strong>Research-candidate live adopt.</strong> Not gold. Not DailyRun.
-Written America/New_York. ORDERS_ENABLED stays off in this repo dump until the trading PC turns it on.</p>
+<h1>Lock gap — adopted live policy: second-leg GTC (31 Oct 2026)</h1>
+<p class="banner"><strong>Adopted live policy</strong> (Paul 2026-10-31). Not gold. Not DailyRun.
+Written America/New_York. Orders stay off until trading PC enables via
+<code>orders_enabled.on</code> / <code>LOCK_ORDERS_ENABLED=1</code>. See merge_lock_gap_gtc_live.bat.</p>
 
 <div class="callout">
 <h2>What Paul approved</h2>
@@ -153,7 +154,8 @@ Written America/New_York. ORDERS_ENABLED stays off in this repo dump until the t
 <code>tools/live_game_pollers.py</code> ticks watches after lock sends and cancels on closed results.
 Tests in <code>tools/test_live_lock_orders.py</code>.</p>
 <p class="note">Trading-PC note: production <code>live_lock_orders.py</code> is ahead of this git dump
-(thin-first / flatten-first). Merge this policy onto that file; do not blindly overwrite thin-first.</p>
+(thin-first / flatten_filled_leg). Merge this policy onto that file; do not overwrite thin-first.
+Run <code>merge_lock_gap_gtc_live.bat</code> after merging the PR.</p>
 </div>
 
 <h2>Counterfactual vs immediate flatten</h2>

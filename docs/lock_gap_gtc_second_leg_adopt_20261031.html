@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>Lock gap GTC second-leg adopt — 31 Oct 2026</title>
+<title>Lock gap GTC second-leg — adopted live policy — 31 Oct 2026</title>
 <style>
 body { font-family: Segoe UI, sans-serif; margin: 1.25rem; color: #0f172a; line-height: 1.45; max-width: 52rem; }
-.banner { background: #fef3c7; border: 1px solid #d97706; padding: 10px 12px; margin: 0 0 14px; }
+.banner { background: #ecfdf5; border: 1px solid #059669; padding: 10px 12px; margin: 0 0 14px; }
+.warn { background: #fff7ed; border: 1px solid #ea580c; padding: 10px 12px; margin: 0 0 14px; }
 .callout { background: #f8fafc; border: 1px solid #d8dee9; padding: 0.8rem 1rem; margin: 0 0 1rem; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border: 1px solid #d8dee9; padding: 6px 8px; text-align: left; }
@@ -16,19 +17,20 @@ code { font-size: 0.92em; }
 </style>
 </head>
 <body>
-<h1>Lock gap — adopt second-leg GTC (31 Oct 2026)</h1>
-<p class="banner"><strong>Research-candidate live adopt.</strong> Not gold. Not DailyRun.
-Written America/New_York. ORDERS_ENABLED stays off in this repo dump until the trading PC turns it on.</p>
+<h1>Lock gap — adopted live policy: second-leg GTC (31 Oct 2026)</h1>
+<p class="banner"><strong>Adopted live policy</strong> (Paul 2026-10-31). Not gold. Not DailyRun.
+Written America/New_York. This replaces the immediate flatten-first one-leg rule for the
+second / easy leg after a hard IOC fill.</p>
 
 <div class="callout">
-<h2>What Paul approved</h2>
+<h2>Live policy</h2>
 <ol>
-<li>Hard / first leg: <strong>IOC</strong>.</li>
-<li>If hard fills → easy / second leg: <strong>GTC at original L</strong> (take now + rest).</li>
+<li>Hard / first leg: <strong>IOC</strong> (keep trading-PC thin-first / hard-first ordering).</li>
+<li>If hard fills → easy / second leg: <strong>GTC at original L</strong> (take now + rest). No post-hard REST delay required before the GTC send. Do not IOC-then-repost.</li>
 <li>If still open after <strong>180s</strong>:
   <ul>
-    <li>held ≤ <strong>0.25</strong> → exit (flatten if tighter, else market sell). Do not hold.</li>
-    <li>held &gt; 25¢ → one IOC to complete at ≤ break-even (+1¢ slip); else <strong>hold</strong>.</li>
+    <li>held ≤ <strong>0.25</strong> → cancel GTC, then exit (same-shop flatten if tighter, else market sell). Do not hold cheap dogs.</li>
+    <li>held &gt; 25¢ → cancel GTC, then one IOC to complete at ≤ break-even (+1¢ slip); else <strong>hold</strong> to settlement.</li>
   </ul>
 </li>
 <li><strong>Cancel-on-resolve</strong> for resting second-leg GTCs.</li>
@@ -37,12 +39,33 @@ Written America/New_York. ORDERS_ENABLED stays off in this repo dump until the t
 
 <div class="callout">
 <h2>Wired in this repo</h2>
-<p class="note"><code>tools/live_lock_orders.py</code>: GTC TIF builders, <code>_send_pair</code> second-leg GTC,
-<code>tick_one_leg_gtc_watches</code>, <code>cancel_second_leg_gtc_on_resolve</code>, pure policy helpers.
+<p class="note"><code>tools/live_lock_orders.py</code>: GTC TIF builders (Polymarket GTC uses
+<code>synchronousExecution=false</code>), <code>_send_pair</code> hard IOC → easy GTC with no forced delay,
+<code>tick_one_leg_gtc_watches</code> (cancel then send flatten / market-sell / BE-complete when orders on),
+<code>cancel_second_leg_gtc_on_resolve</code>, pure policy helpers.
 <code>tools/live_game_pollers.py</code> ticks watches after lock sends and cancels on closed results.
-Tests in <code>tools/test_live_lock_orders.py</code>.</p>
-<p class="note">Trading-PC note: production <code>live_lock_orders.py</code> is ahead of this git dump
-(thin-first / flatten-first). Merge this policy onto that file; do not blindly overwrite thin-first.</p>
+Tests: <code>python tools/test_live_lock_orders.py</code>.</p>
+</div>
+
+<div class="warn">
+<h2>Enable orders (trading PC only)</h2>
+<p class="note">Default in bare clones / cloud VMs: <strong>off</strong>. Do not flip a hard-coded True in git.</p>
+<ol>
+<li>Preferred: create stamp
+  <code>drive/paul_experiments/prediction_market_arb_exhaustive_20261017/raw/orders_enabled.on</code>
+  (delete / avoid <code>orders_enabled.off</code>, which always wins).</li>
+<li>Or set env <code>LOCK_ORDERS_ENABLED=1</code> for the lock job process.</li>
+<li>Then restart the lock job (see <code>merge_lock_gap_gtc_live.bat</code>).</li>
+</ol>
+<p class="note">Gate function: <code>orders_enabled()</code>. Module flag <code>ORDERS_ENABLED</code> remains False by default.</p>
+</div>
+
+<div class="warn">
+<h2>Trading-PC merge (thin-first)</h2>
+<p class="note">Production <code>live_lock_orders.py</code> on the trading PC is ahead of git
+(thin-first / <code>flatten_filled_leg</code>). <strong>Merge this GTC second-leg policy onto that file;
+do not overwrite thin-first.</strong> Run <code>merge_lock_gap_gtc_live.bat</code> after merging the PR —
+it backs up the live file and prints manual merge steps when the files differ.</p>
 </div>
 
 <h2>Counterfactual vs immediate flatten</h2>
@@ -51,12 +74,19 @@ Tests in <code>tools/test_live_lock_orders.py</code>.</p>
 <table>
 <thead><tr><th>Book</th><th>P&amp;L (¢)</th><th>Notes</th></tr></thead>
 <tbody>
-<tr><td>Immediate flatten (14 rows on that page)</td><td>-40.9</td><td>Live house rule before this adopt</td></tr>
+<tr><td>Immediate flatten (14 rows on that page)</td><td>-40.9</td><td>Prior house rule</td></tr>
 <tr><td>Conservative policy floor</td><td>60.52</td><td>Only the +60.52¢ complementary GTC locks; $0 on other touches/misses</td></tr>
 <tr><td>Policy floor − flatten</td><td><strong>101.42</strong></td><td>Directional; tiny N; ask-touch ≠ queue fill</td></tr>
 </tbody>
 </table>
 <p class="note">Even crediting only the +60.52¢ complementary GTC locks (and $0 for the other 20 non-lock/miss rows) beats the −40.9¢ flatten book on that page by +101.4¢. Kitchen leftovers say exit ≤25¢ (0/7) and holding >25¢ was +$2.40 on 15 tickets.</p>
+
+<h2>Go-live steps</h2>
+<ol>
+<li>Merge the GitHub PR into <code>main</code>.</li>
+<li>On the trading PC run <code>merge_lock_gap_gtc_live.bat</code> (backs up live lock module, pulls main, enables stamp, restarts if possible).</li>
+<li>If the bat reports a thin-first conflict: manually keep <code>_pick_hard_leg</code> / thin-first send order and fold in GTC second-leg + watch tick from git.</li>
+</ol>
 
 <h2>Re-run when Kalshi in-game minutes arrive</h2>
 <pre>python tools/lock_gap_gtc_second_leg_counterfactual_20261031.py
@@ -64,6 +94,7 @@ Tests in <code>tools/test_live_lock_orders.py</code>.</p>
 # from local raw/price_memory (or Kalshi hist minutes) and recompute BE/+1¢ ladders exactly.
 </pre>
 <p class="tiny">Generator: <code>tools/lock_gap_gtc_second_leg_counterfactual_20261031.py</code>.
-JSON: <code>docs/lock_gap_gtc_second_leg_counterfactual_20261031.json</code>.</p>
+JSON: <code>docs/lock_gap_gtc_second_leg_counterfactual_20261031.json</code>.
+Batch: <code>merge_lock_gap_gtc_live.bat</code>.</p>
 </body>
 </html>
