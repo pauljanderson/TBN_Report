@@ -12,9 +12,14 @@ as messages arrive. A Polymarket US twin, when one exists, uses the US markets
 socket on the same game. Each book update is compared. A burst of ticks is
 collapsed in about a twentieth of a second so one tick does not start a process.
 If a stream cannot be opened, the child falls back to a request about every 20
-seconds. Open ATP and ATP Challenger matches with a Polymarket US moneyline
-stay on the stream until the deadline. A lock at or under $0.95 net
-sends one contract on each leg. Pairs under $1 that miss that bar stay alerts.
+seconds. Twin moneyline cards stay on the stream until the deadline: ATP /
+ATP Challenger tennis, UFC/MMA fights, table tennis (including Polymarket-only
+open cards), and chess matches when both books list them. Catalog sports in
+LIVE_HOURS (including pro football / hockey moneyline+spread, soccer, mma,
+chess) are watched from listed start through a typical game length. Price
+memory records moneyline, spread, and total asks on every poll. A lock at or
+under $0.95 net sends one contract on each leg. Pairs under $1 that miss that
+bar stay alerts.
 
 HTTP seeds, HTTP fallbacks, and the catalog scan share tools/venue_pace.py.
 A websocket update does not wait on that pace.
@@ -67,6 +72,8 @@ LIVE_HOURS = {
     "pro baseball": 3.5,
     "soccer": 2.5,
     "pro hockey": 3.0,
+    "mma": 3.0,
+    "chess": 3.0,
 }
 SPORT_ORDER = [
     "college football",
@@ -74,10 +81,15 @@ SPORT_ORDER = [
     "pro baseball",
     "soccer",
     "pro hockey",
+    "mma",
+    "chess",
 ]
+# Focus for crossover/dip research. All three kinds are still remembered on each poll.
+TRACK_MARKET_KINDS = ("moneyline", "spread", "total")
 PLAN_NOTE = (
     "One contract when net is $0.95 or less. The venue that moved more is sent first. "
-    "Pairs under $1 that earn less than $0.05 stay alerts."
+    "Pairs under $1 that earn less than $0.05 stay alerts. "
+    "During-game price memory keeps moneyline + spread (+ total) on every live sport."
 )
 
 
@@ -215,35 +227,89 @@ def live_games(scan, moment: datetime | None = None) -> list[dict]:
             "live_until": end.isoformat(),
         })
     rows.extend(tennis_rows(scan))
+    rows.extend(mma_rows(scan))
+    rows.extend(table_tennis_rows(scan))
+    rows.extend(chess_twin_rows(scan))
+    return rows
+
+
+def _twin_game(match: dict, ticker: str) -> dict:
+    """Build a live game row for a Kalshi↔Polymarket (or Polymarket-only) moneyline twin."""
+    slug = str(match.get("slug") or "")
+    code = re.sub(r"[^a-z0-9]+", "", slug)[:40] or re.sub(r"[^a-z0-9]+", "", ticker)[:40] or "game"
+    kalshi = {"game": ticker} if ticker else {}
+    return {
+        "date": match.get("date") or "",
+        "title_kalshi": match.get("title") or ticker or slug,
+        "codes": [code],
+        "kalshi": kalshi,
+        "gemini": {},
+        "polymarket_markets": [match],
+    }
+
+
+def _deadline_twin_rows(sport: str, matches: list[dict], *, require_kalshi: bool) -> list[dict]:
+    """Watch twin moneylines until the supervisor deadline (same pattern as tennis)."""
+    rows = []
+    start = (now_et() - timedelta(minutes=1)).isoformat()
+    for match in matches:
+        if not isinstance(match, dict) or not match.get("slug"):
+            continue
+        ticker = str(match.get("event_ticker") or "")
+        if require_kalshi and not ticker:
+            continue
+        game = _twin_game(match, ticker)
+        # game_key needs scan.game_codes — pass a tiny stub via the caller's scan in wrappers
+        rows.append({
+            "sport": sport,
+            "game": game,
+            "title": match.get("title") or ticker or match.get("slug"),
+            "start": start,
+            "live_until": DEADLINE.isoformat(),
+            "_key_sport": sport,
+        })
     return rows
 
 
 def tennis_rows(scan) -> list[dict]:
     """Kalshi ATP / Challenger moneylines that have one Polymarket US twin. Until the deadline."""
     matches = polymarket_us_live.load_tennis_matches(log)
-    rows = []
-    start = (now_et() - timedelta(minutes=1)).isoformat()
-    for match in matches:
-        ticker = str(match.get("event_ticker") or "")
-        if not ticker or not match.get("slug"):
-            continue
-        game = {
-            "date": match.get("date") or "",
-            "title_kalshi": match.get("title") or ticker,
-            "kalshi": {"game": ticker},
-            "gemini": {},
-            "polymarket_markets": [match],
-        }
-        key = game_key("tennis", game, scan)
-        rows.append({
+    return _finalize_twin_rows(scan, _deadline_twin_rows("tennis", matches, require_kalshi=True))
+
+
+def mma_rows(scan) -> list[dict]:
+    """Kalshi UFC/MMA fight moneylines with a Polymarket US twin. Until the deadline."""
+    matches = polymarket_us_live.load_mma_matches(log)
+    return _finalize_twin_rows(scan, _deadline_twin_rows("mma", matches, require_kalshi=True))
+
+
+def table_tennis_rows(scan) -> list[dict]:
+    """Table tennis moneylines from Polymarket (Kalshi twin when open). Until the deadline."""
+    matches = polymarket_us_live.load_table_tennis_matches(log)
+    return _finalize_twin_rows(scan, _deadline_twin_rows("table tennis", matches, require_kalshi=False))
+
+
+def chess_twin_rows(scan) -> list[dict]:
+    """Kalshi chess match moneylines with a Polymarket US twin. Until the deadline."""
+    matches = polymarket_us_live.load_chess_matches(log)
+    return _finalize_twin_rows(scan, _deadline_twin_rows("chess", matches, require_kalshi=True))
+
+
+def _finalize_twin_rows(scan, rows: list[dict]) -> list[dict]:
+    out = []
+    for row in rows:
+        game = row["game"]
+        sport = row["_key_sport"]
+        key = game_key(sport, game, scan)
+        out.append({
             "key": key,
-            "sport": "tennis",
+            "sport": sport,
             "game": game,
-            "title": match.get("title") or ticker,
-            "start": start,
-            "live_until": DEADLINE.isoformat(),
+            "title": row["title"],
+            "start": row["start"],
+            "live_until": row["live_until"],
         })
-    return rows
+    return out
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -317,19 +383,25 @@ def _log_check(scan, spec: dict, sport: str, title: str, game: dict, result: dic
         log(f"health check log {spec.get('key')} {type(exc).__name__}")
 
 
+def _has_watchable_book(game: dict, scan) -> bool:
+    """True when at least one venue book can be read (Kalshi, Gemini, or Polymarket preset)."""
+    k_tickers, g_tickers = scan.tickers_of(game)
+    preset = game.get("polymarket_markets") if isinstance(game.get("polymarket_markets"), list) else []
+    return bool(k_tickers or g_tickers or preset)
+
+
 def poll_once(scan, spec: dict) -> None:
     game = spec["game"]
     sport = spec["sport"]
     k_tickers, g_tickers = scan.tickers_of(game)
-    preset = game.get("polymarket_markets") if isinstance(game.get("polymarket_markets"), list) else []
-    if not k_tickers or (not g_tickers and not preset):
+    if not _has_watchable_book(game, scan):
         log(f"poll skip {spec['key']} missing ticker")
         state = read_json(STATE / f"{spec['key']}.json")
         state.update({
             "key": spec["key"],
             "last_poll": iso_now(),
             "last_abs_move": state.get("last_abs_move"),
-            "note": "A ticker is blank on one venue.",
+            "note": "No Kalshi, Gemini, or Polymarket book on this game.",
         })
         write_json(STATE / f"{spec['key']}.json", state)
         return
@@ -472,8 +544,7 @@ def seed_quotes(scan, spec: dict):
     game = spec["game"]
     sport = spec["sport"]
     k_tickers, g_tickers = scan.tickers_of(game)
-    preset = game.get("polymarket_markets") if isinstance(game.get("polymarket_markets"), list) else []
-    if not k_tickers or (not g_tickers and not preset):
+    if not _has_watchable_book(game, scan):
         return None
     gemini_events = [scan.fetch_gemini_event(t) for t in g_tickers]
     kalshi_events = [scan.fetch_kalshi_event(t) for t in k_tickers]
