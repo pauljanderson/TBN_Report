@@ -16,6 +16,8 @@ rem   - Enables orders the kitchen-safe way (orders_enabled.on stamp)
 rem   - Restarts the lock job when a known control script exists; else prints steps
 rem
 rem Manual thin-first merge (if backup/diff warns):
+rem   Prefer STEP 2 bat: merge_thin_first_into_gtc.bat
+rem   (needs tools\_merge_backup\live_lock_orders.py + tools\merge_thin_first_into_gtc.py).
 rem   Keep trading-PC: hard/thin-first leg picker (_pick_hard_leg / size-first),
 rem   flatten_filled_leg helper, any NET_MAX / leftover latch live-only bits.
 rem   Take from git: GTC second-leg TIF, _send_pair hard IOC then easy GTC,
