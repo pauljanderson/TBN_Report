@@ -33,6 +33,9 @@ RAW = STAMP / "raw"
 KEY_FILE = ROOT / "secrets" / "polymarket_api_key.txt"
 SECRET_FILE = ROOT / "secrets" / "polymarket_api_secret.txt"
 CACHE = RAW / "polymarket_tennis_matches.json"
+CACHE_MMA = RAW / "polymarket_mma_matches.json"
+CACHE_TABLE_TENNIS = RAW / "polymarket_table_tennis_matches.json"
+CACHE_CHESS = RAW / "polymarket_chess_matches.json"
 GATEWAY = "https://gateway.polymarket.us"
 WS_URL = "wss://api.polymarket.us/v1/ws/markets"
 WS_PATH = "/v1/ws/markets"
@@ -189,9 +192,21 @@ def _names_match(left: str, right: str) -> bool:
     return len(apart) == 1 or len(bpart) == 1 or bool(set(apart) & set(bpart))
 
 
+def _clean_match_title(title: str) -> str:
+    """Drop venue prefixes and parentheticals so player names can match across books."""
+    text = re.sub(r"\s*\([^)]*\)", "", title or "").strip()
+    text = re.sub(
+        r"^(Fight Night|UFC|MMA|Bellator|PFL|ONE)\s*:\s*",
+        "",
+        text,
+        flags=re.I,
+    ).strip()
+    return text
+
+
 def _players_match(kalshi_title: str, poly_title: str) -> bool:
-    left = _split_vs(kalshi_title)
-    right = _split_vs(poly_title)
+    left = _split_vs(_clean_match_title(kalshi_title))
+    right = _split_vs(_clean_match_title(poly_title))
     if len(left) != 2 or len(right) != 2:
         return False
     direct = _names_match(left[0], right[0]) and _names_match(left[1], right[1])
@@ -538,19 +553,21 @@ def _kalshi_open(series: str) -> list[dict]:
     return rows
 
 
-def _polymarket_atp_events() -> list[dict]:
+def _polymarket_sport_ml_events(sport_path: str, series_allow: set[str] | None = None) -> list[dict]:
+    """Two-way moneylines on one Polymarket US sport listing. series_allow=None keeps every series."""
     found = []
     offset = 0
     for _ in range(20):
         query = urllib.parse.urlencode({"limit": 100, "offset": offset})
-        payload = _get(f"{GATEWAY}/v2/sports/tennis/events?{query}")
+        payload = _get(f"{GATEWAY}/v2/sports/{sport_path}/events?{query}")
         batch = payload.get("events") or []
         if not isinstance(batch, list) or not batch:
             break
         for event in batch:
             if not isinstance(event, dict):
                 continue
-            if event.get("seriesSlug") != "atp-2026":
+            series = str(event.get("seriesSlug") or "")
+            if series_allow is not None and series not in series_allow:
                 continue
             title = str(event.get("title") or "")
             if "/" in title:
@@ -563,22 +580,28 @@ def _polymarket_atp_events() -> list[dict]:
                     parsed["date"] = _date_from_slug(parsed["slug"]) or ""
                     markets.append(parsed)
             if len(markets) == 1:
-                found.append({"title": title, "market": markets[0]})
+                found.append({"title": title, "market": markets[0], "series_slug": series})
         offset += len(batch)
         if len(batch) < 100:
             break
     return found
 
 
-def discover_tennis_matches() -> list[dict]:
-    """Open Kalshi ATP and ATP Challenger matches with one Polymarket US moneyline twin."""
-    kalshi = _kalshi_open("KXATPMATCH") + _kalshi_open("KXATPCHALLENGERMATCH")
-    polymarket = _polymarket_atp_events()
+def _polymarket_atp_events() -> list[dict]:
+    return _polymarket_sport_ml_events("tennis", {"atp-2026"})
+
+
+def _discover_kalshi_poly_twins(kalshi_series: list[str], sport_path: str, series_allow: set[str] | None = None) -> list[dict]:
+    """Open Kalshi events with exactly one Polymarket US moneyline twin on the same date."""
+    kalshi: list[dict] = []
+    for series in kalshi_series:
+        kalshi.extend(_kalshi_open(series))
+    polymarket = _polymarket_sport_ml_events(sport_path, series_allow)
     claimed: dict[str, int] = {}
     matches = []
     for event in kalshi:
         ticker = str(event.get("event_ticker") or "")
-        title = re.sub(r"\s*\([^)]*\)", "", str(event.get("title") or event.get("sub_title") or "")).strip()
+        title = _clean_match_title(str(event.get("title") or event.get("sub_title") or ""))
         when = _date_from_kalshi(ticker)
         if not ticker or not when or "/" in title:
             continue
@@ -587,7 +610,9 @@ def discover_tennis_matches() -> list[dict]:
             market = row["market"]
             if market.get("date") != when:
                 continue
-            if _players_match(title, row["title"]) or _players_match(title, f"{market['long_name']} vs {market['short_name']}"):
+            poly_title = row["title"]
+            side_title = f"{market['long_name']} vs {market['short_name']}"
+            if _players_match(title, poly_title) or _players_match(title, side_title):
                 hits.append(row)
         if len(hits) != 1:
             continue
@@ -600,15 +625,77 @@ def discover_tennis_matches() -> list[dict]:
             "series": event.get("series") or "",
             **hits[0]["market"],
         })
-    unique = [row for row in matches if claimed.get(row["slug"]) == 1]
-    return unique
+    return [row for row in matches if claimed.get(row["slug"]) == 1]
 
 
-def load_tennis_matches(log=None, force: bool = False) -> list[dict]:
+def discover_tennis_matches() -> list[dict]:
+    """Open Kalshi ATP and ATP Challenger matches with one Polymarket US moneyline twin."""
+    return _discover_kalshi_poly_twins(
+        ["KXATPMATCH", "KXATPCHALLENGERMATCH"],
+        "tennis",
+        {"atp-2026"},
+    )
+
+
+def discover_mma_matches() -> list[dict]:
+    """Open Kalshi UFC/MMA fight moneylines with one Polymarket US twin."""
+    return _discover_kalshi_poly_twins(
+        ["KXUFCFIGHT", "KXMMAFIGHT", "KXMMAEXFIGHT"],
+        "mma",
+        None,
+    )
+
+
+def discover_chess_matches() -> list[dict]:
+    """Open Kalshi chess match moneylines with one Polymarket US twin when listed."""
+    return _discover_kalshi_poly_twins(
+        ["KXCHESSMATCH"],
+        "chess",
+        None,
+    )
+
+
+def discover_table_tennis_matches() -> list[dict]:
+    """Table tennis moneylines: Kalshi↔Polymarket twins, plus Polymarket-only open matches.
+
+    Polymarket often lists Setka / WTT cards when Kalshi has no open twin. Those still
+    feed price memory so a crossover/dip sim can grow a table-tennis tape.
+    """
+    twins = _discover_kalshi_poly_twins(
+        [
+            "KXTABLETENNISMATCH",
+            "KXTTMATCH",
+            "KXTABLETENNIS",
+            "KXITTFMENMATCH",
+            "KXTTELITEGAME",
+            "KXWTABLETENNISMATCH",
+            "KXWTTMATCH",
+        ],
+        "table-tennis",
+        None,
+    )
+    claimed = {str(row.get("slug") or "") for row in twins}
+    for row in _polymarket_sport_ml_events("table-tennis", None):
+        market = row["market"]
+        slug = str(market.get("slug") or "")
+        if not slug or slug in claimed:
+            continue
+        claimed.add(slug)
+        twins.append({
+            "event_ticker": "",
+            "title": row["title"],
+            "date": market.get("date") or "",
+            "series": "polymarket-only",
+            **market,
+        })
+    return twins
+
+
+def _load_match_cache(path: Path, discover, label: str, log=None, force: bool = False) -> list[dict]:
     """Cached public match list. A failed refresh keeps the previous list."""
-    if not force and CACHE.exists():
+    if not force and path.exists():
         try:
-            cached = json.loads(CACHE.read_text(encoding="utf-8"))
+            cached = json.loads(path.read_text(encoding="utf-8"))
             stamped = datetime.fromisoformat(str(cached.get("fetched_at")))
             if datetime.now(stamped.tzinfo) - stamped < timedelta(minutes=CACHE_MINUTES):
                 rows = cached.get("matches")
@@ -617,13 +704,13 @@ def load_tennis_matches(log=None, force: bool = False) -> list[dict]:
         except Exception:
             pass
     try:
-        matches = discover_tennis_matches()
+        matches = discover()
     except Exception as exc:
         if log:
-            log(f"polymarket tennis list failed {type(exc).__name__}")
-        if CACHE.exists():
+            log(f"polymarket {label} list failed {type(exc).__name__}")
+        if path.exists():
             try:
-                cached = json.loads(CACHE.read_text(encoding="utf-8"))
+                cached = json.loads(path.read_text(encoding="utf-8"))
                 rows = cached.get("matches")
                 if isinstance(rows, list):
                     return [row for row in rows if isinstance(row, dict)]
@@ -633,12 +720,32 @@ def load_tennis_matches(log=None, force: bool = False) -> list[dict]:
     payload = {"fetched_at": datetime.now().astimezone().isoformat(), "matches": matches}
     try:
         RAW.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError:
         pass
     if log:
-        log(f"polymarket tennis twins {len(matches)}")
+        log(f"polymarket {label} twins {len(matches)}")
     return matches
+
+
+def load_tennis_matches(log=None, force: bool = False) -> list[dict]:
+    """Cached public tennis match list. A failed refresh keeps the previous list."""
+    return _load_match_cache(CACHE, discover_tennis_matches, "tennis", log, force)
+
+
+def load_mma_matches(log=None, force: bool = False) -> list[dict]:
+    """Cached public MMA / UFC fight list with Polymarket US moneyline twins."""
+    return _load_match_cache(CACHE_MMA, discover_mma_matches, "mma", log, force)
+
+
+def load_table_tennis_matches(log=None, force: bool = False) -> list[dict]:
+    """Cached table tennis moneylines (Kalshi twins + Polymarket-only open cards)."""
+    return _load_match_cache(CACHE_TABLE_TENNIS, discover_table_tennis_matches, "table tennis", log, force)
+
+
+def load_chess_matches(log=None, force: bool = False) -> list[dict]:
+    """Cached chess match moneylines with Polymarket US twins when both books list them."""
+    return _load_match_cache(CACHE_CHESS, discover_chess_matches, "chess", log, force)
 
 
 def _num_key(value) -> str | None:
