@@ -17,6 +17,7 @@ import html
 import math
 import subprocess
 import sys
+import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -45,6 +46,12 @@ POSITIONS = ROOT / "gettarget_positions.csv"
 GETTARGET = ROOT / "getTarget_output.csv"
 SELL = DRIVE / "Sell_Report_Latest.csv"
 URL = "https://pauljanderson.github.io/TBN_Report/open_today.html"
+
+# A missing Yahoo print is retried this many times, then the page is written anyway.
+# Between tries we wait OPEN_POLL_INTERVAL_SEC (the existing 20s poll). Each try
+# also has a wall-clock cap so one hung download cannot spin forever.
+OPEN_FETCH_ATTEMPTS = 3
+OPEN_FETCH_TIMEOUT_SEC = 60
 
 LIVE = {"BRT", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL"}
 NAMES = {
@@ -528,21 +535,81 @@ def _symbols_needed(holdings, passed, waits) -> list[str]:
     return sorted(syms)
 
 
-def fetch_opens(symbols: list[str], session: date) -> dict:
+def _missing_opens(symbols: list[str], opens: dict) -> list[str]:
+    missing = []
+    for sym in symbols:
+        quote = opens.get(sym)
+        if quote is None or getattr(quote, "price", None) is None:
+            missing.append(sym)
+    return missing
+
+
+def _keep_quotes(opens: dict, got: dict) -> None:
+    for sym, quote in got.items():
+        if quote is not None and getattr(quote, "price", None) is not None:
+            opens[sym] = quote
+
+
+def _fetch_once(symbols: list[str], session: date, now: datetime) -> tuple[dict, bool]:
+    """One Yahoo batch. Returns (quotes, timed_out).
+
+    yfinance's threaded download waits in a loop until every symbol returns.
+    If one request never finishes, that wait never ends and this page is never
+    written. The worker is a daemon so a timeout lets the page continue.
+    """
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["got"] = fetch_session_opens_yfinance(symbols, session, now_et=now)
+        except Exception as exc:
+            box["err"] = exc
+
+    worker = threading.Thread(target=run, name="open-fetch", daemon=True)
+    worker.start()
+    worker.join(OPEN_FETCH_TIMEOUT_SEC)
+    if worker.is_alive():
+        print(
+            f"open fetch still running after {OPEN_FETCH_TIMEOUT_SEC}s; not waiting on it",
+            flush=True,
+        )
+        return {}, True
+    if "err" in box:
+        print(f"open fetch failed: {box['err']}", flush=True)
+        return {}, False
+    return box.get("got") or {}, False
+
+
+def fetch_opens(symbols: list[str], session: date) -> tuple[dict, list[str]]:
     opens = {s: None for s in symbols}
     now = datetime.now(ET)
     if session == now.date() and now.time() < datetime.strptime("09:30", "%H:%M").time():
-        return fetch_session_opens_yfinance(symbols, session, now_et=now)
+        got, _timed_out = _fetch_once(symbols, session, now)
+        _keep_quotes(opens, got)
+        return opens, _missing_opens(symbols, opens)
     deadline = datetime.combine(session, OPEN_POLL_END_ET, tzinfo=ET)
-    while True:
+    missing = list(symbols)
+    for attempt in range(1, OPEN_FETCH_ATTEMPTS + 1):
         now = datetime.now(ET)
-        got = fetch_session_opens_yfinance(symbols, session, now_et=now)
-        opens.update(got)
-        missing = [s for s in symbols if opens.get(s) is None or opens[s].price is None]
-        if not missing or now >= deadline or session != now.date():
-            return opens
-        print(f"waiting for open prints: {', '.join(missing[:12])}", flush=True)
+        got, timed_out = _fetch_once(symbols, session, now)
+        _keep_quotes(opens, got)
+        missing = _missing_opens(symbols, opens)
+        # A timed-out worker is still inside yfinance. Do not start another.
+        if not missing or timed_out or now >= deadline or session != now.date() or attempt >= OPEN_FETCH_ATTEMPTS:
+            if missing:
+                shown = ", ".join(missing)
+                print(
+                    f"open fetch stopped after {attempt} of {OPEN_FETCH_ATTEMPTS} tries; "
+                    f"missing: {shown}",
+                    flush=True,
+                )
+            return opens, missing
+        print(
+            f"waiting for open prints ({attempt}/{OPEN_FETCH_ATTEMPTS}): {', '.join(missing[:12])}",
+            flush=True,
+        )
         time.sleep(OPEN_POLL_INTERVAL_SEC)
+    return opens, missing
 
 
 def publish(path: Path) -> None:
@@ -588,10 +655,12 @@ def main() -> int:
     passed, waits = load_candidates()
     symbols = _symbols_needed(holdings, passed, waits)
     print(f"session {session.isoformat()} symbols {len(symbols)} passed {len(passed)} wrl-wait {len(waits)}", flush=True)
-    opens = fetch_opens(symbols, session)
+    opens, missing = fetch_opens(symbols, session)
     acct = load_account_state()
     buckets = classify(session, holdings, sells, passed, waits, opens, acct)
     note = market_status_message(session, datetime.now(ET))
+    if missing:
+        note += " Opening print unavailable after retries: " + ", ".join(missing) + "."
     PAGE.parent.mkdir(parents=True, exist_ok=True)
     PAGE.write_text(render(session, datetime.now(ET), note, buckets, acct), encoding="utf-8")
     print(

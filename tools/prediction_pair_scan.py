@@ -1,7 +1,9 @@
-"""One-process Kalshi vs Gemini compare for one college game at a time.
+"""One-process same-bet compare for one college game at a time.
 
-Public GETs only. No orders, no API key, no secrets/. Gemini first, then Kalshi,
-then the compare in memory. Does not start a watch.
+Public GETs only. No orders, no API key, no secrets/. Fetch Gemini if a ticker
+exists, Kalshi if a ticker exists, then merge Polymarket US / Novig the same way
+live A does. A blank shop is omitted; the whole game is not skipped. Does not
+start a watch.
 """
 from __future__ import annotations
 
@@ -20,10 +22,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(r"C:\Users\songg\Downloads\stockresearch")
-STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
-RAW = STAMP / "raw"
-sys.path.insert(0, str(STAMP))
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
+from prediction_paths import DRIVE_STAMP as STAMP, RAW_DIR as RAW  # noqa: E402
+sys.path.insert(0, str(STAMP))
 
 import overnight_scan as ov  # noqa: E402
 from report_page_extras import SORTABLE_TABLE_SCRIPT, SORTABLE_TH_CSS, SWIPE_NOTE_HTML  # noqa: E402
@@ -353,6 +355,12 @@ def _remember_prices(game_name: str, seen_at: str, game: dict, gemini_events: li
         print(f"price memory {exc}", file=sys.stderr)
 
 
+def _call_span(calls: list[dict]) -> tuple:
+    if not calls:
+        return None, None
+    return calls[0]["sent_at"], calls[-1]["received_at"]
+
+
 def scan_game(game: dict, codes: str) -> dict:
     k_tickers, g_tickers = ov.tickers_of(game)
     fallback = " vs ".join(game.get("teams") or [codes])
@@ -378,25 +386,6 @@ def scan_game(game: dict, codes: str) -> dict:
             "codes": codes,
             "events": gemini_events,
         })
-    if not g_calls:
-        return {
-            "game": title,
-            "codes": codes,
-            "gemini": None,
-            "kalshi": None,
-            "analysis": None,
-            "total": None,
-            "opportunity": False,
-            "under": [],
-            "reason": "no Gemini ticker",
-            "slow": None,
-            "calls": [],
-            "errors": [],
-            "g_sent": now_et(),
-            "a_recv": now_et(),
-            "rate_limited": False,
-            "rows": [],
-        }
     if saw_429(g_calls):
         if g_calls:
             g_sent = g_calls[0]["sent_at"]
@@ -450,11 +439,12 @@ def scan_game(game: dict, codes: str) -> dict:
             "events": kalshi_events,
         })
     _remember_prices(title, iso(k_stamp), game, gemini_events, kalshi_events)
-    g_sent = g_calls[0]["sent_at"]
-    g_recv = g_calls[-1]["received_at"]
+    g_sent, g_recv = _call_span(g_calls)
+    k_sent, k_recv = _call_span(k_calls)
     if saw_429(k_calls):
-        rows = [
-            metric_row(
+        rows = []
+        if g_calls and g_sent is not None and g_recv is not None:
+            rows.append(metric_row(
                 f"call:Gemini:{g_path.name}:{iso(g_stamp)}",
                 title,
                 "Gemini",
@@ -462,8 +452,7 @@ def scan_game(game: dict, codes: str) -> dict:
                 g_recv,
                 call_notes("Gemini", g_calls),
                 g_path.name,
-            )
-        ]
+            ))
         if k_calls:
             rows.append(metric_row(
                 f"call:Kalshi:{codes}:{iso(k_calls[0]['sent_at'])}",
@@ -479,8 +468,8 @@ def scan_game(game: dict, codes: str) -> dict:
         return {
             "game": title,
             "codes": codes,
-            "gemini": rows[0]["duration_seconds"],
-            "kalshi": rows[1]["duration_seconds"] if len(rows) > 1 else None,
+            "gemini": rows[0]["duration_seconds"] if rows and g_calls else None,
+            "kalshi": (rows[-1]["duration_seconds"] if k_calls and rows else None),
             "analysis": None,
             "total": None,
             "opportunity": False,
@@ -489,26 +478,28 @@ def scan_game(game: dict, codes: str) -> dict:
             "slow": None,
             "calls": g_calls + k_calls,
             "errors": [c for c in g_calls + k_calls if c.get("error")],
-            "g_sent": g_sent,
-            "a_recv": (k_calls[-1]["received_at"] if k_calls else g_recv),
+            "g_sent": g_sent if g_sent is not None else now_et(),
+            "a_recv": (k_recv if k_recv is not None else g_recv if g_recv is not None else now_et()),
             "rate_limited": True,
             "rows": rows,
         }
-    k_sent = k_calls[0]["sent_at"]
-    k_recv = k_calls[-1]["received_at"]
 
     a_sent = now_et()
     result = ov.compare_payloads(game, kalshi_events, gemini_events)
+    polymarket = ov._read_polymarket(game, kalshi_events, gemini_events)
+    novig = ov._read_novig(game, kalshi_events, gemini_events, "college football")
+    ov._merge_extra(game, kalshi_events, gemini_events, result, polymarket, novig)
     closest = None
     if result["candidates"]:
         closest = min(result["candidates"], key=lambda c: ov.d(c["gross"]) or ov.Decimal("99"))
+    fetched_at = iso(k_recv or g_recv or a_sent)
     row = {
         "sport": "college football",
         "game": title,
         "game_date": game.get("date"),
         "codes": codes,
         "pass": PASS_ID,
-        "fetched_at": iso(k_recv),
+        "fetched_at": fetched_at,
         "opportunity": result["opportunity"],
         "confirmed_lock": result["confirmed"],
         "reason": result["reason"],
@@ -524,10 +515,17 @@ def scan_game(game: dict, codes: str) -> dict:
     line = append_line(RAW / "cfb_game_results.jsonl", row)
     a_recv = now_et()
     digest = hashlib.sha1(line.encode("utf-8")).hexdigest()[:16]
-    g_fetched = json.loads(g_path.read_text(encoding="utf-8"))["fetched_at"]
-    k_fetched = json.loads(k_path.read_text(encoding="utf-8"))["fetched_at"]
-    rows = [
-        metric_row(
+    rows = []
+    g_sec = None
+    k_sec = None
+    if g_calls and g_sent is not None and g_recv is not None:
+        g_fetched = iso(g_stamp)
+        if g_path.exists():
+            try:
+                g_fetched = json.loads(g_path.read_text(encoding="utf-8"))["fetched_at"]
+            except (OSError, json.JSONDecodeError, KeyError):
+                pass
+        gemini_row = metric_row(
             f"call:Gemini:{g_path.name}:{g_fetched}",
             title,
             "Gemini",
@@ -535,8 +533,17 @@ def scan_game(game: dict, codes: str) -> dict:
             g_recv,
             call_notes("Gemini", g_calls),
             g_path.name,
-        ),
-        metric_row(
+        )
+        rows.append(gemini_row)
+        g_sec = gemini_row["duration_seconds"]
+    if k_calls and k_sent is not None and k_recv is not None:
+        k_fetched = iso(k_stamp)
+        if k_path.exists():
+            try:
+                k_fetched = json.loads(k_path.read_text(encoding="utf-8"))["fetched_at"]
+            except (OSError, json.JSONDecodeError, KeyError):
+                pass
+        kalshi_row = metric_row(
             f"call:Kalshi:{k_path.name}:{k_fetched}",
             title,
             "Kalshi",
@@ -544,26 +551,29 @@ def scan_game(game: dict, codes: str) -> dict:
             k_recv,
             call_notes("Kalshi", k_calls),
             k_path.name,
-        ),
-        metric_row(
-            f"analysis:cfb:{digest}",
-            title,
-            "Analysis",
-            a_sent,
-            a_recv,
-            "One Python process. Sent is the moment the compare starts. Received is the moment the result line is written. Duration is received minus sent.",
-            "cfb_game_results.jsonl",
-        ),
-    ]
-    g_sec = rows[0]["duration_seconds"]
-    k_sec = rows[1]["duration_seconds"]
-    a_sec = rows[2]["duration_seconds"]
-    parts = round(g_sec + k_sec + a_sec, 3)
-    total = duration_seconds(g_sent, a_recv)
-    cycle_sent = g_sent
+        )
+        rows.append(kalshi_row)
+        k_sec = kalshi_row["duration_seconds"]
+    analysis_row = metric_row(
+        f"analysis:cfb:{digest}",
+        title,
+        "Analysis",
+        a_sent,
+        a_recv,
+        "One Python process. Sent is the moment the compare starts. Received is the moment the result line is written. Duration is received minus sent. A blank shop is omitted; Polymarket US / Novig still merge.",
+        "cfb_game_results.jsonl",
+    )
+    rows.append(analysis_row)
+    a_sec = analysis_row["duration_seconds"]
+    g_part = g_sec if g_sec is not None else 0.0
+    k_part = k_sec if k_sec is not None else 0.0
+    parts = round(g_part + k_part + a_sec, 3)
+    cycle_sent = g_sent or k_sent or a_sent
     cycle_recv = a_recv
+    total = duration_seconds(cycle_sent, cycle_recv)
+    stamp_for_cycle = fetched_at
     rows.append({
-        "row_id": f"cycle:one_process:{codes}:{k_fetched}",
+        "row_id": f"cycle:one_process:{codes}:{stamp_for_cycle}",
         "game": title,
         "sport": "college football",
         "venue": "Cycle",
@@ -578,12 +588,12 @@ def scan_game(game: dict, codes: str) -> dict:
         "total_seconds": total,
         "total_display": f"{total:.3f}",
         "notes": (
-            f"One Python process. Gemini {g_sec:.3f}s + Kalshi {k_sec:.3f}s + analysis {a_sec:.3f}s "
-            f"(parts sum {parts:.3f}s). Gemini runs first, then Kalshi, then the compare. "
+            f"One Python process. Gemini {g_part:.3f}s + Kalshi {k_part:.3f}s + analysis {a_sec:.3f}s "
+            f"(parts sum {parts:.3f}s). Fetch whichever shops have a ticker, then the compare. "
             "This row's duration is the cycle received time minus the cycle sent time."
         ),
         "method": PASS_ID,
-        "source_file": g_path.name,
+        "source_file": g_path.name if g_calls else k_path.name,
         "logged_at": iso(now_et()),
     })
     for item in rows:
@@ -603,10 +613,11 @@ def scan_game(game: dict, codes: str) -> dict:
         "slow": slow,
         "calls": calls,
         "errors": [c for c in calls if c.get("error")],
-        "g_sent": g_sent,
+        "g_sent": g_sent if g_sent is not None else cycle_sent,
         "a_recv": a_recv,
         "rate_limited": False,
         "rows": rows,
+        "candidates": result.get("candidates") or [],
     }
 
 

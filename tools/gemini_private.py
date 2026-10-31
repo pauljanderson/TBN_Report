@@ -105,7 +105,9 @@ def _sign(api_secret: str, nonce: str) -> tuple[str, str]:
 
 def next_nonce() -> str:
     """Unix-second nonce that only increases, including across processes."""
-    nonce_path = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017" / "raw" / "gemini_nonce.txt"
+    from prediction_paths import RAW_DIR
+
+    nonce_path = RAW_DIR / "gemini_nonce.txt"
     lock_path = nonce_path.with_suffix(".lock")
     nonce_path.parent.mkdir(parents=True, exist_ok=True)
     from venue_pace import FileLock
@@ -124,10 +126,17 @@ def next_nonce() -> str:
         return str(current)
 
 
-def private_call(path: str, extra: dict | None, http_method: str) -> tuple[int, str]:
+def private_call(
+    path: str,
+    extra: dict | None,
+    http_method: str,
+    record: dict | None = None,
+    timeout: float = 30,
+) -> tuple[int, str]:
     """Signed prediction-market or balance call. Empty HTTP body. Payload is in the header.
 
-    Spot /v1/order paths are refused. The caller must not log the payload or the signature.
+    Spot /v1/order paths are refused. `record`, when passed, receives the JSON
+    object that is base64-encoded. That object has no API key and no signature.
     """
     allowed = path == BALANCES_PATH or path.startswith("/v1/prediction-markets/")
     if not allowed or any(marker.replace("_", "") in path.lower().replace("_", "") for marker in _ORDER_MARKERS):
@@ -136,7 +145,7 @@ def private_call(path: str, extra: dict | None, http_method: str) -> tuple[int, 
     api_secret = _load_secret(SECRET_FILE)
     nonce = next_nonce()
     # Balance reads take a string nonce. Prediction-market routes take a JSON number.
-    # This key is account-scoped the same way as the balance read: name the primary account.
+    # Nonce is Unix seconds, never milliseconds. This key names the primary account.
     payload = {
         "request": path,
         "nonce": int(nonce) if path.startswith("/v1/prediction-markets/") else nonce,
@@ -144,6 +153,8 @@ def private_call(path: str, extra: dict | None, http_method: str) -> tuple[int, 
     }
     if extra:
         payload.update(extra)
+    if record is not None:
+        record["request"] = json.loads(json.dumps(payload))
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     encoded = base64.b64encode(raw).decode("ascii")
     signature = hmac.new(api_secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha384).hexdigest()
@@ -162,11 +173,20 @@ def private_call(path: str, extra: dict | None, http_method: str) -> tuple[int, 
         method=http_method,
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         return exc.code, detail
+
+
+HISTORY_PATH = "/v1/prediction-markets/orders/history"
+# Docs: https://developer.gemini.com/rest-api/prediction-markets/order-management/get-order-history
+
+
+def get_order_history(extra: dict | None = None, timeout: float = 30) -> tuple[int, str]:
+    """POST /v1/prediction-markets/orders/history. Read-only. Does not place or cancel."""
+    return private_call(HISTORY_PATH, extra, "POST", timeout=timeout)
 
 
 def _post(api_key: str, encoded: str, signature: str) -> tuple[int, str]:

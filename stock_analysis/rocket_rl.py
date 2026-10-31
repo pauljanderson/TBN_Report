@@ -404,6 +404,34 @@ def _fmt_opt_float(v: Optional[float], places: int = 2) -> str:
     return f"{v:.{places}f}"
 
 
+# Close/SMA CSVs are written at 4 decimal places (pre_process_tickers %.4f).
+# Snap the SMA50-rising compare to that resolution so a pandas 1e-14 leftover
+# is not a rise. Round-half-even (Python round) matches the file and is safer
+# than truncate-toward-zero when float noise straddles a 4dp boundary
+# (126.18219999999999 vs 126.18220000000001). Equal exact 50-sums stay False.
+SMA_COMPARE_DECIMALS = 4
+
+
+def _snap_sma_for_compare(value: float, decimals: int = SMA_COMPARE_DECIMALS) -> float:
+    """Snap an SMA to close/SMA-file resolution before a strict > test."""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    if not math.isfinite(x):
+        return float("nan")
+    return round(x, int(decimals))
+
+
+def _sma_is_rising(cur: float, prev: float, decimals: int = SMA_COMPARE_DECIMALS) -> bool:
+    """True only if snapped SMA[T] > snapped SMA[T-lookback]. Equal 4dp → False."""
+    a = _snap_sma_for_compare(cur, decimals)
+    b = _snap_sma_for_compare(prev, decimals)
+    if not (math.isfinite(a) and math.isfinite(b)):
+        return False
+    return a > b
+
+
 def _prepare_bars(df: pd.DataFrame) -> dict[str, Any]:
     df = df.sort_index()
     dates = [d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d)[:10].replace("-", "") for d in df.index]
@@ -2037,11 +2065,8 @@ def run_symbol_rl(
 
         elif cfg.sma_qual and j > SMA_50 + cfg.rl_50_sma_lookback:
             lookback_idx = idx - cfg.rl_50_sma_lookback
-            sma50rising = (
-                lookback_idx >= 0
-                and np.isfinite(sma50[idx])
-                and np.isfinite(sma50[lookback_idx])
-                and sma50[idx] > sma50[lookback_idx]
+            sma50rising = lookback_idx >= 0 and _sma_is_rising(
+                float(sma50[idx]), float(sma50[lookback_idx])
             )
             dip_hi = y_sma * cfg.rl_dip_pct
             dip_lo = y_sma * (1 - (cfg.rl_dip_pct - 1))
