@@ -147,8 +147,10 @@ Do **not** create a second “2026 aoty listen” unless the user prefers isolat
 ### Favorite genres config
 
 Committed template `tools/aoty_listen_config.example.json` (47 normalized
-favorites, `min_score=70`, `min_reviews=5`, `max_pages=6`,
-`max_albums_per_run=20`, `genre_match=any`).
+favorites, `min_score=70`, `min_reviews=5`, `max_pages=16`,
+`max_albums_per_run=25`, `genre_match=any`). Sync also auto-raises
+`max_pages` to `max(config, highest Page N in pages/)` capped at 20 when
+saved pages exceed the configured value (e.g. stale `max_pages=6`).
 
 Runtime copy: `drive/spotify_aoty_listen/config.json` (seeded on first run from
 example if missing). Genre compare = casefold exact tag match against AOTY
@@ -163,8 +165,10 @@ tag strings (not Spotify’s limited genre list). Typo fix:
 
 - Query: `album:"{title}" artist:"{primary_artist}"` `type=album`.
 - Accept only if normalized `album_name_key(artists, name)` equals AOTY key
-  (same helper as year listen: NFKC casefold + collapsed whitespace + primary
-  artist).
+  (same helper as year listen: NFKC casefold + collapsed whitespace +
+  ` & `→` and ` + primary artist).
+- Year light/medium/heavy exclusion scans must read playlist entry `track`
+  **or** `item` (Spotify Dev Mode Feb 2026+ rename); limit ≤50 per page.
 - Reject obvious deluxe/live mismatches unless name_key still matches.
 - Cache search hits/misses; never guess on ambiguous multi-hit without a name_key win.
 - False-positive risk is real for generic titles — dry-run must print
@@ -191,8 +195,8 @@ Defaults mirroring year listen:
 
 ### Page range
 
-Locked defaults: `max_pages=6` (top ~150), `min_score=70`, `min_reviews=5`,
-`max_albums_per_run=20`.
+Locked defaults: `max_pages=16` (top ~400), `min_score=70`, `min_reviews=5`,
+`max_albums_per_run=25` (auto-raise `max_pages` from `pages/` up to 20).
 
 ---
 

@@ -207,8 +207,10 @@ class YearPlaylistIndex:
 
 
 def normalized_text(value: str) -> str:
-    """Casefold + collapse whitespace (NFKC)."""
-    return " ".join(unicodedata.normalize("NFKC", value or "").casefold().split())
+    """Casefold + collapse whitespace (NFKC); treat ' & ' like ' and '."""
+    text = " ".join(unicodedata.normalize("NFKC", value or "").casefold().split())
+    # Titles often flip between "&" and "and" across AOTY vs Spotify.
+    return text.replace(" & ", " and ")
 
 
 def primary_artist_name(artists: str) -> str:
@@ -223,6 +225,24 @@ def album_name_key(artists: str, name: str) -> str:
 
 def artists_from_spotify_list(artists: list | None) -> str:
     return ", ".join(a.get("name", "") for a in (artists or []) if a.get("name"))
+
+
+def playlist_entry_track(entry: dict | None) -> dict:
+    """Extract a track object from a playlist item payload.
+
+    Spotify Dev Mode (Feb 2026+) renamed playlist entry field ``track`` → ``item``.
+    Older / Extended Quota payloads still use ``track``. Accept either.
+    """
+    if not isinstance(entry, dict):
+        return {}
+    track = entry.get("track") if isinstance(entry.get("track"), dict) else None
+    if track is None and isinstance(entry.get("item"), dict):
+        track = entry.get("item")
+    if not track:
+        return {}
+    if track.get("type") and track.get("type") != "track":
+        return {}
+    return track
 
 
 def album_on_year_playlists(
@@ -454,23 +474,49 @@ def playlist_album_index(
     """Album ids + name keys represented by tracks currently on a playlist."""
     index = YearPlaylistIndex()
     offset = 0
+    logged_first_page = False
     while True:
-        # Avoid restrictive `fields=` — some spotipy/API combos return empty items.
+        # Avoid restrictive `fields=` — Feb 2026 field renames + spotipy combos
+        # can return empty/partial payloads when fields= is set. Limit max is 50.
         page = spotify_call(
             sp.playlist_items,
             playlist_id,
-            limit=100,
+            limit=50,
             offset=offset,
             additional_types=("track",),
             budget=budget,
         )
         items = page.get("items") or []
+        if not logged_first_page:
+            logged_first_page = True
+            sample_keys: list[str] = []
+            nested: dict[str, object] = {}
+            if items and isinstance(items[0], dict):
+                sample_keys = sorted(items[0].keys())
+                for nest_key in ("track", "item"):
+                    obj = items[0].get(nest_key)
+                    if isinstance(obj, dict):
+                        nested[nest_key] = sorted(obj.keys())[:12]
+                    elif obj is not None:
+                        nested[nest_key] = type(obj).__name__
+            print(
+                f"  playlist_items id={playlist_id}: first_page={len(items)} "
+                f"api_total={page.get('total')!r} entry_keys={sample_keys}"
+                + (f" nested={nested}" if nested else "")
+            )
+            if not items:
+                print(
+                    f"  WARNING: playlist {playlist_id} returned 0 items on first page "
+                    f"(next={page.get('next')!r}). Check ownership / Dev Mode /items access."
+                )
         if not items:
             break
+        page_tracks = 0
         for entry in items:
-            track = entry.get("track") or {}
+            track = playlist_entry_track(entry if isinstance(entry, dict) else None)
             if not track or track.get("is_local"):
                 continue
+            page_tracks += 1
             index.track_count += 1
             album = track.get("album") or {}
             album_id = album.get("id")
@@ -482,6 +528,13 @@ def playlist_album_index(
                 artists = artists_from_spotify_list(track.get("artists"))
             if album_name and artists:
                 index.name_keys.add(album_name_key(artists, album_name))
+        if offset == 0 and items and page_tracks == 0:
+            first = items[0] if isinstance(items[0], dict) else {}
+            print(
+                "  WARNING: first page had items but 0 parseable tracks — "
+                f"sample keys={sorted(first.keys()) if isinstance(first, dict) else first!r}. "
+                "Expected entry.track (legacy) or entry.item (Feb 2026+)."
+            )
         offset += len(items)
         if page.get("next") is None:
             break
@@ -731,7 +784,7 @@ def scrub_listen_playlist_of_albums(
         page = spotify_call(
             sp.playlist_items,
             pid,
-            limit=100,
+            limit=50,
             offset=offset,
             additional_types=("track",),
             budget=budget,
@@ -740,7 +793,7 @@ def scrub_listen_playlist_of_albums(
         if not items:
             break
         for entry in items:
-            track = entry.get("track") or {}
+            track = playlist_entry_track(entry if isinstance(entry, dict) else None)
             if not track or track.get("is_local"):
                 continue
             album = track.get("album") or {}
@@ -1330,6 +1383,7 @@ def self_test() -> None:
         assert "--spotify-daily-budget 300" in help_text
 
     assert normalized_text("  American   Football ") == "american football"
+    assert normalized_text("Grace & The Hereafter") == normalized_text("Grace and The Hereafter")
     assert primary_artist_name("American Football, Someone Else") == "American Football"
     key_a = album_name_key("American Football", "American Football")
     key_b = album_name_key("  american   football ", "AMERICAN  FOOTBALL")
@@ -1337,6 +1391,18 @@ def self_test() -> None:
     key_other = album_name_key("Different Band", "American Football")
     assert key_a == key_b == key_c
     assert key_a != key_other
+    # Ampersand / casefold title variants (AOTY vs Spotify casing).
+    ice_a = album_name_key("Iceage", "For Love of Grace & The Hereafter")
+    ice_b = album_name_key("iceage", "For Love of Grace and the Hereafter")
+    assert ice_a == ice_b
+
+    # Feb 2026 playlist payloads use entry.item; legacy used entry.track.
+    legacy = playlist_entry_track({"track": {"type": "track", "id": "t1", "name": "A"}})
+    modern = playlist_entry_track({"item": {"type": "track", "id": "t2", "name": "B"}})
+    assert legacy.get("id") == "t1"
+    assert modern.get("id") == "t2"
+    assert playlist_entry_track({"item": {"type": "episode", "id": "e1"}}) == {}
+    assert playlist_entry_track({"track": None, "item": {"type": "track", "id": "t3"}}).get("id") == "t3"
 
     # Same title / primary artist, different Spotify album ids → treat as already on year lists.
     on_year = YearPlaylistIndex(
