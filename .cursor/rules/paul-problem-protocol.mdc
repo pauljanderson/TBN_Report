@@ -23,4 +23,6 @@ hide Kalshi losses; Yes on player A + No on player B on Kalshi is a
 same-direction double, not a lock.
 
 Prevention shipped 2026-11-01: `tools/kalshi_same_direction.py`,
-send gates in `live_lock_orders`, `run_kalshi_venue_kitchen_check.bat`.
+send gates in `live_lock_orders`, `run_pm_venue_kitchen_check.bat`.
+
+All-platform gate: `run_pm_venue_kitchen_check.bat` + `run_pm_recon_dump.bat`.

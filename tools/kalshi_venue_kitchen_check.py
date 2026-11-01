@@ -1,13 +1,8 @@
-"""Automated Kalshi venue-vs-kitchen P&L gap check.
+"""Kalshi-only venue-vs-kitchen helper (bank-true settlements).
 
-Reads a kalshi_recon_dump JSON (Drive/local/latest) and optional kitchen
-closed-slice totals. Flags:
-  - same-direction Yes A + No B stacks (GIMPEN class)
-  - venue settlement with-fee P&L vs kitchen Kalshi-labeled closed
-
-Exit 0 = ok / within tolerance. Exit 1 = gap or same-direction stack found.
-Exit 2 = bad input. Does not place, cancel, or sell. No secrets required when
-the dump file is already on disk.
+Prefer tools/pm_venue_kitchen_check.py / run_pm_venue_kitchen_check.bat for
+ALL platforms (kalshi + polymarket + gemini + novig). This module stays as the
+Kalshi settlement math + same-direction stack detector used by the all-shop gate.
 
     python -u tools/kalshi_venue_kitchen_check.py --dump path/to/kalshi_recon_dump_latest.json
     python -u tools/kalshi_venue_kitchen_check.py --dump ... --kitchen-pnl -0.90 --tolerance 0.50
