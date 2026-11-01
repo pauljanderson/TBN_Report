@@ -792,6 +792,35 @@ def pick_idents(sent_rows: list[dict], store: dict, watches=None) -> list[tuple[
     return out
 
 
+def warn_same_direction_kalshi(rows: list[dict]) -> list[dict]:
+    """Loud log for Yes-A + No-B complementary Kalshi stacks (GIMPEN class). Fail-soft."""
+    try:
+        import kalshi_same_direction as ksd
+    except Exception as exc:
+        log(f"same-direction import {type(exc).__name__}")
+        return []
+    try:
+        stacks = ksd.find_same_direction_stacks(rows)
+    except Exception as exc:
+        log(f"same-direction scan {type(exc).__name__}")
+        return []
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for row in stacks:
+        event = str(row.get("event") or "")
+        if not event or event in seen:
+            continue
+        seen.add(event)
+        unique.append(row)
+        log(f"DANGER {row.get('reason')}")
+    if unique:
+        log(
+            f"DANGER same-direction count={len(unique)} — run "
+            "run_kalshi_venue_kitchen_check.bat; send gate is kalshi_same_direction"
+        )
+    return unique
+
+
 def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
     """One pass. Read-only REST. Updates settled_pnl.json. Does not trade."""
     ensure_dirs()
@@ -869,11 +898,29 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
         "n_changed": report.get("n_changed"),
         "changed": report.get("changed"),
     }
+    # Open + tape Kalshi legs: catch Yes-A/No-B doubles even when kitchen missed them.
+    scan_rows: list[dict] = []
+    for venue, ident in idents:
+        if venue == "kalshi":
+            scan_rows.append({"venue": "kalshi", "instrument": ident, "ticker": ident})
+    for row in sent:
+        if str(row.get("venue") or "").lower() == "kalshi":
+            scan_rows.append(row)
+    for row in trades:
+        if str(row.get("venue") or "").lower() == "kalshi":
+            scan_rows.append(row)
+    for row in store.values():
+        if isinstance(row, dict) and str(row.get("venue") or "").lower() == "kalshi":
+            scan_rows.append(row)
+    stacks = warn_same_direction_kalshi(scan_rows)
+    report["same_direction_stacks"] = stacks
+    state["same_direction_n"] = len(stacks)
     if persist:
         STATE_PATH.write_text(json.dumps(state, indent=2, default=str) + "\n", encoding="utf-8")
     log(
         f"reconcile idents={len(idents)} poly={len(slugs)} kalshi={len(tickers)} "
-        f"scanned={report.get('n_scanned')} changed={report.get('n_changed')}"
+        f"scanned={report.get('n_scanned')} changed={report.get('n_changed')} "
+        f"same_direction={len(stacks)}"
     )
     return report
 

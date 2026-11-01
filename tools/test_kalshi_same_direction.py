@@ -196,6 +196,18 @@ def test_same_settlement_candidate_restored():
     assert "settlement" in why
 
 
+def test_settle_reconcile_warns_gimpen_class():
+    import live_pm_settle_reconcile as rec
+
+    rows = [
+        {"venue": "kalshi", "instrument": GIM, "outcome": "yes", "side": "yes"},
+        {"venue": "kalshi", "instrument": PEN, "outcome": "no", "side": "no"},
+    ]
+    found = rec.warn_same_direction_kalshi(rows)
+    assert found
+    assert "GIMPEN" in found[0]["event"]
+
+
 if __name__ == "__main__":
     test_event_prefix_and_complementary()
     test_yes_a_no_b_is_same_direction_double()
@@ -206,4 +218,5 @@ if __name__ == "__main__":
     test_find_stacks_from_gimpen_settlements()
     test_venue_kitchen_check_flags_gap_and_stack()
     test_same_settlement_candidate_restored()
+    test_settle_reconcile_warns_gimpen_class()
     print("test_kalshi_same_direction ok")
