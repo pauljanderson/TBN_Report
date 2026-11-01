@@ -305,13 +305,19 @@ def sync(
     groups = group_by_tier(albums)
     print_plan(groups, names)
 
+    year_albums = [album for album in albums.values() if album.liked_count >= 1]
+    year_album_ids = {album.album_id for album in year_albums}
+
     if dry_run:
         print("\nDry run only — no playlists were created or modified.")
         if scrub_listen:
-            year_album_ids = {album.album_id for album in albums.values() if album.liked_count >= 1}
+            # Local import avoids a circular import at module load time.
+            from sync_spotify_year_listen import album_name_key  # noqa: WPS433
+
+            year_name_keys = {album_name_key(album.artists, album.name) for album in year_albums}
             print(
-                f"Would scrub {len(year_album_ids)} year-playlist album id(s) "
-                f"from {year} listen (if present)."
+                f"Would scrub {len(year_album_ids)} album id(s) / "
+                f"{len(year_name_keys)} name key(s) from {year} listen (if present)."
             )
         return 0
 
@@ -334,12 +340,20 @@ def sync(
         print(f"  Wrote {len(track_uris)} track(s) from {len(groups[tier])} album(s).")
 
     if scrub_listen:
-        year_album_ids = {album.album_id for album in albums.values() if album.liked_count >= 1}
-        print(f"\nScrubbing {year} listen of albums now on light/medium/heavy …")
         # Local import avoids a circular import at module load time.
-        from sync_spotify_year_listen import scrub_listen_playlist_of_albums  # noqa: WPS433
+        from sync_spotify_year_listen import (  # noqa: WPS433
+            album_name_key,
+            scrub_listen_playlist_of_albums,
+        )
 
-        scrub_listen_playlist_of_albums(sp, year, year_album_ids, dry_run=False)
+        year_name_keys = {album_name_key(album.artists, album.name) for album in year_albums}
+        print(
+            f"\nScrubbing {year} listen of albums now on light/medium/heavy "
+            f"({len(year_album_ids)} id(s), {len(year_name_keys)} name key(s)) …"
+        )
+        scrub_listen_playlist_of_albums(
+            sp, year, year_album_ids, name_keys=year_name_keys, dry_run=False
+        )
 
     print("\nDone.")
     return 0
