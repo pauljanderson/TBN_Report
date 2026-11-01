@@ -154,18 +154,56 @@ def parse_listing_file(path: Path) -> list[AotyListingRow]:
     return parse_markdown_listing(raw)
 
 
+# Known AOTY / paste typos → canonical display label (matched casefold).
+GENRE_TYPO_FIXES: dict[str, str] = {
+    "ost-punk revival": "Post-Punk Revival",
+}
+
+
+def fix_genre_typo(label: str) -> str:
+    """Return display label with known typos corrected."""
+    stripped = (label or "").strip()
+    if not stripped:
+        return ""
+    fixed = GENRE_TYPO_FIXES.get(stripped.casefold())
+    return fixed if fixed else stripped
+
+
+def normalize_favorite_genres(raw: list[str]) -> list[str]:
+    """Casefold-dedupe favorites; apply typo fixes; keep first-seen display form."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        fixed = fix_genre_typo(str(item))
+        if not fixed:
+            continue
+        key = fixed.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fixed)
+    return out
+
+
+def normalize_album_genres(genres: list[str]) -> list[str]:
+    """Apply typo fixes + casefold dedupe to an album's AOTY tags."""
+    return normalize_favorite_genres(genres)
+
+
 def filter_by_genres(
     rows: list[AotyListingRow],
     favorites: list[str],
     *,
     match: str = "any",
 ) -> list[AotyListingRow]:
-    fav = {g.casefold().strip() for g in favorites if g.strip()}
+    fav = {fix_genre_typo(g).casefold() for g in favorites if str(g).strip()}
+    fav.discard("")
     if not fav:
         return list(rows)
     out: list[AotyListingRow] = []
     for row in rows:
-        tags = {g.casefold() for g in row.genres}
+        tags = {fix_genre_typo(g).casefold() for g in row.genres}
+        tags.discard("")
         if not tags:
             continue
         if match == "all":
@@ -210,13 +248,35 @@ def self_test() -> None:
     assert ("Neurosis", "An Undying Love for a Burning World") in names
     assert ("Gilla Band", "Pugnello") in names
     assert ("Phoebe Bridgers", "Lost Weekend") not in names
+
+    # Typo fix + casefold dedupe for favorites / album tags.
+    assert fix_genre_typo("ost-Punk Revival") == "Post-Punk Revival"
+    assert normalize_favorite_genres(
+        ["Indie Rock", "indie rock", "ost-Punk Revival", "Post-Punk Revival"]
+    ) == ["Indie Rock", "Post-Punk Revival"]
+    typo_row = AotyListingRow(
+        rank=99,
+        artist="Test",
+        album="Typo Album",
+        genres=["ost-Punk Revival", "Dream Pop"],
+        score=80,
+        reviews=10,
+    )
+    assert filter_by_genres([typo_row], ["Post-Punk Revival"]) == [typo_row]
+    assert filter_by_genres([typo_row], ["ost-Punk Revival"]) == [typo_row]
+
     print("self-test OK")
     print(json.dumps([asdict(r) for r in rows], indent=2))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", nargs="?", type=Path, help="Saved .md/.html listing page")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        help="Saved .md/.html listing page (or a directory of pages)",
+    )
     parser.add_argument("--genre", action="append", default=[], help="Favorite genre (repeatable)")
     parser.add_argument(
         "--match",
@@ -225,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Genre filter: any overlapping tag (default) or all required",
     )
     parser.add_argument("--min-score", type=int, default=None)
+    parser.add_argument("--min-reviews", type=int, default=None)
     parser.add_argument("--json", action="store_true", help="Print JSON array")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
@@ -235,11 +296,30 @@ def main(argv: list[str] | None = None) -> int:
     if not args.path:
         parser.error("path is required unless --self-test")
 
-    rows = parse_listing_file(args.path)
+    if args.path.is_dir():
+        files = sorted(
+            p
+            for p in args.path.iterdir()
+            if p.is_file() and p.suffix.casefold() in {".md", ".html", ".htm", ".txt"}
+        )
+        rows: list[AotyListingRow] = []
+        seen: set[tuple[str, str]] = set()
+        for path in files:
+            for row in parse_listing_file(path):
+                key = (row.artist.casefold(), row.album.casefold())
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(row)
+    else:
+        rows = parse_listing_file(args.path)
+
     if args.genre:
-        rows = filter_by_genres(rows, args.genre, match=args.match)
+        rows = filter_by_genres(rows, normalize_favorite_genres(args.genre), match=args.match)
     if args.min_score is not None:
         rows = [r for r in rows if r.score is not None and r.score >= args.min_score]
+    if args.min_reviews is not None:
+        rows = [r for r in rows if r.reviews is not None and r.reviews >= args.min_reviews]
 
     if args.json:
         print(json.dumps([asdict(r) for r in rows], indent=2))

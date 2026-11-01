@@ -118,8 +118,8 @@ state.json (source=aoty kept albums) + match cache
 | `tools/aoty_year_listen_design.md` | This design |
 | `tools/parse_aoty_highest_rated.py` | Parse spike / future import helper |
 | `tools/fixtures/aoty_2026_page1_sample.md` | Offline fixture |
-| `tools/sync_spotify_aoty_listen.py` | *(not yet)* import+filter+match+append |
-| `tools/aoty_listen_config.example.json` | Committed example genres/thresholds |
+| `tools/sync_spotify_aoty_listen.py` | Import+filter+match+append (shipped) |
+| `tools/aoty_listen_config.example.json` | Committed example genres/thresholds (47 favorites) |
 | `run_sync_spotify_aoty_listen.bat` | Thin wrapper like other Spotify runners |
 | `drive/spotify_aoty_listen/config.json` | User genres + thresholds (`drive/` is gitignored) |
 | `drive/spotify_aoty_listen/rankings.json` | Parsed AOTY rows (cached) |
@@ -146,30 +146,14 @@ Do **not** create a second “2026 aoty listen” unless the user prefers isolat
 
 ### Favorite genres config
 
-Committed template `tools/aoty_listen_config.example.json`:
+Committed template `tools/aoty_listen_config.example.json` (47 normalized
+favorites, `min_score=70`, `min_reviews=5`, `max_pages=6`,
+`max_albums_per_run=20`, `genre_match=any`).
 
-```json
-{
-  "year": 2026,
-  "favorite_genres": [
-    "Post-Punk",
-    "Noise Rock",
-    "Doom Metal",
-    "Indie Folk"
-  ],
-  "genre_match": "any",
-  "min_score": 80,
-  "min_reviews": 5,
-  "max_pages": 8,
-  "max_albums_per_run": 15,
-  "market": "US"
-}
-```
-
-Runtime copy: `drive/spotify_aoty_listen/config.json` (create on first run from
+Runtime copy: `drive/spotify_aoty_listen/config.json` (seeded on first run from
 example if missing). Genre compare = casefold exact tag match against AOTY
-tag strings (not Spotify’s limited genre list). Optional later: alias map
-(`sludge` → `Sludge Metal`).
+tag strings (not Spotify’s limited genre list). Typo fix:
+`ost-Punk Revival` → `Post-Punk Revival`.
 
 ---
 
@@ -207,8 +191,8 @@ Defaults mirroring year listen:
 
 ### Page range
 
-Start `max_pages=4` (top ~100) with `min_score=80`. Expand to 8–10 if the user
-wants deeper catalog and accepts more Spotify searches / lower scores (~78).
+Locked defaults: `max_pages=6` (top ~150), `min_score=70`, `min_reviews=5`,
+`max_albums_per_run=20`.
 
 ---
 
@@ -225,28 +209,44 @@ wants deeper catalog and accepts more Spotify searches / lower scores (~78).
 
 ---
 
-## 6. User decisions before full implementation
+## 6. Locked user decisions
 
-1. **Favorite genres list** (and `any` vs `all`).
-2. **`min_score`** (suggest 80) and **`min_reviews`** (suggest 5).
-3. **`max_pages`** (suggest 4 then 8) and **`max_albums_per_run`** (suggest 15).
-4. Confirm target playlist is **`2026 listen`** (merge into year_listen rebuild)
-   vs a separate playlist.
-5. Confirm ingest mode for v1: **saved pages only** vs invest in local Playwright fetch.
-6. Whether unmatched / ambiguous Spotify searches should be listed in a report
-   only, or auto-skipped silently (recommend report + skip).
+1. **Favorite genres:** 47 tags (casefold match, dedupe; typo `ost-Punk Revival` →
+   `Post-Punk Revival`). Match mode: **any** overlap with album AOTY genres.
+   Full list lives in `tools/aoty_listen_config.example.json`.
+2. **`min_reviews=5`**, **`min_score=70`**.
+3. **`max_pages=6`** (~top 150), **`max_albums_per_run=20`**.
+4. Target playlist = same **`{year} listen`**. Year-listen rebuild merges AOTY
+   `source=aoty` kept albums from `drive/spotify_aoty_listen/state.json`.
+5. Ingest v1: **saved pages only** (no Playwright in this PR).
+6. Unmatched / ambiguous Spotify searches: print + skip (strict `album_name_key`).
 
 ---
 
-## 7. Implementation plan (after confirmation)
+## 7. How to run (shipped)
 
-1. Copy example config → `drive/spotify_aoty_listen/config.json`; user fills genres.
-2. `sync_spotify_aoty_listen.py`: import pages → filter → exclude → search →
-   dry-run report → append.
-3. Teach `sync_spotify_year_listen.py` to merge `source=aoty` kept albums.
-4. `.bat` runner + docstring call-budget guidance.
-5. Only then consider optional local fetch.
+```bat
+REM 1) Copy config (or let first run seed it)
+copy tools\aoty_listen_config.example.json drive\spotify_aoty_listen\config.json
 
-**Proceed to implementation?** Yes, after the user supplies the genre list and
-thresholds above. Parse spike is already green offline; do not ship a live
-scraper without that confirmation.
+REM 2) Browser-save AOTY pages 1..6 as .html/.md into:
+REM    drive\spotify_aoty_listen\pages\
+REM    https://www.albumoftheyear.org/ratings/6-highest-rated/2026/1
+
+REM 3) Dry-run, then apply
+run_sync_spotify_aoty_listen.bat --dry-run
+run_sync_spotify_aoty_listen.bat
+
+REM Year-listen rebuild preserves AOTY albums via state merge:
+run_sync_spotify_year_listen.bat
+```
+
+Offline checks:
+
+```bat
+python tools\parse_aoty_highest_rated.py --self-test
+python tools\sync_spotify_aoty_listen.py --self-test
+python tools\sync_spotify_year_listen.py --self-test
+```
+
+Optional local fetch (Playwright / browser cookie) remains future work — not in v1.
