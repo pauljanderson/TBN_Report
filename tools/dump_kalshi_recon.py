@@ -183,6 +183,8 @@ def pull_settlements(*, min_ts: int, limit: int = 200, max_pages: int = 40) -> d
 
 
 def build_pack(*, days: int) -> dict:
+    import kalshi_same_direction as ksd
+
     now = _now_et()
     start = now - timedelta(days=days)
     min_ts = int(start.astimezone(timezone.utc).timestamp())
@@ -193,6 +195,19 @@ def build_pack(*, days: int) -> dict:
     fills = pull_fills(min_ts=min_ts)
     time.sleep(0.2)
     settlements = pull_settlements(min_ts=min_ts)
+    sett_rows = list(settlements.get("settlements") or [])
+    fill_rows = list(fills.get("fills") or [])
+    stacks = ksd.find_same_direction_stacks(sett_rows + fill_rows)
+    # Unique by event.
+    seen = set()
+    unique_stacks = []
+    for row in stacks:
+        key = row.get("event")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_stacks.append(row)
+    venue_pnl = sum((ksd.settlement_pnl_usd(r) or __import__("decimal").Decimal("0")) for r in sett_rows)
     return {
         "pack": PACK_NAME,
         "written_at": _iso(now),
@@ -209,10 +224,13 @@ def build_pack(*, days: int) -> dict:
         "positions": positions,
         "fills": fills,
         "settlements": settlements,
+        "same_direction_stacks": unique_stacks,
+        "venue_settlement_pnl_usd": ksd.money(venue_pnl),
         "ready_for_cloud_agent": True,
         "note": (
             "Read-only dump. No orders. Upload/sync the Drive folder, then tell the "
-            "Cloud Agent the pack is ready."
+            "Cloud Agent the pack is ready. same_direction_stacks flags Yes-on-A + "
+            "No-on-B complementary Kalshi markets (not a lock)."
         ),
     }
 

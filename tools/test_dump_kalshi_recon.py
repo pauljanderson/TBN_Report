@@ -54,6 +54,8 @@ def test_build_pack_writes_core_keys():
         assert pack["settlements"]["n"] == 1
         assert pack["positions"]["ok"] is True
         assert pack["ready_for_cloud_agent"] is True
+        assert "same_direction_stacks" in pack
+        assert "venue_settlement_pnl_usd" in pack
 
 
 if __name__ == "__main__":
