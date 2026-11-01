@@ -3250,11 +3250,25 @@ def ticket_settled_pnl(leg: dict, settlements: list[dict], winner: str) -> tuple
 
 
 def lock_realized(legs: list[dict]) -> Decimal:
-    qty = min((Decimal(str(leg.get("qty") or 0)) for leg in legs if qty_is_fill(leg.get("qty"))), default=Decimal("0"))
-    cost = sum((Decimal(str(leg.get("cash") or 0)) * Decimal(str(leg.get("qty") or 0))) + Decimal(str(leg.get("fee") or 0)) for leg in legs)
-    if qty <= 0:
+    """Net for a closed Yes+No book. Matched pairs pay $1 each, not min(leg qty)."""
+    filled = [leg for leg in legs if qty_is_fill(leg.get("qty"))]
+    cost = sum(
+        (Decimal(str(leg.get("cash") or 0)) * Decimal(str(leg.get("qty") or 0)))
+        + Decimal(str(leg.get("fee") or 0))
+        for leg in filled
+    )
+    try:
+        import settled_pnl_store
+
+        matched = settled_pnl_store.flatten_matched_qty(filled)
+    except Exception:
+        matched = min(
+            (Decimal(str(leg.get("qty") or 0)) for leg in filled),
+            default=Decimal("0"),
+        )
+    if matched <= 0:
         return Decimal("0") - cost
-    return qty - cost
+    return matched - cost
 
 
 def load_considerations() -> list[dict]:

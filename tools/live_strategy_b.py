@@ -3289,10 +3289,55 @@ def fire_t0(match: dict) -> None:
         match["note"] = "T0 both Yes missed three times; abandoned. Latch untouched."
 
 
+def e_holds_match(title: str) -> str:
+    """Skip reason when E Tennis T0 dog already filled/holds this match.
+
+    E already skips when B is on a match. B did not skip when E filled first
+    (Langmo vs Sultanov 2026-11-01: E Yes Langmo at 00:45, B T0 at 01:05).
+    Fail-soft: missing watch file → empty string (do not block B).
+    """
+    title = str(title or "").strip()
+    if not title:
+        return ""
+    try:
+        if live_t0_yes.blocks_lock("tennis_t0_dog", "tennis", title):
+            return "E already on match"
+        status = live_t0_yes.load_status("tennis_t0_dog")
+    except Exception:
+        return ""
+    want = live_t0_yes.match_player_set(title) if hasattr(live_t0_yes, "match_player_set") else set()
+    for row in status.get("matches") or []:
+        if not isinstance(row, dict):
+            continue
+        stage = str(row.get("stage") or "")
+        filled = False
+        try:
+            filled = bool(live_t0_yes._row_filled_qty(row))
+        except Exception:
+            filled = False
+        if stage not in getattr(live_t0_yes, "E_FILL_STAGES", set()) and not filled:
+            continue
+        game = str(row.get("game") or "")
+        if same_game(game, title):
+            who = str(row.get("dog") or row.get("fav") or "dog")
+            return f"E already on match (Yes {who})"
+        if want:
+            try:
+                if live_t0_yes.match_player_set(game) == want and (filled or stage in {"filled", "holding", "open", "settled"}):
+                    who = str(row.get("dog") or row.get("fav") or "dog")
+                    return f"E already on match (Yes {who})"
+            except Exception:
+                pass
+    return ""
+
+
 def try_t0(scan, spec: dict, status: dict) -> str:
     title = str(spec.get("title") or "")
     if lock_bot_holds_game(title):
         return "lock-bot leftover or unmatched one-leg"
+    e_why = e_holds_match(title)
+    if e_why:
+        return e_why
     existing = next(
         (row for row in (status.get("matches") or []) if same_game(str(row.get("game") or ""), title)),
         None,
