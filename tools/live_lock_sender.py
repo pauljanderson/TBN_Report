@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,10 +26,10 @@ SLEEP_SEC = 0.2
 
 
 def run() -> None:
-    scan = lgp.load_scan()
     me = os.getpid()
     lgp.write_json(PID_PATH, {"pid": me, "started_at": lgp.iso_now(), "role": "lock_sender"})
     lgp.log(f"lock sender start pid {me}")
+    scan = lgp.load_scan()
     try:
         # Older leftover-IOC resume (may be absent after GTC adopt). Keep the
         # ensure_watch_ticker name for kitchen tests; GTC ticks run below.
@@ -81,4 +82,12 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except Exception as exc:
+        try:
+            lgp.log(f"lock sender crash {type(exc).__name__}: {exc}")
+            lgp.log(traceback.format_exc().replace("\n", " | "))
+        except Exception:
+            pass
+        raise

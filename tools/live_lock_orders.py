@@ -40,11 +40,15 @@ import polymarket_us_live
 import venue_pace
 
 ROOT = Path(__file__).resolve().parents[1]
-STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
-RAW = STAMP / "raw"
+try:
+    from prediction_paths import DRIVE_STAMP as STAMP, RAW_DIR as RAW
+except Exception:  # pragma: no cover - bare clone without prediction_paths
+    STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
+    RAW = STAMP / "raw"
 ORDERS = RAW / "orders.jsonl"
 ORDER_LOCK = RAW / "orders.lock"
 ONE_LEG_WATCH = RAW / "one_leg_gtc_watch.jsonl"
+LAST_SKIP = RAW / "lock_last_skip.json"
 ORDERS_ENABLED_STAMP_ON = RAW / "orders_enabled.on"
 ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
 ONE = Decimal("1")
@@ -61,6 +65,7 @@ BE_COMPLETE_SLIP = Decimal("0.01")  # allow BE + 1¢ on the optional complete IO
 # Aggressive exit limits when a live quote is not passed in.
 MARKET_SELL_FLOOR = Decimal("0.01")
 MARKET_BUY_CEILING = Decimal("0.99")
+MAX_OPEN_LOCKS = 3
 CLOSED = {"closed", "settled", "determined", "finalized", "inactive"}
 _capability: dict[str, tuple[float, bool, str]] = {}
 
@@ -159,6 +164,139 @@ def orders_enabled() -> bool:
     if ORDERS_ENABLED_STAMP_ON.exists():
         return True
     return bool(ORDERS_ENABLED)
+
+
+def _iso_now() -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/New_York")).isoformat(timespec="seconds")
+
+
+def maybe_resume_one_leg_watch(log) -> str:
+    """GTC adopt: leftover IOC resume may be absent. Sender ticks GTC watches instead."""
+    del log
+    return "gtc-adopt"
+
+
+def ensure_watch_ticker(log) -> None:
+    """No-op after GTC adopt. live_lock_sender ticks tick_one_leg_gtc_watches itself."""
+    del log
+
+
+def record_send_skip(reason: str, title: str = "", key: str = "", spec: dict | None = None) -> None:
+    """Write the last send-gate / flatten skip to orders.jsonl and lock_last_skip.json."""
+    row = {
+        "event": "skip",
+        "reason": str(reason or "").strip()[:400],
+        "game": title,
+        "bet_key": key,
+        "at": _iso_now(),
+    }
+    if isinstance(spec, dict):
+        if spec.get("venue"):
+            row["venue"] = spec.get("venue")
+        if spec.get("instrument"):
+            row["instrument"] = spec.get("instrument")
+    try:
+        _append(row)
+    except Exception:
+        pass
+    try:
+        LAST_SKIP.parent.mkdir(parents=True, exist_ok=True)
+        LAST_SKIP.write_text(json.dumps(row, indent=2, default=str) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def effective_max_open_locks() -> int:
+    """systems.json lock.max_open when set; otherwise MAX_OPEN_LOCKS (3)."""
+    try:
+        import prediction_systems
+
+        n = int(prediction_systems.get_system("lock").max_open)
+        if n >= 1:
+            return n
+    except Exception:
+        pass
+    return int(MAX_OPEN_LOCKS)
+
+
+def lock_system_on() -> bool:
+    """False when Lock gap (A) is off in systems.json. GTC leftover ticks still run."""
+    try:
+        import prediction_systems
+
+        return bool(prediction_systems.get_system("lock").on)
+    except Exception:
+        return True
+
+
+def lock_open_denial(open_n: int | None = None) -> str:
+    cap = effective_max_open_locks()
+    n = int(cap if open_n is None else open_n)
+    return f"Already have {n} open lock pair(s); max_open_locks={cap}."
+
+
+def lock_open_line(open_n: int | None = None) -> str:
+    cap = effective_max_open_locks()
+    n = int(cap if open_n is None else open_n)
+    return f"{n} / {cap}"
+
+
+def open_lock_keys(
+    rows: list[dict] | None = None,
+    *,
+    snapshot=None,
+    overlay: bool | None = None,
+    include_watches: bool = True,
+    **_kwargs,
+) -> list[str]:
+    """Unique bet_keys occupying a max_open slot (house tape).
+
+    GTC merge dropped the full venue-overlay kitchen; this keeps the send cap
+    honest from orders.jsonl + open second-leg GTC watches. snapshot/overlay
+    accepted for open_count_sync callers and ignored here.
+    """
+    del snapshot, overlay
+    tape = rows if rows is not None else _read_orders()
+    state: dict[str, str] = {}
+    order: list[str] = []
+    for row in tape:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("bet_key") or "")
+        if not key or key.startswith("tennis-b"):
+            continue
+        if key not in state:
+            state[key] = "clear"
+            order.append(key)
+        event = row.get("event")
+        if event in ("filled", "one_leg"):
+            state[key] = "position"
+        elif event == "flatten_filled":
+            state[key] = "clear"
+        elif event == "claim" and state[key] != "position":
+            state[key] = "working"
+        elif event == "sent" and state[key] != "position":
+            state[key] = "sent"
+        elif event in ("both_unfilled", "preflight_skip", "skip") and state[key] == "working":
+            state[key] = "clear"
+    out = [key for key in order if state.get(key) in ("position", "working", "sent")]
+    if include_watches:
+        try:
+            for row in open_second_leg_gtc_watches():
+                key = str(row.get("bet_key") or "")
+                if key and key not in out:
+                    out.append(key)
+        except Exception:
+            pass
+    return out
+
+
+def lock_slots_full(open_keys: list[str] | None = None) -> bool:
+    keys = list(open_keys if open_keys is not None else open_lock_keys())
+    return len(keys) >= effective_max_open_locks()
 
 
 def _money(value: Decimal) -> str:
@@ -1288,6 +1426,17 @@ def execute_locks(scan, sport: str, title: str, game: dict, result: dict, fresh:
         if ok:
             ready.append((cand, reason))
     if not ready:
+        return
+    if not lock_system_on():
+        why = "Lock gap system is off"
+        log(f"order skip {title}; {why}")
+        record_send_skip(why, title)
+        return
+    open_now = open_lock_keys()
+    if lock_slots_full(open_now):
+        why = lock_open_denial(len(open_now))
+        log(f"order skip {title}; {why}")
+        record_send_skip(why, title)
         return
     if not orders_enabled():
         for cand, _reason in ready:
