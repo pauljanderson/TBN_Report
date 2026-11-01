@@ -42,8 +42,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parse_aoty_highest_rated import (  # noqa: E402
     AotyListingRow,
+    discover_listing_files,
     filter_by_genres,
     normalize_favorite_genres,
+    page_number_from_path,
     parse_listing_file,
 )
 from spotify_json_cache import JsonCache  # noqa: E402
@@ -213,16 +215,15 @@ def prune_aoty_state_against_year(
 
 
 def discover_page_files(pages_dir: Path, max_pages: int) -> list[Path]:
-    if not pages_dir.is_dir():
-        return []
-    files = sorted(
-        p
-        for p in pages_dir.iterdir()
-        if p.is_file() and p.suffix.casefold() in {".md", ".html", ".htm", ".txt"}
-    )
-    if max_pages > 0:
-        files = files[:max_pages]
-    return files
+    """Discover *.html/*.md pages sorted by 'Page N' in the filename.
+
+    Browser Save-as titles (e.g. 'The Best Albums of 2026 - …html',
+    '… _ Page 2 - …html') do not need '6-highest-rated' in the name.
+    Page 1 often has no 'Page 1' — treated as page 1.
+    max_pages keeps files whose parsed page number is <= max_pages
+    (so max_pages=6 uses pages 1–6 even if 16 were saved).
+    """
+    return discover_listing_files(pages_dir, max_pages=max_pages)
 
 
 def ingest_rankings(
@@ -402,8 +403,10 @@ def sync(
     print(f"Pages dir: {pages_dir}")
     print(
         "Save AOTY highest-rated HTML/MD into that folder "
-        f"(e.g. …/ratings/6-highest-rated/{year}/1 .. /{max_pages}). "
-        "Cloudflare blocks curl — use a browser Save Page / copy-as-markdown."
+        f"(browser Save Page As from …/ratings/6-highest-rated/{year}/1 .. /{max_pages}; "
+        "any *.html title works — sorted by 'Page N', page 1 has no Page label). "
+        f"max_pages={max_pages} keeps pages 1..{max_pages} only. "
+        "Cloudflare blocks curl."
     )
 
     rows = ingest_rankings(
@@ -693,7 +696,8 @@ def self_test() -> None:
     assert genres == ["Indie Rock", "Post-Punk Revival", "Ambient Pop"], genres
     assert len(normalize_config_genres(json.loads(DEFAULT_EXAMPLE_CONFIG.read_text())["favorite_genres"])) == 47
 
-    fixture = Path(__file__).resolve().parent / "fixtures" / "aoty_2026_page1_sample.md"
+    fixtures = Path(__file__).resolve().parent / "fixtures"
+    fixture = fixtures / "aoty_2026_page1_sample.md"
     rows = parse_listing_file(fixture)
     favs = normalize_favorite_genres(["Indie Folk", "Noise Rock", "Post-Rock"])
     matched = filter_by_genres(rows, favs, match="any")
@@ -702,6 +706,12 @@ def self_test() -> None:
     assert ("Neurosis", "An Undying Love for a Burning World") in names
     assert ("Gilla Band", "Pugnello") in names
     assert ("underscores", "U") not in names
+
+    # Browser-saved HTML fixture (albumListRow)
+    html_rows = parse_listing_file(fixtures / "aoty_2026_page1_sample.html")
+    assert html_rows[0].artist == "Phoebe Bridgers"
+    assert html_rows[0].score == 91 and html_rows[0].reviews == 32
+    assert "Ambient Pop" in html_rows[0].genres
 
     # Score/reviews thresholds
     filtered = filter_candidates(
@@ -715,6 +725,30 @@ def self_test() -> None:
     assert all(r.reviews is not None and r.reviews >= 5 for r in filtered)
     # Gilla Band has reviews but no score in fixture → dropped
     assert ("Gilla Band", "Pugnello") not in {(r.artist, r.album) for r in filtered}
+
+    # Page discovery: any *.html by "Page N" (not lexicographic / not URL slug)
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pages = Path(tmp)
+        names_to_touch = [
+            "The Best Albums of 2026 _ Page 10 - Album of The Year.html",
+            "The Best Albums of 2026 _ Page 2 - Album of The Year.html",
+            "The Best Albums of 2026 - Album of The Year.html",
+            "The Best Albums of 2026 _ Page 6 - Album of The Year.html",
+        ]
+        for name in names_to_touch:
+            (pages / name).write_text("<html></html>", encoding="utf-8")
+        (pages / "ignore-me.json").write_text("{}", encoding="utf-8")
+        found = discover_page_files(pages, max_pages=6)
+        assert [p.name for p in found] == [
+            "The Best Albums of 2026 - Album of The Year.html",
+            "The Best Albums of 2026 _ Page 2 - Album of The Year.html",
+            "The Best Albums of 2026 _ Page 6 - Album of The Year.html",
+        ]
+        assert [page_number_from_path(p) for p in found] == [1, 2, 6]
+        # max_pages must not pick Page 10 via lexicographic sort
+        assert not any(page_number_from_path(p) == 10 for p in found)
 
     # Strict name_key matching (same helpers year-listen uses)
     key_a = album_name_key("Phoebe Bridgers", "Lost Weekend")
@@ -741,8 +775,6 @@ def self_test() -> None:
     )
 
     # load_aoty_kept_albums only returns source=aoty
-    import tempfile
-
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         save_state(
