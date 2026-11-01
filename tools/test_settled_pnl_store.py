@@ -152,6 +152,32 @@ def test_persist_skips_postponed():
     store.save(blob_before)
 
 
+def test_flatten_net_two_pairs_pays_two_dollars():
+    """Langmo 2026-11-01: T0 Yes+No + stack Yes+No flatten must not book −$1.13."""
+    legs = [
+        {"side": "yes", "qty": "1", "cash": "0.6400", "fee": "0.0200", "step": "b-t0"},
+        {"side": "no", "qty": "1", "cash": "0.3300", "fee": "0.0200", "step": "b-t0"},
+        {"side": "no", "qty": "1", "cash": "0.1300", "fee": "0.0100", "step": "b-t0"},
+        {"side": "yes", "qty": "1", "cash": "0.9800", "fee": "0.0000", "step": "flatten"},
+    ]
+    # Old bug: min(qty)=1 − sum(costs)=2.13 → −1.13. True: 2 − 2.13 → −0.13.
+    net = store.flatten_net_from_legs(legs)
+    assert net is not None
+    assert net == Decimal("-0.1300")
+    assert store.flatten_matched_qty(legs) == Decimal("2")
+    assert w.lock_realized(legs) == Decimal("-0.1300")
+
+
+def test_flatten_net_one_pair_unchanged():
+    legs = [
+        {"side": "yes", "qty": "1", "cash": "0.6400", "fee": "0.0200"},
+        {"side": "no", "qty": "1", "cash": "0.3300", "fee": "0.0200"},
+    ]
+    net = store.flatten_net_from_legs(legs)
+    assert net == Decimal("1") - Decimal("0.6600") - Decimal("0.3500")
+    assert net == Decimal("-0.0100")
+
+
 def main() -> None:
     test_upsert_prices_kalshi_yes()
     test_poly_commission_zero_is_fee_zero()
@@ -160,6 +186,8 @@ def main() -> None:
     test_ticker_result_settlement_px_and_case()
     test_restrict_uses_store_order_id()
     test_persist_skips_postponed()
+    test_flatten_net_two_pairs_pays_two_dollars()
+    test_flatten_net_one_pair_unchanged()
     print("test_settled_pnl_store ok")
 
 

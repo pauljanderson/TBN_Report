@@ -293,23 +293,78 @@ def all_in_cost(leg: dict) -> Decimal | None:
     return (cash * qty) + fee
 
 
+def _flatten_book_side(leg: dict) -> str:
+    """Yes or No seat for flatten pairing. BUY_SHORT / side=no counts as No."""
+    side = str((leg or {}).get("side") or "").lower()
+    if side in {"yes", "no"}:
+        return side
+    intent = str(
+        (leg or {}).get("io_intent")
+        or (leg or {}).get("intent")
+        or (leg or {}).get("order_intent")
+        or ""
+    ).upper()
+    if "SHORT" in intent:
+        return "no"
+    if "LONG" in intent:
+        return "yes"
+    return ""
+
+
+def flatten_matched_qty(legs: list[dict]) -> Decimal:
+    """Dollars a closed Yes+No book pays: min(yes qty, no qty), summed across seats.
+
+    One matched Yes+No pair pays $1. Two pairs (T0 + stack flatten) pay $2.
+    Using min(single-leg qty) against the sum of all costs under-counts payout
+    and invents a phantom ~$1 loss (Langmo vs Sultanov 2026-11-01).
+    """
+    yes_qty = Decimal("0")
+    no_qty = Decimal("0")
+    unknown: list[Decimal] = []
+    for leg in legs or []:
+        if not isinstance(leg, dict):
+            continue
+        qty = _dec(leg.get("qty")) or Decimal("0")
+        if qty <= 0:
+            continue
+        book = _flatten_book_side(leg)
+        if book == "yes":
+            yes_qty += qty
+        elif book == "no":
+            no_qty += qty
+        else:
+            unknown.append(qty)
+    matched = min(yes_qty, no_qty)
+    if matched > 0:
+        return matched
+    if len(unknown) >= 2:
+        total = sum(unknown, Decimal("0"))
+        # Even unknown count → assume complementary pairs; else one $1 set.
+        if len(unknown) % 2 == 0:
+            return (total / Decimal("2")).quantize(FOUR)
+        return min(unknown)
+    return Decimal("0")
+
+
 def flatten_net_from_legs(legs: list[dict]) -> Decimal | None:
-    """Yes+No same ticker is a $1 closed set. Net = 1 − sum(all-in). Independent of winner."""
+    """Yes+No same ticker is a $1 closed set per matched pair.
+
+    Net = matched_qty − sum(all-in). Independent of winner. Two stacked pairs
+    → matched_qty 2, not min(leg qty)=1.
+    """
     filled = [leg for leg in (legs or []) if isinstance(leg, dict) and (_dec(leg.get("qty")) or Decimal("0")) > 0]
     if len(filled) < 2:
         return None
     costs = []
-    qtys = []
     for leg in filled:
         cost = all_in_cost(leg)
         if cost is None:
             return None
         costs.append(cost)
-        qtys.append(_dec(leg.get("qty")) or Decimal("0"))
-    qty = min(qtys)
-    if qty <= 0:
+    matched = flatten_matched_qty(filled)
+    if matched <= 0:
         return None
-    return qty - sum(costs, Decimal("0"))
+    return matched - sum(costs, Decimal("0"))
 
 
 def upsert_flatten_pair(
