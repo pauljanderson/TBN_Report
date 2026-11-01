@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from rocket_rl import ATR_EMA_MULT, ATR_PERIOD, SMA_50, _prepare_bars
+    from rocket_rl import ATR_EMA_MULT, ATR_PERIOD, SMA_50, _prepare_bars, _sma_is_rising
     from rocket_rl_config import RLConfig, atr_pct_band_passes, parse_rl_atr_percent_bound, parse_rl_too_high
 except ImportError:
     from stock_analysis.rocket_rl import (  # type: ignore
@@ -35,6 +35,7 @@ except ImportError:
         ATR_PERIOD,
         SMA_50,
         _prepare_bars,
+        _sma_is_rising,
     )
     from stock_analysis.rocket_rl_config import (  # type: ignore
         RLConfig,
@@ -409,11 +410,8 @@ def scan_symbol_missed_moves(
             continue
 
         lookback_idx = idx - cfg.rl_50_sma_lookback
-        sma50rising = (
-            lookback_idx >= 0
-            and np.isfinite(sma50[idx])
-            and np.isfinite(sma50[lookback_idx])
-            and sma50[idx] > sma50[lookback_idx]
+        sma50rising = lookback_idx >= 0 and _sma_is_rising(
+            float(sma50[idx]), float(sma50[lookback_idx])
         )
         dip_hi = y_sma * cfg.rl_dip_pct
         dip_lo = y_sma * (1 - (cfg.rl_dip_pct - 1))

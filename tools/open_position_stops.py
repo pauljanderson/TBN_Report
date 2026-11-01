@@ -33,19 +33,22 @@ GETTARGET = ROOT / "getTarget_output.csv"
 OUT_HTML = ROOT / "drive" / "paul_experiments" / "open_position_stops_20261015" / "latest.html"
 
 ASK = (
-    "OK. nice. but in the case of zeta, and maybe others. the stock has gone over "
-    "the point where i should have sold, so what is the new sell price? i understand "
-    "the stock price may be under that price, in which case i would sell. othewise "
-    "I would hold. make sense?"
+    "Paul wants run_open_position_stops.bat to even show the trailing stop on a buy "
+    "day. If it goes up a lot on the buy day, he wants to move the stop accordingly. "
+    "It's unlikely, but we should still compute it."
 )
 
 PLAIN = (
-    "You still hold these stocks, so an old stop that price already went through is "
-    "only a note. The stop to use now follows the highest price since you bought. "
-    "If the stock went higher after that touch, the stop moves up with it. If the "
-    "last price is under that new stop, sell at the last price. If the last price "
-    "is at or above it, hold and move the stop there. The buy day is never a sale. "
-    "This looks only at your open positions, and it is not part of the live daily run."
+    "You still hold these stocks. Each name has an initial stop (the base under the "
+    "trigger or signal low) and a trailing stop that turns on after a set percent "
+    "rise from the buy, then keeps a fraction of the gain to the highest high since "
+    "the fill. We compute that trailing stop on the buy day too. If the stock runs "
+    "up enough that day, the stop moves up with it. If the trail is not on yet, the "
+    "stop you see is still the initial stop — we do not hide it. The buy day is "
+    "still not a sale; if the last price is already under the stop, the next open "
+    "is a sale if it is still under. An old stop that price already went through is "
+    "only a note. This looks only at your open positions, and it is not part of the "
+    "live daily run."
 )
 
 # base_pct is the percent under the anchor. None means no price stop until the trail is on.
@@ -144,21 +147,27 @@ def session_date(now: datetime) -> date:
     return d
 
 
+def trail_price(entry: float, hwm: float, act: float, keep: float) -> float | None:
+    """Same trail as later days: on when the high-water mark is at least act% above the buy.
+
+    The trail is entry + keep × (high-water mark − entry). Used on the buy day too.
+    """
+    if entry > 0 and hwm > entry:
+        gain_pct = (hwm - entry) / entry * 100.0
+        if gain_pct + 1e-12 >= act:
+            return entry + keep * (hwm - entry)
+    return None
+
+
 def effective_stop(entry: float, hwm: float, base: float | None, act: float, keep: float) -> tuple[float | None, bool]:
     """Trail turns on when the high-water mark is at least act% above the buy.
 
     The trail is entry + keep × (high-water mark − entry). It never sits under the base.
     """
-    activated = False
-    trail_px = None
-    if entry > 0 and hwm > entry:
-        gain_pct = (hwm - entry) / entry * 100.0
-        if gain_pct + 1e-12 >= act:
-            activated = True
-            trail_px = entry + keep * (hwm - entry)
+    trail_px = trail_price(entry, hwm, act, keep)
     if trail_px is not None and (base is None or trail_px > base + 1e-9):
         return trail_px, True
-    return base, activated
+    return base, trail_px is not None
 
 
 def _under(price: float | None, stop: float | None) -> bool:
@@ -181,8 +190,8 @@ def replay(
     The walk does not stop there. A later high raises the high-water mark, and
     the stop to use now is entry + keep × (that mark − entry), never under the
     base. On the current session, minutes are walked in order so a new high
-    raises the stop before a later pullback. The buy day never counts as a sale.
-    Its high sets the next session's stop.
+    raises the stop before a later pullback, including on the buy day. The buy
+    day never counts as a sale.
     """
     hwm = float(entry)
     touch_px = None
@@ -215,27 +224,29 @@ def replay(
             _note(stop, f"{b.session.isoformat()} session (daily bar)")
         _raise(b.high)
 
-    if minutes and session == entry_day:
+    if minutes:
+        buy_day = session == entry_day
         for b in minutes:
-            _raise(b.high)
-    elif minutes:
-        for b in minutes:
-            stop, _on = effective_stop(entry, hwm, base, act, keep)
-            stamp = b.when.strftime("%Y-%m-%d %H:%M ET")
-            if stop is not None and _le(b.open, stop):
-                _note(b.open, stamp)
-            elif stop is not None and _le(b.low, stop):
-                _note(stop, stamp)
+            if not buy_day:
+                stop, _on = effective_stop(entry, hwm, base, act, keep)
+                stamp = b.when.strftime("%Y-%m-%d %H:%M ET")
+                if stop is not None and _le(b.open, stop):
+                    _note(b.open, stamp)
+                elif stop is not None and _le(b.low, stop):
+                    _note(stop, stamp)
             _raise(b.high)
 
     for b in daily:
         if entry_day <= b.session <= session:
             _raise(b.high)
 
+    trail_px = trail_price(entry, hwm, act, keep)
     stop, trail_on = effective_stop(entry, hwm, base, act, keep)
     return {
         "stop": stop,
         "trail_on": trail_on,
+        "trail_px": trail_px,
+        "base": base,
         "hwm": hwm,
         "touch_px": touch_px,
         "touch_when": touch_when,
@@ -264,8 +275,9 @@ def _self_test() -> None:
     def M(sess: date, hh: int, mm: int, o: float, h: float, l: float, c: float) -> Bar:
         return Bar(datetime(sess.year, sess.month, sess.day, hh, mm, tzinfo=ET), sess, o, h, l, c)
 
-    # Entry-day high 110 arms a 6% / keep-80% trail. Next open 100 touches 108.
-    # He still holds, and that day did not make a higher high, so the stop stays 108.
+    # (c) Later days unchanged: entry-day high 110 arms a 6% / keep-80% trail.
+    # Next open 100 touches 108. He still holds, and that day did not make a higher
+    # high, so the stop stays 108.
     hit = replay(100.0, entry_day, 90.0, 6.0, 0.80, [D(entry_day, 100, 110, 99, 108), D(day2, 100, 101, 99, 100)], [], day2)
     assert abs(hit["stop"] - 108.0) < 1e-9 and abs(hit["touch_px"] - 100.0) < 1e-9, hit
     assert decide(hit["stop"], 100.0, entry_day, day2) == "SELL"
@@ -276,11 +288,29 @@ def _self_test() -> None:
     assert stay["touch_px"] is None and abs(stay["stop"] - 109.6) < 1e-9 and stay["trail_on"], stay
     assert decide(stay["stop"], 111.0, entry_day, day2) == "HOLD"
 
-    # Entry day is not a sale even though the low is through the base.
+    # (a) Buy day with no run-up still shows the initial stop. Not a sale.
     held = replay(100.0, entry_day, 99.0, 6.0, 0.80, [D(entry_day, 100, 101, 90, 100)], [], entry_day)
     assert held["touch_px"] is None and abs(held["stop"] - 99.0) < 1e-9 and not held["trail_on"], held
+    assert held["trail_px"] is None and abs(held["base"] - 99.0) < 1e-9, held
     assert decide(held["stop"], 90.0, entry_day, entry_day) == "NEXT OPEN"
     assert decide(held["stop"], 100.0, entry_day, entry_day) == "HOLD"
+
+    # (b) Buy day with a large high ratchets the trailing stop (6% / keep 80% → 108).
+    runup = replay(100.0, entry_day, 90.0, 6.0, 0.80, [D(entry_day, 100, 110, 99, 108)], [], entry_day)
+    assert runup["touch_px"] is None and abs(runup["hwm"] - 110.0) < 1e-9, runup
+    assert abs(runup["stop"] - 108.0) < 1e-9 and runup["trail_on"], runup
+    assert abs(runup["trail_px"] - 108.0) < 1e-9 and abs(runup["base"] - 90.0) < 1e-9, runup
+    assert decide(runup["stop"], 108.0, entry_day, entry_day) == "HOLD"
+    assert decide(runup["stop"], 100.0, entry_day, entry_day) == "NEXT OPEN"
+
+    # Buy-day minutes: a 10% high turns the trail on. A later pullback is not a sale.
+    mins0 = [
+        M(entry_day, 9, 30, 100, 110, 99.5, 109),
+        M(entry_day, 9, 31, 109, 109.2, 107.0, 107.5),
+    ]
+    intra0 = replay(100.0, entry_day, 90.0, 6.0, 0.80, [], mins0, entry_day)
+    assert intra0["touch_px"] is None and abs(intra0["stop"] - 108.0) < 1e-9 and intra0["trail_on"], intra0
+    assert decide(intra0["stop"], 107.5, entry_day, entry_day) == "NEXT OPEN"
 
     # Minute 1 high turns the trail on. Minute 2 tags it. The high-water mark stays 107.
     mins = [
@@ -330,6 +360,22 @@ def _self_test() -> None:
     assert rsi_off[0] is None and rsi_off[1] is False, rsi_off
     rsi_on = effective_stop(100.0, 110.0, None, 6.0, 0.80)
     assert abs(rsi_on[0] - 108.0) < 1e-9 and rsi_on[1] is True, rsi_on
+
+    shown = _stop_display({
+        "status": "NEXT OPEN", "stop": 99.0, "base": 99.0, "trail_px": None,
+        "trail_on": False, "live_stop": None,
+    })
+    assert shown == ("99.00", "99.00", "99.00", "no"), shown
+    shown_on = _stop_display({
+        "status": "NEXT OPEN", "stop": 108.0, "base": 90.0, "trail_px": 108.0,
+        "trail_on": True, "live_stop": None,
+    })
+    assert shown_on == ("90.00", "108.00", "108.00", "yes"), shown_on
+    later_shown = _stop_display({
+        "status": "HOLD", "stop": 108.0, "base": 90.0, "trail_px": 108.0,
+        "trail_on": True, "live_stop": None,
+    })
+    assert later_shown == ("90.00", "108.00", "108.00", "yes"), later_shown
     print("self-test ok", flush=True)
 
 
@@ -553,6 +599,8 @@ def analyze_one(pos: dict, daily: list[Bar], minutes: list[Bar], minute_note: st
         "price_src": price_src,
         "live_stop": pos.get("live_stop"),
         "stop": None,
+        "base": None,
+        "trail_px": None,
         "trail_on": False,
         "hwm": None,
         "status": "",
@@ -620,9 +668,12 @@ def analyze_one(pos: dict, daily: list[Bar], minutes: list[Bar], minute_note: st
             f"The last price {_px(price)} is under that stop, so sell at {_px(price)}."
         )]
     elif status == "NEXT OPEN":
+        init = _px(base) if base is not None else "no price stop"
+        trail_txt = _px(walked["trail_px"]) if walked.get("trail_px") is not None else init
         bits = [(
             f"{row['system_name']} {pos['symbol']}: today is the buy day, so this is not a sale. "
-            f"Today's high sets the next session's stop at {_px(walked['stop'])}. "
+            f"Initial stop {init}. Trailing stop {trail_txt}. "
+            f"Move the stop to {_px(walked['stop'])}. "
             f"The last price {_px(price)} is under that stop, so the next open is a sale if it is still under the stop."
         )]
     elif walked["stop"] is None:
@@ -637,8 +688,13 @@ def analyze_one(pos: dict, daily: list[Bar], minutes: list[Bar], minute_note: st
         old = ""
         if walked["touch_px"] is not None:
             old = "That earlier price is not the stop to use now. "
+        init = _px(base) if base is not None else "no price stop"
+        trail_txt = _px(walked["trail_px"]) if walked.get("trail_px") is not None else init
+        buy = ""
+        if pos.get("entry_date") == session:
+            buy = f"Today is the buy day, so this is not a sale. Initial stop {init}. Trailing stop {trail_txt}. "
         bits = [(
-            f"{row['system_name']} {pos['symbol']}: {touch}{old}"
+            f"{row['system_name']} {pos['symbol']}: {touch}{old}{buy}"
             f"Move the stop to {_px(walked['stop'])}. "
             f"The last price {_px(price)} is {where} that stop, so {held}."
         )]
@@ -673,19 +729,33 @@ def _td(text: str, num: bool = False) -> str:
     return f"<td{style}>{html.escape(text)}</td>"
 
 
+def _stop_display(row: dict) -> tuple[str, str, str, str]:
+    """Initial stop, trailing stop, stop now, trail-on label. Never hide the stop on buy day."""
+    if row["status"] == "no new stop rule picked":
+        live = _px(row.get("live_stop") or row.get("stop"))
+        return live, "n/a", live, "n/a"
+    if row["stop"] is None and row["status"] == "HOLD":
+        none = "no price stop"
+        return none, none, none, "no"
+    init = _px(row["base"]) if row.get("base") is not None else (
+        "no price stop" if row["stop"] is None else _px(row["stop"])
+    )
+    if row.get("trail_px") is not None:
+        trail_txt = _px(row["trail_px"])
+    else:
+        trail_txt = init
+    stop_txt = _px(row["stop"]) if row["stop"] is not None else "no price stop"
+    on = "—"
+    if row["status"] in {"HOLD", "SELL", "NEXT OPEN"}:
+        on = "yes" if row["trail_on"] else "no"
+    return init, trail_txt, stop_txt, on
+
+
 def write_html(rows: list[dict], now: datetime, market_open: bool, elapsed: float, daily_note: str) -> None:
     OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
     body = []
     for r in rows:
-        trail = "—"
-        if r["status"] == "no new stop rule picked":
-            trail = "n/a"
-        elif r["status"] in {"HOLD", "SELL", "NEXT OPEN"}:
-            trail = "yes" if r["trail_on"] else "no"
-        if r["stop"] is None and r["status"] == "HOLD":
-            stop_txt = "no price stop"
-        else:
-            stop_txt = _px(r["stop"])
+        init_txt, trail_txt, stop_txt, trail = _stop_display(r)
         sell_at = _px(r["price"]) if r["status"] == "SELL" else "—"
         body.append(
             "<tr>"
@@ -693,6 +763,8 @@ def write_html(rows: list[dict], now: datetime, market_open: bool, elapsed: floa
             + _td(r["system_name"])
             + _td(_px(r["entry"]), True)
             + _td(_px(r["price"]), True)
+            + _td(init_txt, True)
+            + _td(trail_txt, True)
             + _td(stop_txt, True)
             + _td(sell_at, True)
             + _td(trail)
@@ -738,7 +810,7 @@ h2 {{ font-size: 1.1rem; margin-top: 1.2rem; }}
 <h2>In plain English</h2>
 <p>{html.escape(PLAIN)}</p>
 <p>{html.escape(knobs)}</p>
-<p>He still holds every name in the position file, so the first time a stop was touched is a note, not the price to use now. The stop now is the base, or the buy plus the keep fraction of the rise to the highest high since the fill, whichever is higher. Completed days come from the local daily warehouse ({html.escape(daily_note)}). Today uses 1-minute bars from 9:30 to 4:00 Eastern, and only for these open symbols, walked in order so a new high raises the stop before a later pullback. The buy day is never a sale. If the buy minute is unknown, that day's high sets the next session's stop only. If the last price is already under that next-session stop, the next open is a sale if it is still under the stop. A system with no rule above keeps the live getTarget stop and is labeled &quot;no new stop rule picked.&quot;</p>
+<p>He still holds every name in the position file, so the first time a stop was touched is a note, not the price to use now. The stop now is the base (initial stop), or the buy plus the keep fraction of the rise to the highest high since the fill (trailing stop), whichever is higher. Both numbers are shown, including on the buy day. Completed days come from the local daily warehouse ({html.escape(daily_note)}). Today uses 1-minute bars from 9:30 to 4:00 Eastern, and only for these open symbols, walked in order so a new high raises the stop before a later pullback — including on the buy day. The buy day is never a sale. If the last price is already under that stop, the next open is a sale if it is still under the stop. A system with no rule above keeps the live getTarget stop and is labeled &quot;no new stop rule picked.&quot;</p>
 </div>
 {extras.SWIPE_NOTE_HTML}
 <div class="table-wrap">
@@ -748,6 +820,8 @@ h2 {{ font-size: 1.1rem; margin-top: 1.2rem; }}
 {_th("System", "text")}
 {_th("Entry", "num")}
 {_th("Current price", "num")}
+{_th("Initial stop", "num")}
+{_th("Trailing stop", "num")}
 {_th("Stop now", "num")}
 {_th("Sell at", "num")}
 {_th("Trail on?", "text")}
@@ -777,23 +851,27 @@ def _print_table(rows: list[dict], market_open: bool, elapsed: float) -> None:
     print(f"{state}  open-position stops  ({elapsed:.1f}s)")
     print("Research helper only. Not gold. Not DailyRun.")
     hdr = (
-        f"{'Symbol':<8} {'System':<6} {'Price':>8} {'Stop now':>10} "
-        f"{'Status':<26} {'Sell at':>8}  First touch"
+        f"{'Symbol':<8} {'System':<6} {'Price':>8} {'Initial':>9} {'Trailing':>9} "
+        f"{'Stop now':>10} {'Trail':<5} {'Status':<26} {'Sell at':>8}  First touch"
     )
     print(hdr)
     print("-" * len(hdr))
     for r in rows:
-        if r["stop"] is None and r["status"] == "HOLD":
+        init_txt, trail_txt, stop_txt, on = _stop_display(r)
+        if stop_txt == "no price stop":
             stop_txt = "no px stop"
-        else:
-            stop_txt = _px(r["stop"])
+        if init_txt == "no price stop":
+            init_txt = "no px stop"
+        if trail_txt == "no price stop":
+            trail_txt = "no px stop"
         sell_at = _px(r["price"]) if r["status"] == "SELL" else "-"
         touch = "-"
         if r.get("touch_px") is not None:
             touch = f"{_px(r['touch_px'])} at {r['touch_when']}"
         print(
             f"{r['symbol']:<8} {r['system']:<6} {_px(r['price']):>8} "
-            f"{stop_txt:>10} {r['status']:<26} {sell_at:>8}  {touch}"
+            f"{init_txt:>9} {trail_txt:>9} {stop_txt:>10} {on:<5} "
+            f"{r['status']:<26} {sell_at:>8}  {touch}"
         )
         if r["status"] not in {"HOLD", "SELL", "NEXT OPEN", "no new stop rule picked"} or r.get("note"):
             extra = r["sentence"]

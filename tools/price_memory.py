@@ -1,7 +1,11 @@
 """Remember the price you pay on each Kalshi, Gemini, and Polymarket contract.
 
-No orders. No secrets. History is raw/price_memory.jsonl. The latest price
-for each contract key is raw/price_last.json.
+No orders. No secrets. Live ticks are dated sport shards under
+raw/price_memory/YYYY-MM-DD/{sport}.jsonl. The old one-file tape
+raw/price_memory.jsonl is a read-only archive (do not append). Latest
+prices are per-game files under raw/price_last_games/{sport}/{game}.json.
+raw/price_last.json is a read-only leftover of the old one-file rewrite
+(helpers must not convoy on it).
 
 A key is sport, game, market type, side, number, venue, and whether you pay
 the Yes ask or the No ask. A Gemini No that is just one minus the Yes bid,
@@ -9,25 +13,35 @@ with no No size, is not stored. The Yes ask on that contract still is.
 """
 from __future__ import annotations
 
+import csv
+import hashlib
 import html
 import json
 import re
 import statistics
 import sys
 import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.request
+from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
-STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
-RAW = STAMP / "raw"
-HISTORY = RAW / "price_memory.jsonl"
-LAST = RAW / "price_last.json"
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
+from prediction_paths import DRIVE_STAMP as STAMP, RAW_DIR as RAW  # noqa: E402
+HISTORY = RAW / "price_memory.jsonl"  # read-only archive; new ticks go to HISTORY_DIR
+HISTORY_DIR = RAW / "price_memory"
+CSV_DIR = HISTORY_DIR / "csv"
+CUTOFF_PATH = HISTORY_DIR / "archive_cutoff.json"
+LAST = RAW / "price_last.json"  # read-only leftover; live writes go to LAST_DIR
+LAST_DIR = RAW / "price_last_games"
+LOCK_HOLD_BUDGET_MS = 500.0
 PAGE = STAMP / "price_moves.html"
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -35,12 +49,29 @@ DRASTIC = Decimal("0.05")
 FLIP_TOL = Decimal("0.001")
 SAME_QUOTE_SEC = 20
 GET_CAP = 8
+CSV_KEEP_DAYS = 2
+TICK_FIELDS = (
+    "key", "sport", "game", "market_type", "side", "side_key", "number",
+    "venue", "pay", "seen_at", "price", "prior_price", "prior_seen_at",
+    "move", "gap_seconds", "game_start", "phase", "drastic",
+)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from report_page_extras import SORTABLE_TABLE_SCRIPT, SORTABLE_TH_CSS, SWIPE_NOTE_HTML  # noqa: E402
 
 _lock = threading.Lock()
+_lock_stats = {
+    "last_wait_ms": 0.0,
+    "last_hold_ms": 0.0,
+    "wait_ms_sum": 0.0,
+    "hold_ms_sum": 0.0,
+    "n": 0,
+    "over_budget_n": 0,
+    "last_game": "",
+    "last_sport": "",
+}
+_legacy_last_cache: dict = {"mtime": None, "data": None}
 
 PREFIX_SPORT = {
     "cfb": "college football",
@@ -52,6 +83,9 @@ PREFIX_SPORT = {
     "mma": "mma",
     "nhl": "pro hockey",
     "chess": "chess",
+    "tennis": "tennis",
+    "tt": "table tennis",
+    "tabletennis": "table tennis",
 }
 DURING_MINUTES = {
     "college football": 240,
@@ -63,6 +97,8 @@ DURING_MINUTES = {
     "golf": 360,
     "motorsports": 180,
     "chess": 180,
+    "tennis": 180,
+    "table tennis": 90,
 }
 MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -77,9 +113,10 @@ TZ_BY_ABBR = {
     "UTC": UTC, "GMT": UTC,
 }
 SKIP_NAMES = {
-    "price_memory.jsonl", "price_last.json", "call_metrics.jsonl", "overnight_checkpoint.json",
-    "last_gross.json", "overnight_scan.log",
+    "price_memory.jsonl", "price_memory", "price_last.json", "call_metrics.jsonl",
+    "overnight_checkpoint.json", "last_gross.json", "overnight_scan.log",
 }
+_csv_pruned_on = None
 
 ASKED = (
     "Bets moving most rapidly are probably games underway. Track historically the price moves "
@@ -95,7 +132,8 @@ PLAIN = (
     "A move of 5 cents or more since the prior saved price is a drastic move. "
     "Before means the quote is earlier than the listed start. During means the quote is after the start "
     "and still inside a typical game length (about four hours for college football, three and a half for pro football, "
-    "two hours for soccer, three hours for hockey, three and a half for baseball). "
+    "two hours for soccer, three hours for hockey, three and a half for baseball, "
+    "about three hours for tennis or MMA or chess, about ninety minutes for table tennis). "
     "If the start time is not in the ticker or the event text, the phase stays unknown. "
     "A Gemini No that is only one dollar minus the Yes bid, with no No contracts behind it, is left out. The Yes ask is kept."
 )
@@ -174,22 +212,69 @@ def norm_side(label: str, kind: str) -> str:
         if re.search(r"\bunder\b", low):
             return "under"
         return "over"
+    if kind == "team_total":
+        ou = "under" if re.search(r"\bunder\b", low) else "over"
+        team = re.split(r"\bover\b|\bunder\b", low, maxsplit=1)[0]
+        team = re.sub(r"[^a-z0-9 ]+", " ", team)
+        team = re.sub(r"\s+", " ", team).strip()
+        return f"{team} {ou}".strip() if team else ou
     low = re.split(r"\bwins\b|\bmore than\b|\bover\b|\bby\b", low, maxsplit=1)[0]
     low = re.sub(r"[^a-z0-9 ]+", " ", low)
     low = re.sub(r"\s+", " ", low).strip()
     return low or "side"
 
 
+LOCK_KINDS = ("moneyline", "spread", "total", "team_total")
+
+
 def market_type_from(*parts: str) -> str | None:
-    """Totals and spreads win over the word Game, which also appears in total titles."""
+    """Team total, then total, then spread. Game in a total title is not moneyline."""
     blob = " ".join(p for p in parts if p).upper()
+    if (
+        "TEAMTOTAL" in blob
+        or "TEAM TOTAL" in blob
+        or re.search(r"[-_]TT([-_]|$)", blob)
+    ):
+        return "team_total"
     if "TOTAL" in blob or re.search(r"[-_]T([-_]|$)", blob):
         return "total"
     if "SPREAD" in blob or re.search(r"[-_]S([-_]|$)|[-_]REGS([-_]|$)", blob):
         return "spread"
-    if "MONEYLINE" in blob or re.search(r"[-_]M([-_]|$)", blob) or "GAME" in blob:
+    if "MONEYLINE" in blob or re.search(r"[-_]M([-_]|$)", blob) or "GAME" in blob or "MATCH" in blob:
         return "moneyline"
     return None
+
+
+def settlement_kinds(*parts: str) -> set[str]:
+    """Bet types named by ticker, instrument, or an explicit kind token.
+
+    Team total is not a game total. Spread is not moneyline. Line number
+    alone is not a settlement.
+    """
+    found: set[str] = set()
+    for part in parts:
+        text = str(part or "").strip()
+        if not text:
+            continue
+        low = text.lower()
+        if low in LOCK_KINDS:
+            found.add(low)
+            continue
+        kind = market_type_from(text)
+        if kind:
+            found.add(kind)
+    return found
+
+
+def same_settlement(*parts: str) -> bool:
+    return len(settlement_kinds(*parts)) <= 1
+
+
+def settlement_mismatch_reason(*parts: str) -> str:
+    kinds = settlement_kinds(*parts)
+    if len(kinds) <= 1:
+        return ""
+    return "not the same settlement: " + " vs ".join(sorted(kinds))
 
 
 def ticker_start(text: str) -> datetime | None:
@@ -360,8 +445,15 @@ def quotes_from_kalshi_contract(contract: dict, event: dict, sport: str, game: s
     number = contract.get("floor_strike")
     if number is None:
         number = norm_number(label) if kind != "moneyline" else ""
-    start = ticker_start(ticker) or description_start(str(contract.get("rules_primary") or ""))
-    consider_start(starts, sport, game, start, 2 if ticker_start(ticker) else 1)
+    tick = ticker_start(ticker)
+    occ = parse_time(str(contract.get("occurrence_datetime") or ""))
+    desc = description_start(str(contract.get("rules_primary") or ""))
+    exp = parse_time(str(contract.get("expected_expiration_time") or contract.get("expiration_time") or ""))
+    start = tick or occ or desc or exp
+    consider_start(starts, sport, game, tick, 3)
+    consider_start(starts, sport, game, occ, 3)
+    consider_start(starts, sport, game, desc, 1)
+    consider_start(starts, sport, game, exp, 1)
     out = []
     for pay, field in (("yes", "yes_ask_dollars"), ("no", "no_ask_dollars")):
         price = as_price(contract.get(field))
@@ -376,7 +468,7 @@ def quotes_from_gemini_contract(contract: dict, event: dict, sport: str, game: s
     event_ticker = str(event.get("ticker") or "")
     strike = contract.get("strike") if isinstance(contract.get("strike"), dict) else {}
     kind = market_type_from(symbol, event_ticker, str(strike.get("type") or ""), str(event.get("title") or ""))
-    if kind is None and strike.get("type") in ("moneyline", "spread", "total"):
+    if kind is None and strike.get("type") in ("moneyline", "spread", "total", "team_total"):
         kind = strike["type"]
     if kind is None:
         return []
@@ -435,7 +527,7 @@ def candidate_quotes(cand: dict, sport: str, game: str, seen: datetime, starts: 
     if not isinstance(cand, dict):
         return []
     kind = cand.get("market_type") or cand.get("type") or ""
-    if kind not in ("moneyline", "spread", "total"):
+    if kind not in ("moneyline", "spread", "total", "team_total"):
         return []
     side = str(cand.get("side") or cand.get("side_label") or "")
     number = cand.get("number")
@@ -776,10 +868,9 @@ def fold(quotes: list[dict]) -> list[dict]:
 
 
 def write_store(rows: list[dict]) -> None:
+    """Write ticks to dated shards. Never truncates the archive jsonl."""
     RAW.mkdir(parents=True, exist_ok=True)
-    with HISTORY.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    _append_rows(rows)
     last = {}
     for row in rows:
         last[row["key"]] = {
@@ -797,14 +888,442 @@ def write_store(rows: list[dict]) -> None:
     LAST.write_text(json.dumps(last, indent=2), encoding="utf-8")
 
 
-def load_last() -> dict:
+def _load_legacy_last() -> dict:
+    """Read the leftover one-file snapshot. Not taken under a writer lock."""
     if not LAST.exists():
         return {}
     try:
-        data = json.loads(LAST.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        mtime = LAST.stat().st_mtime
+    except OSError:
+        mtime = None
+    cached = _legacy_last_cache.get("data")
+    if cached is not None and _legacy_last_cache.get("mtime") == mtime:
+        return cached
+    data = _read_json_dict(LAST)
+    _legacy_last_cache["mtime"] = mtime
+    _legacy_last_cache["data"] = data
+    return data
+
+
+def _load_all_game_lasts() -> dict:
+    out: dict = {}
+    if not LAST_DIR.is_dir():
+        return out
+    for path in LAST_DIR.rglob("*.json"):
+        if not path.is_file() or path.name.endswith(".tmp"):
+            continue
+        out.update(_read_json_dict(path))
+    return out
+
+
+def load_last() -> dict:
+    """Latest prices. Per-game files overlay the leftover one-file snapshot."""
+    out = dict(_load_legacy_last())
+    out.update(_load_all_game_lasts())
+    return out
+
+
+def load_last_game(sport: str, game: str) -> dict:
+    """Latest prices for one game. Does not rewrite the 15 MB leftover file."""
+    path = game_last_path(sport, game)
+    data = _read_json_dict(path)
+    if data:
+        return data
+    return _legacy_last_for_game(sport, game)
+
+
+def load_last_sport(sport: str) -> dict:
+    """Latest prices for one sport. Prefers per-game files over the leftover snapshot."""
+    slug = sport_slug(sport)
+    out: dict = {}
+    folder = LAST_DIR / slug
+    if folder.is_dir():
+        for path in folder.glob("*.json"):
+            if path.name.endswith(".tmp"):
+                continue
+            out.update(_read_json_dict(path))
+    if out:
+        return out
+    sport_l = (sport or "").strip().lower()
+    for key, rec in _load_legacy_last().items():
+        if isinstance(rec, dict) and str(rec.get("sport") or "").strip().lower() == sport_l:
+            out[key] = rec
+        elif isinstance(key, str) and key.split("|", 1)[0].strip().lower() == sport_l:
+            out[key] = rec
+    return out
+
+
+def _legacy_last_for_game(sport: str, game: str) -> dict:
+    sport_l = (sport or "").strip().lower()
+    game_l = (game or "").strip().lower()
+    out: dict = {}
+    for key, rec in _load_legacy_last().items():
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("game") or "").strip().lower() != game_l:
+            continue
+        rec_sport = str(rec.get("sport") or "").strip().lower()
+        if rec_sport and rec_sport != sport_l:
+            continue
+        out[key] = rec
+    return out
+
+
+def _read_json_dict(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _atomic_write_json(path: Path, payload: dict, *, indent: int | None = None) -> None:
+    """Copy-then-replace. Do not hold a lock across HTTP."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=indent, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(path)
+
+
+def sport_slug(sport: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", (sport or "unknown").strip().lower()).strip("_")
+    return text or "unknown"
+
+
+def game_slug(game: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", (game or "unknown").strip().lower()).strip("_")
+    text = text or "unknown"
+    if len(text) > 80:
+        digest = hashlib.sha1((game or "").encode("utf-8")).hexdigest()[:12]
+        text = text[:60].rstrip("_") + "_" + digest
+    return text
+
+
+def game_last_path(sport: str, game: str) -> Path:
+    return LAST_DIR / sport_slug(sport) / f"{game_slug(game)}.json"
+
+
+def game_lock_path(sport: str, game: str) -> Path:
+    return LAST_DIR / sport_slug(sport) / f"{game_slug(game)}.lock"
+
+
+def sport_jsonl_lock_path(day: str, sport: str) -> Path:
+    return HISTORY_DIR / day / f".{sport_slug(sport)}.jsonl.lock"
+
+
+def lock_stats() -> dict:
+    return dict(_lock_stats)
+
+
+def _note_lock(sport: str, game: str, wait_ms: float, hold_ms: float) -> None:
+    wait_ms = max(0.0, float(wait_ms))
+    hold_ms = max(0.0, float(hold_ms))
+    _lock_stats["last_wait_ms"] = round(wait_ms, 2)
+    _lock_stats["last_hold_ms"] = round(hold_ms, 2)
+    _lock_stats["wait_ms_sum"] = round(float(_lock_stats["wait_ms_sum"]) + wait_ms, 2)
+    _lock_stats["hold_ms_sum"] = round(float(_lock_stats["hold_ms_sum"]) + hold_ms, 2)
+    _lock_stats["n"] = int(_lock_stats["n"]) + 1
+    _lock_stats["last_sport"] = sport
+    _lock_stats["last_game"] = game
+    if hold_ms >= LOCK_HOLD_BUDGET_MS:
+        _lock_stats["over_budget_n"] = int(_lock_stats["over_budget_n"]) + 1
+
+
+def et_day(dt: datetime) -> str:
+    return to_et(dt).strftime("%Y-%m-%d")
+
+
+def shard_jsonl_path(day: str, sport: str) -> Path:
+    return HISTORY_DIR / day / f"{sport_slug(sport)}.jsonl"
+
+
+def shard_csv_path(day: str, sport: str) -> Path:
+    return CSV_DIR / f"{day}_{sport_slug(sport)}.csv"
+
+
+def load_cutoff() -> dict:
+    if not CUTOFF_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(CUTOFF_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cutoff_day() -> str | None:
+    seen = str(load_cutoff().get("cutoff_et") or "")
+    if len(seen) >= 10 and seen[4] == "-" and seen[7] == "-":
+        return seen[:10]
+    return None
+
+
+def _ensure_cutoff() -> None:
+    if CUTOFF_PATH.is_file():
+        return
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "cutoff_et": datetime.now(ET).isoformat(),
+        "archive": str(HISTORY),
+        "archive_bytes": HISTORY.stat().st_size if HISTORY.is_file() else 0,
+        "format": "jsonl_shards_by_day_and_sport",
+        "shards": str(HISTORY_DIR / "YYYY-MM-DD" / "{sport}.jsonl"),
+        "csv_last_2_days": str(CSV_DIR / "YYYY-MM-DD_{sport}.csv"),
+    }
+    tmp = CUTOFF_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(CUTOFF_PATH)
+    readme = HISTORY_DIR / "README.txt"
+    if not readme.is_file():
+        readme.write_text(
+            "Live Yes/No change-ticks. Local PC only. Not Google Drive.\n"
+            "House format: one jsonl per Eastern date and sport, "
+            "YYYY-MM-DD/{sport}.jsonl.\n"
+            "price_memory.jsonl one folder up is a frozen archive. Do not append to it.\n"
+            "csv/ holds Excel copies for the last two Eastern days, plus match exports.\n"
+            "Read one match: python tools/price_memory.py export-match --game NAME --sport tennis\n"
+            "Same-price repeats are stored only after 20 seconds.\n",
+            encoding="utf-8",
+        )
+
+
+def tick_files(
+    *,
+    sport: str | None = None,
+    day: str | None = None,
+    include_archive: bool | None = None,
+) -> list[Path]:
+    """Paths to stream for a lookback.
+
+    If you pass a day that already has shards, the 1.87 GB archive is skipped
+    unless include_archive=True (needed for this morning before the split).
+    """
+    freeze = cutoff_day()
+    if day:
+        days = [day]
+    elif HISTORY_DIR.is_dir():
+        days = sorted(
+            p.name
+            for p in HISTORY_DIR.iterdir()
+            if p.is_dir() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.name)
+        )
+    else:
+        days = []
+    slug = sport_slug(sport) if sport else None
+    shards: list[Path] = []
+    for item in days:
+        folder = HISTORY_DIR / item
+        if not folder.is_dir():
+            continue
+        if slug:
+            shard = folder / f"{slug}.jsonl"
+            if shard.is_file():
+                shards.append(shard)
+        else:
+            shards.extend(sorted(p for p in folder.glob("*.jsonl") if p.is_file()))
+    if include_archive is None:
+        if day and shards and freeze and day >= freeze:
+            include_archive = False
+        elif day and freeze and day > freeze:
+            include_archive = False
+        else:
+            include_archive = True
+    paths: list[Path] = []
+    if include_archive and HISTORY.is_file():
+        paths.append(HISTORY)
+    paths.extend(shards)
+    return paths
+
+
+def iter_tick_lines(
+    *,
+    sport: str | None = None,
+    game: str | None = None,
+    day: str | None = None,
+    include_archive: bool | None = None,
+    paths: list[Path] | None = None,
+):
+    """Yield raw jsonl lines. Use sport/day/game so one match does not scan the 1.87 GB archive."""
+    sport_needle = (sport or "").strip().lower()
+    game_needle = (game or "").strip().lower()
+    files = list(paths) if paths is not None else tick_files(
+        sport=sport, day=day, include_archive=include_archive
+    )
+    for path in files:
+        if not path.is_file():
+            continue
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if sport_needle and sport_needle not in line.lower():
+                    continue
+                if game_needle and game_needle not in line.lower():
+                    continue
+                yield line
+
+
+def iter_ticks(
+    *,
+    sport: str | None = None,
+    game: str | None = None,
+    day: str | None = None,
+    include_archive: bool | None = None,
+    paths: list[Path] | None = None,
+):
+    """Yield tick dicts. Filters sport/game on the parsed row, not only the raw line."""
+    sport_want = (sport or "").strip().lower()
+    game_want = (game or "").strip().lower()
+    for line in iter_tick_lines(
+        sport=sport, game=game, day=day, include_archive=include_archive, paths=paths
+    ):
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            row = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if sport_want and str(row.get("sport") or "").strip().lower() != sport_want:
+            continue
+        if game_want and game_want not in str(row.get("game") or "").lower():
+            continue
+        yield row
+
+
+def export_match_csv(
+    *,
+    game: str,
+    sport: str | None = None,
+    day: str | None = None,
+    dest: Path | None = None,
+    include_archive: bool | None = None,
+) -> Path:
+    """Write one match (or one day+sport) to a small CSV Paul can open in Excel."""
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "_", (game or "match").strip().lower()).strip("_") or "match"
+    stamp = datetime.now(ET).strftime("%Y%m%d_%H%M%S")
+    path = dest or (CSV_DIR / f"match_{slug}_{stamp}.csv")
+    n = 0
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(TICK_FIELDS), extrasaction="ignore")
+        writer.writeheader()
+        for row in iter_ticks(
+            sport=sport, game=game, day=day, include_archive=include_archive
+        ):
+            writer.writerow({key: row.get(key, "") for key in TICK_FIELDS})
+            n += 1
+    return path
+
+
+def list_tick_files() -> list[dict]:
+    """Archive + shard + csv sizes for the storage note."""
+    rows = []
+    if HISTORY.is_file():
+        stat = HISTORY.stat()
+        rows.append({
+            "kind": "archive jsonl (read-only)",
+            "path": str(HISTORY),
+            "bytes": stat.st_size,
+            "mtime_et": datetime.fromtimestamp(stat.st_mtime, ET).strftime("%Y-%m-%d %I:%M:%S %p"),
+        })
+    if HISTORY_DIR.is_dir():
+        for path in sorted(HISTORY_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".jsonl", ".csv", ".json", ".txt"}:
+                continue
+            stat = path.stat()
+            kind = "shard jsonl" if path.suffix.lower() == ".jsonl" else path.suffix.lower().lstrip(".")
+            if path.name.startswith("match_"):
+                kind = "match csv"
+            elif path.parent == CSV_DIR and path.suffix.lower() == ".csv":
+                kind = "last-2-day csv"
+            elif path.name == "archive_cutoff.json":
+                kind = "cutoff note"
+            elif path.name == "README.txt":
+                kind = "readme"
+            rows.append({
+                "kind": kind,
+                "path": str(path),
+                "bytes": stat.st_size,
+                "mtime_et": datetime.fromtimestamp(stat.st_mtime, ET).strftime("%Y-%m-%d %I:%M:%S %p"),
+            })
+    return rows
+
+
+def _row_day(row: dict) -> str:
+    seen = parse_time(row.get("seen_at"))
+    if seen is None:
+        seen = datetime.now(ET)
+    return et_day(seen)
+
+
+def _append_csv(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = (not path.exists()) or path.stat().st_size == 0
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(TICK_FIELDS), extrasaction="ignore")
+        if new_file:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in TICK_FIELDS})
+
+
+def prune_csv(keep_days: int = CSV_KEEP_DAYS) -> None:
+    if not CSV_DIR.is_dir():
+        return
+    today = datetime.now(ET).date()
+    for path in CSV_DIR.glob("*.csv"):
+        if path.name.startswith("match_"):
+            continue
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})_", path.name)
+        if not match:
+            continue
+        try:
+            day = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if (today - day).days >= keep_days:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def maybe_prune_csv() -> None:
+    global _csv_pruned_on
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    if _csv_pruned_on == today:
+        return
+    prune_csv()
+    _csv_pruned_on = today
+
+
+def _append_rows(rows: list[dict]) -> None:
+    """Append change-ticks to dated sport jsonl shards. Never opens the archive for write."""
+    if not rows:
+        return
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        groups[(_row_day(row), str(row.get("sport") or "unknown"))].append(row)
+    today = datetime.now(ET).date()
+    for (day, sport), chunk in groups.items():
+        jpath = shard_jsonl_path(day, sport)
+        jpath.parent.mkdir(parents=True, exist_ok=True)
+        with jpath.open("a", encoding="utf-8") as handle:
+            for row in chunk:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        try:
+            day_d = datetime.strptime(day, "%Y-%m-%d").date()
+        except ValueError:
+            day_d = today
+        if (today - day_d).days < CSV_KEEP_DAYS:
+            _append_csv(shard_csv_path(day, sport), chunk)
+    maybe_prune_csv()
+    _ensure_cutoff()
 
 
 def quotes_from_polymarket(contracts, sport: str, game: str, seen: datetime, starts: dict) -> list[dict]:
@@ -814,7 +1333,7 @@ def quotes_from_polymarket(contracts, sport: str, game: str, seen: datetime, sta
         if not isinstance(contract, dict):
             continue
         kind = str(contract.get("kind") or "moneyline")
-        if kind not in ("moneyline", "spread", "total"):
+        if kind not in ("moneyline", "spread", "total", "team_total"):
             continue
         number = "" if kind == "moneyline" else contract.get("number")
         ask = as_price(contract.get("yes_ask"))
@@ -841,10 +1360,39 @@ def quotes_from_polymarket(contracts, sport: str, game: str, seen: datetime, sta
     return out
 
 
-def remember_books(sport: str, game: str, seen_at, kalshi_events=None, gemini_events=None, game_date: str | None = None, moves_out: list | None = None, polymarket_contracts=None) -> int:
+def quotes_from_novig(contracts, sport: str, game: str, seen: datetime, starts: dict) -> list[dict]:
+    """Novig asks. A side with no size is left out. Orders are not placed."""
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import novig_live
+    out = []
+    for contract in contracts or []:
+        if not isinstance(contract, dict):
+            continue
+        for view in novig_live.contract_views(contract):
+            kind = str(view.get("kind") or "")
+            if kind not in ("moneyline", "spread", "total", "team_total"):
+                continue
+            number = "" if kind == "moneyline" else view.get("number")
+            label = str(view.get("side") or "")
+            if not label:
+                continue
+            yes = view.get("yes")
+            no = view.get("no")
+            if yes is not None and size_positive(view.get("yes_size")) is True:
+                out.append(quote_row(sport, game, kind, label, number, "Novig", "yes", yes, seen, None))
+            if no is not None and size_positive(view.get("no_size")) is True:
+                out.append(quote_row(sport, game, kind, label, number, "Novig", "no", no, seen, None))
+    return out
+
+
+def remember_books(sport: str, game: str, seen_at, kalshi_events=None, gemini_events=None, game_date: str | None = None, moves_out: list | None = None, polymarket_contracts=None, novig_contracts=None, listed_start=None) -> int:
     """Append new pay-prices from one scan. Safe to call after each fetch or stream update. Places no orders.
 
-    This does not wait on venue_pace. HTTP reads wait before they fetch. A websocket compare calls this with books already in memory.
+    Quotes are built in memory first. This does not wait on venue_pace and does
+    not take a lock during HTTP. A websocket compare calls this with books already
+    in memory. Writers lock one game file, not the leftover 15 MB snapshot.
     """
     seen = parse_time(seen_at) if isinstance(seen_at, str) else seen_at
     if seen is None:
@@ -853,26 +1401,47 @@ def remember_books(sport: str, game: str, seen_at, kalshi_events=None, gemini_ev
     payload_k = {"fetched_at": iso_et(seen), "sport": sport, "game": game, "game_date": game_date, "events": kalshi_events or []}
     payload_g = {"fetched_at": iso_et(seen), "sport": sport, "game": game, "game_date": game_date, "events": gemini_events or []}
     starts: dict = {}
+    listed = listed_start
+    if isinstance(listed, str):
+        listed = parse_time(listed)
+    consider_start(starts, sport, game, listed, 3)
     quotes = quotes_from_book(payload_k, sport, game, starts) + quotes_from_book(payload_g, sport, game, starts)
     quotes.extend(quotes_from_polymarket(polymarket_contracts, sport, game, seen, starts))
+    quotes.extend(quotes_from_novig(novig_contracts, sport, game, seen, starts))
     apply_starts(quotes, starts)
     if not quotes:
         return 0
-    tools = str(ROOT / "tools")
-    if tools not in sys.path:
-        sys.path.insert(0, tools)
-    import venue_pace
-    with _lock:
-        with venue_pace.FileLock(RAW / "price_memory.lock"):
-            return _remember_locked(quotes, seen, moves_out)
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for item in quotes:
+        grouped[(str(item.get("sport") or sport), str(item.get("game") or game))].append(item)
+    n = 0
+    for (row_sport, row_game), chunk in grouped.items():
+        n += _remember_game(row_sport, row_game, chunk, seen, moves_out)
+    return n
 
 
-def _remember_locked(quotes: list[dict], seen: datetime, moves_out: list | None) -> int:
-    last = load_last()
+def _last_entry(item: dict, row: dict) -> dict:
+    return {
+        "price": row["price"],
+        "seen_at": row["seen_at"],
+        "sport": item["sport"],
+        "game": item["game"],
+        "market_type": item["market_type"],
+        "side": item["side_label"],
+        "number": item["number"],
+        "venue": item["venue"],
+        "pay": item["pay"],
+        "game_start": row["game_start"],
+    }
+
+
+def _fresh_rows(quotes: list[dict], last: dict, seen: datetime) -> tuple[list[dict], dict]:
+    """Compare quotes to this game's last map. Does not touch disk."""
     fresh = []
+    updated = dict(last)
     for item in quotes:
         key = contract_key(item["sport"], item["game"], item["market_type"], item["side"], item["number"], item["venue"], item["pay"])
-        prev = last.get(key)
+        prev = updated.get(key)
         price = item["price"]
         if isinstance(prev, dict) and prev.get("price"):
             prev_seen = parse_time(prev.get("seen_at"))
@@ -921,47 +1490,71 @@ def _remember_locked(quotes: list[dict], seen: datetime, moves_out: list | None)
             "drastic": bool(move is not None and abs(move) >= DRASTIC),
         }
         fresh.append(row)
-        last[key] = {
-            "price": row["price"],
-            "seen_at": row["seen_at"],
-            "sport": item["sport"],
-            "game": item["game"],
-            "market_type": item["market_type"],
-            "side": item["side_label"],
-            "number": item["number"],
-            "venue": item["venue"],
-            "pay": item["pay"],
-            "game_start": row["game_start"],
-        }
-    if moves_out is not None:
-        moves_out.extend(fresh)
-    if not fresh:
-        return 0
-    RAW.mkdir(parents=True, exist_ok=True)
-    with HISTORY.open("a", encoding="utf-8") as handle:
-        for row in fresh:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    tmp = LAST.parent / "price_last.json.tmp"
-    tmp.write_text(json.dumps(last, indent=2), encoding="utf-8")
-    tmp.replace(LAST)
-    return len(fresh)
+        updated[key] = _last_entry(item, row)
+    return fresh, updated
+
+
+def _append_rows_locked(rows: list[dict]) -> None:
+    """Append jsonl/csv under a short per-sport lock. Not the leftover 15 MB file."""
+    if not rows:
+        return
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import venue_pace
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        groups[(_row_day(row), str(row.get("sport") or "unknown"))].append(row)
+    for (day, sport), chunk in groups.items():
+        with venue_pace.FileLock(sport_jsonl_lock_path(day, sport)):
+            _append_rows(chunk)
+
+
+def _remember_game(sport: str, game: str, quotes: list[dict], seen: datetime, moves_out: list | None) -> int:
+    """Lock one game, copy-then-write its last file. Do not rewrite price_last.json."""
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import venue_pace
+    path = game_last_path(sport, game)
+    seed = _read_json_dict(path)
+    if not seed:
+        seed = _legacy_last_for_game(sport, game)
+    lock_path = game_lock_path(sport, game)
+    t_wait = time.perf_counter()
+    with venue_pace.FileLock(lock_path):
+        wait_ms = (time.perf_counter() - t_wait) * 1000.0
+        t_hold = time.perf_counter()
+        wrote = 0
+        try:
+            last = _read_json_dict(path) or seed
+            fresh, updated = _fresh_rows(quotes, last, seen)
+            if moves_out is not None:
+                moves_out.extend(fresh)
+            if not fresh:
+                return 0
+            _append_rows_locked(fresh)
+            _atomic_write_json(path, updated)
+            wrote = len(fresh)
+            return wrote
+        finally:
+            _note_lock(sport, game, wait_ms, (time.perf_counter() - t_hold) * 1000.0)
+
+
+def _remember_locked(quotes: list[dict], seen: datetime, moves_out: list | None) -> int:
+    """Test/helper: same compare as a live write, grouped per game. Does not rewrite LAST."""
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for item in quotes:
+        grouped[(str(item.get("sport") or "unknown"), str(item.get("game") or "unknown"))].append(item)
+    n = 0
+    for (sport, game), chunk in grouped.items():
+        n += _remember_game(sport, game, chunk, seen, moves_out)
+    return n
 
 
 def read_history() -> list[dict]:
-    if not HISTORY.exists():
-        return []
-    rows = []
-    for line in HISTORY.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
+    """Load ticks into memory. Prefer iter_ticks(sport=..., game=..., day=...) for research."""
+    return list(iter_ticks())
 
 
 def rephase(rows: list[dict]) -> None:
@@ -1125,7 +1718,7 @@ h2 {{ font-size: 1.05rem; margin: 1.2rem 0 0.4rem; }}
 <p class="note">Up to 60 largest absolute moves. You pay Yes or No is the ask on that venue. Click column headers to sort.</p>
 {SWIPE_NOTE_HTML}
 {largest_table}
-<p class="note">History file raw/price_memory.jsonl. Latest price per line raw/price_last.json. Written {esc(datetime.now(ET).strftime("%Y-%m-%d %I:%M:%S %p"))} Eastern Time. The overnight watcher stopped at 8:00 AM ET on 2026-10-18 as scheduled.</p>
+<p class="note">Live ticks: raw/price_memory/YYYY-MM-DD/{{sport}}.jsonl. Archive (read-only): raw/price_memory.jsonl. Latest price per line raw/price_last.json. Written {esc(datetime.now(ET).strftime("%Y-%m-%d %I:%M:%S %p"))} Eastern Time. The overnight watcher stopped at 8:00 AM ET on 2026-10-18 as scheduled.</p>
 {SORTABLE_TABLE_SCRIPT}
 </body>
 </html>
@@ -1209,11 +1802,77 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
-def main() -> None:
-    rows, note = backfill()
-    write_page(rows, note)
-    stats = summarize(rows)
-    print(json.dumps({"history_rows": stats["rows"], "median_abs_before": stats["before"], "median_abs_during": stats["during"], "largest_move": stats["largest"], "start_note": note}, indent=2))
+def _cli_export_match(argv: list[str]) -> int:
+    game = ""
+    sport = None
+    day = None
+    dest = None
+    include_archive = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("--game", "-g") and i + 1 < len(argv):
+            game = argv[i + 1]
+            i += 2
+            continue
+        if arg in ("--sport", "-s") and i + 1 < len(argv):
+            sport = argv[i + 1]
+            i += 2
+            continue
+        if arg in ("--day", "-d") and i + 1 < len(argv):
+            day = argv[i + 1]
+            i += 2
+            continue
+        if arg in ("--out", "-o") and i + 1 < len(argv):
+            dest = Path(argv[i + 1])
+            i += 2
+            continue
+        if arg in ("--archive", "--include-archive"):
+            include_archive = True
+            i += 1
+            continue
+        if arg in ("--no-archive",):
+            include_archive = False
+            i += 1
+            continue
+        i += 1
+    if not game:
+        print("usage: python tools/price_memory.py export-match --game NAME [--sport tennis] [--day YYYY-MM-DD] [--out file.csv] [--archive|--no-archive]")
+        return 2
+    path = export_match_csv(game=game, sport=sport, day=day, dest=dest, include_archive=include_archive)
+    n = 0
+    if path.is_file():
+        with path.open("r", encoding="utf-8") as handle:
+            n = max(0, sum(1 for _ in handle) - 1)
+    print(json.dumps({"csv": str(path), "rows": n, "game": game, "sport": sport, "day": day}, indent=2))
+    return 0
+
+
+def _cli_files() -> int:
+    rows = list_tick_files()
+    print(json.dumps(rows, indent=2))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in ("export-match", "--export-match"):
+        raise SystemExit(_cli_export_match(args[1:]))
+    if args and args[0] in ("files", "--files"):
+        raise SystemExit(_cli_files())
+    if args and args[0] == "--backfill":
+        rows, note = backfill()
+        write_page(rows, note)
+        stats = summarize(rows)
+        print(json.dumps({"history_rows": stats["rows"], "median_abs_before": stats["before"], "median_abs_during": stats["during"], "largest_move": stats["largest"], "start_note": note}, indent=2))
+        return
+    print(
+        "Live ticks write to raw/price_memory/YYYY-MM-DD/{sport}.jsonl. "
+        "The old price_memory.jsonl is a read-only archive.\n"
+        "  python tools/price_memory.py export-match --game Wawrinka --sport tennis\n"
+        "  python tools/price_memory.py files\n"
+        "Refusing to backfill-overwrite. Pass --backfill only if you mean to rebuild shards from RAW snapshots."
+    )
 
 
 if __name__ == "__main__":

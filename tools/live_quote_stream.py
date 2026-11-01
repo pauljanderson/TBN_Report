@@ -18,12 +18,15 @@ from typing import Callable
 import websockets
 
 import kalshi_private
+import novig_live
 import polymarket_us_live
 
 GEMINI_WS = "wss://ws.gemini.com"
 KALSHI_WS = "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
 KALSHI_PATH = "/trade-api/ws/v2"
 ONE = Decimal("1")
+# HTTP only while that venue's socket is down. Change-ticks still write; same-price within 20s does not.
+HTTP_FALLBACK_SEC = 5
 
 
 def _d(value) -> Decimal | None:
@@ -159,6 +162,13 @@ def _poly_fp(contract: dict) -> tuple:
     )
 
 
+def _novig_fp(contract: dict) -> tuple:
+    return (
+        contract.get("yes_ask"), contract.get("ask_size"),
+        contract.get("no_ask"), contract.get("no_ask_size"),
+    )
+
+
 def _polymarket_heartbeat(raw: str) -> bool:
     try:
         payload = json.loads(raw)
@@ -184,16 +194,20 @@ def kalshi_headers() -> dict[str, str]:
 
 
 class GameStreams:
-    def __init__(self, gemini_events: list[dict], kalshi_events: list[dict], on_change: Callable[[str], None], log: Callable[[str], None], polymarket_contracts: list[dict] | None = None, on_quote: Callable[[str, bool], None] | None = None):
+    def __init__(self, gemini_events: list[dict], kalshi_events: list[dict], on_change: Callable[[str], None], log: Callable[[str], None], polymarket_contracts: list[dict] | None = None, on_quote: Callable[[str, bool], None] | None = None, novig_contracts: list[dict] | None = None):
         self.gemini = gemini_symbols(gemini_events)
         self.kalshi = kalshi_contracts(kalshi_events)
         self.polymarket = {str(row.get("slug")): row for row in (polymarket_contracts or []) if row.get("slug")}
+        self.novig = {str(row.get("market_id")): row for row in (novig_contracts or []) if row.get("market_id")}
+        self.novig_socket_up = False
+        self.polymarket_socket_up = False
         self.on_change = on_change
         self.on_quote = on_quote
         self.log = log
         self.gemini_messages = 0
         self.kalshi_messages = 0
         self.polymarket_messages = 0
+        self.novig_messages = 0
 
     def _emit(self, venue: str, changed: bool) -> None:
         """Count a price update only when the stored quote changed. Still report the message."""
@@ -210,6 +224,8 @@ class GameStreams:
             self.kalshi_messages += 1
         elif venue == "polymarket":
             self.polymarket_messages += 1
+        elif venue == "novig":
+            self.novig_messages += 1
         self.on_change(venue)
 
     async def gemini_forever(self, stop: Callable[[], bool]) -> None:
@@ -353,6 +369,7 @@ class GameStreams:
                     ping_interval=20,
                 ) as ws:
                     delay = 2
+                    self.polymarket_socket_up = True
                     for index in range(0, len(slugs), 100):
                         chunk = slugs[index:index + 100]
                         await ws.send(json.dumps(polymarket_us_live.subscribe_message(chunk, f"md-sub-{index // 100 + 1}")))
@@ -377,6 +394,8 @@ class GameStreams:
                 self.log(f"polymarket stream closed {type(exc).__name__} {status or ''}".strip())
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
+            finally:
+                self.polymarket_socket_up = False
 
     def _on_polymarket(self, raw: str) -> None:
         try:
@@ -400,17 +419,123 @@ class GameStreams:
         changed = bool(applied and _poly_fp(contract) != before)
         self._emit("polymarket", changed)
 
+    async def novig_forever(self, stop: Callable[[], bool]) -> None:
+        """Signed book socket. A missing key leaves this task idle. HTTP keeps quoting."""
+        market_ids = list(self.novig)
+        if not market_ids:
+            self.log("novig stream skipped; no matched market")
+            return
+        if not novig_live.keys_present():
+            self.log("novig stream skipped; no trading::read key. Signed HTTP quotes continue.")
+            return
+        delay = 2
+        nonce = 1
+        while not stop():
+            headers = novig_live.ws_headers()
+            if headers is None:
+                self.log("novig stream skipped; key file unreadable. Signed HTTP quotes continue.")
+                return
+            try:
+                async with websockets.connect(
+                    novig_live.WS_URL,
+                    additional_headers=headers,
+                    open_timeout=20,
+                    ping_interval=20,
+                ) as ws:
+                    delay = 2
+                    self.novig_socket_up = True
+                    await ws.send(json.dumps(novig_live.subscribe_message(market_ids, nonce)))
+                    nonce += 1
+                    self.log(f"novig stream open {len(market_ids)} contracts")
+                    async for raw in ws:
+                        if stop():
+                            return
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8", errors="replace")
+                        self._on_novig(raw)
+                        if any(row.get("book_gap") for row in self.novig.values()):
+                            await ws.send(json.dumps(novig_live.snapshot_message(market_ids, nonce)))
+                            nonce += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                self.log(f"novig stream closed {type(exc).__name__} {status or ''}".strip())
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30)
+            finally:
+                self.novig_socket_up = False
 
-def run_until_done(scan, spec: dict, gemini_events: list[dict], kalshi_events: list[dict], stop: Callable[[], bool], log: Callable[[str], None], on_change: Callable[[str], None], polymarket_contracts: list[dict] | None = None, on_quote: Callable[[str, bool], None] | None = None) -> None:
-    """Block until stop() is true. Reconnects each stream on its own. No orders."""
+    def _on_novig(self, raw: str) -> None:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        before = {market_id: _novig_fp(row) for market_id, row in self.novig.items()}
+        applied = novig_live.on_stream_message(self.novig, payload)
+        changed = applied and any(_novig_fp(row) != before.get(market_id) for market_id, row in self.novig.items())
+        if "snapshot" in payload or "delta" in payload:
+            self._emit("novig", bool(changed))
+
+    async def polymarket_http_forever(self, stop: Callable[[], bool]) -> None:
+        """Public books while the US socket is down. Stays quiet while the socket is up."""
+        if not self.polymarket:
+            return
+        while not stop():
+            await asyncio.sleep(HTTP_FALLBACK_SEC)
+            if stop():
+                return
+            if self.polymarket_socket_up:
+                continue
+            try:
+                before = {slug: _poly_fp(row) for slug, row in self.polymarket.items()}
+                await asyncio.to_thread(polymarket_us_live.seed_books, list(self.polymarket.values()))
+                changed = any(_poly_fp(row) != before.get(slug) for slug, row in self.polymarket.items())
+            except Exception as exc:
+                self.log(f"polymarket http {type(exc).__name__}")
+                continue
+            self._emit("polymarket", bool(changed))
+
+    async def novig_http_forever(self, stop: Callable[[], bool]) -> None:
+        """Signed books on the HTTP fallback. Stays quiet while the socket is up."""
+        if not self.novig:
+            self.log("novig http skipped; no matched market")
+            return
+        if not novig_live.keys_present():
+            self.log("novig websocket needs secrets/novig_api_key.txt and secrets/novig_api_secret.txt. Signed HTTP fallback.")
+        while not stop():
+            await asyncio.sleep(HTTP_FALLBACK_SEC)
+            if stop():
+                return
+            if self.novig_socket_up:
+                continue
+            try:
+                changed = await asyncio.to_thread(novig_live.refresh_books, list(self.novig.values()))
+            except Exception as exc:
+                self.log(f"novig http {type(exc).__name__}")
+                continue
+            self._emit("novig", bool(changed))
+
+
+def run_until_done(scan, spec: dict, gemini_events: list[dict], kalshi_events: list[dict], stop: Callable[[], bool], log: Callable[[str], None], on_change: Callable[[str], None], polymarket_contracts: list[dict] | None = None, on_quote: Callable[[str, bool], None] | None = None, novig_contracts: list[dict] | None = None) -> None:
+    """Block until stop() is true. Reconnects each stream on its own. No orders.
+
+    Novig uses its signed socket when a key file is present. If that socket is
+    down, Novig alone falls back to signed HTTP. The other venues stay on their sockets.
+    """
     logging.getLogger("websockets").setLevel(logging.WARNING)
-    streams = GameStreams(gemini_events, kalshi_events, on_change, log, polymarket_contracts, on_quote)
+    streams = GameStreams(gemini_events, kalshi_events, on_change, log, polymarket_contracts, on_quote, novig_contracts)
 
     async def _main() -> None:
         await asyncio.gather(
             streams.gemini_forever(stop),
             streams.kalshi_forever(stop),
             streams.polymarket_forever(stop),
+            streams.polymarket_http_forever(stop),
+            streams.novig_forever(stop),
+            streams.novig_http_forever(stop),
         )
 
     asyncio.run(_main())

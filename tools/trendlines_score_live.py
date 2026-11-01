@@ -23,7 +23,14 @@ _REPO = Path(__file__).resolve().parent.parent
 _TOOLS = _REPO / "tools"
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
+from stock_analysis.live_style_sizing import (  # noqa: E402
+    load_account_state,
+    risk_dollar,
+    size_trade,
+)
 from trendline_slopes_paultwenty import line_price_at, slope_metrics  # noqa: E402
 from trendlines_ensure_charts import ensure_charts, ohlc_csv  # noqa: E402
 from trendlines_opens_universe import (  # noqa: E402
@@ -46,6 +53,8 @@ ORIGINAL_REQUEST = (
     "bottom line."
 )
 
+SHARES_REQUEST = "this page should include # shares targeted for the buys"
+
 LAYMAN = (
     "1) If you already own a name, this same daily page should say when the "
     "trendline picture is a sell (broken support, falling weekly line) — not "
@@ -56,15 +65,24 @@ LAYMAN = (
     "bottom line? "
     "3) DailyRun still auto-builds missing charts and scores opens, helds, "
     "watchlists, and scanners. The entry filter is a research overlay only — "
-    "not a live buy gate."
+    "not a live buy gate. "
+    "4) On Buy today, the share count is the live-style size at the close, "
+    "with risk measured down to the weekly support line, and the same caps "
+    "as the open buy page. Whole shares, rounded down."
 )
 
 SORT_CSS = """
-th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+.table-wrap { overflow: auto; max-height: calc(100vh - 8rem); width: 100%; }
+table.sortable { width: 100%; border-collapse: collapse; }
+th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; touch-action: manipulation; position: sticky; top: 0; background: #f8fafc; z-index: 2; }
 th.sortable-th:hover { background: #e2e8f0; }
 th.sortable-th .sort-ind::after { content: " \\2195"; opacity: .35; font-size: .85em; }
 th.sortable-th.sort-asc .sort-ind::after { content: " \\2191"; opacity: .9; }
 th.sortable-th.sort-desc .sort-ind::after { content: " \\2193"; opacity: .9; }
+th.sortable-th[data-sort="num"], td.num { text-align: right; }
+table.sortable td:first-child, table.sortable th:first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
+table.sortable th:first-child { z-index: 3; background: #f8fafc; }
+tbody tr:hover td { background: #f1f5f9; }
 """
 
 SORT_JS = r"""
@@ -427,6 +445,47 @@ def _fmt(v: Any, nd: int = 2) -> str:
     return f"{x:.{nd}f}"
 
 
+def _finite(v: Any) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def buy_today_shares(sym: str, close: Any, w_line: Any, acct) -> tuple[int, str]:
+    """Whole shares at the close, risk to weekly support, via size_trade.
+
+    Same call shape as open_buy_sell_today._shares (system RS, floor). When
+    the close is not above the weekly line, size_trade's skip_reason is the note.
+    """
+    entry = _finite(close)
+    stop = _finite(w_line)
+    sized = size_trade(
+        symbol=sym,
+        system="RS",
+        entry=entry if entry is not None else 0.0,
+        stop=stop,
+        bom_equity=acct.bom_equity,
+        current_equity=acct.current_equity,
+        asof=date.today(),
+    )
+    if not sized.sized:
+        return 0, sized.skip_reason or "not sized"
+    n = int(math.floor(sized.shares))
+    px = entry or 0.0
+    return n, f"{sized.binding_lid}, about ${n * px:,.0f}"
+
+
+def attach_buy_shares(rows: list[dict[str, Any]], acct) -> None:
+    for r in rows:
+        if r.get("verdict") != "BUY TODAY":
+            continue
+        n, note = buy_today_shares(r.get("symbol") or "", r.get("close"), r.get("w_line"), acct)
+        r["shares"] = n
+        r["size_note"] = note
+
+
 def _sortable_th(label: str, sort_type: str) -> str:
     return (
         f'<th class="sortable-th" data-sort="{html_mod.escape(sort_type)}" '
@@ -447,48 +506,75 @@ def _verdict_class(v: str) -> str:
     }.get(v, "")
 
 
-def table_for(rows: list[dict[str, Any]], caption: str, chart_href: str) -> str:
+def _td(text: str, *, num: bool = False) -> str:
+    cls = ' class="num"' if num else ""
+    return f"<td{cls}>{text}</td>"
+
+
+def table_for(
+    rows: list[dict[str, Any]],
+    caption: str,
+    chart_href: str,
+    *,
+    with_shares: bool = False,
+) -> str:
     heads = [
         ("Symbol", "text"),
         ("System(s)", "text"),
         ("List type", "text"),
         ("Verdict", "text"),
         ("Close", "num"),
-        ("Px date", "date"),
-        ("M sup", "text"),
-        ("W sup", "text"),
-        ("D sup", "text"),
-        ("W dist %", "num"),
-        ("W res %", "num"),
-        ("Trendline note", "text"),
-        ("Chart", "text"),
     ]
+    if with_shares:
+        heads.extend([("Shares", "num"), ("Size", "text")])
+    heads.extend(
+        [
+            ("Px date", "date"),
+            ("M sup", "text"),
+            ("W sup", "text"),
+            ("D sup", "text"),
+            ("W dist %", "num"),
+            ("W res %", "num"),
+            ("Trendline note", "text"),
+            ("Chart", "text"),
+        ]
+    )
     thead = "".join(_sortable_th(l, t) for l, t in heads)
     body = []
     for r in rows:
         href = f'{html_mod.escape(chart_href)}#{html_mod.escape(r["symbol"])}'
         chart = f'<a href="{href}">chart</a>' if r.get("has_chart") else "—"
+        share_cells = ""
+        if with_shares:
+            n = r.get("shares")
+            share_txt = f"{int(n):,}" if isinstance(n, int) else "—"
+            share_cells = (
+                _td(share_txt, num=True)
+                + _td(html_mod.escape(r.get("size_note") or "—"))
+            )
         body.append(
             "<tr>"
             f'<td><a href="{href}">{html_mod.escape(r["symbol"])}</a></td>'
             f'<td>{html_mod.escape(r.get("systems") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("list_types") or "—")}</td>'
             f'<td class="{_verdict_class(r["verdict"])}">{html_mod.escape(r["verdict"])}</td>'
-            f'<td>{_fmt(r.get("close"))}</td>'
-            f'<td>{html_mod.escape(r.get("px_date") or "—")}</td>'
-            f'<td>{html_mod.escape(r.get("m_sup") or "—")}</td>'
-            f'<td>{html_mod.escape(r.get("w_sup") or "—")}</td>'
-            f'<td>{html_mod.escape(r.get("d_sup") or "—")}</td>'
-            f'<td>{_fmt(r.get("w_dist"))}</td>'
-            f'<td>{_fmt(r.get("w_res_dist"))}</td>'
-            f'<td>{html_mod.escape(r.get("note") or "—")}</td>'
-            f"<td>{chart}</td>"
-            "</tr>"
+            + _td(_fmt(r.get("close")), num=True)
+            + share_cells
+            + f'<td>{html_mod.escape(r.get("px_date") or "—")}</td>'
+            + f'<td>{html_mod.escape(r.get("m_sup") or "—")}</td>'
+            + f'<td>{html_mod.escape(r.get("w_sup") or "—")}</td>'
+            + f'<td>{html_mod.escape(r.get("d_sup") or "—")}</td>'
+            + _td(_fmt(r.get("w_dist")), num=True)
+            + _td(_fmt(r.get("w_res_dist")), num=True)
+            + f'<td>{html_mod.escape(r.get("note") or "—")}</td>'
+            + f"<td>{chart}</td>"
+            + "</tr>"
         )
+    swipe = " Swipe sideways to see more columns." if with_shares else ""
     return (
-        f'<p class="meta">{html_mod.escape(caption)} Click column headers to sort.</p>'
-        f'<table class="sortable"><thead><tr>{thead}</tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table>'
+        f'<p class="meta">{html_mod.escape(caption)} Click column headers to sort.{swipe}</p>'
+        f'<div class="table-wrap"><table class="sortable"><thead><tr>{thead}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
     )
 
 
@@ -519,20 +605,20 @@ def holdings_table_for(rows: list[dict[str, Any]], caption: str, chart_href: str
             f'<td>{html_mod.escape(r.get("systems") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("list_types") or "—")}</td>'
             f'<td>{html_mod.escape(r.get("purchase_date") or "—")}</td>'
-            f'<td>{_fmt(r.get("entry_price"))}</td>'
-            f'<td class="{_verdict_class(hv)}">{html_mod.escape(hv)}</td>'
-            f'<td>{_fmt(r.get("close"))}</td>'
-            f'<td>{html_mod.escape(r.get("px_date") or "—")}</td>'
-            f'<td>{html_mod.escape(r.get("w_sup") or "—")}</td>'
-            f'<td>{_fmt(r.get("w_dist"))}</td>'
-            f'<td>{html_mod.escape(r.get("note") or "—")}</td>'
-            f"<td>{chart}</td>"
-            "</tr>"
+            + _td(_fmt(r.get("entry_price")), num=True)
+            + f'<td class="{_verdict_class(hv)}">{html_mod.escape(hv)}</td>'
+            + _td(_fmt(r.get("close")), num=True)
+            + f'<td>{html_mod.escape(r.get("px_date") or "—")}</td>'
+            + f'<td>{html_mod.escape(r.get("w_sup") or "—")}</td>'
+            + _td(_fmt(r.get("w_dist")), num=True)
+            + f'<td>{html_mod.escape(r.get("note") or "—")}</td>'
+            + f"<td>{chart}</td>"
+            + "</tr>"
         )
     return (
         f'<p class="meta">{html_mod.escape(caption)} Click column headers to sort.</p>'
-        f'<table class="sortable"><thead><tr>{thead}</tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table>'
+        f'<div class="table-wrap"><table class="sortable"><thead><tr>{thead}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
     )
 
 
@@ -599,6 +685,8 @@ def write_score_html(
         "NO CHART": int(counts["NO CHART"]),
         "NO DATA": int(counts["NO DATA"]),
     }
+    acct = load_account_state()
+    attach_buy_shares(rows, acct)
     buy_rows = [r for r in rows if r["verdict"] == "BUY TODAY"]
     wait_rows = [r for r in rows if r["verdict"] == "WAIT"]
     skip_rows = [r for r in rows if r["verdict"] == "SKIP"]
@@ -622,6 +710,9 @@ def write_score_html(
             "frozen entry. Do not adopt the filter from this page.</p></div>"
         )
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    risk = risk_dollar(acct.bom_equity)
+    sized_n = sum(1 for r in buy_rows if int(r.get("shares") or 0) > 0)
+    zero_n = len(buy_rows) - sized_n
     built = (ensure_info or {}).get("built") or []
     no_ohlc = (ensure_info or {}).get("no_ohlc") or []
     failed = (ensure_info or {}).get("failed") or []
@@ -666,6 +757,7 @@ code {{ font-size: .88em; }}
 <div class="callout ask">
 <h2 style="margin-top:0;border:0">What you asked</h2>
 <p>“{html_mod.escape(ORIGINAL_REQUEST)}”</p>
+<p>“{html_mod.escape(SHARES_REQUEST)}”</p>
 </div>
 
 <div class="callout plain">
@@ -686,6 +778,7 @@ code {{ font-size: .88em; }}
 <li><strong>Universe:</strong> gettarget helds/opens ∪ live DailyRun Open ∪ Watchlist ∪ Scanner (wired registry). Relative Strength Index (RSI) uses the house pin, not <code>RSIN_PaulScore5_IS</code>.</li>
 <li><strong>Missing chart:</strong> generate monthly/weekly/daily (M/W/D) segments + PNG, then score. Do not leave a silent skip.</li>
 <li><strong>BUY TODAY</strong> only when weekly support is UP and close is within the frozen <strong>{PROX_PCT:g}%</strong> band from <code>trendline_slopes_buylow_ab.py</code> hypothesis B.</li>
+<li><strong>Shares</strong> (Buy today table only): live-style size at the close, risk to the weekly support line, same caps as the open buy page. Risk ${risk:,.0f} (1% of the ${acct.bom_equity:,.0f} account figure dated {html_mod.escape(str(acct.asof))}, with the sizer’s dollar lid), also capped by 1% of 20-day volume and 17.5% of equity. Whole shares, rounded down. This pass: {sized_n} name(s) with a share count, {zero_n} at zero (the Size column is the sizer’s skip reason). Research overlay only — not a DailyRun order.</li>
 <li><strong>SELL holdings</strong> (conservative inverse of buy-low B, already used as SKIP on the buy overlay): weekly support DOWN and/or close more than {PROX_PCT:g}% under weekly support. Near resistance without a broken line is HOLD, not SELL. Not a DailyRun exit freeze.</li>
 </ul>
 <p class="caveat">Acronyms on first use: Break and ReTest (BRT); Volume Zone (VZ); Relative Strength Index (RSI); Rocket Launcher (RL); Pivot Break and Retest (WPBR); Year High (YH); StockBee (SB); Magic Touch (MTS); Relative Strength vs SPY (RS).</p>
@@ -697,7 +790,7 @@ code {{ font-size: .88em; }}
 {holdings_table_for(hold_none, f"{len(hold_none)} holding(s) still unscoreable after ensure-charts.", chart_href)}
 
 <h2>Buy today</h2>
-{table_for(buy_rows, f"{len(buy_rows)} name(s) on a live list and on/near rising weekly support.", chart_href)}
+{table_for(buy_rows, f"{len(buy_rows)} name(s) on a live list and on/near rising weekly support. Shares are the live-style size at the close, stopped at the weekly support line.", chart_href, with_shares=True)}
 
 <h2>Watch / wait</h2>
 {table_for(wait_rows, f"{len(wait_rows)} name(s) on a list but the trendline is messy, extended, or not yet at the line.", chart_href)}
@@ -758,6 +851,17 @@ def run_daily_score(
             for v in ("BUY TODAY", "WAIT", "SKIP", "NO CHART", "NO DATA")
         },
         "buy_today": [r["symbol"] for r in rows if r["verdict"] == "BUY TODAY"],
+        "buy_shares": [
+            {
+                "symbol": r["symbol"],
+                "shares": r.get("shares"),
+                "close": r.get("close"),
+                "w_line": r.get("w_line"),
+                "size_note": r.get("size_note"),
+            }
+            for r in rows
+            if r["verdict"] == "BUY TODAY"
+        ],
         "holdings_sell": [
             r["symbol"]
             for r in rows

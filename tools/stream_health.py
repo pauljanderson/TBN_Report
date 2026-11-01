@@ -27,10 +27,8 @@ if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
 
 import venue_pace  # noqa: E402
+from prediction_paths import DRIVE_STAMP as STAMP, RAW_DIR as RAW  # noqa: E402
 from report_page_extras import SORTABLE_TABLE_SCRIPT, SORTABLE_TH_CSS, SWIPE_NOTE_HTML  # noqa: E402
-
-STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
-RAW = STAMP / "raw"
 HEALTH_DIR = RAW / "live_health"
 CHECKS = RAW / "live_checks.jsonl"
 CHECKS_PREV = RAW / "live_checks.prev.jsonl"
@@ -40,7 +38,7 @@ ONE_LEG_PAGE = STAMP / "one_leg_note.html"
 STATUS = RAW / "live_pollers_status.json"
 SUPERVISOR_PID = RAW / "live_supervisor.pid"
 ET = ZoneInfo("America/New_York")
-VENUES = ("gemini", "kalshi", "polymarket")
+VENUES = ("gemini", "kalshi", "polymarket", "novig")
 QUIET_SEC = 120
 HEARTBEAT_SEC = 15
 STATE_FLUSH_SEC = 15
@@ -184,6 +182,8 @@ def is_buyable(cand: dict, scan) -> bool:
     if not cand.get("yes_price") or not cand.get("no_price"):
         return False
     if not cand.get("net_under_1"):
+        return False
+    if "novig" in (str(cand.get("yes_venue") or "").lower(), str(cand.get("no_venue") or "").lower()):
         return False
     reject = scan.gemini_no_rejection(cand)
     if reject:
@@ -609,6 +609,8 @@ def _load_health() -> list[dict]:
 def _venue_label(name: str) -> str:
     if name == "polymarket":
         return "Polymarket US"
+    if name == "novig":
+        return "Novig"
     return name[:1].upper() + name[1:]
 
 
@@ -689,10 +691,33 @@ ONE_LEG_ASKED = (
     "Add a one-leg message, written to the supervisor log and attempted once on the phone, "
     "and keep a note on the page for when the phone channel times out."
 )
+ONE_LEG_ASKED_LATEST = (
+    "send me a detailed analysis of the trade we just made that was one-leg only. "
+    "we bought mateus cardoso alves to win over jose pereria. for 0.24. "
+    "this page says file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/"
+    "prediction_market_arb_exhaustive_20261017/one_leg_note.html http 404 insufficient_shard_balance: "
+    "insufficient shard balance do we know what that error is exactly, yet? "
+    "Also, one-leg note page SHOULD tell us what we tried on the other side. "
+    "in this example, we should have tried Kalshi at ?? and then when it failed we should have tried "
+    "a higher price up to where it would no longer be a profitable trade. "
+    "this trade SHOULD also appear on this page file:///C:/Users/songg/Downloads/stockresearch/drive/"
+    "paul_experiments/prediction_market_arb_exhaustive_20261017/orders.html "
+    "give me a detail of what we tried and when we gave up and what you plan to do about it?"
+)
 ONE_LEG_PLAIN = (
     "A lock is supposed to buy both sides of the same bet so the $1 payout covers the cost. "
-    "If only one side fills, that cash is at risk and the other side is not bought again. "
-    "This note lists those one-leg fills. It is separate from the alert that a pair is under $1. "
+    "Both legs are now sent at the same time at the quoted limits. "
+    "If exactly one side fills, we send one recovery on the missed venue at the highest price that still keeps "
+    "the pair profitable after the actual fill (websocket, then book, then midway, never above that max). "
+    "If that recovery also misses, new pairs stop, and a 20-second all-venues watch may still buy the "
+    "opposite bet — including on the origin venue — if it falls to a profitable price. Orders turn back on only after that second fill. "
+    "This note lists the fill, every price tried on the other side, "
+    "the HTTP result, and that max profitable price. "
+    "There is no Polymarket-first preference anymore. "
+    "Repeating the same price after HTTP 404 insufficient_shard_balance is only a Kalshi shard retry "
+    "(up to two more posts, two seconds apart on that Kalshi thread alone). It is not the normal leg delay, "
+    "and it does not block the parallel partner send. "
+    "That 404 means Kalshi has no account on the shard for that sport. Tennis is shard 3. "
     "The phone attempt can time out. This page is the copy you can still open."
 )
 
@@ -716,6 +741,239 @@ def load_one_leg_alerts() -> list[dict]:
         if isinstance(item, dict):
             rows.append(item)
     return rows
+
+
+def _io_by_instrument() -> dict[tuple, list[dict]]:
+    path = RAW / "order_io.jsonl"
+    found: dict[tuple, list[dict]] = {}
+    if not path.exists():
+        return found
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return found
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or str(row.get("kind") or "") != "order":
+            continue
+        request = row.get("request") if isinstance(row.get("request"), dict) else {}
+        instrument = str(request.get("marketSlug") or request.get("ticker") or request.get("symbol") or "")
+        venue = str(row.get("venue") or "")
+        if not instrument:
+            continue
+        found.setdefault((venue, instrument), []).append(row)
+    return found
+
+
+def _error_fields(row: dict) -> tuple[str, str, str]:
+    response = row.get("response") if isinstance(row.get("response"), dict) else {}
+    error = response.get("error") if isinstance(response.get("error"), dict) else {}
+    return (
+        str(error.get("code") or ""),
+        str(error.get("message") or ""),
+        str(error.get("details") or ""),
+    )
+
+
+def _poly_fill_bits(row: dict | None) -> dict:
+    blank = {"outcome": "", "intent": "", "avg": "", "fee": "", "state": ""}
+    if not isinstance(row, dict):
+        return blank
+    response = row.get("response")
+
+    def walk(value) -> None:
+        if isinstance(value, dict):
+            state = str(value.get("state") or "")
+            if "FILLED" in state:
+                blank["state"] = state
+            intent = str(value.get("intent") or "")
+            if "LONG" in intent or "SHORT" in intent:
+                blank["intent"] = intent
+            meta = value.get("marketMetadata")
+            if isinstance(meta, dict) and meta.get("outcome"):
+                blank["outcome"] = str(meta.get("outcome"))
+            avg = value.get("avgPx")
+            if isinstance(avg, dict) and str(avg.get("value") or "") not in {"", "0", "0.0", "0.00", "0.000", "0.0000"}:
+                blank["avg"] = str(avg.get("value"))
+            fee = value.get("commissionNotionalTotalCollected")
+            if isinstance(fee, dict) and "FILLED" in state:
+                blank["fee"] = str(fee.get("value") or "0")
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(response)
+    return blank
+
+
+def _one_leg_facts() -> list[dict]:
+    """One-leg pairs from orders.jsonl, with each send on the other side."""
+    import order_ledger
+
+    orders = order_ledger._load_jsonl(order_ledger.ORDERS)
+    io_rows = _io_by_instrument()
+    times = order_ledger._send_times()
+    used: dict[tuple, int] = {}
+    io_cursor: dict[tuple, int] = {}
+    facts = []
+    try:
+        import live_lock_orders
+    except Exception:
+        live_lock_orders = None
+    for context, events in order_ledger._attempts(orders):
+        if not any(item.get("event") == "one_leg" for item in events):
+            continue
+        sends = [item for item in events if item.get("event") == "sent"]
+        terminal = next(item for item in reversed(events) if item.get("event") == "one_leg")
+        filled = next((item for item in events if item.get("event") == "filled"), None)
+        first = next((item for item in sends if str(item.get("venue") or "") == str(terminal.get("venue") or "")), None)
+        second_venue = str(terminal.get("second_venue") or "")
+        second = [item for item in sends if str(item.get("venue") or "") == second_venue]
+        attempts = []
+        for item in sends:
+            venue = str(item.get("venue") or "")
+            instrument = str(item.get("instrument") or "")
+            side = str(item.get("side") or "")
+            limit = str(item.get("limit_price") or "")
+            http = str(item.get("http_status") or "")
+            key = (venue, instrument, side, limit, http)
+            slots = times.get(key) or []
+            cursor = used.get(key, 0)
+            when = slots[cursor] if cursor < len(slots) else ""
+            used[key] = cursor + 1
+            io_key = (venue, instrument)
+            io_list = io_rows.get(io_key) or []
+            attempt_no = int(item.get("attempt") or 0)
+            io_match = None
+            for candidate in io_list:
+                try:
+                    same = int(candidate.get("attempt") or 0) == attempt_no and attempt_no
+                except (TypeError, ValueError):
+                    same = False
+                if same:
+                    io_match = candidate
+                    break
+            if io_match is None and io_list:
+                cursor = io_cursor.get(io_key, 0)
+                if cursor < len(io_list):
+                    io_match = io_list[cursor]
+                    io_cursor[io_key] = cursor + 1
+            request = (io_match or {}).get("request") if isinstance((io_match or {}).get("request"), dict) else {}
+            if "SHORT" in str(request.get("intent") or ""):
+                side = "no"
+            elif "LONG" in str(request.get("intent") or ""):
+                side = "yes"
+            code, message, details = _error_fields(io_match or {})
+            if not when and isinstance(io_match, dict):
+                when = str(io_match.get("timestamp") or "")
+            attempts.append({
+                "when": when,
+                "venue": venue,
+                "instrument": instrument,
+                "side": side,
+                "limit": limit,
+                "size": str(item.get("size") or "1"),
+                "http": http,
+                "step": str(item.get("step") or ""),
+                "attempt": str(item.get("attempt") or ""),
+                "code": code,
+                "message": message,
+                "details": details,
+                "order_id": str(item.get("order_id") or ""),
+            })
+        poly_io = None
+        if first:
+            poly_list = list(io_rows.get((str(first.get("venue") or ""), str(first.get("instrument") or ""))) or [])
+            poly_io = poly_list[0] if poly_list else None
+        poly_bits = _poly_fill_bits(poly_io)
+        fee = poly_bits.get("fee") or "0"
+        other_price = str((first or {}).get("limit_price") or (filled or {}).get("price") or "")
+        cap = ""
+        if live_lock_orders is not None and second_venue and other_price and fee != "":
+            try:
+                amount = live_lock_orders.max_leg_price(second_venue, Decimal(other_price), Decimal(fee))
+            except Exception:
+                amount = None
+            if amount is not None:
+                cap = format(amount, "f")
+        second_limits = [row["limit"] for row in attempts if row["venue"] == second_venue]
+        unique = set(second_limits)
+        if not second_limits:
+            walk = "not sent"
+        elif len(unique) <= 1:
+            walk = "same price repeated"
+        else:
+            walk = "more than one price"
+        facts.append({
+            "game": str(context.get("game") or ""),
+            "market": " ".join(
+                part for part in (str(context.get("market_type") or ""), str(context.get("side") or "")) if part
+            ),
+            "filled_venue": str((filled or terminal).get("venue") or ""),
+            "contract": str((filled or terminal).get("instrument") or ""),
+            "side": (
+            "no" if "SHORT" in str(poly_bits.get("intent") or "")
+            else "yes" if "LONG" in str(poly_bits.get("intent") or "")
+            else str((filled or first or terminal).get("side") or "")
+        ),
+            "price": str((filled or {}).get("price") or ""),
+            "limit": other_price,
+            "fee": fee,
+            "order_id": str((first or {}).get("order_id") or ""),
+            "outcome_name": poly_bits.get("outcome") or "",
+            "intent": poly_bits.get("intent") or "",
+            "other_venue": second_venue,
+            "other_contract": str((second[0].get("instrument") if second else "") or ""),
+            "other_side": str((second[0].get("side") if second else "") or ""),
+            "cap": cap,
+            "walk": walk,
+            "attempts": attempts,
+            "note": str(terminal.get("note") or ""),
+        })
+    return facts
+
+
+def _walk_sentence(fact: dict) -> str:
+    other = [row for row in fact["attempts"] if row["venue"] == fact["other_venue"]]
+    if not other:
+        return "The other side has no sent order in the ledger."
+    prices = ", ".join(row["limit"] for row in other)
+    http = ", ".join(row["http"] for row in other)
+    if fact["walk"] == "same price repeated":
+        move = (
+            f"All {len(other)} {fact['other_venue']} sends used the same limit ({prices}). "
+            "The price was not walked up. A higher price was not sent."
+        )
+    else:
+        move = f"{fact['other_venue']} limits sent: {prices}."
+    cap = fact.get("cap") or "not computed"
+    unit = (
+        "That cap is the highest No cost (one minus the Kalshi ask), not the ask itself. "
+        if fact.get("other_side") == "no" and fact.get("other_venue") == "kalshi"
+        else "That cap is the highest price on the unfilled leg. "
+    )
+    try:
+        import live_lock_orders
+
+        send_cap = live_lock_orders.send_line()
+    except Exception:
+        send_cap = "NET_MAX"
+    return (
+        f"{move} HTTP {http}. "
+        f"Profit cap on the {fact['other_venue']} leg, using the filled leg's sent price {fact.get('limit')} "
+        f"and fee {fact.get('fee')}, is {cap}. "
+        f"{unit}"
+        f"The two prices must stay under $1 and the net at or under ${send_cap}. "
+        "Kalshi is charged $0 in that check until a fill returns a fee."
+    )
 
 
 def _one_leg_table(rows: list[dict]) -> str:
@@ -761,19 +1019,166 @@ def _one_leg_table(rows: list[dict]) -> str:
     )
 
 
+def _attempt_table(facts: list[dict]) -> str:
+    headers = [
+        ("Game", "text"),
+        ("Attempt", "num"),
+        ("Time", "date"),
+        ("Venue", "text"),
+        ("Instrument", "text"),
+        ("Side", "text"),
+        ("Limit sent", "num"),
+        ("Size", "num"),
+        ("HTTP", "num"),
+        ("Step", "text"),
+        ("Error code", "text"),
+        ("Error message", "text"),
+        ("Error details", "text"),
+        ("Order id", "text"),
+    ]
+    body = []
+    for fact in facts:
+        for row in fact["attempts"]:
+            cells = [
+                fact.get("game") or "",
+                row.get("attempt") or "",
+                row.get("when") or "",
+                row.get("venue") or "",
+                row.get("instrument") or "",
+                row.get("side") or "",
+                row.get("limit") or "",
+                row.get("size") or "",
+                row.get("http") or "",
+                row.get("step") or "",
+                row.get("code") or "",
+                row.get("message") or "",
+                row.get("details") or "",
+                row.get("order_id") or "",
+            ]
+            body.append("<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in cells) + "</tr>")
+    return (
+        '<div class="table-wrap"><table class="sortable"><thead><tr>'
+        + "".join(_th(label, kind) for label, kind in headers)
+        + "</tr></thead><tbody>"
+        + ("".join(body) if body else "<tr><td>No sends are on the ledger.</td></tr>")
+        + "</tbody></table></div>"
+    )
+
+
+def _summary_from_facts(facts: list[dict]) -> str:
+    headers = [
+        ("Game", "text"),
+        ("Filled venue", "text"),
+        ("Contract", "text"),
+        ("Book side", "text"),
+        ("Outcome", "text"),
+        ("Fill price", "num"),
+        ("Fee", "num"),
+        ("Order id", "text"),
+        ("Other venue", "text"),
+        ("Other contract", "text"),
+        ("Other side", "text"),
+        ("Other prices sent", "text"),
+        ("Profit cap", "num"),
+        ("Walked up?", "text"),
+    ]
+    body = []
+    for fact in facts:
+        prices = ", ".join(
+            row["limit"] for row in fact["attempts"] if row["venue"] == fact["other_venue"]
+        )
+        cells = [
+            fact.get("game") or "",
+            fact.get("filled_venue") or "",
+            fact.get("contract") or "",
+            fact.get("side") or "",
+            fact.get("outcome_name") or "",
+            fact.get("price") or "",
+            fact.get("fee") or "",
+            fact.get("order_id") or "",
+            fact.get("other_venue") or "",
+            fact.get("other_contract") or "",
+            fact.get("other_side") or "",
+            prices,
+            fact.get("cap") or "",
+            fact.get("walk") or "",
+        ]
+        body.append("<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in cells) + "</tr>")
+    return (
+        '<div class="table-wrap"><table class="sortable"><thead><tr>'
+        + "".join(_th(label, kind) for label, kind in headers)
+        + "</tr></thead><tbody>"
+        + ("".join(body) if body else "<tr><td>No one-leg fill has been recorded.</td></tr>")
+        + "</tbody></table></div>"
+    )
+
+
+def _page_shell(title: str, body: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_esc(title)}</title>
+<style>
+body {{ font-family: "Segoe UI", system-ui, sans-serif; margin: 1.2rem; color: #1e293b; background: #fff; }}
+h1 {{ font-size: 1.45rem; margin-bottom: 0.3rem; }}
+h2 {{ font-size: 1.05rem; margin: 1.2rem 0 0.4rem; }}
+.callout {{ background: #f8fafc; border: 1px solid #d8dee9; padding: 12px 14px; margin: 0 0 12px; }}
+.callout h2 {{ margin: 0 0 6px; }}
+.note {{ color: #475569; font-size: 14px; }}
+{SORTABLE_TH_CSS}
+</style>
+</head>
+<body>
+{body}
+{SORTABLE_TABLE_SCRIPT}
+</body>
+</html>
+"""
+
+
+def _write_html(path: Path, title: str, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(_page_shell(title, body), encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
 def write_one_leg_note(rows: list[dict] | None = None) -> Path:
     """Small page that is not wiped by the 30-second stream-health rewrite."""
-    rows = load_one_leg_alerts() if rows is None else rows
-    table = _one_leg_table(rows)
+    facts = _one_leg_facts()
+    narratives = []
+    for fact in facts:
+        who = fact.get("outcome_name") or fact.get("game")
+        narratives.append(
+            f"<h2>{_esc(fact.get('game') or '')}</h2>"
+            f"<p>{_esc(who)} on { _esc(fact.get('filled_venue') or '') } "
+            f"{_esc(fact.get('side') or '')} filled at {_esc(fact.get('price') or '')} "
+            f"(order {_esc(fact.get('order_id') or '')}, fee {_esc(fact.get('fee') or '')}). "
+            f"{_esc(_walk_sentence(fact))}</p>"
+        )
+    fallback = ""
+    if not facts:
+        fallback = _one_leg_table(load_one_leg_alerts() if rows is None else rows)
     body = f"""
 <h1>One leg filled</h1>
-<p class="note">America/New_York. Research only. Not gold. Not DailyRun. This page does not place or cancel orders. Click column headers to sort.</p>
-<div class="callout"><h2>What you asked</h2><p>{_esc(ONE_LEG_ASKED)}</p></div>
+<p class="note">America/New_York. Research only. Not gold. Not DailyRun. This page does not place or cancel orders. Click column headers to sort. Orders are still stopped.</p>
+<div class="callout"><h2>What you asked</h2><p>{_esc(ONE_LEG_ASKED)}</p><p>{_esc(ONE_LEG_ASKED_LATEST)}</p></div>
 <div class="callout"><h2>In plain English</h2><p>{_esc(ONE_LEG_PLAIN)}</p></div>
+<p class="note">The Alves vs Pereira writeup is <a href="alves_pereira_one_leg_20261019.html">alves_pereira_one_leg_20261019.html</a>. The sent orders are on <a href="orders.html">orders.html</a>.</p>
 <p class="note">Swipe sideways to see more columns.</p>
 {SWIPE_NOTE_HTML}
-{table}
+{''.join(narratives)}
+<h2>One-leg fills</h2>
+{_summary_from_facts(facts)}
+<h2>Every price that was sent</h2>
+<p class="note">One row per order the ledger recorded. A Kalshi HTTP 404 with code insufficient_shard_balance and details starting with "Exchange user not found" means there is no Kalshi user on that sport's shard. The same limit was sent again. That is not a higher price.</p>
+{_attempt_table(facts)}
+{fallback}
 """
+    return _write_html(ONE_LEG_PAGE, "One leg filled", body)
     page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -801,6 +1206,70 @@ h2 {{ font-size: 1.05rem; margin: 1.2rem 0 0.4rem; }}
     tmp.write_text(page, encoding="utf-8")
     tmp.replace(ONE_LEG_PAGE)
     return ONE_LEG_PAGE
+
+
+def write_alves_one_leg_page() -> Path:
+    """Stand-alone writeup for the 2026-10-19 Alves vs Pereira one-leg. Does not send an order."""
+    try:
+        import live_lock_orders
+    except Exception:
+        live_lock_orders = None
+    fact = next((row for row in _one_leg_facts() if row.get("game") == "Alves vs Pereira"), None)
+    if fact is None:
+        body = "<h1>Alves vs Pereira</h1><p>No Alves one-leg row is on the ledger.</p>"
+        return _write_html(STAMP / "alves_pereira_one_leg_20261019.html", "Alves vs Pereira one leg", body)
+    lines = []
+    for row in fact["attempts"]:
+        lines.append(
+            f"<li>{_esc(row.get('when') or 'time not on the log')} "
+            f"{_esc(row.get('venue'))} {_esc(row.get('side'))} {_esc(row.get('instrument'))} "
+            f"limit {_esc(row.get('limit'))} size {_esc(row.get('size'))} "
+            f"HTTP {_esc(row.get('http'))} step {_esc(row.get('step') or 'unknown')} "
+            f"attempt {_esc(row.get('attempt') or '')} "
+            f"order {_esc(row.get('order_id') or 'none')} "
+            f"code {_esc(row.get('code') or '')} "
+            f"message {_esc(row.get('message') or '')} "
+            f"details {_esc(row.get('details') or '')}</li>"
+        )
+    body = f"""
+<h1>Alves vs Pereira, one leg only</h1>
+<p class="note">America/New_York. Research only. Not gold. Not DailyRun. This page does not place or cancel orders. Orders are still stopped. Nothing here moves Kalshi funds.</p>
+<div class="callout"><h2>What you asked</h2><p>{_esc(ONE_LEG_ASKED_LATEST)}</p></div>
+<div class="callout"><h2>In plain English</h2>
+<p>We bought Mateus Cardoso Alves to win, on Polymarket, one contract. The order was a buy-long Yes at 0.230, and the venue filled it at 0.2300. The phone note said about 0.24. The ledger fill is 0.2300, not 0.24. The other side was Jose Pereira to win on Kalshi, ticker KXATPCHALLENGERMATCH-26OCT19ALVPER-PER, Yes, at 0.6600. Kalshi rejected that three times with the same price. We did not try a higher Kalshi price. The pair would have stopped being profitable at a Kalshi Yes price of {_esc(fact.get('cap') or '')}. We gave up because Kalshi has no user on the tennis shard, then the lock turned orders off. A higher price cannot create that user.</p>
+</div>
+<h2>What the 404 means on this response</h2>
+<p>Each Kalshi response for this trade was HTTP 404. The error object was code <code>insufficient_shard_balance</code>, message <code>insufficient shard balance</code>, details <code>Exchange user not found. For Predictions: reference documentation Exchange Sharding documentation.</code> That is the same code and message as the earlier tennis 404s. The details field is the full sentence, not only the words "Exchange user not found." Kalshi shards predictions. Tennis is shard 3. A balance read around 12:48 PM ET showed about $22.53 on shard 0 and $0.00 on shards 1, 2, and 3. The 3:08 PM ET balance line after this fill still showed kalshi=22.53, which is the cash the default balance read sees. It does not show a funded tennis shard. Retrying the same order cannot create the shard user. The repo has no transfer function. This job did not move money.</p>
+<h2>Timeline</h2>
+<p>Exchange create time on the Polymarket fill is 2026-10-19T19:08:33.222119636Z, which is 15:08:33 ET. The local log times below are when this machine recorded the HTTP result.</p>
+<ul>
+{''.join(lines)}
+</ul>
+<p>Supervisor log, America/New_York:</p>
+<ul>
+<li>15:08:34.906 order sent Polymarket Yes aec-atp-matalv-josper-2026-10-19 limit 0.230 size 1 HTTP 200. Order id D6SKMGHG10JK. Intent ORDER_INTENT_BUY_LONG. Outcome Mateus Cardoso Alves. Average price 0.2300. Fee 0.0100. State ORDER_STATE_FILLED. Size 1.</li>
+<li>15:08:35.235 Kalshi Yes KXATPCHALLENGERMATCH-26OCT19ALVPER-PER limit 0.6600 size 1 HTTP 404. Attempt 1. Step websocket. Same client order id on the retries.</li>
+<li>15:08:35.236 log: order retry shard user missing, waiting 2 seconds.</li>
+<li>15:08:37.493 same Kalshi order again, limit still 0.6600, HTTP 404. Attempt 2.</li>
+<li>15:08:37.494 waiting 2 seconds.</li>
+<li>15:08:39.750 same Kalshi order again, limit still 0.6600, HTTP 404. Attempt 3.</li>
+<li>15:08:39.751 ONE LEG Polymarket Yes price 0.2300.</li>
+<li>15:08:39.840 one-leg log line. It says no further order was sent.</li>
+<li>15:08:40 orders_stopped.json: stopped true, reason "one leg filled and the other missed".</li>
+<li>15:08:40.477 balances after fill: kalshi=22.53 gemini=25.02 polymarket=50.19.</li>
+</ul>
+<h2>Did we walk the Kalshi price up?</h2>
+<p>No. The three Kalshi limits in orders.jsonl and order_io.jsonl are 0.6600, 0.6600, and 0.6600. The step on each row is websocket. There is no book step and no midway step. The profit-cap walk (websocket, then book ask, then halfway to the cap) runs only when an immediate-or-cancel comes back cancelled with nothing filled. This 404 is not that. The separate 404 rule sent the same limit up to two more times, two seconds apart. That retry is not a higher price. After the third 404 the sender stopped. The profit cap, from the Polymarket limit 0.230 and the 0.01 fee on that fill, is {_esc(fact.get('cap') or '')} on the Kalshi Yes. 0.6600 is under that cap, so the price was not the reason we stopped. Net at the prices we sent is 0.230 + 0.6600 + 0.01 = 0.90, still at or under {live_lock_orders.send_line() if live_lock_orders is not None else 'NET_MAX'}, with the Kalshi fee counted as 0 because Kalshi never returned a fill fee.</p>
+<h2>Later read of the Polymarket account</h2>
+<p>A read-only GET /v1/orders/D6SKMGHG10JK returned HTTP 404 with message "The server was unable to process your request." That is not the Kalshi shard error. A read-only GET /v1/portfolio/positions returned HTTP 200 with an empty positions list (eof true). So that positions call does not independently show the share still open. The fill we can quote is the order response saved at send time: cumQuantity 1, avgPx 0.2300, fee 0.0100, ORDER_STATE_FILLED, outcome Mateus Cardoso Alves.</p>
+<h2>What should change</h2>
+<p>Paul funds tennis shard 3 on the Kalshi website. Until that user exists, tennis Kalshi legs will 404. This code will not transfer money and will not turn orders back on. The useful code change, which this page is, is to show the attempted price and the profit cap even when the walk-up never ran. A higher price cannot fix "exchange user not found."</p>
+<p class="note">Swipe sideways to see more columns.</p>
+{SWIPE_NOTE_HTML}
+<h2>Sends on this pair</h2>
+{_attempt_table([fact])}
+"""
+    return _write_html(STAMP / "alves_pereira_one_leg_20261019.html", "Alves vs Pereira one leg", body)
 
 
 def append_one_leg_alert(row: dict) -> None:

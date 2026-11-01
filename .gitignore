@@ -2,6 +2,7 @@
 data/
 Drive/
 drive/
+local/
 logs/
 *.duckdb
 *.pkl

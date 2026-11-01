@@ -9,6 +9,10 @@ Buckets (per album released in --year):
 Each playlist is filled with *all* tracks from albums in that bucket (not only
 the liked ones). Re-run after likes/unlikes; contents are replaced to match.
 
+After writing light/medium/heavy, albums now on those playlists are scrubbed from
+the companion "{year} listen" playlist (see tools/sync_spotify_year_listen.py).
+Pass --skip-listen-scrub to disable that step.
+
 Setup (one-time):
   1. Create an app at https://developer.spotify.com/dashboard
   2. Add Redirect URI http://127.0.0.1:8888/callback
@@ -284,7 +288,14 @@ def print_plan(groups: dict[str, list[AlbumBucket]], names: dict[str, str]) -> N
             )
 
 
-def sync(year: int, name_style: str, dry_run: bool, cache_path: Path) -> int:
+def sync(
+    year: int,
+    name_style: str,
+    dry_run: bool,
+    cache_path: Path,
+    *,
+    scrub_listen: bool = True,
+) -> int:
     names = playlist_names(year, name_style)
     sp = build_client(cache_path)
     me = sp.current_user()
@@ -296,6 +307,12 @@ def sync(year: int, name_style: str, dry_run: bool, cache_path: Path) -> int:
 
     if dry_run:
         print("\nDry run only — no playlists were created or modified.")
+        if scrub_listen:
+            year_album_ids = {album.album_id for album in albums.values() if album.liked_count >= 1}
+            print(
+                f"Would scrub {len(year_album_ids)} year-playlist album id(s) "
+                f"from {year} listen (if present)."
+            )
         return 0
 
     for tier in ("light", "medium", "heavy"):
@@ -315,6 +332,14 @@ def sync(year: int, name_style: str, dry_run: bool, cache_path: Path) -> int:
 
         replace_playlist_tracks(sp, playlist_id, track_uris)
         print(f"  Wrote {len(track_uris)} track(s) from {len(groups[tier])} album(s).")
+
+    if scrub_listen:
+        year_album_ids = {album.album_id for album in albums.values() if album.liked_count >= 1}
+        print(f"\nScrubbing {year} listen of albums now on light/medium/heavy …")
+        # Local import avoids a circular import at module load time.
+        from sync_spotify_year_listen import scrub_listen_playlist_of_albums  # noqa: WPS433
+
+        scrub_listen_playlist_of_albums(sp, year, year_album_ids, dry_run=False)
 
     print("\nDone.")
     return 0
@@ -379,6 +404,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"OAuth token cache path (default: {DEFAULT_CACHE_PATH})",
     )
     parser.add_argument(
+        "--skip-listen-scrub",
+        action="store_true",
+        help='Do not remove matching albums from the "{year} listen" playlist after sync',
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Run offline unit checks and exit",
@@ -395,7 +425,13 @@ def main(argv: list[str] | None = None) -> int:
     # Also allow a repo-root .env if present
     load_env_file(REPO_ROOT / ".env")
     try:
-        return sync(args.year, args.name_style, args.dry_run, args.cache_path)
+        return sync(
+            args.year,
+            args.name_style,
+            args.dry_run,
+            args.cache_path,
+            scrub_listen=not args.skip_listen_scrub,
+        )
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130
