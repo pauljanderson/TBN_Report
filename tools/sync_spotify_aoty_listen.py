@@ -6,8 +6,10 @@ Ingest (v1 — no live scrape; Cloudflare blocks plain curl):
      drive/spotify_aoty_listen/pages/
      URLs look like:
        https://www.albumoftheyear.org/ratings/6-highest-rated/{year}/1
-       …/{year}/2 … (max_pages from config, default 6 ≈ top 150)
+       …/{year}/2 … (max_pages from config, default 16 ≈ top 400)
   2. Or drop a pre-parsed rankings.json in the data dir.
+  If pages/ has more Page N files than config max_pages, sync auto-raises
+  max_pages to the highest detected page (capped at 20) and logs it.
 
 Pipeline:
   parse pages → genre/score/reviews filter → exclude year light|medium|heavy
@@ -27,7 +29,7 @@ Examples:
   python tools/sync_spotify_aoty_listen.py --year 2026
 
 Call-budget guidance: defaults ~80 Spotify calls/UTC-day and
---max-albums-per-run 20. Do not stack with a cold year-listen sync the same day.
+--max-albums-per-run 25. Do not stack with a cold year-listen sync the same day.
 """
 
 from __future__ import annotations
@@ -82,6 +84,9 @@ DEFAULT_SPOTIFY_SLEEP = 0.35
 DEFAULT_SPOTIFY_DAILY_BUDGET = 80
 DEFAULT_MATCH_CACHE_HOURS = 336.0  # 14 days
 DEFAULT_ALBUM_CACHE_HOURS = 336.0
+DEFAULT_MAX_PAGES = 16
+DEFAULT_MAX_ALBUMS_PER_RUN = 25
+MAX_PAGES_AUTO_CAP = 20
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +119,44 @@ def load_config(path: Path | None, example: Path) -> dict:
     data.setdefault("genre_match", "any")
     data.setdefault("min_score", 70)
     data.setdefault("min_reviews", 5)
-    data.setdefault("max_pages", 6)
-    data.setdefault("max_albums_per_run", 20)
+    data.setdefault("max_pages", DEFAULT_MAX_PAGES)
+    data.setdefault("max_albums_per_run", DEFAULT_MAX_ALBUMS_PER_RUN)
     data.setdefault("market", "US")
     data.setdefault("year", datetime.now().year)
     return data
+
+
+def highest_page_number_in_dir(pages_dir: Path) -> int:
+    """Highest 'Page N' among *.html/*.md/*.txt in pages_dir (0 if none)."""
+    if not pages_dir.is_dir():
+        return 0
+    nums = [
+        page_number_from_path(p)
+        for p in pages_dir.iterdir()
+        if p.is_file() and p.suffix.casefold() in {".html", ".htm", ".md", ".txt"}
+    ]
+    return max(nums) if nums else 0
+
+
+def effective_max_pages(
+    config_max_pages: int,
+    pages_dir: Path,
+    *,
+    cap: int = MAX_PAGES_AUTO_CAP,
+) -> tuple[int, int]:
+    """Raise max_pages to cover saved pages, capped at ``cap``.
+
+    Returns (effective_max_pages, highest_detected_page). When pages/ has a
+    higher Page N than config (e.g. user saved 16 pages but config still has
+    max_pages=6), use max(config, detected) capped at ``cap`` so all saved
+    pages are ingested.
+    """
+    configured = max(0, int(config_max_pages or 0))
+    detected = highest_page_number_in_dir(pages_dir)
+    if detected <= 0:
+        return configured or DEFAULT_MAX_PAGES, 0
+    raised = max(configured or DEFAULT_MAX_PAGES, detected)
+    return min(raised, cap), detected
 
 
 def load_state(path: Path, year: int) -> dict:
@@ -411,24 +449,37 @@ def sync(
     pages_dir.mkdir(parents=True, exist_ok=True)
     rankings_path = data_dir / "rankings.json"
     state_path = data_dir / "state.json"
-    max_pages = int(config.get("max_pages") or 6)
+    config_max_pages = int(config.get("max_pages") or DEFAULT_MAX_PAGES)
+    max_pages, detected_pages = effective_max_pages(config_max_pages, pages_dir)
     min_score = int(config.get("min_score") or 70)
     min_reviews = int(config.get("min_reviews") or 5)
     favorites = list(config.get("favorite_genres") or [])
     genre_match = str(config.get("genre_match") or "any")
 
     print(f"Config genres: {len(favorites)} (match={genre_match})")
-    print(f"Thresholds: min_score={min_score} min_reviews={min_reviews} max_pages={max_pages}")
+    print(
+        f"Thresholds: min_score={min_score} min_reviews={min_reviews} "
+        f"max_pages={max_pages} (config={config_max_pages})"
+    )
+    if detected_pages > config_max_pages:
+        print(
+            f"WARNING: pages/ has files through Page {detected_pages} but "
+            f"config max_pages={config_max_pages}. Auto-using max_pages={max_pages} "
+            f"(cap {MAX_PAGES_AUTO_CAP}). Edit drive/spotify_aoty_listen/config.json "
+            "to persist (example default is 16)."
+        )
+    elif detected_pages:
+        print(f"Detected highest page file in pages/: {detected_pages}")
     print(f"Pages dir: {pages_dir}")
     print(
         "Save AOTY highest-rated HTML/MD into that folder "
         f"(browser Save Page As from …/ratings/6-highest-rated/{year}/1 .. /{max_pages}; "
         "any *.html title works — sorted by 'Page N', page 1 has no Page label). "
-        f"max_pages={max_pages} keeps pages 1..{max_pages} only. "
+        f"max_pages={max_pages} keeps pages 1..{max_pages} only "
+        f"(auto-raised to cover pages/ up to {MAX_PAGES_AUTO_CAP}). "
         "Cloudflare blocks curl. Prefer Chrome 'Webpage, Complete' after albums are visible; "
         "pass --debug if ingest stays at 0."
     )
-
     rows = ingest_rankings(
         pages_dir=pages_dir,
         rankings_path=rankings_path,
@@ -772,12 +823,41 @@ def self_test() -> None:
         # max_pages must not pick Page 10 via lexicographic sort
         assert not any(page_number_from_path(p) == 10 for p in found)
 
+        # Auto-raise: config max_pages=6 but pages/ goes through Page 10 → 10 (cap 20)
+        (pages / "The Best Albums of 2026 _ Page 16 - Album of The Year.html").write_text(
+            "<html></html>", encoding="utf-8"
+        )
+        assert highest_page_number_in_dir(pages) == 16
+        eff, detected = effective_max_pages(6, pages)
+        assert detected == 16
+        assert eff == 16
+        # Cap at 20 even if a Page 25 file exists.
+        (pages / "The Best Albums of 2026 _ Page 25 - Album of The Year.html").write_text(
+            "<html></html>", encoding="utf-8"
+        )
+        eff_capped, detected_capped = effective_max_pages(6, pages, cap=20)
+        assert detected_capped == 25
+        assert eff_capped == 20
+        # Config already high enough: keep config when higher than detected.
+        only_low = Path(tmp) / "pages_low"
+        only_low.mkdir()
+        (only_low / "The Best Albums of 2026 - Album of The Year.html").write_text(
+            "<html></html>", encoding="utf-8"
+        )
+        eff_keep, det_keep = effective_max_pages(16, only_low)
+        assert det_keep == 1
+        assert eff_keep == 16
+
     # Strict name_key matching (same helpers year-listen uses)
     key_a = album_name_key("Phoebe Bridgers", "Lost Weekend")
     key_b = album_name_key("  phoebe   bridgers ", "LOST  WEEKEND")
     key_c = album_name_key("Phoebe Bridgers, Someone", "Lost Weekend")
     assert key_a == key_b == key_c
     assert key_a != album_name_key("Other Artist", "Lost Weekend")
+    # & / and + casefold (Iceage title casing differed in dry-run logs)
+    assert album_name_key("Iceage", "For Love of Grace & The Hereafter") == album_name_key(
+        "Iceage", "For Love of Grace and the Hereafter"
+    )
 
     on_year = YearPlaylistIndex(
         album_ids={"already-id"},
@@ -873,7 +953,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-albums-per-run",
         type=int,
         default=None,
-        help="Cap Spotify search/add attempts per run (default from config, usually 20)",
+        help=(
+            "Cap Spotify search/add attempts per run "
+            f"(default from config, usually {DEFAULT_MAX_ALBUMS_PER_RUN})"
+        ),
     )
     parser.add_argument(
         "--cache-only",
@@ -909,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
     max_albums = (
         args.max_albums_per_run
         if args.max_albums_per_run is not None
-        else int(config.get("max_albums_per_run") or 20)
+        else int(config.get("max_albums_per_run") or DEFAULT_MAX_ALBUMS_PER_RUN)
     )
 
     load_env_file(args.env_file)
