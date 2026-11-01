@@ -155,6 +155,11 @@
 <ul>
   <li>RS is the production consumer of Strong TC outlooks — do not revive IND to “keep TC in the book.”</li>
   <li>Monthly HTML still labels an IND column for legacy Closed/Open files.</li>
+  <li>OHLC-easy add-ons (StochRSI, Ultimate Oscillator, WMA/VMA/WilderMA, Chaikin Volatility Fast/Slow,
+  volume ratios, A/D slope, Standard Error) export as <code>IND_*</code> columns and work in
+  <code>mandatory_ind_states</code> / exclude JSON, but are <strong>excluded from IND_DIFF / IND_ENTRY_* tallies</strong>
+  so historical <code>indicator_diff</code> gates stay stable. See
+  <code>drive/paul_experiments/ind_ohlc_indicators_add_20260902/</code>.</li>
 </ul>
 
 <h2>Canonical links</h2>
@@ -162,6 +167,7 @@
   <li><code>run_ind.bat</code> · <code>DailyRun.bat</code> step [5/14] SKIPPED</li>
   <li><a href="rs.html">RS — Relative Strength</a> (TC Strong gates)</li>
   <li><a href="../system_setup_process.html">System setup process</a></li>
+  <li><code>stock_analysis/brt_entry_indicators.py</code> · <code>OHLC_ADDON_INDICATOR_IDS</code></li>
 </ul>
 
   <footer>Canonical IND write-up · Twin Beacon Networks (TBN) · deprecated sleeve</footer>

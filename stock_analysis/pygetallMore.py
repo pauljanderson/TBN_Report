@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -40,6 +42,11 @@ except ImportError:
 DATA_DIR = "C:\\Users\\songg\\Downloads\\stockresearch\\data\\newdata\\data"
 # Start date for full-history downloads and automatic backfill detection.
 START_DATE = "2010-01-01"
+# First US equity session in 2010 was 2010-01-04 (Jan 1 holiday). Without slack,
+# every symbol re-triggers full download on each incremental run.
+BACKFILL_START_SLACK_DAYS = 7
+# Min rows when listing started after START_DATE (IPO / ADR) — treat as complete history.
+BACKFILL_MIN_ROWS_LATE_START = 200
 
 # End date is today+1 so yfinance includes latest close
 END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -48,7 +55,7 @@ DEFAULT_DB_TABLE = "prices"
 DEFAULT_MODE = "incremental"
 DEFAULT_INCREMENTAL_DAYS = 7
 # One-time safety backfill (kept explicit so symbol gets full history even if a short file exists).
-FORCE_FULL_BACKFILL_SYMBOLS = {"P"}
+FORCE_FULL_BACKFILL_SYMBOLS = {"P", "EA"}  # EA: truncated stub 2026-08; force restore
 
 # Local CSV/DuckDB symbol -> Yahoo Finance download symbol.
 # Keep local names stable; only the yfinance request/column key uses the Yahoo form.
@@ -345,6 +352,7 @@ TICKERS = [
     "CTSH",
     "CTVA",
     "CVCO",
+    "CVI",
     "CVNA",
     "CVS",
     "CVX",
@@ -492,6 +500,7 @@ TICKERS = [
     "GLW",
     "GM",
     "GMAB",
+    "GOLD",
     "GOOG",
     "GOOGL",
     "GPC",
@@ -533,6 +542,7 @@ TICKERS = [
     "HWBK",
     "HWKN",
     "HWM",
+    "IAG",
     "IBKR",
     "IBP",
     "ICE",
@@ -757,6 +767,7 @@ TICKERS = [
     "REAL",
     "REGN",
     "RELX",
+    "REPX",
     "RF",
     "RGC",
     "RGLD",
@@ -1370,20 +1381,48 @@ def _read_existing_coverage_start(output_file: str) -> datetime | None:
         return None
 
 
-def _should_backfill_full_history(output_file: str, start_date: str) -> bool:
+def _history_covers_start(output_file: str, start_date: str) -> bool:
     """
-    In incremental mode, backfill full history when the local CSV is missing or does not
-    cover the configured start date.
+    True when local CSV already has adequate history (incremental is enough).
+
+    Strict ``earliest_bar > START_DATE`` falsely flags every symbol after a full
+    download because the first 2010 session is 2010-01-04, not 2010-01-01.
+    Late-start listings (IPO/ADR) are accepted when the file spans most of their
+    available history.
     """
     cov_start = _read_existing_coverage_start(output_file)
     if cov_start is None:
-        return True
+        return False
     try:
         req_start = datetime.strptime(start_date, "%Y-%m-%d")
     except ValueError:
-        return False
-    # If earliest local bar is after configured start, we are missing history.
-    return cov_start.date() > req_start.date()
+        return True
+    slack_end = req_start + timedelta(days=BACKFILL_START_SLACK_DAYS)
+    if cov_start.date() <= slack_end.date():
+        return True
+    try:
+        old = pd.read_csv(output_file, usecols=["Date"], parse_dates=["Date"])
+        if old.empty:
+            return False
+        mn = pd.Timestamp(old["Date"].min()).normalize()
+        mx = pd.Timestamp(old["Date"].max()).normalize()
+        age_days = (datetime.now().date() - mn.date()).days
+        span_days = (mx - mn).days
+        # Recent IPO / listing: accept only if the file actually has a short
+        # dense series. Tiny truncated stubs (e.g. EA wiped to 6 bars) must NOT
+        # pass — otherwise incremental never restores 2010+ history.
+        if age_days <= 90 and len(old) >= 40 and span_days >= max(20, int(age_days * 0.5)):
+            return True
+        if len(old) >= BACKFILL_MIN_ROWS_LATE_START and span_days >= max(180, int(age_days * 0.65)):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _should_backfill_full_history(output_file: str, start_date: str) -> bool:
+    """In incremental mode, full re-download only when local history is missing or truncated."""
+    return not _history_covers_start(output_file, start_date)
 
 
 def _extract_symbol_frame(download_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -1478,6 +1517,33 @@ def _upsert_symbol_to_db(con: duckdb.DuckDBPyConnection, table: str, symbol: str
         """
     )
     con.unregister("stage_prices")
+
+
+def _write_update_stamp(
+    *,
+    updated: int,
+    skipped: int,
+    total: int,
+    full_backfill_count: int,
+    ok: bool = True,
+) -> None:
+    """Record last successful pygetallMore run for DailyRun auto SKIP_GET."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    stamp_dir = os.path.join(repo_root, "drive")
+    os.makedirs(stamp_dir, exist_ok=True)
+    path = os.path.join(stamp_dir, "data_update_last_ok.json")
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    payload = {
+        "ok": bool(ok),
+        "ok_at": now_et.isoformat(),
+        "updated": int(updated),
+        "skipped": int(skipped),
+        "total": int(total),
+        "full_backfill_count": int(full_backfill_count),
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    print(f"[stamp] wrote {path}")
 
 
 def _merge_with_existing_csv(output_file: str, fresh_df: pd.DataFrame) -> pd.DataFrame:
@@ -1697,7 +1763,20 @@ def main():
     fund_msg = ""
     if do_fundamentals:
         fund_msg = f", Fundamentals ok={fund_ok} fail={fund_skip}"
+    total = len(tickers)
+    stamp_ok = updated > 0 or (not _is_us_weekday(datetime.now(ZoneInfo("America/New_York"))))
+    _write_update_stamp(
+        updated=updated,
+        skipped=skipped,
+        total=total,
+        full_backfill_count=len(full_symbols),
+        ok=stamp_ok,
+    )
     print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}{fund_msg}")
+
+
+def _is_us_weekday(dt: datetime) -> bool:
+    return dt.weekday() < 5
 
 if __name__ == "__main__":
     main()

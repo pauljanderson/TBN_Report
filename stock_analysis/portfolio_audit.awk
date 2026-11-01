@@ -27,6 +27,9 @@
 # RL_POST_TARGET_UNDER_SMA20: For mode=under_sma_limit: max depth under SMA20; reject if
 #                      close < SMA20*(1-limit) (default 0.03).
 # RL_TARGET_PCT:     Profit target multiplier (e.g., 1.20 for 20%).
+# RL_SMA_TARGET_OFF: When 1, keep RL_TARGET_PCT for expansion hits but do not sell
+# at the moving SMA50 envelope. Recorded target is static: entry × RL_TARGET_PCT
+# (+20% at the default 1.20) until the scale-out, then entry × (1 + RL_ENTRY_TARGET_PCT).
 # SMA_QUAL:            Toggle for SMA Qualifier (1=On, 0=Off).
 # INSTRUMENT:          If set (e.g. 1), enables throughput instrumentation (instrument.txt, per-symbol timing). Default: 0.
 # RL_INPUT_MANIFEST:   Optional path to a text file (one input CSV path per line, UTF-8). When set by run_audit.ps1,
@@ -194,6 +197,7 @@ BEGIN {
     # Milestone Percentages
     MILESTONE_10_PCT = 0.10
     MILESTONE_20_PCT = 0.20
+    MILESTONE_25_PCT = 0.25
     MILESTONE_30_PCT = 0.30
     MILESTONE_40_PCT = 0.40
     MILESTONE_50_PCT = 0.50
@@ -274,7 +278,7 @@ BEGIN {
     if (RS_DAYS == "") RS_DAYS = 5
     if (ADD_PCT == "") ADD_PCT = 0.33
     if (RL_CASH == "") RL_CASH = 47500
-    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.041
+    if (RL_DIP_PCT == "") RL_DIP_PCT = 1.055
     if (RL_STOP_PCT == "") RL_STOP_PCT = 0.934
     if (RL_POST_TARGET_REENTRY_DAYS != "" && RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = RL_POST_TARGET_REENTRY_DAYS
     if (RL_POST_TARGET_REENTRY_BARS == "") RL_POST_TARGET_REENTRY_BARS = 0
@@ -283,6 +287,7 @@ BEGIN {
     if (RL_POST_TARGET_MIN_STACK == "") RL_POST_TARGET_MIN_STACK = 0.05
     if (RL_POST_TARGET_UNDER_SMA20 == "") RL_POST_TARGET_UNDER_SMA20 = 0.03
     if (RL_TARGET_PCT == "") RL_TARGET_PCT = 1.20
+    if (RL_SMA_TARGET_OFF == "") RL_SMA_TARGET_OFF = 1
     if (SMA_QUAL == "") SMA_QUAL = 1
     if (RL_EXPANSION == "") RL_EXPANSION = 1.163
     if (RL_ACC_MIN == "") RL_ACC_MIN = 8
@@ -336,7 +341,7 @@ BEGIN {
     if (RL_100_TRAIL_STOP == "")   RL_100_TRAIL_STOP = RL100_TRAIL_STOP + 0
     if (RL_100_TARGET_PCT == "")   RL_100_TARGET_PCT = RL100_TARGET_PCT + 0
     if (RL_100_STOP_PCT == "")     RL_100_STOP_PCT = RL100_STOP_PCT + 0
-    if (RL_CUT_THE_LOSERS == "") RL_CUT_THE_LOSERS = 0.25 #percent to cut the losers. this is the default. if you want to NOT cut the losers, set it to 1000
+    if (RL_CUT_THE_LOSERS == "") RL_CUT_THE_LOSERS = 1000 # OFF — Paul house baseline (was 0.25; 1000=do not cut)
     if (RL_TRAIL_PROFIT2 == "") RL_TRAIL_PROFIT2 = 0  # 40% Gain
     if (RL_TRAIL_STOP2 == "") RL_TRAIL_STOP2 = 0      # 20% Stop
         
@@ -384,8 +389,38 @@ BEGIN {
     if (RL_SHOCK_THRESHOLD == "") RL_SHOCK_THRESHOLD = 0
     if (RL_SHOCK_REHAB_DAYS == "") RL_SHOCK_REHAB_DAYS = 120
     if (RL_SHOCK_MAX_ALLOWED == "") RL_SHOCK_MAX_ALLOWED = 1
-    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 10000
-    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0.29
+    if (RL_EXIT_DAYS == "") RL_EXIT_DAYS = 0
+    if (RL_EXIT_PERCENT == "") RL_EXIT_PERCENT = 0
+    if (RL_ENTRY_TARGET_PCT == "") RL_ENTRY_TARGET_PCT = 0.40
+    if (RL_SCALE_LADDER == "") RL_SCALE_LADDER = "0.20:0.80:0"
+    n_ladder = 0
+    ladder_raw = RL_SCALE_LADDER
+    gsub(/ /, "", ladder_raw)
+    ladder_low = tolower(ladder_raw)
+    if (ladder_low != "" && ladder_low != "0" && ladder_low != "off" && ladder_low != "false" && ladder_low != "none") {
+        nparts = split(ladder_raw, ladder_parts, /[|;]/)
+        for (li = 1; li <= nparts; li++) {
+            if (split(ladder_parts[li], ladder_bits, ":") != 3) continue
+            lg = ladder_bits[1] + 0
+            ls = ladder_bits[2] + 0
+            lstop = ladder_bits[3] + 0
+            if (lg > 0 && ls > 0) {
+                n_ladder++
+                ladder_gain[n_ladder] = lg
+                ladder_sell[n_ladder] = ls
+                ladder_stopg[n_ladder] = lstop
+            }
+        }
+        for (li = 1; li <= n_ladder; li++) {
+            for (lj = li + 1; lj <= n_ladder; lj++) {
+                if (ladder_gain[lj] < ladder_gain[li]) {
+                    tmp = ladder_gain[li]; ladder_gain[li] = ladder_gain[lj]; ladder_gain[lj] = tmp
+                    tmp = ladder_sell[li]; ladder_sell[li] = ladder_sell[lj]; ladder_sell[lj] = tmp
+                    tmp = ladder_stopg[li]; ladder_stopg[li] = ladder_stopg[lj]; ladder_stopg[lj] = tmp
+                }
+            }
+        }
+    }
 
     if (RL_FLUSH_DAYS == "") RL_FLUSH_DAYS = 0 #42 may be the optimal number, but to turn it off we use 0
     if (PARTIAL_EXIT_TARGET == "") PARTIAL_EXIT_TARGET = 0
@@ -479,7 +514,7 @@ function reset_ticker_variables() {
     sym_hwm = 0; max_sym_dd = 0; 
     
     # 2. Reset Milestone & Time Trigger Counters
-    m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0; 
+    m10_days = m20_days = m25_days = m30_days = m40_days = m50_days = m60_days = 0; 
     has_hit_time_trigger[current_symbol] = 0; time_trigger_counter[current_symbol] = 0; 
     has_hit_milestone[current_symbol] = 0; total_exit_proceeds[current_symbol] = 0; total_shares_sold[current_symbol] = 0; 
     
@@ -689,7 +724,7 @@ function perform_audit(sym) {
       last_exit_idx = -1; last_exit_was_target = 0
       s_50_wins = s_50_losses = s_50_BEs = 0
       s_100_wins = s_100_losses = s_100_BEs = 0
-      m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0
+      m10_days = m20_days = m25_days = m30_days = m40_days = m50_days = m60_days = 0
       # --- NEW: SHOCK & STREAK RESET ---
       shock_count = 0
       delete shock_event_dates
@@ -827,7 +862,9 @@ function perform_audit(sym) {
             _use_computed = 1
             # Use precomputed SMAs from Python when available; else compute in AWK (backward compat)
             key_sma = sym SUBSEP iso
-            if (key_sma in raw_sma && raw_sma[sym, iso] != "") {
+            # RL_USE_FILE_SMA=0: compute SMAs from closes. The CSV SMA columns are rounded
+            # (about 4 decimals) and disagree with rocket_rl.py on hairline dip-zone tests.
+            if ((RL_USE_FILE_SMA == "" || (RL_USE_FILE_SMA + 0)) && key_sma in raw_sma && raw_sma[sym, iso] != "") {
                 n = split(raw_sma[sym, iso], arr, "|")
                 # Accept prepacked row when SMA50 is ready, or before day 50 when SMA20 is
                 # already filled (Python precompute); avoids ~50 PRECOMP_SMA_MISS bars per symbol.
@@ -959,9 +996,12 @@ function perform_audit(sym) {
                     entry_smas_set[sym] = 1
                 }
 
-                if (j > 1 && sma50[dates[sym, j-1]] > 0) 
+                if (j > 1 && sma50[dates[sym, j-1]] > 0 && has_hit_milestone[sym] == 0)
                     {
-                    rl_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
+                    if (RL_SMA_TARGET_OFF + 0)
+                        rl_target = 0
+                    else
+                        rl_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
                     debug_printf(sym, "\nSETTING RL_TARGET:\nrl_target:%.2f\niso:%s\ndates[sym, j-1]:%s\nraw_hi[sym, iso]:%.2f\nexecute_exit:%d", rl_target, iso, dates[sym, j-1], raw_hi[sym, iso], execute_exit)
                     }
                 # Reset exit flag for the current day's bar
@@ -980,6 +1020,7 @@ function perform_audit(sym) {
                   # Capture day count for each milestone if reached for the first time
                   if (curr_profit_pct >= MILESTONE_10_PCT && m10_days == 0) m10_days = days_diff(rl_entry_iso[sym], iso) + 1
                   if (curr_profit_pct >= MILESTONE_20_PCT && m20_days == 0) m20_days = days_diff(rl_entry_iso[sym], iso) + 1
+                  if (curr_profit_pct >= MILESTONE_25_PCT && m25_days == 0) m25_days = days_diff(rl_entry_iso[sym], iso) + 1
                   if (curr_profit_pct >= MILESTONE_30_PCT && m30_days == 0) m30_days = days_diff(rl_entry_iso[sym], iso) + 1
                   if (curr_profit_pct >= MILESTONE_40_PCT && m40_days == 0) m40_days = days_diff(rl_entry_iso[sym], iso) + 1
                   if (curr_profit_pct >= MILESTONE_50_PCT && m50_days == 0) m50_days = days_diff(rl_entry_iso[sym], iso) + 1
@@ -1004,8 +1045,44 @@ function perform_audit(sym) {
                 
                 debug_printf(sym, "\nSection 6:sym:%s\nexit_type:%s", sym, exit_type)
 
-                # --- PARTIAL EXIT LOGIC ---
-                if (execute_exit == 0 && has_hit_milestone[sym] == 0 && PARTIAL_EXIT_TARGET > 0 && curr_profit_pct >= PARTIAL_EXIT_TARGET) {
+                # --- SCALE LADDER (house freeze: 80% at +20%, leftover stop at entry) ---
+                # Same order as rocket_rl.py: sell and ratchet, then the stop check below sees the new stop.
+                if (execute_exit == 0 && n_ladder > 0) {
+                    orig_sh = initial_shares_at_entry[sym]
+                    if (orig_sh <= 0) orig_sh = rl_inv
+                    for (si = 1; si <= n_ladder; si++) {
+                        if (ladder_done[sym, si] == 1 || curr_profit_pct < ladder_gain[si]) continue
+                        want = int(orig_sh * ladder_sell[si])
+                        max_sell = (rl_inv > 1) ? int(rl_inv) - 1 : 0
+                        shares_to_sell = want
+                        if (shares_to_sell > max_sell) shares_to_sell = max_sell
+                        if (shares_to_sell < 0) shares_to_sell = 0
+                        if (shares_to_sell > 0) {
+                            rl_inv -= shares_to_sell
+                            gate = rl_entry_p[sym] * (1 + ladder_gain[si])
+                            opx = raw_op[sym, iso]
+                            p_exit = (opx > gate) ? opx : gate
+                            total_exit_proceeds[sym] += (shares_to_sell * p_exit)
+                            p_exit_val = (shares_to_sell * p_exit) - (shares_to_sell * rl_entry_p[sym])
+                            rl_pnl += p_exit_val
+                            trl += p_exit_val
+                            partial_exit_amount[sym] += p_exit_val
+                            if (partial_exit_date[sym] == "") partial_exit_date[sym] = iso
+                            sym_partial_cnt[sym]++
+                            sym_partial_amt[sym] += p_exit_val
+                            has_hit_milestone[sym] = 1
+                        }
+                        new_stop = rl_entry_p[sym] * (1 + ladder_stopg[si])
+                        if (new_stop > rl_stop) {
+                            rl_stop = new_stop
+                            rl_trail_active = (si >= 2) ? 2 : 1
+                        }
+                        ladder_done[sym, si] = 1
+                    }
+                }
+
+                # --- PARTIAL EXIT LOGIC (off when the scale ladder is on) ---
+                if (n_ladder == 0 && execute_exit == 0 && has_hit_milestone[sym] == 0 && PARTIAL_EXIT_TARGET > 0 && curr_profit_pct >= PARTIAL_EXIT_TARGET) {
                     debug_print(sym, "\nHERE1: Partial exit triggered")
 
                     has_hit_milestone[sym] = 1
@@ -1028,14 +1105,15 @@ function perform_audit(sym) {
                     sym_partial_cnt[sym]++
                     sym_partial_amt[sym] += p_exit_val
 
-                    # Reset the target for the remaining shares
+                    # Reset the target for the remaining shares (entry-based; freeze SMA50 target)
                     if (PARTIAL_EXIT_TARGET != 0) {
                         current_target[sym] = (rl_entry_p[sym] * (1 + PARTIAL_EXIT_TARGET + PARTIAL_EXIT_FOLLOW_TARGET))
+                        rl_target = current_target[sym]
                         debug_printf(sym, "\ncurrent_target[sym]:%.2f\nrl_entry_p[sym]:%.2f", current_target[sym], rl_entry_p[sym])
                     }
                 }
 
-                  if (RL_TRAIL_PROFIT > 0 && rl_trail_active == 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT))) {
+                  if (n_ladder == 0 && RL_TRAIL_PROFIT > 0 && rl_trail_active == 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT))) {
                     debug_print(sym, "\nHERE2: Trail 1 activated")
                       rl_trail_active = 1
                       rl_stop = rl_entry_p[sym] * (1 + RL_TRAIL_STOP)
@@ -1043,7 +1121,7 @@ function perform_audit(sym) {
 
                   # --- TRAIL 2 ACTIVATION (The new 40%) ---
                   # If we hit RL_TRAIL_PROFIT2, we overwrite Trail 1 with the more aggressive Trail 2 stop
-                  if (RL_TRAIL_PROFIT2 > 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT2))) {
+                  if (n_ladder == 0 && RL_TRAIL_PROFIT2 > 0 && raw_hi[sym, iso] >= (rl_entry_p[sym] * (1 + RL_TRAIL_PROFIT2))) {
                     debug_print(sym, "\nHERE3: Trail 2 activated")
                       rl_trail_active = 2 # Setting this to 2 distinguishes the exit type
                       rl_stop = rl_entry_p[sym] * (1 + RL_TRAIL_STOP2)
@@ -1067,37 +1145,40 @@ function perform_audit(sym) {
                 debug_printf(sym, "\nHERE7:\nstop_price:%.2f (entry_day=%d)\nrl_stop:%.2f", stop_price, (iso == rl_entry_iso[sym]), rl_stop)
 
                     execute_exit = 1
-                    rl_sell = (rl_stop > raw_op[sym, iso]) ? rl_stop : raw_op[sym, iso]
-                        exit_type = (rl_trail_active == 2) ? "TRAIL_STOP2" : (rl_trail_active == 1 ? "TRAIL_STOP" : "STOP_LOSS")
+                    # Match rocket_rl.py: gap through the stop fills at the open;
+                    # an intraday touch fills at the stop. Trail labels win over GAP_DOWN.
+                    gap_through_stop = (raw_op[sym, iso] <= rl_stop)
+                    rl_sell = gap_through_stop ? raw_op[sym, iso] : rl_stop
+                    if (rl_trail_active == 2)
+                        exit_type = "TRAIL_STOP2"
+                    else if (rl_trail_active == 1)
+                        exit_type = "TRAIL_STOP"
+                    else if (gap_through_stop)
+                        exit_type = "GAP_DOWN"
+                    else
+                        exit_type = "STOP_LOSS"
                 } 
                 # 2. Check PROFIT RACE (Only if Stop wasn't hit)
                 else {
                     hit_sma = (sma_target_px > 0 && raw_hi[sym, iso] >= sma_target_px)
-                    hit_timed = (has_hit_time_trigger[sym] == 1 && time_trigger_counter[sym] >= RL_EXIT_DAYS)
-
-                    if (hit_sma && hit_timed) {
-                        debug_printf(sym, "\nHERE8:\nhit_timed:%d", hit_timed)
+                    hit_timed = (has_hit_time_trigger[sym] == 1 && (RL_EXIT_PERCENT + 0) > 0 && time_trigger_counter[sym] >= RL_EXIT_DAYS)
+                    entry_target_px = ((RL_ENTRY_TARGET_PCT + 0) > 0) ? (rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)) : 0
+                    hit_entry = (entry_target_px > 0 && raw_hi[sym, iso] >= entry_target_px)
+                    # Lowest hit price wins (stop already checked).
+                    best_px = -1
+                    best_type = ""
+                    if (hit_sma && (best_px < 0 || sma_target_px < best_px)) { best_px = sma_target_px; best_type = "TARGET" }
+                    if (hit_entry && (best_px < 0 || entry_target_px < best_px)) { best_px = entry_target_px; best_type = "ENTRY_TARGET" }
+                    if (hit_timed && (best_px < 0 || timed_exit_px < best_px)) { best_px = timed_exit_px; best_type = "RL_EXIT_DAYS" }
+                    if (best_type != "") {
                         execute_exit = 1
-                        # Price climbed from Open. Use lower price (hit first).
-                        if (sma_target_px < timed_exit_px) {
-                            debug_print(sym, "\nHERE9: SMA target hit first")
+                        exit_type = best_type
+                        if (best_type == "TARGET")
                             rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso]
-                            exit_type = "TARGET"
-                        } else {
-                            debug_printf(sym, "\nHERE17:\nhit_timed:%d\niso:%s", hit_timed, iso)
+                        else if (best_type == "ENTRY_TARGET")
+                            rl_sell = (entry_target_px > raw_op[sym, iso]) ? entry_target_px : raw_op[sym, iso]
+                        else
                             rl_sell = raw_op[sym, iso]
-                            exit_type = "RL_EXIT_DAYS"
-                        }
-                    }
-                    else if (hit_sma) {
-                        debug_print(sym, "\nHERE11: SMA target hit")
-                        execute_exit = 1; exit_type = "TARGET"
-                        rl_sell = (sma_target_px > raw_op[sym, iso]) ? sma_target_px : raw_op[sym, iso]
-                    }
-                    else if (hit_timed) {
-                        debug_printf(sym, "\nHERE12:\nhit_timed:%d\niso:%s", hit_timed, iso)
-                        execute_exit = 1; exit_type = "RL_EXIT_DAYS"
-                        rl_sell = raw_op[sym, iso]
                     }
                 }
             }
@@ -1125,8 +1206,16 @@ function perform_audit(sym) {
                         debug_printf(sym, "\nHERE15:current_target[sym]:%.2f\nraw_op[sym, iso]:%.2f\nrl_target:%.2f\niso:%s", current_target[sym], raw_op[sym, iso], rl_target, iso)
                         rl_sell = (rl_target > raw_op[sym, iso]) ? rl_target : raw_op[sym, iso]
                     }
+                    else if (exit_type == "ENTRY_TARGET")
+                    {
+                        et_px = rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)
+                        rl_sell = (et_px > raw_op[sym, iso]) ? et_px : raw_op[sym, iso]
+                    }
                     else if (exit_type == "FLUSH_EXIT")
                         rl_sell = raw_op[sym, iso]
+                    else if (exit_type == "STOP_LOSS" || exit_type == "GAP_DOWN" || exit_type == "TRAIL_STOP" || exit_type == "TRAIL_STOP2") {
+                        # Keep the fill from the stop check (gap at the open, touch at the stop).
+                    }
                     else 
                         rl_sell = rl_stop # Stop Loss / Trailing Stop
 
@@ -1192,6 +1281,7 @@ function perform_audit(sym) {
 
                     m10_to_close = (m10_days > 0) ? (hold_days - m10_days) : 0
                     m20_to_close = (m20_days > 0) ? (hold_days - m20_days) : 0
+                    m25_to_close = (m25_days > 0) ? (hold_days - m25_days) : 0
                     m30_to_close = (m30_days > 0) ? (hold_days - m30_days) : 0
                     m40_to_close = (m40_days > 0) ? (hold_days - m40_days) : 0
                     m50_to_close = (m50_days > 0) ? (hold_days - m50_days) : 0
@@ -1227,8 +1317,8 @@ function perform_audit(sym) {
                     row = row "," sprintf("%.2f", entry_spy50[sym]) "," sprintf("%.2f", entry_spy100[sym]) "," sprintf("%.2f", entry_spy200[sym])
                     row = row "," entry_active_shocks[sym] "," sprintf("%.4f", entry_last_shock_mag[sym]) "," entry_rehab_cooldown[sym]
                     row = row "," sprintf("%.2f", entry_close) "," sprintf("%.2f", raw_op[sym, iso])
-                    row = row "," m10_days "," m20_days "," m30_days "," m40_days "," m50_days "," m60_days
-                    row = row "," m10_to_close "," m20_to_close "," m30_to_close "," m40_to_close "," m50_to_close "," m60_to_close
+                    row = row "," m10_days "," m20_days "," m25_days "," m30_days "," m40_days "," m50_days "," m60_days
+                    row = row "," m10_to_close "," m20_to_close "," m25_to_close "," m30_to_close "," m40_to_close "," m50_to_close "," m60_to_close
                     row = row "," sprintf("%.6f", trade_ces) "," partial_exit_date[sym] "," sprintf("%.2f", partial_exit_amount[sym]) "," sprintf("%.2f", avg_exit_price) "," sprintf("%.0f", entry_avg_vol[sym]+0) "," sprintf("%.0f", entry_trigger_vol[sym]+0)
                     row = row "," entry_pivot_high[sym]+0 "," entry_pivot_low[sym]+0
                     row = row "," (entry_struct_high[sym] != "" ? entry_struct_high[sym] : "") "," (entry_struct_low[sym] != "" ? entry_struct_low[sym] : "")
@@ -1244,10 +1334,13 @@ function perform_audit(sym) {
                     last_exit_was_target = (exit_type == "TARGET") ? 1 : 0
                     rl_pnl += trade_pnl
                     trl += trade_pnl
-                    rl_inv = rl_max_p = rl_min_p = rl_trail_active = m10_days = m20_days = m30_days = m40_days = m50_days = m60_days = 0
+                    rl_inv = rl_max_p = rl_min_p = rl_trail_active = m10_days = m20_days = m25_days = m30_days = m40_days = m50_days = m60_days = 0
                     has_hit_time_trigger[sym] = 0
                     time_trigger_counter[sym] = 0
                     has_hit_milestone[sym] = 0
+                    partial_exit_date[sym] = ""
+                    partial_exit_amount[sym] = 0
+                    for (si = 1; si <= n_ladder; si++) ladder_done[sym, si] = 0
                     total_exit_proceeds[sym] = 0
                     total_shares_sold[sym] = 0
                     
@@ -1410,7 +1503,15 @@ function perform_audit(sym) {
                               }
                               if (j == d_ptr[sym]) {
                                     pred_iso_scan = dates[sym, j - 1]
-                                    scan_tgt = (pred_iso_scan != "" && sma50[pred_iso_scan] > 0) ? (sma50[pred_iso_scan] * RL_TARGET_PCT) : 0
+                                    nxop_scan_early = (next_day_iso != "" && raw_op[sym, next_day_iso] > 0) ? raw_op[sym, next_day_iso] : 0
+                                    # Last bar: next open is not in the file. Use the trigger close.
+                                    if (RL_SMA_TARGET_OFF + 0) {
+                                        if (nxop_scan_early > 0)
+                                            scan_tgt = nxop_scan_early * RL_TARGET_PCT
+                                        else
+                                            scan_tgt = raw_cl[sym, iso] * RL_TARGET_PCT
+                                    } else
+                                        scan_tgt = (pred_iso_scan != "" && sma50[pred_iso_scan] > 0) ? (sma50[pred_iso_scan] * RL_TARGET_PCT) : 0
                                     entry_bar_idx_scan = j + 1
                                     stop_pct_scan = RL_STOP_PCT + 0
                                     pt_mode_scan = tolower(RL_POST_TARGET_REENTRY_MODE)
@@ -1470,7 +1571,10 @@ function perform_audit(sym) {
                                     entry_prev_pl_pr[sym] = (prev_pivot_low_price[sym, next_day_iso] != "") ? prev_pivot_low_price[sym, next_day_iso] + 0 : ""
                                     entry_close = raw_cl[sym, iso]
                                     rl_close_to_high = 1 - ((raw_hi[sym, iso] - raw_cl[sym, iso]) / (raw_hi[sym, iso] - raw_lo[sym, iso]))
-                                    original_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
+                                    if ((RL_SMA_TARGET_OFF + 0) && rl_entry_p[sym] > 0)
+                                        original_target = rl_entry_p[sym] * RL_TARGET_PCT
+                                    else
+                                        original_target = sma50[dates[sym, j-1]] * RL_TARGET_PCT
                                     current_target[sym] = rl_entry_p[sym] * (1 + RL_EXIT_PERCENT)
                                     original_stop = rl_stop
                                     partial_exit_date[sym] = ""
@@ -1552,11 +1656,12 @@ function perform_audit(sym) {
                       entry100_sma100[sym] = (sma100[iso] > 0) ? sma100[iso] : 0
                       entry100_sma200[sym] = (sma200[iso] > 0) ? sma200[iso] : 0
                   }
-                  # Milestone tracking (days to first hit 10%, 20%, ... 60%)
+                  # Milestone tracking (days to first hit 10%, 20%, 25%, ... 60%)
                   curr_profit_pct_100_m = (raw_hi[sym, iso] - rl100_entry_p) / rl100_entry_p
                   hold_days_100_m = days_diff(rl100_entry_iso, iso) + 1
                   if (curr_profit_pct_100_m >= MILESTONE_10_PCT && m10_days_100[sym] == 0) m10_days_100[sym] = hold_days_100_m
                   if (curr_profit_pct_100_m >= MILESTONE_20_PCT && m20_days_100[sym] == 0) m20_days_100[sym] = hold_days_100_m
+                  if (curr_profit_pct_100_m >= MILESTONE_25_PCT && m25_days_100[sym] == 0) m25_days_100[sym] = hold_days_100_m
                   if (curr_profit_pct_100_m >= MILESTONE_30_PCT && m30_days_100[sym] == 0) m30_days_100[sym] = hold_days_100_m
                   if (curr_profit_pct_100_m >= MILESTONE_40_PCT && m40_days_100[sym] == 0) m40_days_100[sym] = hold_days_100_m
                   if (curr_profit_pct_100_m >= MILESTONE_50_PCT && m50_days_100[sym] == 0) m50_days_100[sym] = hold_days_100_m
@@ -1631,6 +1736,7 @@ function perform_audit(sym) {
                     max_dd_100 = mae_pct_100
                     m10_to_c_100 = (m10_days_100[sym] > 0) ? (hold_days100 - m10_days_100[sym]) : 0
                     m20_to_c_100 = (m20_days_100[sym] > 0) ? (hold_days100 - m20_days_100[sym]) : 0
+                    m25_to_c_100 = (m25_days_100[sym] > 0) ? (hold_days100 - m25_days_100[sym]) : 0
                     m30_to_c_100 = (m30_days_100[sym] > 0) ? (hold_days100 - m30_days_100[sym]) : 0
                     m40_to_c_100 = (m40_days_100[sym] > 0) ? (hold_days100 - m40_days_100[sym]) : 0
                     m50_to_c_100 = (m50_days_100[sym] > 0) ? (hold_days100 - m50_days_100[sym]) : 0
@@ -1648,8 +1754,8 @@ function perform_audit(sym) {
                     row100 = row100 "," sprintf("%.4f", entry_slope_100[sym]+0) ",0,0,0," sprintf("%.2f", entry100_spy50[sym]+0) "," sprintf("%.2f", entry100_spy100[sym]+0) "," sprintf("%.2f", entry100_spy200[sym]+0)
                     row100 = row100 ",0,0,0"
                     row100 = row100 "," sprintf("%.2f", entry100_close[sym]+0) "," sprintf("%.2f", raw_op[sym, iso]+0)
-                    row100 = row100 "," (m10_days_100[sym]+0) "," (m20_days_100[sym]+0) "," (m30_days_100[sym]+0) "," (m40_days_100[sym]+0) "," (m50_days_100[sym]+0) "," (m60_days_100[sym]+0)
-                    row100 = row100 "," m10_to_c_100 "," m20_to_c_100 "," m30_to_c_100 "," m40_to_c_100 "," m50_to_c_100 "," m60_to_c_100
+                    row100 = row100 "," (m10_days_100[sym]+0) "," (m20_days_100[sym]+0) "," (m25_days_100[sym]+0) "," (m30_days_100[sym]+0) "," (m40_days_100[sym]+0) "," (m50_days_100[sym]+0) "," (m60_days_100[sym]+0)
+                    row100 = row100 "," m10_to_c_100 "," m20_to_c_100 "," m25_to_c_100 "," m30_to_c_100 "," m40_to_c_100 "," m50_to_c_100 "," m60_to_c_100
                     row100 = row100 "," sprintf("%.6f", trade_ces_100) ",0,0," sprintf("%.2f", rl100_sell) "," sprintf("%.0f", entry100_avg_vol[sym]+0) "," sprintf("%.0f", entry100_trigger_vol[sym]+0)
                     row100 = row100 ",0,0,,,0,0,,,,,,"
                     RL100_closed_list[++RL100_closed_ptr] = row100
@@ -1749,7 +1855,7 @@ function perform_audit(sym) {
                         entry100_atr_val[sym] = atr_rolling + 0
                         entry100_atr_pct[sym] = (rl100_entry_p > 0 && atr_rolling > 0) ? (atr_rolling / rl100_entry_p) : 0
                         entry100_close[sym] = raw_cl[sym, iso] + 0
-                        m10_days_100[sym] = 0; m20_days_100[sym] = 0; m30_days_100[sym] = 0
+                        m10_days_100[sym] = 0; m20_days_100[sym] = 0; m25_days_100[sym] = 0; m30_days_100[sym] = 0
                         m40_days_100[sym] = 0; m50_days_100[sym] = 0; m60_days_100[sym] = 0
                         rl100_trail_active = 0
                         entry100_peak_hi[sym] = peak_hi[sym]
@@ -1911,11 +2017,24 @@ function perform_audit(sym) {
       if (rl_inv > 0) {
             last_cl = raw_cl[sym, dates[sym, d_ptr[sym]]]
             _open_val = (rl_inv * last_cl) - RL_CASH
-            distance_covered_to_target = (last_cl-rl_entry_p[sym])/(rl_target-rl_entry_p[sym])
+            book_tgt = rl_target
+            if ((RL_SMA_TARGET_OFF + 0) && rl_entry_p[sym] > 0) {
+                if (n_ladder > 0) {
+                    book_tgt = rl_entry_p[sym] * RL_TARGET_PCT
+                    if (ladder_done[sym, 1] == 1 && (RL_ENTRY_TARGET_PCT + 0) > 0)
+                        book_tgt = rl_entry_p[sym] * (1 + RL_ENTRY_TARGET_PCT)
+                } else if (!(book_tgt > 0)) {
+                    book_tgt = rl_entry_p[sym] * RL_TARGET_PCT
+                }
+            }
+            if (book_tgt != rl_entry_p[sym])
+                distance_covered_to_target = (last_cl-rl_entry_p[sym])/(book_tgt-rl_entry_p[sym])
+            else
+                distance_covered_to_target = 0
             
             if (_open_val > 0) { rl_open_wins++; rl_val_open_wins += _open_val }
             else { rl_open_losses++; rl_val_open_losses += _open_val }
-            rl_open_list[++rl_open_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f%%,%d,50-trigger,%.2f,%.2f,%.4f,%.0f,%s,%s", sym, rl_entry_iso[sym], rl_entry_p[sym], last_cl, (_open_val/RL_CASH)*100, (d_ptr[sym] - rl_entry_idx[sym]), rl_stop, rl_target, distance_covered_to_target, entry_hist_hits[sym], entry_hist_exp[sym], entry_hist_reset[sym])
+            rl_open_list[++rl_open_ptr] = sprintf("%s,%s,%.2f,%.2f,%.2f%%,%d,50-trigger,%.2f,%.2f,%.4f,%.0f,%s,%s", sym, rl_entry_iso[sym], rl_entry_p[sym], last_cl, (_open_val/RL_CASH)*100, (d_ptr[sym] - rl_entry_idx[sym]), rl_stop, book_tgt, distance_covered_to_target, entry_hist_hits[sym], entry_hist_exp[sym], entry_hist_reset[sym])
       }
       # Persistence for 100-day Open trades
       if (rl100_inv > 0) {
@@ -2519,12 +2638,12 @@ END {
             for (xp=1; xp<=rl_open_ptr; xp++) print rl_open_list[xp] >> open_file
       }
       # Always write RL_Closed (header + rows if any) so run timestamp is findable by RegressionCheck
-      printf "SYMBOL,DATE OPENED,ENTRY PRICE,SMA20,SMA30,SMA50,SMA100,SMA200,CLOSE TO HIGH,MAX PRICE,MAX GAIN,MIN PRICE,TOO HIGH?,ORIGINAL STOP,STOP LOSS AT CLOSE,ORIGINAL TARGET,RISK (%% to stop),Reward/risk,DATE CLOSED,DAYS HELD,EXIT PRICE,PNL %%,ANNUALIZED ROR,EXIT TYPE,MAE, MAX DRAW DOWN,TRIGGER TYPE,HIST_HIGH_PCT,HIST_CLOSE_PCT,HIST_LOW_PCT,ENTRY_ATR_STOP,ATR,ATR %% OF PRICE,PREVIOUS EXP TO TARGET,PRIOR RESET,MOST recent EXP,MOST RECENT RESET,SLOPE AT ENTRY,SPY AT ENTRY,SPY20,SPY30,SPY50,SPY100,SPY200,ACTIVE_SHOCKS,LAST SHOCK MAGNITUDE,SHOCK REHAB COOLDOWN REMAINING,CLOSE PRIOR,OPEN ON DAY OF CLOSE,DAYS_TO_10,DAYS_TO_20,DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,30_TO_CLOSE,40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,AVG_VOL,TRIGGER_VOL,PIVOT_HIGH_AT_ENTRY,PIVOT_LOW_AT_ENTRY,STRUCT_HIGH_AT_ENTRY,STRUCT_LOW_AT_ENTRY,MAJOR_PIVOT_HIGH_AT_ENTRY,MAJOR_PIVOT_LOW_AT_ENTRY,PIVOT_HIGH_PRICE_AT_ENTRY,PIVOT_LOW_PRICE_AT_ENTRY,LAST_PIVOT_HIGH_PRICE,LAST_PIVOT_LOW_PRICE,PREV_PIVOT_HIGH_PRICE,PREV_PIVOT_LOW_PRICE\n" > closed_file
+      printf "SYMBOL,DATE OPENED,ENTRY PRICE,SMA20,SMA30,SMA50,SMA100,SMA200,CLOSE TO HIGH,MAX PRICE,MAX GAIN,MIN PRICE,TOO HIGH?,ORIGINAL STOP,STOP LOSS AT CLOSE,ORIGINAL TARGET,RISK (%% to stop),Reward/risk,DATE CLOSED,DAYS HELD,EXIT PRICE,PNL %%,ANNUALIZED ROR,EXIT TYPE,MAE, MAX DRAW DOWN,TRIGGER TYPE,HIST_HIGH_PCT,HIST_CLOSE_PCT,HIST_LOW_PCT,ENTRY_ATR_STOP,ATR,ATR %% OF PRICE,PREVIOUS EXP TO TARGET,PRIOR RESET,MOST recent EXP,MOST RECENT RESET,SLOPE AT ENTRY,SPY AT ENTRY,SPY20,SPY30,SPY50,SPY100,SPY200,ACTIVE_SHOCKS,LAST SHOCK MAGNITUDE,SHOCK REHAB COOLDOWN REMAINING,CLOSE PRIOR,OPEN ON DAY OF CLOSE,DAYS_TO_10,DAYS_TO_20,DAYS_TO_25,DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,25_TO_CLOSE,30_TO_CLOSE,40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,AVG_VOL,TRIGGER_VOL,PIVOT_HIGH_AT_ENTRY,PIVOT_LOW_AT_ENTRY,STRUCT_HIGH_AT_ENTRY,STRUCT_LOW_AT_ENTRY,MAJOR_PIVOT_HIGH_AT_ENTRY,MAJOR_PIVOT_LOW_AT_ENTRY,PIVOT_HIGH_PRICE_AT_ENTRY,PIVOT_LOW_PRICE_AT_ENTRY,LAST_PIVOT_HIGH_PRICE,LAST_PIVOT_LOW_PRICE,PREV_PIVOT_HIGH_PRICE,PREV_PIVOT_LOW_PRICE\n" > closed_file
       for (xc=1; xc<=rl_closed_ptr; xc++) print rl_closed_list[xc] >> closed_file
       close(closed_file)
 
       # 100-SMA system: separate RL100_Closed file (same header as RL_Closed for alignment)
-      printf "SYMBOL,DATE OPENED,ENTRY PRICE,SMA20,SMA30,SMA50,SMA100,SMA200,CLOSE TO HIGH,MAX PRICE,MAX GAIN,MIN PRICE,TOO HIGH?,ORIGINAL STOP,STOP LOSS AT CLOSE,ORIGINAL TARGET,RISK (%% to stop),Reward/risk,DATE CLOSED,DAYS HELD,EXIT PRICE,PNL %%,ANNUALIZED ROR,EXIT TYPE,MAE, MAX DRAW DOWN,TRIGGER TYPE,HIST_HIGH_PCT,HIST_CLOSE_PCT,HIST_LOW_PCT,ENTRY_ATR_STOP,ATR,ATR %% OF PRICE,PREVIOUS EXP TO TARGET,PRIOR RESET,MOST recent EXP,MOST RECENT RESET,SLOPE AT ENTRY,SPY AT ENTRY,SPY20,SPY30,SPY50,SPY100,SPY200,ACTIVE_SHOCKS,LAST SHOCK MAGNITUDE,SHOCK REHAB COOLDOWN REMAINING,CLOSE PRIOR,OPEN ON DAY OF CLOSE,DAYS_TO_10,DAYS_TO_20,DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,30_TO_CLOSE,40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,AVG_VOL,TRIGGER_VOL,PIVOT_HIGH_AT_ENTRY,PIVOT_LOW_AT_ENTRY,STRUCT_HIGH_AT_ENTRY,STRUCT_LOW_AT_ENTRY,MAJOR_PIVOT_HIGH_AT_ENTRY,MAJOR_PIVOT_LOW_AT_ENTRY,PIVOT_HIGH_PRICE_AT_ENTRY,PIVOT_LOW_PRICE_AT_ENTRY,LAST_PIVOT_HIGH_PRICE,LAST_PIVOT_LOW_PRICE,PREV_PIVOT_HIGH_PRICE,PREV_PIVOT_LOW_PRICE\n" > RL100_closed_file
+      printf "SYMBOL,DATE OPENED,ENTRY PRICE,SMA20,SMA30,SMA50,SMA100,SMA200,CLOSE TO HIGH,MAX PRICE,MAX GAIN,MIN PRICE,TOO HIGH?,ORIGINAL STOP,STOP LOSS AT CLOSE,ORIGINAL TARGET,RISK (%% to stop),Reward/risk,DATE CLOSED,DAYS HELD,EXIT PRICE,PNL %%,ANNUALIZED ROR,EXIT TYPE,MAE, MAX DRAW DOWN,TRIGGER TYPE,HIST_HIGH_PCT,HIST_CLOSE_PCT,HIST_LOW_PCT,ENTRY_ATR_STOP,ATR,ATR %% OF PRICE,PREVIOUS EXP TO TARGET,PRIOR RESET,MOST recent EXP,MOST RECENT RESET,SLOPE AT ENTRY,SPY AT ENTRY,SPY20,SPY30,SPY50,SPY100,SPY200,ACTIVE_SHOCKS,LAST SHOCK MAGNITUDE,SHOCK REHAB COOLDOWN REMAINING,CLOSE PRIOR,OPEN ON DAY OF CLOSE,DAYS_TO_10,DAYS_TO_20,DAYS_TO_25,DAYS_TO_30,DAYS_TO_40,DAYS_TO_50,DAYS_TO_60,10_TO_CLOSE,20_TO_CLOSE,25_TO_CLOSE,30_TO_CLOSE,40_TO_CLOSE,50_TO_CLOSE,60_TO_CLOSE,Trade_CES,PARTIAL_DATE,PARTIAL_AMT,AVG EXIT PRICE,AVG_VOL,TRIGGER_VOL,PIVOT_HIGH_AT_ENTRY,PIVOT_LOW_AT_ENTRY,STRUCT_HIGH_AT_ENTRY,STRUCT_LOW_AT_ENTRY,MAJOR_PIVOT_HIGH_AT_ENTRY,MAJOR_PIVOT_LOW_AT_ENTRY,PIVOT_HIGH_PRICE_AT_ENTRY,PIVOT_LOW_PRICE_AT_ENTRY,LAST_PIVOT_HIGH_PRICE,LAST_PIVOT_LOW_PRICE,PREV_PIVOT_HIGH_PRICE,PREV_PIVOT_LOW_PRICE\n" > RL100_closed_file
       for (xc=1; xc<=RL100_closed_ptr; xc++) print RL100_closed_list[xc] >> RL100_closed_file
       close(RL100_closed_file)
 

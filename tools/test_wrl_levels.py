@@ -198,6 +198,17 @@ def test_min_rr_swing_blocks_above_2r() -> None:
     assert closed == []
 
 
+def test_house_default_is_swing_full_exit() -> None:
+    assert WrlConfig().wrl_target_mode == "swing"
+    df = _synth_breakout_df()
+    closed, _, _, _ = backtest_symbol("TEST", df, WrlConfig())
+    assert len(closed) == 1
+    t = closed[0]
+    # Fill bar skips exits; next bar High tags swing high → 100% out at 110.
+    assert abs(t.exit_price - 110.0) < 1e-6
+    assert t.exit_type in ("TARGET", "TARGET2", "GAP_UP")
+
+
 def test_backtest_range_target_only() -> None:
     df = _synth_breakout_df()
     closed, _, _, _ = backtest_symbol("TEST", df, WrlConfig(wrl_target_mode="range"))

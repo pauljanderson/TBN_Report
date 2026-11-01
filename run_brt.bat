@@ -1,5 +1,7 @@
 @echo off
 rem BRT zone backtest (whitelist) — outputs BRT_Closed|Open|Scanner|Watchlist_<ts>.csv in drive\
+rem Kelly size A/Bs (research only, house sheet ~$47.5k unchanged):
+rem   drive\paul_experiments\kelly_size_ab_20260915\
 rem Standalone: double-click or call from DailyRun.
 rem Universe: drive\universes\BRT_universe.csv (one ticker per line)
 rem Override: run_brt.bat path\to\test_universe.csv
@@ -31,14 +33,18 @@ call "%~dp0tools\load_universe_csv.bat" BRT "%BRT_UNIV_ARG%"
 if errorlevel 1 exit /b 1
 echo [BRT] Universe src=%BRT_UNIVERSE_SRC% pass_s=%BRT_PASS_SYMBOLS%
 
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 32. Explicit BRT_WORKERS wins.
+if not defined BRT_WORKERS if defined DAILYRUN_WORKERS set "BRT_WORKERS=%DAILYRUN_WORKERS%"
+if not defined BRT_WORKERS set "BRT_WORKERS=32"
+
 if not defined PER_SYMBOL_SETTINGS set "PER_SYMBOL_SETTINGS=stock_analysis\Per_Symbol_Optimized_Settings_Approved_Latest.json"
 
 set "PS_ARGS="
 if exist "%~dp0%PER_SYMBOL_SETTINGS%" set "PS_ARGS=--per-symbol-settings %PER_SYMBOL_SETTINGS%"
 
 if "%BRT_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 32 --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.081 -v strong_post_pivot_pct=0.108 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% -s "!BRT_SYMBOLS!" !BRT_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% -s "!BRT_SYMBOLS!" !BRT_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w 32 --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.081 -v strong_post_pivot_pct=0.108 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% !BRT_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% !BRT_FORWARD!
 )
 exit /b %errorlevel%

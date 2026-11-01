@@ -475,7 +475,7 @@ def rl() -> str:
 <h2>1. What it is</h2>
 <p>
   RL waits for a stacked SMA tape (20&gt;50&gt;100&gt;200) with a rising 50-SMA, then buys a
-  controlled dip into a ±4.1% band around yesterday’s 50-SMA, provided expansion, acceptance
+  controlled dip into a ±5.5% band around yesterday’s 50-SMA, provided expansion, acceptance
   (8 of 10 closes above the prior 50-SMA), peak, and fill gates pass. It is <em>not</em> a zone-retest system.
   Sizing is fixed <code>rl_cash</code> (default $47,500 per name), not the host 500k×2×0.6 deployable path.
 </p>
@@ -490,7 +490,7 @@ def rl() -> str:
 <ol class="steps">
   <li><strong>SMA stack + 200-SMA exists:</strong> SMA20 &gt; SMA50 &gt; SMA100 &gt; SMA200, all finite/positive. <code>rl_sma_qual=1</code> (prod on).</li>
   <li><strong>50-SMA rising:</strong> SMA50[T] &gt; SMA50[T − <code>rl_50_sma_lookback</code>] (prod lookback <strong>4</strong>).</li>
-  <li><strong>In the 50-zone:</strong> Low_T is inside yesterday’s 50-SMA × <code>rl_dip_pct</code> band. Prod <code>rl_dip_pct=1.041</code> → band is SMA50 × 0.959 … SMA50 × 1.041 (±4.1%).</li>
+  <li><strong>In the 50-zone:</strong> Low_T is inside yesterday’s 50-SMA × <code>rl_dip_pct</code> band. Prod <code>rl_dip_pct=1.055</code> → band is SMA50 × 0.945 … SMA50 × 1.055 (±5.5%).</li>
   <li><strong>Uptick + close above 50-SMA:</strong> Close_T &gt; Open_T and Close_T &gt; yesterday’s SMA50.</li>
   <li><strong>Expansion:</strong> some close in the last <code>expansion_lookback_days</code> (10) ≥ prior-bar SMA50 × <code>rl_expansion</code> (prod <strong>1.163</strong>).</li>
   <li><strong>Acceptance:</strong> at least <code>rl_acc_min</code> of the last <code>rl_acc_count</code> bars close above prior SMA50 (defaults <strong>8 / 10</strong>).</li>
@@ -503,9 +503,10 @@ def rl() -> str:
 <h2>3. Exit logic</h2>
 <ul>
   <li><strong>Stop:</strong> signal-bar Low × <code>rl_stop_pct</code> → prod / AWK default <strong>0.934</strong> (−6.6% vs signal low).</li>
-  <li><strong>Target:</strong> SMA50 × <code>rl_target_pct</code> → AWK/Python default <strong>1.20</strong>. Anchored to the 50-SMA (not entry) and <em>updated while the trade is open</em>.</li>
+  <li><strong>Target:</strong> static <code>entry × rl_target_pct</code> (default <strong>1.20</strong>, +20% from the buy) while the Simple Moving Average (SMA) envelope is off. After the 80% sale that price becomes entry × (1 + <code>rl_entry_target_pct</code>) (+40%). The old moving target (prior-day SMA50 × 1.20, updated while open) is used only when <code>rl_sma_target_off=0</code>.</li>
   <li>Shared gap-down / gap-up / intraday stop / target schedule (first match wins), matching AWK bar order.</li>
-  <li>Trail / partial / flush / time-exit levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
+  <li>Trail / partial / flush levers exist in AWK BEGIN; Python honors the same config fields. Prod bat does not turn trails on.</li>
+  <li><strong>Exit (house freeze 2026-09-27):</strong> sell 80% at +20% from the buy (<code>rl_scale_ladder=0.20:0.80:0</code>), move the leftover stop to the entry price, and sell that leftover at +40% (<code>rl_entry_target_pct=0.40</code>). No time clock (<code>rl_exit_percent=0</code>, <code>rl_exit_days=0</code>). SMA envelope target off (<code>rl_sma_target_off=1</code>). If one day trades both the leftover stop and the +40% target, the stop is checked first. Universe is every name under <code>data/newdata/data</code>.</li>
   <li>Post-TARGET re-entry window: prod <code>rl_post_target_reentry_bars=0</code> (off).</li>
   <li>AWK-only subsystems (not in the Python 50-trigger port): RL100 (100-SMA) and Dive Bomber shorts — audit defaults show them off.</li>
 </ul>
@@ -514,18 +515,20 @@ def rl() -> str:
 <p>Production from <code>run_rl.bat</code>; remaining defaults from <code>RLConfig</code> / AWK BEGIN. Do not promote a Python-only lever until AWK compare is clean.</p>
 """
         + levers([
-            ("<code>rl_dip_pct</code>", "Half-width of the 50-SMA dip band", "<strong>1.041</strong> (±4.1%)", "Tighter band → fewer dips that qualify"),
+            ("<code>rl_dip_pct</code>", "Half-width of the 50-SMA dip band", "<strong>1.055</strong> (±5.5%)", "Tighter band → fewer dips that qualify"),
             ("<code>rl_sma_qual</code>", "Require SMA stack + rising 50", "<strong>1</strong> (on)", "Off → many more unstructured dips"),
             ("<code>rl_50_sma_lookback</code>", "Bars for “50-SMA rising”", "<strong>4</strong> (config default)", "Longer lookback → slower trend confirmation"),
             ("<code>rl_stop_pct</code>", "Stop = signal Low × multiplier", "<strong>0.934</strong>", "Lower multiplier = wider stop"),
-            ("<code>rl_target_pct</code>", "Target = prior SMA50 × multiplier", "<strong>1.20</strong> (config default)", "Higher → fewer TARGET hits, longer holds"),
+            ("<code>rl_target_pct</code>", "Static target = entry × multiplier when SMA envelope is off", "<strong>1.20</strong> (+20% from the buy)", "After the 80% sale the leftover target is +40%"),
+            ("<code>rl_exit_percent</code>", "Timed-exit profit gate vs entry MTM", "<strong>0.40</strong> (+40%)", "House adopt 40_30d 2026-08-31"),
+            ("<code>rl_exit_days</code>", "Bars after profit gate before forced exit", "<strong>30</strong>", "10000 ≈ off; races SMA50 target"),
             ("<code>rl_too_high</code>", "Fill ceiling vs signal Low × stop", "<strong>0</strong> (off)", "On (hist 1.14) rejects opens that gap too far above the stop line"),
             ("<code>rl_expansion</code>", "Min close vs SMA50 for expansion", "<strong>1.163</strong> (config default)", "Higher → require a stronger prior thrust"),
             ("<code>rl_acc_min</code> / <code>rl_acc_count</code>", "Acceptance: closes above SMA50 in window", "<strong>8 / 10</strong>", "Higher min → fewer accepted dips"),
             ("<code>rl_cash</code>", "Fixed notional per name", "<strong>$47,500</strong>", "RL does not use host 600k deployable / max_positions"),
             ("<code>ATR_LOW</code> / <code>ATR_HIGH</code>", "ATR% band at signal", "<strong>off / off</strong> in prod bat", "Config defaults 2.44% / 8.48% if not overridden"),
             ("<code>rl_slope_threshold</code>", "Min 30-bar slope", "<strong>0</strong> (off in prod bat)", "Config default 0.0643 if not overridden"),
-            ("<code>rl_cut_the_losers</code>", "Prior-bar high vs SMA50 cap", "<strong>0.25</strong> (config default)", "Blocks entries already extended above the 50"),
+            ("<code>rl_cut_the_losers</code>", "Prior-bar high vs SMA50 cap", "<strong>1000</strong> (OFF)", "0.25 would block extended prior highs; Paul house OFF"),
             ("Per-symbol JSON", "Approved overlay on gold names", "Loaded when file exists", "Keep JSON <code>rl_too_high=0</code> in sync with the bat"),
         ])
         + """
@@ -697,7 +700,7 @@ def brt() -> str:
   <li><strong>Pivots:</strong> local high/low in a ±k window with future confirmation (drop/rally). Sheet-touch Final Pivot High also requires post-drop and not-also-pivot-low. Consecutive same-price Final PHs are allowed (PO 2026-07-20).</li>
   <li><strong>Zone band:</strong> touch price × (1 ± <code>band_pct</code>). Prod <strong>0.0154</strong>. Overlapping bands are <em>not</em> merged.</li>
   <li><strong>Maturity:</strong> touch count in <code>lookback_long</code> reaches <code>touch_threshold</code> (sheet <strong>2</strong>).</li>
-  <li><strong>Strong-pivot filter:</strong> prod pre 7 bars / 8.1%, post 7 / 10.8% (bat sets the percents; spec default mode is pre).</li>
+  <li><strong>Strong-pivot filter:</strong> prod pre 7 bars / 10%, post 7 / 10% (bat sets the percents; prior house was 8.1% / 10.8%; spec default mode is pre).</li>
   <li><strong>Tight range:</strong> (max high / min low − 1) over 105 bars must be &gt; 35% or the level is blocked (dead-range qualifier).</li>
   <li><strong>Level acceptance (7/10):</strong> at least 7 of the last 10 bars close above the anchored zone lower, tied to Support Test when enabled.</li>
   <li><strong>Bullish candle window:</strong> Close &gt; Open on the maturity bar <em>or</em> the next bar only. Fill = next session open after that candle.</li>
@@ -724,8 +727,8 @@ def brt() -> str:
             ("<code>band_pct</code>", "Zone half-width around touch price", "<strong>0.0154</strong>", "Wider → more overlapping/mature zones"),
             ("<code>stop_pct</code>", "Stop multiplier", "<strong>0.934</strong>", "Lower multiplier = wider stop"),
             ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.21</strong>", "Higher → fewer TARGET hits"),
-            ("<code>strong_pre_pivot_pct</code> / bars", "Pre-pivot thrust", "<strong>0.081 / 7</strong>", "Higher % → fewer “strong” pivots"),
-            ("<code>strong_post_pivot_pct</code> / bars", "Post-pivot follow-through", "<strong>0.108 / 7</strong>", "Higher % → stricter confirmation"),
+            ("<code>strong_pre_pivot_pct</code> / bars", "Pre-pivot thrust", "<strong>0.1 / 7</strong>", "Higher % → fewer “strong” pivots"),
+            ("<code>strong_post_pivot_pct</code> / bars", "Post-pivot follow-through", "<strong>0.1 / 7</strong>", "Higher % → stricter confirmation"),
             ("<code>breakout_bars</code>", "Breakout lookback", "<strong>100</strong>", "Sheet C-cell analog"),
             ("<code>tight_range_threshold_pct</code> / lookback", "Dead-range block", "<strong>0.35 / 105</strong>", "Higher threshold → more blocks"),
             ("<code>brt_sheet_touch</code>", "Sheet Final-PH touch stream", "<strong>true</strong>", "Off → engine pivot-only stream"),
@@ -785,10 +788,14 @@ def wpbr() -> str:
         ),
         body="""
 <div class="callout ok">
-  <strong>Status:</strong> Production gold · DailyRun step [8/14].
-  Mag9 production universe (<span class="path">drive/universes/WPBR_universe.csv</span>).
-  Comment in the bat: AMD is out of WPBR. Seed historically used the MarkTen mega-cap set
-  (AAPL AMZN GOOGL META MSFT NVDA TSLA AU AMD NFLX) — production CSV is source of truth.
+  <strong>Status:</strong> Production · DailyRun step [8/13].
+  Full warehouse (<span class="path">data/newdata/data</span>), frozen 2 Oct 2026 from the
+  22% overhead arm of <span class="path">drive/paul_experiments/wpbr_overhead20_vs22_t20s8_ab_20261002</span>
+  (engine Closed stamp <code>261002051403</code>).
+  The 9-name file <span class="path">drive/universes/WPBR_universe.csv</span> is an optional override, not the DailyRun universe.
+  Overhead gate <code>wpbr_overhead_band_pct=0.22</code>. Sell the whole position at 20% above the buy.
+  Stop is 8% under the low of the trigger day (the session before the buy), <code>stop_pct=0.92</code>.
+  The 3-year “close must be higher” filter stays off, and this arm does not require 756 sessions of history.
 </div>
 <div class="callout">
   Product decision (2026-07-22): <strong>the sheet wins</strong> on daily-retest scan.
@@ -815,13 +822,14 @@ def wpbr() -> str:
   <li><strong>Entry window:</strong> <code>wpbr_max_days_after_retest=2</code> (inclusive) for a green daily close above the upper band; fill = next open.</li>
   <li><strong>Second chance after win:</strong> prod <code>wpbr_second_chance_after_win=true</code>.</li>
   <li><code>sheet_no_entry_same_bar_after_exit=false</code> is forced (WPBR nosamebarexit off vs some sheet defaults).</li>
-  <li>Growth filter <strong>off</strong>. SPY-compare floor neutralized (−1000). Indicators on for report columns, not as buy gates.</li>
+  <li>Overhead gate: <code>wpbr_overhead_band_pct=0.22</code>. Skip the buy when an earlier Pivot Break and Retest zone has its bottom above this zone’s top and that gap is 22% or less. A wider gap is allowed.</li>
+  <li>History: <code>min_history_bars=0</code>. This freeze does not require 756 sessions of history. Growth filter <strong>off</strong> (<code>growth_filter_enabled=false</code>; the close does not have to be higher than it was 756 sessions earlier). SPY-compare floor neutralized (−1000). Indicators on for report columns, not as buy gates.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
 <ul>
-  <li><strong>Stop:</strong> <code>stop_pct=0.91</code> (wider than BRT’s 0.934).</li>
-  <li><strong>Target:</strong> <code>target_pct=1.22</code> (+22%).</li>
+  <li><strong>Stop:</strong> <code>stop_pct=0.92</code>. That is 0.92 times the low of the trigger day (8% under the low of the day before the buy), because the default stop base is the trigger-day low. It is not 8% under the entry price.</li>
+  <li><strong>Target:</strong> <code>target_pct=1.20</code> (full sale at 20% above the buy).</li>
   <li>Host gap / stop / target schedule. HALF_UP retest compares + variant C pivot rounding live in <code>wpbr_zones.py</code>.</li>
 </ul>
 
@@ -834,19 +842,21 @@ def wpbr() -> str:
             ("<code>retest_mode</code>", "Daily scan terminate rule", "<strong>stop_looking</strong> (sheet)", "<code>keep_looking</code> is legacy A/B only"),
             ("<code>wpbr_second_chance_after_win</code>", "Re-arm after a winning exit", "<strong>true</strong>", "Off → one-and-done per zone episode"),
             ("<code>strong_pivot_mode</code>", "Pre/post/either/both", "<strong>either</strong> · 3 bars / 10%", "Stricter modes cut pivot inventory"),
-            ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.22</strong>", "Higher → fewer TARGET hits; longer holds (WPBR avg hold is multi-month)"),
-            ("<code>stop_pct</code>", "Stop multiplier", "<strong>0.91</strong>", "Wider than BRT 0.934"),
+            ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.20</strong>", "Full sale at 20% above the buy"),
+            ("<code>stop_pct</code>", "Stop vs trigger-day low", "<strong>0.92</strong>", "8% under the low of the day before the buy, not under the entry price"),
+            ("<code>wpbr_overhead_band_pct</code>", "Max gap to an older zone above", "<strong>0.22</strong>", "Skip the buy when an earlier zone sits 22% or closer above this zone"),
             ("<code>wpbr_merge_overlapping_zones</code>", "Merge overlapping weekly bands", "<strong>false</strong> (optional on)", "On → ZONE_STRENGTH = member count"),
-            ("<code>growth_filter_enabled</code>", "3-year growth gate", "<strong>false</strong>", "On would cut Mag9 history"),
+            ("<code>min_history_bars</code>", "Sessions of history before a buy", "<strong>0</strong>", "This freeze does not require 756 sessions of history"),
+            ("<code>growth_filter_enabled</code>", "3-year close-must-be-higher gate", "<strong>false</strong>", "Stays off. The close does not have to be higher than 756 sessions earlier"),
             ("<code>start_date</code>", "Entry/pivot window", "<strong>unset</strong> (full history)", "Do not add 2016 on DailyRun / reconcile freeze"),
         ])
         + """
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Production gold</strong> — DailyRun Mag9"),
+            ("Status", "<strong>Production</strong> — DailyRun full warehouse, 22% overhead, 20% target, 8% stop under the trigger-day low, growth filter off"),
             ("Runner", "<code>run_wpbr.bat</code>"),
-            ("Universe", "<code>drive/universes/WPBR_universe.csv</code>"),
+            ("Universe", "Every CSV under <span class='path'>data/newdata/data</span>"),
             ("Engine", "<span class='path'>stock_analysis/wpbr_zones.py</span> via TBN host"),
             ("Parity tools", "<span class='path'>tools/run_wpbr_*_markten.py</span>"),
             ("Outputs", "<code>drive/WPBR_*_&lt;ts&gt;.*</code>"),
@@ -940,7 +950,7 @@ def mts() -> str:
             ("<code>band_pct</code>", "Zone half-width (C5 analog; bat override)", "<strong>0.018</strong> (optimizer was 0.016)", "Wider → more ladder overlaps / first touches"),
             ("<code>touch_threshold</code>", "Touches to mature (C6)", "<strong>2</strong>", "Higher → fewer matured zones"),
             ("<code>strong_pre_pivot_*</code>", "Pre-pivot thrust", "<strong>7 / 0.12</strong>", "Sheet C-cell analog"),
-            ("<code>strong_post_pivot_*</code>", "Post-pivot follow-through", "<strong>7 / 0.06</strong>", "Looser post than BRT’s 0.108"),
+            ("<code>strong_post_pivot_*</code>", "Post-pivot follow-through", "<strong>7 / 0.06</strong>", "Looser post than BRT’s 0.1"),
             ("<code>target_pct</code>", "Take-profit vs entry", "<strong>1.22</strong>", "Sheet C3 / +22% cap language in overrides"),
             ("<code>stop_pct</code> + <code>stop_loss_based</code>", "Stop vs signal-bar low", "<strong>0.934 / trigger_low</strong>", "Do not switch to entry-anchored without a new freeze"),
             ("<code>symbol_reentry_cooldown_days</code>", "Re-arm delay after exit", "<strong>20</strong>", "Higher → fewer re-entries"),
@@ -982,26 +992,41 @@ def mts() -> str:
 def vz() -> str:
     return page(
         title="VZ — Volume Zone",
-        eyebrow="Research · Volume Zone (VZ) Break and Retest",
+        eyebrow="Production · Volume Zone (VZ) Break and Retest",
         lede=(
-            "<strong>VZ</strong> (Volume Zone) is a research prototype: rolling max-volume days become "
-            "High–Low (HL) price zones; after an upside break, the system buys a support retest. "
-            "It is not Break and ReTest (BRT) production and is not DailyRun-wired."
+            "<strong>VZ</strong> (Volume Zone) is a DailyRun official Twin Beacon Networks (TBN) sleeve: "
+            "rolling max-volume days become High–Low (HL) price zones; after an upside break, the system "
+            "buys a support retest. It is not Break and ReTest (BRT). "
+            "<strong>TBN production sleeve / DailyRun official — not walk-forward gold.</strong>"
         ),
-        badge_class="badge-bad",
-        badge_text="Research candidate — not DailyRun",
+        badge_class="badge-ok",
+        badge_text="DailyRun / TBN official",
         meta=(
             "<span>Mode <code>vz_mode=true</code></span>"
             "<span>Runner <code>run_vz.bat</code></span>"
             "<span>Engine <span class='path'>tools/vol_zone_break_retest.py</span></span>"
-            "<span>Freeze <code>vol_zone_v2_rw63_20260810</code></span>"
+            "<span>Freeze <code>EXIT_atr4_s025_r15_ts20</code> · atr4=4% floor at trigger · s025 · r15 · ts20 · Paul78.142</span>"
         ),
         body="""
-<div class="callout bad">
-  <strong>Not production gold. Not DailyRun-wired.</strong>
-  House artifacts: <code>drive/VZ_*_&lt;ts&gt;.*</code> via the TBN host.
-  Adopted freeze: entry gates <code>RESEARCH_CANDIDATE_V2_RW63</code> · exit <code>zone_atr05_ts40</code> ·
-  house fill <code>entry_on=next_open</code>.
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10b/13] · reconcile-gated (PO adopt 2026-09-07).
+  Universe <code>drive/universes/VZ_universe.csv</code> — <strong>Paul78.142 (142)</strong>.
+  House label <code>EXIT_atr4_s025_r15_ts20</code>:
+  <strong>atr4</strong> = 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+  (quiet names never enter — <em>not</em> a 4-ATR stop; scanner-known on the trigger date);
+  <strong>s025</strong> = stop at zone low − 0.25×ATR;
+  <strong>r15</strong> = 1.5R target;
+  <strong>ts20</strong> = 20-bar time stop.
+  <strong>Not walk-forward gold.</strong>
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> Paul78.142 is a user Paul Score list (likely in-sample / IS-aware).
+  4-arm universe AB vs old house56 was <strong>HOLD</strong> on IS annualized rate of return (Ann ROR) —
+  product choice. Stop 0.25 was chosen after seeing the ImprovePriority AB table on the same 142 book
+  → <strong>in-sample selection</strong>. Out-of-sample (OOS) is report-only; do not retune.
+  The 4% ATR floor moved from entry fill to trigger close on 2026-09-07
+  (<span class="path">vz_atr_trigger_adopt_20260907</span>) after a
+  <strong>HOLD</strong> quality A/B — operational / scanner-live override, not KEEP, not gold.
 </div>
 <div class="callout ok">
   <strong>Predictive timing:</strong> signal known at retest-bar <em>close</em> (uses that bar’s Low/High/Close).
@@ -1011,7 +1036,7 @@ def vz() -> str:
 <h2>1. What it is</h2>
 <p>
   Hypothesis: high-volume nodes act as support after acceptance above them.
-  Default research universe is DualPaul78 (<code>drive/universes/VZ_universe.csv</code>).
+  Default DailyRun universe is Paul78.142 (<code>drive/universes/VZ_universe.csv</code>).
 </p>
 
 <h2>2. Entry logic</h2>
@@ -1021,20 +1046,52 @@ def vz() -> str:
   <li><strong>Retest clock:</strong> within <code>retest_window</code> bars after break (adopted <strong>63</strong>).</li>
   <li><strong>Signal bar T:</strong> bar intersects the zone band (or near-miss within <code>retest_eps_pct</code> of zone.hi), approach from_above, close still ≥ zone.lo. Known only at/after T’s close.</li>
   <li><strong>Quality gates (v2):</strong> <code>first_retest_only=True</code>; <code>min_touches_before_entry ≥ 1</code>.</li>
+  <li><strong>Volatility floor (atr4):</strong> 14-day Average True Range (ATR) must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger=4.0</code> / <code>VZ_MIN_ATR_PCT=4.0</code>;
+      <code>min_atr_pct_at_entry=0</code>). Quiet names fail and never enter.
+      This is <strong>not</strong> a 4-ATR stop — it is a “is this name moving enough?” screen
+      the scanner can apply on the trigger date (next-open fill is not known yet).</li>
   <li><strong>Fill:</strong> <code>entry_on=next_open</code> → Open of T+1. Alternate research: close of T. Forbidden: Open of T using T’s range.</li>
 </ol>
 
 <h2>3. Exit logic</h2>
-<p>Exit recipe <code>zone_atr05_ts40</code> (chosen in-sample on PaulTwenty — label selection bias).</p>
+<p>
+  The house freeze name is <code>EXIT_atr4_s025_r15_ts20</code> (PO adopt 2026-09-07; stop 0.25 chosen after
+  ImprovePriority AB on the same 142 book — in-sample selection).
+  Read the tokens left to right — <code>atr4</code> is a volatility floor, not the stop:
+</p>
+<ul>
+  <li><strong>atr4</strong> — 14-day ATR must be ≥ <strong>4% of trigger close</strong>
+      (<code>min_atr_pct_at_trigger</code> / <code>VZ_MIN_ATR_PCT=4.0</code>).
+      Quiet names fail this gate and never enter. <strong>Not a 4-ATR stop.</strong>
+      The same <code>atr4</code> prefix sat on the older <code>EXIT_atr4_s05_r15_ts20</code>
+      (0.5 ATR stop) — the 4 did not change when the stop did.
+      House used entry-priced 4% until 2026-09-07; trigger-priced 4% is now the DailyRun identity
+      (one gate only — entry gate off).</li>
+  <li><strong>s025</strong> — stop at zone low − 0.25×ATR (<code>stop_atr_buffer=0.25</code>).</li>
+  <li><strong>r15</strong> — 1.5R target (<code>target_r=1.5</code>): take profit at 1.5 times the entry-to-stop distance.</li>
+  <li><strong>ts20</strong> — 20-bar time stop (<code>exit_bars=20</code>).</li>
+</ul>
+<p>
+  House now measures that 4% ATR floor at <strong>trigger close</strong>
+  (<code>ATR14 / trigger_close ≥ 4%</code>) so the scanner can decide on the signal date.
+  The prior house used entry fill price (lookahead vs a live scanner). Quality A/B
+  (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>) was <strong>HOLD</strong>
+  (IS WR 60.5% vs 60.9%, AvgR 0.489 vs 0.535; OOS also slightly softer). Adopted as a
+  product / scanner-live choice — <strong>not KEEP, not gold</strong>. Do not also apply
+  the entry gate (that would be a tighter two-gate system).
+</p>
 """
         + kv([
-            ("Stop", "<code>zone.lo − 0.5 · ATR14[entry]</code>"),
-            ("Target", "<strong>2.0R</strong> from entry vs stop distance"),
-            ("Time stop", "<strong>40</strong> trading bars (end-of-data truncation stays Open, not Closed TIME)"),
+            ("Stop", "<code>zone.lo − 0.25 · ATR14[entry]</code> — this is the <code>s025</code> token, not <code>atr4</code>"),
+            ("Target", "<strong>1.5R</strong> from entry vs stop distance (<code>r15</code>)"),
+            ("Time stop", "<strong>20</strong> trading bars (<code>ts20</code>; end-of-data truncation stays Open, not Closed TIME)"),
+            ("Volatility floor", "14-day ATR ≥ <strong>4%</strong> of trigger close (<code>atr4</code> / <code>min_atr_pct_at_trigger</code>) — not a stop"),
+            ("Cooldown", "<strong>10</strong> calendar days after a TARGET exit (same symbol)"),
         ])
         + """
 <div class="callout warn">
-  <strong>Fidelity:</strong> zone stop and 2R target can sit in the broker. The <strong>40-day time stop</strong>
+  <strong>Fidelity:</strong> zone stop and 1.5R target can sit in the broker. The <strong>20-day time stop</strong>
   is not a broker order.
 </div>
 
@@ -1048,50 +1105,244 @@ def vz() -> str:
             ("<code>first_retest_only</code>", "One entry per zone after break", "<strong>True</strong>", "False → later visits / more signals"),
             ("<code>min_touches_before_entry</code>", "Min prior intersections", "<strong>1</strong>", "mt0 dismissed"),
             ("<code>entry_on</code>", "Fill at retest close vs next open", "<strong>next_open</strong> (house)", "Prior AB freeze used close"),
-            ("Exit <code>zone_atr05_ts40</code>", "ATR buffer / 2R / 40d", "<strong>0.5 / 2.0 / 40</strong>", "In-sample exit compare winner — selection bias labeled"),
+            ("<code>min_atr_pct_at_trigger</code>", "14-day ATR must be ≥ this % of trigger close or the name never enters (the <code>atr4</code> token — not a 4-ATR stop). House / scanner identity.", "<strong>4.0</strong>", "Lower → more quiet names enter. Replaced entry-priced 4% on 2026-09-07 after HOLD AB."),
+            ("<code>min_atr_pct_at_entry</code>", "Optional fill-priced ATR% floor. House leaves this off so only the trigger gate applies.", "<strong>0</strong> (off)", "Do not turn on together with trigger 4% — that is a two-gate system."),
+            ("Exit <code>EXIT_atr4_s025_r15_ts20</code>", "<code>atr4</code>=4% ATR floor <em>at trigger</em> (not a 4-ATR stop); <code>s025</code>=zone.lo−0.25×ATR; <code>r15</code>=1.5R; <code>ts20</code>=20 bars", "<strong>4% trigger / 0.25 / 1.5 / 20</strong>", "PO adopt 2026-09-07 vs prior house stop 0.5; in-sample selection. The atr4 prefix did not change when the stop did, nor when the measurement point moved from entry to trigger."),
+            ("<code>vz_require_hvn_overlap</code>", "Require High Volume Node overlap", "<strong>false</strong>", "HOLD DualPaul78 + 764 — do not default-on"),
+            ("<code>cooldown_after_target_days</code>", "Block re-entry after TARGET", "<strong>10</strong>", "Higher → fewer re-entries after winners"),
+            ("One position per symbol", "Skip a later signal while that name is still held (including same-day two-zone pile-ups). Always on in <code>enrich_trade_rows</code> — no flag re-enables pyramids.", "<strong>on</strong> (DailyRun lock 2026-09-15)", "Older pyramid books (N=2708 / GOLD 20200506 doubles) are not the regression baseline. Compare to <code>VZ_LatestRun_Closed.csv</code> / house pin."),
         ])
         + """
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Research candidate only</strong> — not gold, not DailyRun"),
+            ("Status", "<strong>DailyRun official TBN sleeve</strong> — not walk-forward gold"),
             ("TBN mode", "<code>vz_mode=true</code> (early dispatch in rocket_tbn)"),
-            ("Default univ", "<code>drive/universes/VZ_universe.csv</code> (DualPaul78)"),
+            ("Default univ", "<code>drive/universes/VZ_universe.csv</code> (Paul78.142, 142 names)"),
+            ("Reconcile freeze", "<code>drive/paul_experiments/vz_baseline_260915223353/</code> (one-position DailyRun lock <code>vz_one_position_dailyrun_20260915</code>; latest = <code>VZ_LatestRun_Closed.csv</code>; prior trigger-gate <code>vz_baseline_260907175402</code>)"),
             ("PaulTwenty", "<code>run_vz.bat drive\\\\universes\\\\PaulTwenty_universe.csv</code>"),
             ("IS / OOS", "IS = entry_date &lt; 2024-01-01; OOS = 2024+ holdout — report-only"),
         ])
         + """
 <h2>6. Caveats</h2>
 <ul>
-  <li><strong>Selection bias:</strong> HL / first_retest / mt≥1 / eps / rw63 / <code>zone_atr05_ts40</code> were chosen on overlapping PaulTwenty history.</li>
+  <li><strong>Universe:</strong> Paul78.142 is a user Paul Score list (likely IS-aware). 4-arm AB vs old house56 was HOLD on IS Ann ROR — product choice, not a process KEEP.</li>
+  <li><strong>Stop 0.25:</strong> chosen after seeing ImprovePriority AB on the same 142 book → in-sample selection. Re-score IS/OOS under the adopted freeze; do not retune OOS.</li>
   <li>House <code>entry_on=next_open</code> differs from prior AB freeze <code>close</code> — do not silently retune other freeze knobs on OOS.</li>
-  <li>Promotion bar: wider/walk-forward + process PO — research stamps alone do not wire DailyRun.</li>
-  <li>OOS softened under the toy exit on <code>vol_zone_hl_quality_20260810</code> — HOLD, not a retune trigger.</li>
+  <li><strong>ATR% at trigger:</strong> operational adopt after HOLD quality A/B
+      (<span class="path">vz_atr_trigger_vs_entry_ab_20260907</span>). Slightly worse IS/OOS
+      quality vs entry-priced 4%. Adopted so the scanner can decide on the trigger date.
+      Not KEEP. Not walk-forward gold. Do not retune the 4% floor on OOS.</li>
+  <li>Not walk-forward gold. DailyRun official ≠ gold promotion bar.</li>
+  <li>High Volume Node (HVN) overlap stays <strong>off</strong>.</li>
+  <li><strong>One position per symbol</strong> (DailyRun lock 2026-09-15): do not buy a name we already hold.
+      Always on in <code>enrich_trade_rows</code>. Older pyramid books (N=2708 / GOLD 20200506 doubles)
+      are not the regression baseline — compare to <code>VZ_LatestRun_Closed.csv</code> / house pin.
+      Research extras were better quality; operational lock is still one position. Not walk-forward gold.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/vol_zone_v2_rw63_20260810/BASELINE.md</span></li>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_adopt_20260907/</span> (ATR% at trigger operational adopt)</li>
+  <li><span class="path">drive/paul_experiments/vz_atr_trigger_vs_entry_ab_20260907/</span> (HOLD quality A/B)</li>
+  <li><span class="path">drive/paul_experiments/vz_tbn_adopt_s025_paul78_20260907/</span></li>
+  <li><span class="path">drive/paul_experiments/vz_paul78_142_adopt_20260907/BASELINE.md</span> (universe adopt)</li>
   <li><span class="path">drive/paul_experiments/VZ_TBN_Integration_And_Predictive_Timing.html</span></li>
   <li><code>run_vz.bat</code> / <span class="path">stock_analysis/rocket_vz.py</span> / <span class="path">tools/vol_zone_break_retest.py</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/volume_zone/HOW_TO_RUN.md</span></li>
 </ul>
 """,
-        footer="Canonical VZ write-up · Twin Beacon Networks (TBN) · research only",
+        footer="Canonical VZ write-up · Twin Beacon Networks (TBN) · DailyRun official",
+    )
+
+
+def rsi() -> str:
+    return page(
+        title="RSI — Relative Strength Index",
+        eyebrow="Production · Relative Strength Index (RSI)",
+        lede=(
+            "<strong>RSI</strong> (Relative Strength Index) is Wilder's 14-period heat gauge — "
+            "how stretched a name is on its own tape — <strong>not</strong> "
+            "<strong>RS</strong> (Relative Strength vs SPY). "
+            "It buys a cool-off after a hot run, then sells when RSI is hot again, "
+            "rolls off a peak, or the calendar clock hits. "
+            "<strong>DailyRun sleeve — not walk-forward gold.</strong>"
+        ),
+        badge_class="badge-ok",
+        badge_text="DailyRun / TBN official",
+        meta=(
+            "<span>Mode <code>rsi_mode=true</code></span>"
+            "<span>Runner <code>run_rsi.bat</code></span>"
+            "<span>Engine <span class='path'>stock_analysis/rocket_rsi.py</span></span>"
+            "<span>Prefix <code>RSI_*</code></span>"
+            "<span>Freeze ob70 / os30 / exit70 / maxrsi60 / atr2.93 / roll8 / ts20 / next_open</span>"
+        ),
+        body="""
+<div class="callout">
+  <strong>Not RS vs SPY:</strong> <strong>RSI</strong> here is J. Welles Wilder's Relative Strength Index (14) —
+  up-closes vs down-closes on this symbol. <strong>RS</strong> (Relative Strength) is the other sleeve
+  that scores excess return vs SPY plus Trend Condition (TC). Do not mix the two books, prefixes, or reports.
+</div>
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10c/13] · preference-adopt.
+  Universe <code>drive/universes/rsi_universe.csv</code> — <strong>149</strong> High-FIT / in-sample (IS)-good names.
+  House freeze from <code>run_rsi.bat</code> / DailyRun:
+  prior bar RSI(14) ≥ 70, then close with 30 &lt; RSI &lt; 60 and trigger RSI &lt; 60,
+  Average True Range (ATR)% ≥ 2.93, fill next open;
+  sell RSI(14) ≥ 70 next open, or roll-8, or 20 calendar-day clock.
+  <strong>No price stop. Dummy $10k sheet notional. Watchlist, not Scanner.
+  Not walk-forward gold.</strong>
+  Skip with <code>SKIP_RSI=1</code>.
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> DailyRun-wired is not the gold bar. Roll-8 and ATR% 2.93 are
+  preference adopts (see adopt stamps below). Out-of-sample (OOS) is report-only — do not retune.
+  Research A/B stamps (RSI 75 exit, ATR% 4, 7.18 distance-to-52-week-high, Kelly size) are
+  <strong>not</strong> this page’s house freeze.
+</div>
+<div class="callout ok">
+  <strong>Predictive timing:</strong> signal known at trigger-bar <em>close</em>
+  (Wilder RSI(14) + ATR% on that close). Default fill = <strong>next open</strong> (T+1).
+  Never buys the open of the signal morning. Gates are not re-checked on the fill bar.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Hypothesis: after a name runs hot (RSI(14) ≥ 70), a pullback into a cooler band
+  (still above oversold) on a lively tape is worth a short hold until heat returns,
+  the move gives back, or time runs out.
+  Role: short-hold heat-gauge sleeve vs multi-month <strong>RS</strong> (vs SPY) leadership
+  and zone-retest books (Break and ReTest / Year High / Pivot Break and Retest / Volume Zone).
+</p>
+<p>
+  One position at a time per symbol. Live surface is <strong>Watchlist</strong>
+  (<code>RSI_Watchlist_&lt;ts&gt;.csv</code>) — there is no <code>RSI_Scanner</code> file.
+  Watchlist rows include what-if closes (price that would print RSI &lt; 60 tomorrow, and
+  the range needed for the ATR% floor).
+</p>
+
+<h2>2. Entry logic</h2>
+<p>Signal bar <strong>T</strong> close — then fill at T+1 open. Engine: <code>_signal</code> path in
+<code>rocket_rsi.py</code> (<code>buy_base</code> + <code>gate_ok</code>).</p>
+<ol class="steps">
+  <li><strong>Was hot:</strong> prior bar RSI(14) ≥ <code>rsi_ob</code> (house <strong>70</strong>).
+      This arms the setup; it is not the buy.</li>
+  <li><strong>Cool-off band:</strong> T close has 30 &lt; RSI(14) &lt; 70
+      (<code>rsi_os=30</code>, still below the overbought line). Below 30 is oversold here — not a buy.</li>
+  <li><strong>Trigger cap:</strong> T’s RSI must be <strong>&lt; <code>rsi_max_trigger</code></strong>
+      (house <strong>60</strong>). Combined with the band: house buy is
+      prior ≥ 70, then <strong>30 &lt; RSI &lt; 60</strong> and trigger RSI &lt; 60.</li>
+  <li><strong>Volatility floor:</strong> 14-day ATR / close × 100 ≥ <code>rsi_min_atr_pct</code>
+      (house <strong>2.93</strong>) at the trigger close. Quiet names never enter.
+      This is not a stop.</li>
+  <li><strong>Optional DNA gates (house off):</strong>
+      <code>rsi_min_dist_to_52w_high_pct_at_trigger=0</code> (do not pass 7.18 — that wire was reverted),
+      rel-vol min off, RSI-drop-from-overbought min off, near-high cap off.</li>
+  <li><strong>Fill:</strong> <code>rsi_entry_on=next_open</code> → Open of T+1.
+      Alternate research: close of T. Do not buy T’s open using T’s close.</li>
+  <li>One name at a time. <code>symbol_reentry_cooldown_days=0</code> in house (off).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<p>
+  Evaluated on each bar’s close while in the trade; fills are the <strong>next open</strong>.
+  Priority if more than one fires on the same bar:
+</p>
+<ol class="steps">
+  <li><strong>Roll-8</strong> (<code>RSI_ROLL</code>): in-trade max RSI(14) − current RSI(14) ≥
+      <code>rsi_roll_from_max</code> (house <strong>8</strong>) → sell next open.</li>
+  <li><strong>Overbought</strong> (<code>OVERBOUGHT</code>): RSI(14) ≥ <code>rsi_exit</code>
+      (house <strong>70</strong>) → sell next open.</li>
+  <li><strong>Clock</strong> (<code>TIME</code>): calendar days from entry ≥
+      <code>rsi_time_stop_days</code> (house <strong>20</strong>) → sell next open.</li>
+</ol>
+"""
+        + kv([
+            ("Price stop", "<strong>None</strong> — Closed <code>STOP_PRICE=0</code>. Not a broker stop."),
+            ("Dollar target", "<strong>None</strong> — Closed <code>TARGET_PRICE=0</code>. Not a broker target."),
+            ("getTarget prices", "Implied what-if closes (RSI ≥ 70 / roll-8 invert) for the sheet — <strong>not</strong> live exits."),
+            ("Fill on exit", "Next session open (same as entry). Last bar of the tape cannot fill inside the backtest window."),
+        ])
+        + """
+<div class="callout warn">
+  <strong>Fidelity:</strong> there is no price stop and no dollar target to park at the broker.
+  Sell when Watchlist / Open says RSI ≥ 70, roll-8, or the 20-calendar-day date.
+  <code>getTarget.py</code> RSI rows are implied closes for those RSI events — not live exits.
+</div>
+
+<h2>4. Levers</h2>
+<p>House values from <code>run_rsi.bat</code> / DailyRun. Effects are directional tendencies — not guarantees.
+Research A/B knobs below stay off unless a later stamp adopts them.</p>
+"""
+        + levers([
+            ("<code>rsi_ob</code>", "Prior-bar “was hot” line that arms the setup", "<strong>70</strong>", "Higher → fewer armed setups"),
+            ("<code>rsi_os</code>", "Neutral-band floor (below = oversold, not a buy)", "<strong>30</strong>", "Higher floor → fewer deep pullbacks"),
+            ("<code>rsi_max_trigger</code>", "Trigger RSI must be strictly below this", "<strong>60</strong>", "Lower → cooler entries, fewer trades"),
+            ("<code>rsi_min_atr_pct</code>", "14-day ATR must be ≥ this % of trigger close", "<strong>2.93</strong>", "Higher → fewer quiet names. Preference adopt vs prior 5.0"),
+            ("<code>rsi_exit</code>", "Sell when RSI reaches this again (next open)", "<strong>70</strong>", "Higher → longer holds / fewer OVERBOUGHT exits"),
+            ("<code>rsi_roll_from_max</code>", "EXIT: flatten next open when in-trade max RSI − now ≥ this (0 = off)", "<strong>8</strong>", "Tighter roll → more RSI_ROLL, shorter holds. Engine default is 0; house is 8"),
+            ("<code>rsi_time_stop_days</code>", "Calendar-day clock from entry (0 = off)", "<strong>20</strong>", "Shorter → more TIME exits"),
+            ("<code>rsi_entry_on</code>", "Fill at trigger close vs next open", "<strong>next_open</strong>", "close = same-bar fill (research only)"),
+            ("<code>rsi_sheet_notional</code>", "Dummy sheet cash per name (Closed $ PnL scale)", "<strong>10000</strong>", "Kelly / risk-frac A/Bs are research only — house stays $10k"),
+            ("<code>rsi_min_dist_to_52w_high_pct_at_trigger</code>", "Keep if distance-to-52-week-high % ≥ X (0 = off)", "<strong>0</strong> (off)", "Do not pass 7.18 — that DailyRun wire was reverted"),
+            ("Universe CSV", "Whitelist symbols", "<strong>149</strong> High-FIT / IS-good", "ALL / research CSVs must not steal the house pin"),
+        ])
+        + """
+<h2>5. Universe / status</h2>
+"""
+        + kv([
+            ("Status", "<strong>DailyRun official TBN sleeve</strong> — preference-adopt, not walk-forward gold"),
+            ("TBN mode", "<code>rsi_mode=true</code> (early dispatch in <code>rocket_tbn.py</code>)"),
+            ("Runner", "<code>run_rsi.bat</code> · DailyRun step [10c/13] · <code>SKIP_RSI=1</code> to skip"),
+            ("Universe", "<code>drive/universes/rsi_universe.csv</code> (N=149; copy of <code>RSIN_HighFIT_ISgood_maxrsi60_20260911.csv</code>)"),
+            ("Live list", "<strong>Watchlist</strong> — no Scanner output"),
+            ("Sizing", "Dummy <strong>$10k</strong> sheet notional (<code>rsi_sheet_notional=10000</code>). Host 500k / 2× / 0.6 flags are neutralized for this book’s $ PnL."),
+            ("House pin", "<code>drive/RSI_house_last_run_ts.txt</code> — ALL / research lists must not steal it"),
+            ("Outputs", "<code>drive/RSI_*_&lt;ts&gt;.*</code> — Closed / Open / Watchlist / Summary / Report / Audit / Equity / LatestRun copies"),
+            ("Adopt (roll-8)", "<code>drive/paul_experiments/rsi_roll_ab_20260916/</code>"),
+            ("Prior ATR% adopt", "<code>drive/paul_experiments/rsi_atr293_dailyrun_20260916/</code> (replaced house ATR% 5)"),
+            ("Reverted wire", "<code>drive/paul_experiments/rsi_mindist52_718_20260916/</code> — 7.18 min-dist is off"),
+            ("IS / OOS", "IS = entry before 2024-01-01; OOS = 2024+ — report-only"),
+        ])
+        + """
+<h2>6. Caveats</h2>
+<ul>
+  <li><strong>Not Relative Strength vs SPY.</strong> Prefix <code>RSI_*</code> is this sleeve; <code>RS_*</code> is the other.</li>
+  <li>No price stop and no dollar target. A gap through the next-open sell is the live risk.</li>
+  <li>Dummy $10k notional means Closed dollar columns are sheet-scale, not a 500k deployable book. Do not change DailyRun host sizing from this page.</li>
+  <li>Watchlist is the live surface. Convergence / reports that look for <code>RSI_Scanner</code> will show missing — that is expected.</li>
+  <li>Roll-8 and ATR% 2.93 are preference adopts, not walk-forward gold. OOS is report-only; do not retune to “fix” OOS.</li>
+  <li>Optional trigger DNA (7.18 min-dist, rel-vol, RSI-drop) stays off in house. Passing them silently is a different system.</li>
+  <li>Never pass <code>entry_start_date</code> / <code>entry_end_date</code> on production runs (research shop only).</li>
+  <li><code>run_rsi.bat ALL</code> / research CSVs write their own stamps and must not overwrite <code>RSI_house_last_run_ts.txt</code>.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_rsi.bat</code> — production CLI + freeze comments</li>
+  <li><span class="path">stock_analysis/rocket_rsi.py</span> — <code>rsi_mode</code> engine</li>
+  <li><span class="path">drive/universes/rsi_universe.csv</span> — house 149</li>
+  <li><span class="path">drive/paul_experiments/rsi_roll_ab_20260916/</span> — roll-8 EXIT adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr293_dailyrun_20260916/</span> — ATR% 2.93 adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr5_dailyrun_20260914/</span> — prior ATR% 5 house</li>
+  <li><a href="../tbn_philosophy.html#rsi">TBN Philosophy § RSI</a> · <a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+""",
+        footer="Canonical RSI write-up · Twin Beacon Networks (TBN) · production knobs from run_rsi.bat",
     )
 
 
 def wrl() -> str:
     return page(
         title="WRL — Weekly Range / Swing",
-        eyebrow="Research · Weekly Range / Swing",
+        eyebrow="DailyRun · Weekly Range / Swing · official 6-sys mix — not gold",
         lede=(
             "Demand-zone bounce off last week’s range, enclosed by a walk-back swing high and swing low. "
             "Watch a daily close in the lower pocket; buy the next session if price trades up out of it. "
-            "Targets are last week’s high, then the swing high."
+            "House exit (2026-09-22): sell 100% at the walk-back swing high."
         ),
-        badge_class="badge-bad",
-        badge_text="Research candidate — not DailyRun",
+        badge_class="badge-warn",
+        badge_text="DailyRun wired — official 6-sys mix — not gold",
         meta=(
             "<span>Mode <code>wrl_mode=true</code></span>"
             "<span>Runner <code>run_wrl.bat</code></span>"
@@ -1099,8 +1350,10 @@ def wrl() -> str:
             "<span>Host <span class='path'>stock_analysis/rocket_wrl.py</span></span>"
         ),
         body="""
-<div class="callout bad">
-  <strong>Not production gold. Not a DailyRun numbered step. Not in the $500k allocation mix.</strong>
+<div class="callout warn">
+  <strong>DailyRun wired. Official 6-sys mix. Not gold.</strong>
+  Adopt stamp <code>wrl_dailyrund_6sys_20260922</code>. Parent 5-vs-6 was HOLD on quality
+  (6-sys more dollars; Max DD 10.4%→17.2%; WR / Avg / PF softened). Paul adopted anyway.
   Do not treat Watchlist rows as same-day fills. The last bar closing in the zone only arms
   <em>tomorrow’s</em> breakout check.
 </div>
@@ -1199,7 +1452,7 @@ def wrl() -> str:
 <ul>
   <li><code>WRL_Watchlist_*</code> / <code>WRL_Scanner_*</code> — last bar closed in the demand zone; next session is the breakout day. Not a fill.</li>
   <li><code>WRL_Open_*</code> — live position; levels frozen from the watch week.</li>
-  <li><code>WRL_Closed_*</code> — finished trades. <code>TARGET_PRICE</code> = T1, <code>TARGET2_PRICE</code> = swing high.</li>
+  <li><code>WRL_Closed_*</code> — finished trades. House <code>TARGET_PRICE</code> = swing high (full exit). <code>TARGET2_PRICE</code> unused unless a leftover scale lot exists. Published <code>WRL_Closed_260906140457</code> is the old scale book until the next production run.</li>
 </ul>
 
 <h2>6. Exits</h2>
@@ -1208,20 +1461,20 @@ def wrl() -> str:
 <table class="sortable">
   <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
   <tbody>
-    <tr><td><code>scale</code> (default)</td><td>50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
-    <tr><td><code>range</code></td><td>Full size out at range high.</td></tr>
-    <tr><td><code>swing</code></td><td>Full size out at swing high.</td></tr>
+    <tr><td><code>swing</code> (default)</td><td>Sell 100% at the walk-back swing high. <code>wrl_scale_frac</code> unused.</td></tr>
+    <tr><td><code>range</code></td><td>Full size out at last week’s range high.</td></tr>
+    <tr><td><code>scale</code></td><td>Leftover: 50% at range high (<code>TARGET1</code>), stop to entry, remainder at swing high (<code>TARGET2</code>).</td></tr>
   </tbody>
 </table>
 </div>
-<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>.</p>
+<p>Default stop = <code>swing_low * stop_pct</code> with <code>stop_pct=1.0</code>. Min-zone off. Cooldown unset. DailyRun house default — not gold.</p>
 
 <h2>7. How to run</h2>
 <div class="card">
   <p>From the development root (same folder as <code>DailyRun.bat</code>), on <code>main</code>:</p>
-  <p><code>run_wrl.bat</code> — Mag10 if <code>drive\\universes\\WRL_universe.csv</code> is missing.</p>
+  <p><code>run_wrl.bat</code> — house <code>drive\\universes\\WRL_universe.csv</code> (29 names). Mag10 only if that file is missing.</p>
   <p><code>run_wrl.bat drive\\universes\\PaulTwenty_universe.csv</code> — Paul Twenty.</p>
-  <p><code>run_wrl.bat ALL</code> — full universe. <code>set WRL_TARGET_MODE=scale|range|swing</code>.</p>
+  <p><code>run_wrl.bat ALL</code> — full universe. Default <code>WRL_TARGET_MODE=swing</code>. Override: <code>set WRL_TARGET_MODE=swing|range|scale</code>.</p>
   <p>Outputs: <code>drive/WRL_*_&lt;ts&gt;.csv</code> plus <code>WRL_LatestRun_*</code>.</p>
 </div>
 
@@ -1232,44 +1485,45 @@ def wrl() -> str:
   <li>Keep a watch alive for more than one session. Cancel the buy stop at the close if it was not hit.</li>
   <li>Wait for the day’s high to print, then market-buy — that is chasing. The buy stop must be working at the range low.</li>
   <li>Buy a gap that opens below the swing low, even if the high later reclaims the range low.</li>
-  <li>Wire this into DailyRun gold or the $500k mix until there is a freeze and a promotion bar.</li>
+  <li>Call this gold. DailyRun wire ≠ gold. Parent 5-vs-6 was HOLD on quality. Do not retune OOS.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
   <li><span class="path">drive/systems/wrl.html</span> · <span class="path">docs/systems/wrl.html</span></li>
   <li><code>run_wrl.bat</code> / <code>run_wrl_ab.bat</code> / <span class="path">stock_analysis/rocket_wrl.py</span> / <span class="path">stock_analysis/wrl_zones.py</span></li>
-  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers)</li>
+  <li><a href="wrl_ab.html">WRL A/B comparison</a> (Mag10 one-knob levers; historical control was scale)</li>
+  <li>House adopt 2026-09-22: <span class="path">drive/paul_experiments/wrl_adopt_exitswing_default_20260922/</span></li>
   <li><span class="path">tools/test_wrl_levels.py</span> · <span class="path">tools/run_wrl_ab.py</span></li>
 </ul>
 """,
-        footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · research only",
+        footer="Canonical WRL write-up · Twin Beacon Networks (TBN) · DailyRun wire / official 6-sys — not gold",
     )
 
 
 def mvcp() -> str:
     return page(
         title="MVCP — Minervini VCP",
-        eyebrow="Parked · Minervini Volatility Contraction Pattern (VCP)",
+        eyebrow="Retired · Minervini Volatility Contraction Pattern (VCP)",
         lede=(
             "<strong>MVCP</strong> (Minervini Volatility Contraction Pattern) is a Specific Entry Point Analysis (SEPA) "
-            "Stage-2 pivot-breakout sleeve. The engine is kept; the sleeve is parked from DailyRun and "
-            "active $500k allocation as of 2026-08-12."
+            "Stage-2 pivot-breakout sleeve. <strong>Retired 2026-08-21</strong> from DailyRun and active reporting "
+            "(monthly / investment / system-performance). Engine and historical Closed stamps are kept for research."
         ),
-        badge_class="badge-warn",
-        badge_text="Parked from live sleeve (2026-08-12)",
+        badge_class="badge-muted",
+        badge_text="Retired from DailyRun (2026-08-21)",
         meta=(
             "<span>Mode <code>mvcp_mode=true</code></span>"
-            "<span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code></span>"
+            "<span>Runner <code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone only)</span>"
             "<span>Prefix <code>MVCP_*</code></span>"
             "<span>Module <span class='path'>stock_analysis/rocket_minervini_vcp.py</span></span>"
         ),
         body="""
 <div class="callout warn">
-  <strong>What parked means:</strong> out of DailyRun by default (<code>SKIP_MVCP=1</code>; opt-in
-  <code>SKIP_MVCP=0</code>); out of monthly / investment / system-performance active lists;
-  reconcile gate MVCP <code>enabled: false</code>. Engine kept for research.
-  Source of truth: <span class="path">drive/paul_experiments/PARK.md</span>.
+  <strong>Retired:</strong> no DailyRun step (prior <code>SKIP_MVCP</code> opt-in removed);
+  omitted from monthly / investment / system-performance active lists;
+  reconcile gate MVCP <code>enabled: false</code>. Standalone research runners kept.
+  Do not re-wire without a new promotion bar.
 </div>
 
 <h2>1. What it is</h2>
@@ -1319,29 +1573,28 @@ def mvcp() -> str:
 <h2>5. Universe / status</h2>
 """
         + kv([
-            ("Status", "<strong>Parked</strong> — research only; DailyRun skip unless SKIP_MVCP=0"),
-            ("Runner", "<code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code>"),
+            ("Status", "<strong>Retired</strong> — not in DailyRun; omitted from active reports (2026-08-21)"),
+            ("Runner", "<code>run_mvcp.bat</code> → <code>run_minervini_vcp.bat</code> (standalone / research)"),
             ("Universe", "<code>drive/universes/MVCP_universe.csv</code> (default * = full scan)"),
             ("Sizing", "Host: 500k × 2 × 0.6 = 600k deployable; <code>MVCP_MAX_POSITIONS=0</code> auto peak concurrent"),
-            ("Park evidence", "<span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span>"),
+            ("Park / retire evidence", "<span class='path'>drive/paul_experiments/mvcp_vs_sb_rl_yearly_20260811.html</span>"),
         ])
         + """
 <h2>6. Caveats / do not</h2>
 <ul>
-  <li>Do not retune on out-of-sample (OOS) to “fix” the park.</li>
+  <li>Do not retune on out-of-sample (OOS) to “un-retire” the sleeve.</li>
   <li>Do not re-wire DailyRun without a new failure-mode hypothesis and promotion bar.</li>
-  <li>Park is process, not a silent deletion of the engine.</li>
+  <li>Retirement is process — historical <code>MVCP_*</code> Closed/Open stamps stay on Drive.</li>
 </ul>
 
 <h2>Canonical links</h2>
 <ul>
-  <li><span class="path">drive/paul_experiments/PARK.md</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/HOW_TO_RUN.html</span></li>
   <li><span class="path">drive/paul_experiments/tbn_new_systems/minervini_vcp/10_theory.md</span></li>
   <li><span class="path">stock_analysis/rocket_minervini_vcp.py</span></li>
 </ul>
 """,
-        footer="Canonical MVCP write-up · Twin Beacon Networks (TBN) · PARK.md is status SSoT",
+        footer="Canonical MVCP write-up · Twin Beacon Networks (TBN) · retired sleeve",
     )
 
 
@@ -1421,6 +1674,11 @@ def ind() -> str:
 <ul>
   <li>RS is the production consumer of Strong TC outlooks — do not revive IND to “keep TC in the book.”</li>
   <li>Monthly HTML still labels an IND column for legacy Closed/Open files.</li>
+  <li>OHLC-easy add-ons (StochRSI, Ultimate Oscillator, WMA/VMA/WilderMA, Chaikin Volatility Fast/Slow,
+  volume ratios, A/D slope, Standard Error) export as <code>IND_*</code> columns and work in
+  <code>mandatory_ind_states</code> / exclude JSON, but are <strong>excluded from IND_DIFF / IND_ENTRY_* tallies</strong>
+  so historical <code>indicator_diff</code> gates stay stable. See
+  <code>drive/paul_experiments/ind_ohlc_indicators_add_20260902/</code>.</li>
 </ul>
 
 <h2>Canonical links</h2>
@@ -1428,13 +1686,104 @@ def ind() -> str:
   <li><code>run_ind.bat</code> · <code>DailyRun.bat</code> step [5/14] SKIPPED</li>
   <li><a href="rs.html">RS — Relative Strength</a> (TC Strong gates)</li>
   <li><a href="../system_setup_process.html">System setup process</a></li>
+  <li><code>stock_analysis/brt_entry_indicators.py</code> · <code>OHLC_ADDON_INDICATOR_IDS</code></li>
 </ul>
 """,
         footer="Canonical IND write-up · Twin Beacon Networks (TBN) · deprecated sleeve",
     )
 
 
-PAGES: list[tuple[str, str, str]] = [
+def mom() -> str:
+    return page(
+        title="MOM — Momentum (Clenow)",
+        eyebrow="Research · MOM (Momentum) / Stocks on the Move",
+        lede=(
+            "<strong>MOM</strong> (Momentum) is a house research sleeve based on Andreas Clenow’s "
+            "<em>Stocks on the Move</em> classic rules: weekly volatility-adjusted momentum ranking, "
+            "100-day Simple Moving Average (SMA) trend filter, SPY 200-day SMA regime gate, and "
+            "Average True Range (ATR) risk sizing. "
+            "It is a <strong>research candidate</strong> — not gold and not DailyRun-wired."
+        ),
+        badge_class="badge-bad",
+        badge_text="Research candidate — not DailyRun",
+        meta=(
+            "<span>Engine <span class='path'>tools/mom_clenow_ab.py</span></span>"
+            "<span>Freeze <code>mom_baseline_20260828</code></span>"
+            "<span>Universe <code>drive/universes/MOM_universe.csv</code></span>"
+            "<span>Review Wednesday</span>"
+        ),
+        body="""
+<div class="callout bad">
+  <strong>Not production gold. Not DailyRun-wired.</strong>
+  Baseline stamp: <code>drive/paul_experiments/mom_baseline_20260828/</code>.
+  Rules note: <code>drive/paul_experiments/clenow_rules_summary_20260828/</code>.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Long-only equity momentum: each week, rank liquid names by 90-day log-regression slope × R²
+  (coefficient of determination), keep / buy the top ~20% of eligible names when the index is
+  in an uptrend, size by ATR, and exit on rank or SMA failure. No classic hard stop.
+</p>
+
+<h2>2. Entry logic</h2>
+<ol class="steps">
+  <li><strong>Universe:</strong> static liquid tradable tape (<code>MOM_universe.csv</code> = VZ 2010 / ADV$2m copy). Not point-in-time S&amp;P 500.</li>
+  <li><strong>Trend:</strong> close above 100-day SMA.</li>
+  <li><strong>Gap filter:</strong> no single-day |move| &gt; 15% in past 90 days (included; labeled).</li>
+  <li><strong>Rank:</strong> 90-day volatility-adjusted momentum; higher better.</li>
+  <li><strong>Pool:</strong> top 20% of eligible ranked names that review day.</li>
+  <li><strong>Index gate:</strong> new buys only if SPY &gt; 200-day SMA.</li>
+  <li><strong>Size:</strong> shares ≈ (equity × 0.001) / 20-day Wilder ATR; fill from top of rank until cash used.</li>
+  <li><strong>Cadence:</strong> Wednesday review (signal at close → next open fill); re-size every other week.</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+"""
+        + kv([
+            ("Rank exit", "Falls out of top ~20% on weekly review"),
+            ("Trend exit", "Close below 100-day SMA on weekly review"),
+            ("Universe / data", "Leaves usable OHLC / universe"),
+            ("Hard stop", "<strong>None</strong> (classic reconstruction)"),
+        ])
+        + """
+<h2>4. Levers</h2>
+"""
+        + levers([
+            ("<code>MOM_LOOKBACK</code>", "Log-regression window", "<strong>90</strong>", "Shorter → faster churn"),
+            ("<code>SMA_STOCK</code>", "Stock trend filter", "<strong>100</strong>", "Lower → more eligible"),
+            ("<code>SMA_INDEX</code>", "SPY regime gate", "<strong>200</strong>", "Shorter → more new buys in chops"),
+            ("<code>TOP_FRAC</code>", "Rank keep / buy pool", "<strong>0.20</strong>", "Wider → more names / more overlap"),
+            ("<code>RISK_FRAC</code>", "ATR risk fraction", "<strong>0.001</strong>", "Higher → larger positions / fewer names"),
+            ("<code>GAP_MAX</code>", "Shock filter", "<strong>15% / 90d</strong>", "Off → more speculative names"),
+            ("Review weekday", "Weekly signal day", "<strong>Wednesday</strong>", "Friday is an alternate classic choice"),
+        ])
+        + """
+<h2>5. Universe / status</h2>
+"""
+        + kv([
+            ("Status", "<strong>Research candidate only</strong> — not gold, not DailyRun"),
+            ("Universe", "<code>drive/universes/MOM_universe.csv</code> (~763 names; liquid ADV$2m since 2010)"),
+            ("OHLC", "<code>data/ohlcv.duckdb</code> · index <code>SPY</code>"),
+            ("IS / OOS", "IS = before 2024-01-01; OOS = 2024+ — report-only"),
+            ("Look-ahead", "Indicators through signal close; fills next open"),
+            ("Blocker", "No point-in-time S&amp;P membership — survivorship vs classic Clenow"),
+        ])
+        + """
+<h2>6. How to run</h2>
+<pre style="background:var(--fill);padding:12px;overflow:auto">python tools/mom_clenow_ab.py
+python tools/mom_clenow_ab.py --start 2012-01-01 --end 2026-08-28
+python tools/mom_clenow_ab.py --limit 80   # smoke</pre>
+<p>
+  Artifacts: <code>drive/paul_experiments/mom_baseline_20260828/compare.html</code>,
+  <code>MOM_Closed.csv</code>, <code>BASELINE.md</code>, <code>SUMMARY.md</code>.
+</p>
+""",
+        footer="Canonical MOM write-up · Twin Beacon Networks (TBN) · research candidate",
+    )
+
+
+PAGES: list[tuple[str, str, object]] = [
     ("rs.html", "RS_System_Guide.html", rs),
     ("sb.html", "SB_System_Guide.html", sb),
     ("rl.html", "RL_System_Guide.html", rl),
@@ -1443,9 +1792,11 @@ PAGES: list[tuple[str, str, str]] = [
     ("wpbr.html", "WPBR_System_Guide.html", wpbr),
     ("mts.html", "MTS_System_Guide.html", mts),
     ("vz.html", "VZ_System_Guide.html", vz),
+    ("rsi.html", "RSI_System_Guide.html", rsi),
     ("wrl.html", "WRL_System_Guide.html", wrl),
     ("mvcp.html", "MVCP_System_Guide.html", mvcp),
     ("ind.html", "IND_System_Guide.html", ind),
+    ("mom.html", "MOM_System_Guide.html", mom),
 ]
 
 
@@ -1457,9 +1808,11 @@ INDEX_CARDS = [
     ("brt.html", "gold", "Production", "BRT — Break and ReTest", "Daily pivot-zone break → support retest on the TBN host."),
     ("wpbr.html", "gold", "Production", "WPBR — Pivot Break and Retest", "Weekly pivot zones, weekly breakout + confirm, daily hold-above retest."),
     ("mts.html", "gold", "Production", "MTS — Magic Touch", "STONK_DATA MTS-tab BI first-touch (not the BRT retest pipeline)."),
-    ("vz.html", "research", "Research", "VZ — Volume Zone", "Max-volume HL zones; break → retest. Not DailyRun-wired."),
-    ("wrl.html", "research", "Research", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; watch the lower zone, buy the upside break."),
-    ("mvcp.html", "parked", "Parked", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve parked from live allocation (2026-08-12)."),
+    ("vz.html", "gold", "Production", "VZ — Volume Zone", "Max-volume HL zones; break → retest. DailyRun official TBN (Paul78.142; 4% Average True Range (ATR) floor at trigger; stop at zone low − 0.25×ATR)."),
+    ("rsi.html", "gold", "Production", "RSI — Relative Strength Index", "Wilder RSI(14) heat gauge (not RS vs SPY); cool-off buy after a hot run. DailyRun sleeve — not walk-forward gold."),
+    ("wrl.html", "gold", "DailyRun", "WRL — Weekly Range / Swing", "Previous-week range + walk-back swing high/low; DailyRun sleeve in official 6-sys mix — not gold."),
+    ("mom.html", "research", "Research", "MOM — Momentum (Clenow)", "Weekly vol-adjusted momentum rank + ATR sizing. Research candidate — not DailyRun."),
+    ("mvcp.html", "retired", "Retired", "MVCP — Minervini VCP", "Volatility Contraction Pattern (VCP) sleeve retired from DailyRun and active reporting (2026-08-21)."),
     ("ind.html", "deprecated", "Deprecated", "IND — Indicator / TC", "Legacy indicator / Trend Condition path; still in some reports, not an active gold sleeve."),
 ]
 
@@ -1492,7 +1845,7 @@ def systems_index() -> str:
   }}
   a.card .tag.gold {{ color: var(--ok); }}
   a.card .tag.research {{ color: var(--warn); }}
-  a.card .tag.parked, a.card .tag.deprecated {{ color: var(--muted); }}
+  a.card .tag.parked, a.card .tag.deprecated, a.card .tag.retired {{ color: var(--muted); }}
   a.card strong {{ display: block; font-size: 1.02rem; margin-bottom: 4px; }}
   a.card span.blurb {{ display: block; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }}
 </style>

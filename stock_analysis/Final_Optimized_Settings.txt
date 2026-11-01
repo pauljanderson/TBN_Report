@@ -1,6 +1,6 @@
 {
     "RL_CASH": 47500,
-    "RL_DIP_PCT": 1.041,
+    "RL_DIP_PCT": 1.055,
     "RL_STOP_PCT": 0.934,
     "RL_TARGET_PCT": 1.29,
     "RL_SLOPE_THRESHOLD": 0,

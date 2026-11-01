@@ -6,6 +6,7 @@ Report / Audit / EquityCurve). Host: ``rocket_tbn.py``.
 from __future__ import annotations
 
 import csv
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, fields, replace
@@ -59,9 +60,11 @@ except ImportError:
 @dataclass
 class WrlConfig:
     wrl_mode: bool = True
-    # range = full exit at range high; swing = full exit at swing high;
-    # scale = 50% at range high, remainder at swing high (stop to breakeven after T1).
-    wrl_target_mode: str = "scale"
+    # House default 2026-09-22: swing = sell 100% at the walk-back swing high.
+    # range = full exit at last week's range high;
+    # scale = leftover 50/50 (range high then swing high; stop to breakeven after T1).
+    # wrl_scale_frac is unused when mode=swing.
+    wrl_target_mode: str = "swing"
     wrl_scale_frac: float = 0.50
     # Stop at swing_low * stop_pct (1.0 = at the swing low).
     stop_pct: float = 1.0
@@ -202,6 +205,7 @@ WRL_OPEN_HEADER = [
     "SWING_LOW",
     "WATCH_DATE",
     "SIGNAL_DATE",
+    "PNL_DOLLARS",
 ]
 
 WRL_WATCHLIST_HEADER = [
@@ -324,7 +328,7 @@ def _min_rr_allows_entry(fill: float, stop: float, levels: WeeklyLevels, cfg: Wr
 
 
 def _primary_target(levels: WeeklyLevels, mode: str) -> float:
-    m = (mode or "scale").strip().lower()
+    m = (mode or "swing").strip().lower()
     if m == "swing":
         return float(levels.swing_high)
     return float(levels.range_high)
@@ -378,7 +382,7 @@ def brt_config_from_wrl(cfg: WrlConfig, host_cfg: Any = None) -> Any:
         vec_zones=False,
         rl_mode="false",
         relative_strength_enabled=False,
-        wrl_target_mode=str(cfg.wrl_target_mode or "scale"),
+        wrl_target_mode=str(cfg.wrl_target_mode or "swing"),
         wrl_scale_frac=float(cfg.wrl_scale_frac or 0.50),
         wrl_min_zone_pct=float(cfg.wrl_min_zone_pct or 0.0),
         wrl_min_rr=float(getattr(cfg, "wrl_min_rr", 0.0) or 0.0),
@@ -443,7 +447,7 @@ def backtest_symbol(
     c = df["Close"].to_numpy(dtype=np.float64)
     n = len(df)
     cash = float(cfg.brt_cash)
-    mode = (cfg.wrl_target_mode or "scale").strip().lower()
+    mode = (cfg.wrl_target_mode or "swing").strip().lower()
     scale_frac = min(0.99, max(0.01, float(cfg.wrl_scale_frac or 0.50)))
     use_scale = mode == "scale"
     cooldown_until = ""
@@ -846,13 +850,18 @@ def write_wrl_outputs(
     with open_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(WRL_OPEN_HEADER)
+        slot_cash = float(getattr(cfg, "brt_cash", 0) or 0)
         for r in open_rows:
+            entry = float(r["entry_price"] or 0)
+            cur = float(r["current_price"] or 0)
+            # Same house dummy as Closed: shares = brt_cash / entry (post host scale).
+            pnl_d = (slot_cash / entry) * (cur - entry) if entry > 0 else 0.0
             w.writerow(
                 [
                     r["symbol"],
                     r["date_opened"],
-                    f"{r['entry_price']:.4f}",
-                    f"{r['current_price']:.4f}",
+                    f"{entry:.4f}",
+                    f"{cur:.4f}",
                     f"{r['pnl_pct']:.4f}",
                     r["days_open"],
                     f"{r['stop']:.4f}",
@@ -864,6 +873,7 @@ def write_wrl_outputs(
                     f"{r['swing_low']:.4f}",
                     r["watch_date"],
                     r["signal_date"],
+                    f"{pnl_d:.2f}",
                 ]
             )
 
@@ -949,6 +959,7 @@ def write_wrl_outputs(
                 "TOTAL_PNL",
                 "SHEET_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "PCT_OF_TOTAL_PNL",
                 "CURRENT_MARKET_CAP",
                 "SECTOR",
@@ -970,6 +981,12 @@ def write_wrl_outputs(
             avg_pct = (sum(pnls) / len(pnls)) if pnls else 0.0
             med_pct = float(np.median(pnls)) if pnls else 0.0
             max_win = max(pnls) if pnls else 0.0
+            sum_wins = sum(r.pnl_dollars for r in rows if r.pnl_pct > 1e-9)
+            sum_losses = abs(sum(r.pnl_dollars for r in rows if r.pnl_pct < -1e-9))
+            if sum_losses > 0:
+                pf = sum_wins / sum_losses
+            else:
+                pf = sum_wins if sum_wins > 0 else 0.0
             first = _first_data_date(sym)
             years = 1.0
             if first and rows:
@@ -990,6 +1007,7 @@ def write_wrl_outputs(
                     f"{pnl:.2f}",
                     f"{pnl:.2f}",
                     f"{avg_pct:.2f}%",
+                    f"{pf:.2f}",
                     f"{(100.0 * pnl / total_pnl_all) if total_pnl_all else 0.0:.1f}%",
                     "",
                     "",
@@ -1182,7 +1200,9 @@ def write_wrl_outputs(
             dest.write_bytes(src.read_bytes())
 
     (output_dir / "WRL_last_run_ts.txt").write_text(ts + "\n", encoding="utf-8")
-    (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
+    # Shared pointer. A DailyRun wave skips it so siblings do not write the same path.
+    if os.environ.get("DAILYRUN_WAVE", "").strip() != "1":
+        (output_dir / "last_run_ts.txt").write_text(ts, encoding="utf-8")
     return {
         "closed": closed_path,
         "open": open_path,
@@ -1219,7 +1239,7 @@ def run_wrl_from_brt_main(
     print(
         "[WRL] Watch: daily close in [swing_low, range_low]. "
         "Buy next day if High > range_low (no gap down through swing_low). "
-        "Targets: range high then swing high.",
+        "House target: full exit at swing high. Stop at swing low.",
         flush=True,
     )
 

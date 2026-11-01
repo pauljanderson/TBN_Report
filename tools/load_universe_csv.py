@@ -54,6 +54,12 @@ def load_tickers(path: Path) -> list[str] | str:
     tickers = [t for t in tickers if t != "*"]
     if not tickers:
         return "*"
+    # Drop common CSV header labels (e.g. symbol → SYMBOL) when mixed with real tickers
+    _HDR = {"SYMBOL", "TICKER", "TICKERS", "SYM"}
+    if any(t not in _HDR for t in tickers):
+        tickers = [t for t in tickers if t not in _HDR]
+    if not tickers:
+        return "*"
     # Dedupe preserving order (ALL among others is Allstate)
     seen: set[str] = set()
     out: list[str] = []
