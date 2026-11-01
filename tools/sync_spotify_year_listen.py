@@ -8,8 +8,11 @@ Candidate albums:
   - released in --year (default: current calendar year)
   - Spotify album-type releases only (not singles / appears_on)
 
-Exclude an album if its album id already appears on any of:
+Exclude an album if it already appears on any of:
   "{year} light" | "{year} medium" | "{year} heavy"
+Matched by Spotify album id OR a normalized primary-artist + album-name key
+(casefold, collapsed whitespace). That catches alternate editions / regional
+catalog ids that share the same title for the same primary artist.
 
 Playlist: "{year} listen" — full album track lists for remaining candidates.
 Re-runs rebuild the playlist, so albums that later land on light/medium/heavy
@@ -44,7 +47,8 @@ import argparse
 import json
 import sys
 import time
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,6 +87,52 @@ class CandidateAlbum:
     artists: str
     release_date: str
     source_artist_id: str = ""
+
+
+@dataclass
+class YearPlaylistIndex:
+    """Albums already represented on light/medium/heavy for a year."""
+
+    album_ids: set[str] = field(default_factory=set)
+    name_keys: set[str] = field(default_factory=set)
+    track_count: int = 0
+
+    def __ior__(self, other: YearPlaylistIndex) -> YearPlaylistIndex:
+        self.album_ids |= other.album_ids
+        self.name_keys |= other.name_keys
+        self.track_count += other.track_count
+        return self
+
+
+def normalized_text(value: str) -> str:
+    """Casefold + collapse whitespace (NFKC)."""
+    return " ".join(unicodedata.normalize("NFKC", value or "").casefold().split())
+
+
+def primary_artist_name(artists: str) -> str:
+    """First listed album artist (Spotify joins with ', ')."""
+    return (artists or "").split(",", 1)[0].strip()
+
+
+def album_name_key(artists: str, name: str) -> str:
+    """Stable key for matching alternate catalog ids of the same release title."""
+    return f"{normalized_text(primary_artist_name(artists))}\x1f{normalized_text(name)}"
+
+
+def artists_from_spotify_list(artists: list | None) -> str:
+    return ", ".join(a.get("name", "") for a in (artists or []) if a.get("name"))
+
+
+def album_on_year_playlists(
+    album_id: str,
+    artists: str,
+    name: str,
+    index: YearPlaylistIndex,
+) -> bool:
+    if album_id and album_id in index.album_ids:
+        return True
+    key = album_name_key(artists, name)
+    return bool(key.strip("\x1f")) and key in index.name_keys
 
 
 class SpotifyRateLimitError(RuntimeError):
@@ -238,15 +288,15 @@ def find_playlist_id(sp, name: str, budget: SpotifyBudget | None = None) -> str 
     return None
 
 
-def playlist_album_ids(
+def playlist_album_index(
     sp,
     playlist_id: str,
     *,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
-) -> set[str]:
-    """Album ids represented by tracks currently on a playlist."""
-    album_ids: set[str] = set()
+) -> YearPlaylistIndex:
+    """Album ids + name keys represented by tracks currently on a playlist."""
+    index = YearPlaylistIndex()
     offset = 0
     while True:
         # Avoid restrictive `fields=` — some spotipy/API combos return empty items.
@@ -265,14 +315,33 @@ def playlist_album_ids(
             track = entry.get("track") or {}
             if not track or track.get("is_local"):
                 continue
-            album_id = ((track.get("album") or {}).get("id")) if track else None
+            index.track_count += 1
+            album = track.get("album") or {}
+            album_id = album.get("id")
             if album_id:
-                album_ids.add(album_id)
+                index.album_ids.add(album_id)
+            album_name = album.get("name") or ""
+            artists = artists_from_spotify_list(album.get("artists"))
+            if not artists:
+                artists = artists_from_spotify_list(track.get("artists"))
+            if album_name and artists:
+                index.name_keys.add(album_name_key(artists, album_name))
         offset += len(items)
         if page.get("next") is None:
             break
         time.sleep(sleep_s)
-    return album_ids
+    return index
+
+
+def playlist_album_ids(
+    sp,
+    playlist_id: str,
+    *,
+    budget: SpotifyBudget | None = None,
+    sleep_s: float = 0.05,
+) -> set[str]:
+    """Album ids represented by tracks currently on a playlist."""
+    return playlist_album_index(sp, playlist_id, budget=budget, sleep_s=sleep_s).album_ids
 
 
 def year_playlist_album_ids(
@@ -282,21 +351,24 @@ def year_playlist_album_ids(
     *,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
-) -> tuple[set[str], dict[str, str | None]]:
-    """Return (album_ids on light/medium/heavy, playlist_id by tier)."""
+) -> tuple[YearPlaylistIndex, dict[str, str | None]]:
+    """Return (index of albums on light/medium/heavy, playlist_id by tier)."""
     names = playlist_names(year, name_style)
     ids_by_tier: dict[str, str | None] = {}
-    album_ids: set[str] = set()
+    index = YearPlaylistIndex()
     for tier, name in names.items():
         playlist_id = find_playlist_id(sp, name, budget=budget)
         ids_by_tier[tier] = playlist_id
         if not playlist_id:
             print(f"  missing playlist {name!r} — treating as empty")
             continue
-        found = playlist_album_ids(sp, playlist_id, budget=budget, sleep_s=sleep_s)
-        print(f"  {name!r}: {len(found)} album id(s)")
-        album_ids |= found
-    return album_ids, ids_by_tier
+        found = playlist_album_index(sp, playlist_id, budget=budget, sleep_s=sleep_s)
+        print(
+            f"  {name!r}: {found.track_count} track(s), "
+            f"{len(found.album_ids)} album id(s), {len(found.name_keys)} name key(s)"
+        )
+        index |= found
+    return index, ids_by_tier
 
 
 def rows_to_albums(rows: list, source_artist_id: str = "") -> list[CandidateAlbum]:
@@ -477,17 +549,20 @@ def scrub_listen_playlist_of_albums(
     year: int,
     album_ids: set[str],
     *,
+    name_keys: set[str] | None = None,
     dry_run: bool = False,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
     playlist_id: str | None = None,
 ) -> int:
-    """Remove tracks whose album id is in album_ids from "{year} listen".
+    """Remove tracks matching year-playlist albums from "{year} listen".
 
+    Matches by Spotify album id and/or normalized artist+album name key.
     Used by sync_spotify_year_playlists after it writes light/medium/heavy.
     Returns number of track URIs removed (0 if playlist missing / nothing to do).
     """
-    if not album_ids:
+    keys = name_keys or set()
+    if not album_ids and not keys:
         return 0
     name = listen_playlist_name(year)
     pid = playlist_id or find_playlist_id(sp, name, budget=budget)
@@ -512,9 +587,20 @@ def scrub_listen_playlist_of_albums(
             track = entry.get("track") or {}
             if not track or track.get("is_local"):
                 continue
-            album_id = ((track.get("album") or {}).get("id")) if track else None
+            album = track.get("album") or {}
+            album_id = album.get("id")
             uri = track.get("uri")
-            if album_id in album_ids and uri:
+            if not uri:
+                continue
+            matched = bool(album_id and album_id in album_ids)
+            if not matched and keys:
+                artists = artists_from_spotify_list(album.get("artists"))
+                if not artists:
+                    artists = artists_from_spotify_list(track.get("artists"))
+                album_name = album.get("name") or ""
+                if artists and album_name and album_name_key(artists, album_name) in keys:
+                    matched = True
+            if matched:
                 remove_uris.append(uri)
         offset += len(items)
         if page.get("next") is None:
@@ -584,11 +670,19 @@ def sync(
     new_count = sum(1 for aid in followed if aid not in prev_pool)
     print(f"Followed artists: {len(followed)} (new_since_last={new_count})")
 
-    print(f"Reading album ids already on {year} light/medium/heavy …")
+    print(f"Reading albums already on {year} light/medium/heavy …")
     on_year, _ = year_playlist_album_ids(
         sp, year, name_style, budget=budget, sleep_s=spotify_sleep
     )
-    print(f"Year-playlist album ids: {len(on_year)}")
+    print(
+        f"Year-playlist index: {on_year.track_count} track(s), "
+        f"{len(on_year.album_ids)} album id(s), {len(on_year.name_keys)} name key(s)"
+    )
+    if on_year.track_count and not on_year.album_ids:
+        print(
+            "  WARNING: year playlists have tracks but 0 album ids — "
+            "exclusion would be incomplete; check playlist_items responses."
+        )
 
     ordered = prioritize_artists(followed, prev_pool, album_cache, year, market)
     print(
@@ -634,7 +728,7 @@ def sync(
             continue
 
         for album in albums:
-            if album.album_id in on_year:
+            if album_on_year_playlists(album.album_id, album.artists, album.name, on_year):
                 continue
             candidates.setdefault(album.album_id, album)
 
@@ -652,10 +746,27 @@ def sync(
         f"(discography fetches={fetched_artists}, cache hits={cache_hits})"
     )
 
+    # Drop stale kept_albums that now match year playlists (id or name key),
+    # even if they are not rediscovered via discography this run.
+    prev_kept = state.get("kept_albums") or {}
+    if isinstance(prev_kept, dict):
+        for album_id, row in list(prev_kept.items()):
+            if not isinstance(row, dict):
+                continue
+            if album_on_year_playlists(
+                str(row.get("album_id") or album_id),
+                str(row.get("artists") or ""),
+                str(row.get("name") or ""),
+                on_year,
+            ):
+                prev_kept.pop(album_id, None)
+
     kept: dict[str, dict] = {}
     for album in sorted(
         candidates.values(), key=lambda a: (a.artists.casefold(), a.name.casefold())
     ):
+        if album_on_year_playlists(album.album_id, album.artists, album.name, on_year):
+            continue
         allow_track_fetch = not cache_only
         try:
             track_uris, _ = album_track_uris(
@@ -685,6 +796,7 @@ def sync(
             "release_date": album.release_date,
             "track_uris": track_uris,
             "source_artist_id": album.source_artist_id,
+            "name_key": album_name_key(album.artists, album.name),
         }
         print(
             f"  KEEP {album.artists} — {album.name} ({album.release_date}) "
@@ -711,7 +823,9 @@ def sync(
     state["kept_albums"] = kept
     state["year"] = year
     state["market"] = market
-    state["on_year_playlist_album_count"] = len(on_year)
+    state["on_year_playlist_album_count"] = len(on_year.album_ids)
+    state["on_year_playlist_name_key_count"] = len(on_year.name_keys)
+    state["on_year_playlist_track_count"] = on_year.track_count
     state["playlist_name"] = playlist_name
     budget.save()
 
@@ -954,6 +1068,40 @@ def print_personalized_estimate(args: argparse.Namespace) -> int:
 def self_test() -> None:
     assert listen_playlist_name(2026) == "2026 listen"
     assert artist_albums_cache_key("abc", 2026, "US") == "artist_albums:abc:2026:album:US"
+
+    assert normalized_text("  American   Football ") == "american football"
+    assert primary_artist_name("American Football, Someone Else") == "American Football"
+    key_a = album_name_key("American Football", "American Football")
+    key_b = album_name_key("  american   football ", "AMERICAN  FOOTBALL")
+    key_c = album_name_key("American Football, Feat", "American Football")
+    key_other = album_name_key("Different Band", "American Football")
+    assert key_a == key_b == key_c
+    assert key_a != key_other
+
+    # Same title / primary artist, different Spotify album ids → treat as already on year lists.
+    on_year = YearPlaylistIndex(
+        album_ids={"medium-edition-id"},
+        name_keys={album_name_key("American Football", "American Football")},
+        track_count=10,
+    )
+    assert album_on_year_playlists(
+        "medium-edition-id", "American Football", "American Football", on_year
+    )
+    assert album_on_year_playlists(
+        "listen-candidate-id", "American Football", "American Football", on_year
+    )
+    assert not album_on_year_playlists(
+        "other-id", "American Football", "Years", on_year
+    )
+
+    # Merge indexes accumulate tracks + keys.
+    merged = YearPlaylistIndex()
+    merged |= YearPlaylistIndex(album_ids={"a"}, name_keys={"k1"}, track_count=3)
+    merged |= YearPlaylistIndex(album_ids={"b"}, name_keys={"k2"}, track_count=2)
+    assert merged.album_ids == {"a", "b"}
+    assert merged.name_keys == {"k1", "k2"}
+    assert merged.track_count == 5
+
     est = estimate_calls(591, cached_discographies=0, max_artists_fetch=40)
     assert est["uncached_artists"] == 591
     assert est["fetch_this_run"] == 40
@@ -979,6 +1127,7 @@ def self_test() -> None:
     print("self-test OK")
     print(f"  example 591 follows, cold first run (cap 40): ~{this_run} calls")
     print(f"  example 591 follows, warm weekly: ~{warm} calls")
+    print(f"  album_name_key American Football example: {key_a!r}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
