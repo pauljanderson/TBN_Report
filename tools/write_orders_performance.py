@@ -3796,6 +3796,21 @@ def score_cluster(
     wins = 0
     losses = 0
     complementary = bool(cluster.get("complementary"))
+    # Yes-A + No-B on complementary Kalshi markets is a same-direction double,
+    # never a $1 lock (GIMPEN class). Force directional settle.
+    try:
+        import kalshi_same_direction as ksd
+
+        same_dir, same_why = ksd.legs_are_same_direction_double(fill_legs)
+    except Exception:
+        same_dir, same_why = False, ""
+    if same_dir:
+        complementary = False
+        cluster["complementary"] = False
+        cluster["same_direction_double"] = True
+        cluster["same_direction_note"] = same_why
+        if cluster.get("intent") == INTENT_FULL_LOCK:
+            cluster["intent"] = INTENT_INCOMPLETE_LOCK
     watch = cluster.get("watch") or {}
     market_index = market_index or {}
     market_rows = [_leg_market_row(leg, settlements, market_index) for leg in fill_legs]

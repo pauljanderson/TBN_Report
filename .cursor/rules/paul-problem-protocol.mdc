@@ -26,3 +26,10 @@ Prevention shipped 2026-11-01: `tools/kalshi_same_direction.py`,
 send gates in `live_lock_orders`, `run_pm_venue_kitchen_check.bat`.
 
 All-platform gate: `run_pm_venue_kitchen_check.bat` + `run_pm_recon_dump.bat`.
+
+## Anything like this = all platforms
+
+Kalshi holes (under-book, same-direction double, no post-send confirm) are
+class bugs for polymarket/gemini/novig too. Bidirectional venue↔kitchen
+reconcile + dashboard/orders_performance must stay bank-true.
+

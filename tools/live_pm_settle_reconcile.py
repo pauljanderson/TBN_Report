@@ -882,6 +882,51 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
         watches=watches,
         fetched_slugs=[ident for _venue, ident in idents],
     )
+    # Venue → tape: bank settlements the kitchen never booked (both_unfilled ghosts).
+    miss = {"added": 0, "skipped": 0, "same_direction_n": 0}
+    if fetch:
+        try:
+            import pm_venue_miss_ingest
+
+            sett_rows: list[dict] = []
+            # Prefer settlements already on disk from dump_kalshi_recon / pm dump.
+            for path_name in (
+                "kalshi_recon_dump/kalshi_recon_dump_latest.json",
+                "pm_recon_dump/pm_recon_dump_latest.json",
+            ):
+                path = RAW / path_name
+                if not path.is_file():
+                    continue
+                try:
+                    blob = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if path_name.startswith("pm_"):
+                    block = ((blob.get("venues") or {}).get("kalshi") or {})
+                else:
+                    block = blob
+                batch = (block.get("settlements") or {}).get("settlements") or []
+                if isinstance(batch, list):
+                    sett_rows.extend(r for r in batch if isinstance(r, dict))
+                if sett_rows:
+                    break
+            if sett_rows:
+                before = len(store)
+                miss = pm_venue_miss_ingest.ingest_kalshi_settlements(
+                    store,
+                    sett_rows,
+                    fills=[t for t in trades if str(t.get("venue") or "").lower() == "kalshi"],
+                    persist=False,
+                )
+                if len(store) > before or miss.get("added"):
+                    report["n_changed"] = int(report.get("n_changed") or 0) + int(miss.get("added") or 0)
+                    report["venue_miss_ingest"] = miss
+                    log(
+                        f"venue→tape miss ingest added={miss.get('added')} "
+                        f"skipped={miss.get('skipped')} same_dir={miss.get('same_direction_n')}"
+                    )
+        except Exception as exc:
+            log(f"venue miss ingest {type(exc).__name__}")
     if persist and report.get("n_changed"):
         settled_pnl_store.save(store)
         try:

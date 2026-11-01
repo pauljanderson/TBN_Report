@@ -36,7 +36,9 @@ from pathlib import Path
 
 import gemini_private
 import kalshi_private
+import novig_live
 import polymarket_us_live
+import venue_fill_confirm
 import venue_pace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -979,21 +981,242 @@ def _walk(value):
             yield from _walk(child)
 
 
+def venue_confirm_of(payload) -> dict | None:
+    return venue_fill_confirm.from_payload(payload)
+
+
+def venue_confirm_known(payload) -> bool:
+    row = venue_confirm_of(payload)
+    return bool(row and row.get("known"))
+
+
+def confirm_venue_after_order(spec: dict, status: int, payload) -> dict:
+    """Read-only fill/history confirm. Bounded. Does not place or cancel."""
+    venue = str((spec or {}).get("venue") or "")
+    tape = venue_fill_confirm.tape_filled_qty(payload)
+    return venue_fill_confirm.confirm_order(venue, payload, spec, tape_qty=tape)
+
+
+def _with_venue_confirm(spec: dict, status: int, payload):
+    """After an order HTTP return, overlay venue fill/history. Status 0 skips."""
+    if status == 0:
+        return payload
+    try:
+        confirm = confirm_venue_after_order(spec, status, payload)
+    except Exception as exc:
+        confirm = venue_fill_confirm.unknown_result(
+            str((spec or {}).get("venue") or ""),
+            f"confirm {type(exc).__name__}",
+            venue_fill_confirm.tape_filled_qty(payload),
+            venue_fill_confirm.ids_from(payload, spec),
+        )
+    return venue_fill_confirm.attach(payload, confirm)
+
+
 def filled_contracts(payload) -> Decimal:
-    """Contracts filled, from the fields the three venues return. Zero when unknown."""
+    """Contracts filled. Venue confirm wins over the order HTTP tape.
+
+    A known confirm qty is used even when the tape said fill_count 0.
+    Unknown/timeout confirm is 0: do not invent a fill. With no confirm
+    overlay, use THIS-order tape fields only (never status=filled ⇒ qty 1).
+    """
+    confirm = venue_confirm_of(payload)
+    if confirm is not None:
+        return venue_fill_confirm.qty_of(confirm)
     if not isinstance(payload, (dict, list)):
         return Decimal("0")
-    qty_keys = ("fill_count", "filledQuantity", "filled_quantity", "cumQuantity", "executedQuantity", "quantityFilled")
-    best = Decimal("0")
+    if isinstance(payload, dict) and payload.get("tif") == "IOC" and payload.get("orderId"):
+        dollars = novig_live.filled_dollar_contracts(payload)
+        if dollars > 0:
+            return dollars
+        state = str(payload.get("status") or "").upper()
+        if state == "FILLED":
+            return SIZE
+    return venue_fill_confirm.tape_filled_qty(payload)
+
+
+def _scrub_public_text(text: str) -> str:
+    cleaned = " ".join(str(text or "").split())
+    lowered = cleaned.lower()
+    if any(word in lowered for word in ("signature", "secret", "bearer", "api key", "apikey", "private key")):
+        return "rejected"
+    return cleaned[:240]
+
+
+def public_venue_note(payload, fallback: str = "") -> str:
+    """Public one-line note from confirm overlay or HTTP body. Never secrets."""
+    confirm = venue_confirm_of(payload)
+    if confirm:
+        note = str(confirm.get("note") or "").strip()
+        if note:
+            return _scrub_public_text(note)
+    if isinstance(payload, dict):
+        for key in ("message", "reason", "error", "code", "status"):
+            value = payload.get(key)
+            if value not in (None, ""):
+                return _scrub_public_text(str(value))
+    return _scrub_public_text(fallback)
+
+
+def _book_side(spec: dict | None) -> str:
+    if not isinstance(spec, dict):
+        return ""
+    side = str(spec.get("outcome") or spec.get("side") or spec.get("pay") or "").lower()
+    if side in {"yes", "no"}:
+        return side
+    return ""
+
+
+def fee_returned(payload) -> Decimal | None:
+    confirm = venue_confirm_of(payload)
+    if confirm and confirm.get("fee") not in (None, ""):
+        return _dec(confirm.get("fee"))
+    if not isinstance(payload, (dict, list)):
+        return None
     for node in _walk(payload):
-        status = str(node.get("status") or node.get("state") or node.get("orderState") or "").lower()
-        if status in ("filled", "executed", "complete", "completed"):
-            best = max(best, SIZE)
-        for key in qty_keys:
+        for key in ("average_fee_paid", "fee", "fee_cost", "taker_fee"):
             number = _dec(node.get(key))
-            if number is not None and number > best:
-                best = number
-    return best
+            if number is not None:
+                return number
+    return None
+
+
+def kalshi_fee_amount(price: Decimal | None, payload=None) -> Decimal:
+    returned = fee_returned(payload)
+    if returned is not None:
+        return returned
+    pay = _dec(price) or Decimal("0")
+    raw = Decimal("0.07") * pay * (ONE - pay)
+    if raw < 0:
+        raw = Decimal("0")
+    return raw.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def gemini_taker_fee(price: Decimal | None) -> Decimal:
+    pay = _dec(price) or Decimal("0")
+    raw = Decimal("0.07") * pay * (ONE - pay)
+    if raw < 0:
+        raw = Decimal("0")
+    return raw.quantize(CENT, rounding=ROUND_CEILING)
+
+
+def leg_fee(spec: dict, price: Decimal, payload=None) -> Decimal | None:
+    """Documented 1-contract taker fee. None when the venue schedule is unknown."""
+    returned = fee_returned(payload)
+    venue = str((spec or {}).get("venue") or "").lower()
+    if venue == "kalshi":
+        return kalshi_fee_amount(price, payload)
+    if venue == "gemini":
+        return returned if returned is not None else gemini_taker_fee(price)
+    if venue == "polymarket":
+        if returned is not None:
+            return returned
+        return polymarket_us_live.taker_fee(price, (spec or {}).get("fee_coefficient"))
+    if venue == "novig":
+        if returned is not None:
+            return returned
+        return novig_live.taker_fee(
+            price,
+            (spec or {}).get("fee_coefficient"),
+            (spec or {}).get("fee_charged"),
+            (spec or {}).get("event_status"),
+        )
+    return Decimal("0")
+
+
+def _actual_fill_cash(spec: dict, payload) -> Decimal | None:
+    """Pay-side cash of a fill. Prefer venue-confirm house_cash / avg_price."""
+    confirm = venue_confirm_of(payload)
+    if confirm:
+        house = _dec(confirm.get("house_cash"))
+        if house is not None and Decimal("0") < house < ONE:
+            return house
+        avg = _dec(confirm.get("avg_price"))
+        if avg is not None and Decimal("0") < avg < ONE:
+            side = _book_side(spec)
+            venue = str((spec or {}).get("venue") or "").lower()
+            # Confirm avg for Kalshi No is already house cash — do not invert again.
+            if venue == "kalshi" and side == "no":
+                return avg
+            return avg
+    side = _book_side(spec)
+    exec_px = _dec(_execution_price(payload, str((spec or {}).get("outcome") or "")))
+    pay = _dec((spec or {}).get("pay"))
+    venue = str((spec or {}).get("venue") or "").lower()
+    if venue == "kalshi" and side == "no" and exec_px is not None and Decimal("0") < exec_px < ONE:
+        # HTTP average_fill_price on No is Yes-wire; invert once.
+        cash = ONE - exec_px
+        if Decimal("0") < cash < ONE:
+            return cash
+    if exec_px is not None and Decimal("0") < exec_px < ONE:
+        return exec_px
+    return pay
+
+
+def order_qty_of(spec: dict | None) -> Decimal:
+    if not isinstance(spec, dict):
+        return SIZE
+    for key in ("qty", "size", "count", "contracts"):
+        number = _dec(spec.get(key))
+        if number is not None and number > 0:
+            return number
+    body = spec.get("body") if isinstance(spec.get("body"), dict) else {}
+    for key in ("count", "qty", "quantity"):
+        number = _dec(body.get(key))
+        if number is not None and number > 0:
+            # Novig posts 100 native cents for $1.
+            if str(spec.get("venue") or "").lower() == "novig" and number >= 100:
+                return number / Decimal("100")
+            return number
+    return SIZE
+
+
+def poly_partial_unexpected(spec: dict | None, filled: Decimal) -> bool:
+    if not isinstance(spec, dict):
+        return False
+    if str(spec.get("venue") or "").lower() != "polymarket":
+        return False
+    qty = order_qty_of(spec)
+    return Decimal("0") < filled < qty
+
+
+def note_poly_fok_partial(spec: dict, filled: Decimal, log=None) -> None:
+    qty = order_qty_of(spec)
+    msg = (
+        f"poly FOK partial unexpected venue=polymarket "
+        f"instrument={spec.get('instrument') or ''} "
+        f"cum={format(filled, 'f')} qty={format(qty, 'f')}; "
+        "not a house 1-contract fill"
+    )
+    if log:
+        try:
+            log(msg)
+        except Exception:
+            pass
+    record_send_skip(msg, str(spec.get("game") or ""), str(spec.get("_bet_key") or ""), spec=spec)
+
+
+def _post_same_limit(
+    log,
+    key: str,
+    built: dict,
+    step: str,
+    send,
+    limit: Decimal | None,
+    other_price: Decimal | None,
+    other_fee: Decimal | None,
+):
+    """Post this exact one-contract limit. Confirm is attached inside _send."""
+    built["_attempt"] = int(built.get("_attempt") or 1)
+    built["_bet_key"] = key
+    built["_step"] = step
+    status, payload, note = send(built)
+    try:
+        log(f"order sent venue={built.get('venue')} instrument={built.get('instrument')} "
+            f"side={built.get('outcome')} limit={built.get('limit')} size=1 http={status}")
+    except Exception:
+        pass
+    return status, payload, note
 
 
 def order_still_open(payload) -> bool:
@@ -1261,21 +1484,41 @@ def _preview(spec: dict) -> tuple[bool, str]:
 
 
 def _send(spec: dict) -> tuple[int, dict | None, str]:
+    """Place one order, then confirm against that venue's fill/history API.
+
+    HTTP tape alone is not truth (Gima/Peniston both_unfilled while Kalshi filled).
+    Confirm is bounded in venue_fill_confirm (tries/timeout). Does not rebuild HTML.
+    """
     if not orders_enabled():
         return 0, None, "placing orders is off"
-    if spec["venue"] == "kalshi":
+    venue = str(spec.get("venue") or "").lower()
+    if venue == "kalshi":
         status, body = kalshi_private.signed_call("POST", "/trade-api/v2/portfolio/events/orders", spec["body"])
-    elif spec["venue"] == "gemini":
+    elif venue == "gemini":
         status, body = gemini_private.private_call("/v1/prediction-markets/order", spec["body"], "POST")
-    elif spec["venue"] == "polymarket":
+    elif venue == "polymarket":
         status, body = polymarket_us_live.signed_json("POST", "/v1/orders", spec["body"])
+    elif venue == "novig":
+        status, payload, note = novig_live.place_order(spec.get("body") or {})
+        payload = _with_venue_confirm(spec, status, payload if isinstance(payload, (dict, list)) else None)
+        return status, payload, note or _public_note("")
     else:
         return 0, None, "unknown venue"
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
         payload = None
-    return status, payload if isinstance(payload, (dict, list)) else None, _public_note(body)
+    payload = payload if isinstance(payload, (dict, list)) else None
+    if isinstance(payload, dict) and isinstance(payload.get("order"), dict):
+        inner = payload["order"]
+        if payload.get("fill_count") is None and inner.get("fill_count") is not None:
+            payload = inner
+    note = _public_note(body)
+    payload = _with_venue_confirm(spec, status, payload)
+    confirm = venue_confirm_of(payload) or {}
+    if confirm.get("note"):
+        note = _scrub_public_text(str(confirm.get("note")))
+    return status, payload, note
 
 
 def _order_id(payload) -> str:
@@ -1934,11 +2177,23 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
             "note": why_settle,
         })
         return
+    def _sent_confirm_fields(payload) -> dict:
+        confirm = venue_confirm_of(payload) or {}
+        if not confirm:
+            return {}
+        return {
+            "confirm_known": bool(confirm.get("known")),
+            "confirm_qty": str(confirm.get("qty") or "0"),
+            "confirm_note": str(confirm.get("note") or ""),
+            "confirm_mismatch": bool(confirm.get("mismatch")),
+            "tape_qty": str(confirm.get("tape_qty") or ""),
+        }
+
     first, second = legs[0], _with_tif(legs[1], "gtc")
     status, payload, note = _send(first)
     first_payload = payload
     _log_sent(log, first, status)
-    _append({
+    sent_row = {
         "event": "sent",
         "bet_key": key,
         "venue": first["venue"],
@@ -1950,15 +2205,28 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
         "http_status": status,
         "note": note,
         "order_id": _order_id(payload),
-    })
-    filled = filled_contracts(payload) if status in (200, 201) else Decimal("0")
+    }
+    sent_row.update(_sent_confirm_fields(payload))
+    _append(sent_row)
+    # Confirm overlay is truth; HTTP 4xx with a known fill still counts.
+    filled = filled_contracts(payload) if (status in (200, 201) or venue_confirm_known(payload)) else Decimal("0")
     if status in (200, 201) and order_still_open(payload) and filled < SIZE:
         cancel_status, cancel_note = _cancel(first, payload)
         log(f"order cancel venue={first['venue']} instrument={first['instrument']} http={cancel_status} {cancel_note}")
-        filled = Decimal("0")
+        # Keep any real fill; cancel only the resting remainder. Re-confirm.
+        payload = _with_venue_confirm(first, status, payload)
+        filled = filled_contracts(payload)
     if filled < SIZE:
         log(f"order first leg not filled {title} {first['venue']} {first['outcome']}; second leg not sent")
-        _append({"event": "both_unfilled", "bet_key": key, "venue": first["venue"], "http_status": status, "note": note})
+        miss = {
+            "event": "both_unfilled",
+            "bet_key": key,
+            "venue": first["venue"],
+            "http_status": status,
+            "note": note,
+        }
+        miss.update(_sent_confirm_fields(payload))
+        _append(miss)
         return
     _append({
         "event": "filled",
@@ -1968,10 +2236,11 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
         "side": first["outcome"],
         "size": "1",
         "price": first["pay"],
+        **_sent_confirm_fields(payload),
     })
     status2, payload2, note2 = _send(second)
     _log_sent(log, second, status2)
-    _append({
+    sent2 = {
         "event": "sent",
         "bet_key": key,
         "venue": second["venue"],
@@ -1983,8 +2252,10 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
         "http_status": status2,
         "note": note2,
         "order_id": _order_id(payload2),
-    })
-    filled2 = filled_contracts(payload2) if status2 in (200, 201) else Decimal("0")
+    }
+    sent2.update(_sent_confirm_fields(payload2))
+    _append(sent2)
+    filled2 = filled_contracts(payload2) if (status2 in (200, 201) or venue_confirm_known(payload2)) else Decimal("0")
     resting = bool(status2 in (200, 201) and order_still_open(payload2) and filled2 < SIZE)
     if filled2 >= SIZE:
         _append({
