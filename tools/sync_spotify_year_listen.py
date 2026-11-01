@@ -32,8 +32,9 @@ Call-budget guidance (Development Mode):
   Spotify does not publish a fixed daily number; Dev Mode has a rolling 30s rate
   limit plus an opaque account quota (429 reason QUOTA_EXCEEDED). This tool
   defaults to a self-imposed 150 calls/UTC-day and caches discographies for 14 days.
-  Weekly is the sweet spot once the cache is warm (~40–120 calls/run). Cold start
-  a large follow list over several days with --max-artists-fetch 40. Avoid stacking
+  Artist album pages are capped at limit=10 by Spotify (higher → 400 Invalid limit).
+  Run --estimate to size calls from YOUR followed-artist count (library cache).
+  Weekly once warm; cold-start large follow lists over several days. Avoid stacking
   this on the same day as a full upcoming-shows or favorites-unlistened crawl.
 """
 
@@ -248,12 +249,13 @@ def playlist_album_ids(
     album_ids: set[str] = set()
     offset = 0
     while True:
+        # Avoid restrictive `fields=` — some spotipy/API combos return empty items.
         page = spotify_call(
             sp.playlist_items,
             playlist_id,
-            fields="items(track(album(id))),next",
             limit=100,
             offset=offset,
+            additional_types=("track",),
             budget=budget,
         )
         items = page.get("items") or []
@@ -261,6 +263,8 @@ def playlist_album_ids(
             break
         for entry in items:
             track = entry.get("track") or {}
+            if not track or track.get("is_local"):
+                continue
             album_id = ((track.get("album") or {}).get("id")) if track else None
             if album_id:
                 album_ids.add(album_id)
@@ -334,23 +338,30 @@ def fetch_artist_year_albums(
 
     albums: dict[str, CandidateAlbum] = {}
     offset = 0
+    # Spotify capped Get Artist's Albums max limit at 10 (Feb 2026); 20/50 → 400 Invalid limit.
+    page_limit = 10
     while True:
         page = spotify_call(
             sp.artist_albums,
             artist.artist_id,
             include_groups="album",
             country=market,
-            limit=50,
+            limit=page_limit,
             offset=offset,
             budget=budget,
         )
         items = page.get("items") or []
         if not items:
             break
+        # Results are newest-first; once every item on a page is older than --year, stop.
+        page_years: list[int] = []
         for album in items:
             if not album or not album.get("id"):
                 continue
-            if release_year(album.get("release_date")) != year:
+            yr = release_year(album.get("release_date"))
+            if yr is not None:
+                page_years.append(yr)
+            if yr != year:
                 continue
             # Defensive: artist_albums can still surface odd groups.
             group = (album.get("album_group") or album.get("album_type") or "").casefold()
@@ -371,6 +382,8 @@ def fetch_artist_year_albums(
             )
         offset += len(items)
         if page.get("next") is None:
+            break
+        if page_years and max(page_years) < year:
             break
         time.sleep(sleep_s)
 
@@ -487,9 +500,9 @@ def scrub_listen_playlist_of_albums(
         page = spotify_call(
             sp.playlist_items,
             pid,
-            fields="items(track(uri,album(id))),next",
             limit=100,
             offset=offset,
+            additional_types=("track",),
             budget=budget,
         )
         items = page.get("items") or []
@@ -497,7 +510,7 @@ def scrub_listen_playlist_of_albums(
             break
         for entry in items:
             track = entry.get("track") or {}
-            if not track:
+            if not track or track.get("is_local"):
                 continue
             album_id = ((track.get("album") or {}).get("id")) if track else None
             uri = track.get("uri")
@@ -764,47 +777,208 @@ def print_call_guidance(
             )
 
 
-def estimate_calls(followed: int, year_playlist_tracks: int, new_albums: int) -> dict[str, int]:
-    """Rough HTTP call counts for planning (documented for --estimate)."""
+def estimate_calls(
+    followed: int,
+    *,
+    cached_discographies: int = 0,
+    max_artists_fetch: int = DEFAULT_MAX_ARTISTS_FETCH,
+    year_playlist_tracks: int = 0,
+    new_albums: int | None = None,
+    pages_per_discography: float = 1.5,
+) -> dict[str, int]:
+    """Rough HTTP call counts for planning (used by --estimate).
+
+    Discography paging uses limit=10 (Spotify max); assume ~1.5 pages/artist on
+    average when stopping early at albums older than --year.
+    """
+    uncached = max(0, followed - cached_discographies)
+    fetch_this_run = min(uncached, max_artists_fetch) if max_artists_fetch > 0 else 0
+    if new_albums is None:
+        # Rough: a few percent of followed artists release a year-album you care about.
+        new_albums = max(5, followed // 25)
+
     followed_pages = max(1, (followed + 49) // 50)
-    # playlist list + 3 year playlists (assume ~100 tracks/page)
-    year_pages = 3 + max(3, (year_playlist_tracks + 99) // 100)
-    # warm: mostly cache; cold: 1 page per artist typical
+    # Find 3 year playlists among user playlists (~1–N pages) + read their tracks.
+    year_pages = 5 + max(3, (year_playlist_tracks + 99) // 100)
+    disco_calls = int(round(fetch_this_run * pages_per_discography))
+    warm_disco = int(round(min(5, uncached) * pages_per_discography)) if uncached else 0
+
     return {
         "auth_and_me": 1,
         "followed_refresh": followed_pages,
-        "year_playlist_scan": year_pages + 5,
-        "cold_discographies": followed,
-        "warm_discographies": max(5, followed // 20),
+        "year_playlist_scan": year_pages,
+        "uncached_artists": uncached,
+        "fetch_this_run": fetch_this_run,
+        "discography_calls_this_run": disco_calls,
+        "warm_discography_calls": warm_disco,
         "new_album_tracks": max(new_albums, 1),
         "playlist_write": max(1, (new_albums * 10 + 99) // 100),
+        "cold_full_discographies": int(round(followed * pages_per_discography)),
     }
+
+
+def sum_estimate(parts: dict[str, int], *keys: str) -> int:
+    return sum(parts[k] for k in keys)
+
+
+def count_cached_discographies(
+    album_cache: JsonCache, artist_ids: list[str], year: int, market: str
+) -> int:
+    n = 0
+    for artist_id in artist_ids:
+        key = artist_albums_cache_key(artist_id, year, market)
+        if cache_get(album_cache, key, allow_stale=True) is not None:
+            n += 1
+    return n
+
+
+def load_followed_ids_for_estimate(
+    *,
+    env_file: Path,
+    cache_path: Path,
+    refresh: bool,
+) -> tuple[list[str], str]:
+    """Return (artist_ids, source_label) from library cache and/or live Spotify."""
+    lib_cache = library_cache(ttl_hours=DEFAULT_LIBRARY_CACHE_HOURS_LOCAL)
+    cached = lib_cache.get("followed_artists", allow_stale=True)
+    if isinstance(cached, list) and cached and not refresh:
+        ids = [row.get("artist_id") for row in cached if isinstance(row, dict) and row.get("artist_id")]
+        fetched_at = ""
+        row = lib_cache.data.get("followed_artists")
+        if isinstance(row, dict):
+            fetched_at = str(row.get("fetched_at") or "")
+        label = f"library cache ({lib_cache.path}"
+        if fetched_at:
+            label += f", fetched_at={fetched_at}"
+        label += ")"
+        return ids, label
+
+    load_env_file(env_file)
+    load_env_file(REPO_ROOT / ".env")
+    sp = build_client(cache_path)
+    followed = fetch_followed_artists(sp, cache=lib_cache, sleep_s=0.2, force_refresh=True)
+    return list(followed.keys()), "live Spotify followed-artists scan (cache refreshed)"
+
+
+def print_personalized_estimate(args: argparse.Namespace) -> int:
+    artist_ids, source = load_followed_ids_for_estimate(
+        env_file=args.env_file,
+        cache_path=args.cache_path,
+        refresh=args.refresh_followed,
+    )
+    followed = len(artist_ids)
+    album_cache = JsonCache(args.data_dir / "album_cache.json", ttl_hours=args.album_cache_hours)
+    cached = count_cached_discographies(album_cache, artist_ids, args.year, args.market)
+    uncached = max(0, followed - cached)
+
+    est = estimate_calls(
+        followed,
+        cached_discographies=cached,
+        max_artists_fetch=args.max_artists_fetch,
+        year_playlist_tracks=max(100, followed // 2),
+    )
+    this_run = sum_estimate(
+        est,
+        "auth_and_me",
+        "year_playlist_scan",
+        "discography_calls_this_run",
+        "new_album_tracks",
+        "playlist_write",
+    )
+    # If followed cache is stale and we didn't refresh, one optional refresh adds pages.
+    this_run_with_follow_refresh = this_run + est["followed_refresh"]
+
+    warm = sum_estimate(
+        est,
+        "auth_and_me",
+        "year_playlist_scan",
+        "warm_discography_calls",
+        "new_album_tracks",
+        "playlist_write",
+    )
+    cold_full = sum_estimate(
+        est,
+        "auth_and_me",
+        "followed_refresh",
+        "year_playlist_scan",
+        "cold_full_discographies",
+        "new_album_tracks",
+        "playlist_write",
+    )
+
+    days_at_cap = (
+        (uncached + args.max_artists_fetch - 1) // args.max_artists_fetch
+        if args.max_artists_fetch > 0 and uncached
+        else 0
+    )
+    # Budget gate: discography pages dominate; require budget headroom for this_run.
+    budget = args.spotify_daily_budget
+    fits_budget = this_run <= budget
+
+    print("Personalized Spotify call estimate (Development Mode)\n")
+    print(f"  Followed artists:     {followed}  ← {source}")
+    print(f"  Year:                 {args.year}  market={args.market}")
+    print(f"  Discographies cached: {cached}/{followed}  (uncached={uncached})")
+    print(f"  Per-run fetch cap:    {args.max_artists_fetch} artists")
+    print(f"  Self-budget:          {budget} calls/UTC-day")
+    print()
+    print(f"  This run (defaults):  ~{this_run} calls")
+    print(f"    + refresh followed: ~{this_run_with_follow_refresh} calls")
+    print(f"  Warm weekly (caches filled): ~{warm} calls/run")
+    print(f"  Full cold start (all {followed} artists, no cache): ~{cold_full} calls total")
+    if uncached:
+        print(
+            f"  Days to finish cold queue at --max-artists-fetch {args.max_artists_fetch}: "
+            f"~{days_at_cap} run(s)"
+        )
+    print()
+    if not fits_budget:
+        print(
+            f"  WARNING: estimated ~{this_run} calls exceeds --spotify-daily-budget {budget}. "
+            "Lower --max-artists-fetch or raise the budget."
+        )
+    elif uncached > args.max_artists_fetch:
+        print(
+            f"  Recommended cadence now: daily until ~{uncached} uncached artists are filled "
+            f"(~{days_at_cap} days), then weekly."
+        )
+    else:
+        print("  Recommended cadence: weekly (warm). Monthly also fine if you accept lag.")
+    print(
+        "  Tip: artist album pages are limited to 10 items each by Spotify; "
+        "this estimate assumes ~1.5 pages/artist with early stop on older releases."
+    )
+    return 0
 
 
 def self_test() -> None:
     assert listen_playlist_name(2026) == "2026 listen"
     assert artist_albums_cache_key("abc", 2026, "US") == "artist_albums:abc:2026:album:US"
-    est = estimate_calls(200, 300, 15)
-    warm = (
-        est["auth_and_me"]
-        + est["year_playlist_scan"]
-        + est["warm_discographies"]
-        + est["new_album_tracks"]
-        + est["playlist_write"]
+    est = estimate_calls(591, cached_discographies=0, max_artists_fetch=40)
+    assert est["uncached_artists"] == 591
+    assert est["fetch_this_run"] == 40
+    this_run = sum_estimate(
+        est,
+        "auth_and_me",
+        "year_playlist_scan",
+        "discography_calls_this_run",
+        "new_album_tracks",
+        "playlist_write",
     )
-    cold = (
-        est["auth_and_me"]
-        + est["followed_refresh"]
-        + est["year_playlist_scan"]
-        + est["cold_discographies"]
-        + est["new_album_tracks"]
-        + est["playlist_write"]
+    assert 50 < this_run < 200
+    warm_est = estimate_calls(591, cached_discographies=591, max_artists_fetch=40)
+    warm = sum_estimate(
+        warm_est,
+        "auth_and_me",
+        "year_playlist_scan",
+        "warm_discography_calls",
+        "new_album_tracks",
+        "playlist_write",
     )
-    assert warm < 100
-    assert cold < 500
+    assert warm < 80
     print("self-test OK")
-    print(f"  example warm (~200 follows): ~{warm} calls")
-    print(f"  example cold (~200 follows): ~{cold} calls")
+    print(f"  example 591 follows, cold first run (cap 40): ~{this_run} calls")
+    print(f"  example 591 follows, warm weekly: ~{warm} calls")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -853,7 +1027,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--estimate",
         action="store_true",
-        help="Print call-count estimates for typical follow-list sizes and exit",
+        help="Estimate calls from YOUR followed-artist count (library cache or live Spotify)",
     )
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args(argv)
@@ -865,32 +1039,11 @@ def main(argv: list[str] | None = None) -> int:
         self_test()
         return 0
     if args.estimate:
-        print("Approximate Spotify HTTP calls (Development Mode — stay under your own budget):\n")
-        for follows in (50, 100, 200, 400):
-            est = estimate_calls(follows, year_playlist_tracks=follows, new_albums=max(5, follows // 20))
-            warm = (
-                est["auth_and_me"]
-                + est["year_playlist_scan"]
-                + est["warm_discographies"]
-                + est["new_album_tracks"]
-                + est["playlist_write"]
-            )
-            cold = (
-                est["auth_and_me"]
-                + est["followed_refresh"]
-                + est["year_playlist_scan"]
-                + est["cold_discographies"]
-                + est["new_album_tracks"]
-                + est["playlist_write"]
-            )
-            print(f"  {follows:>3} followed artists → warm ~{warm:>3} calls/run, cold ~{cold:>3} calls")
-        print(
-            "\nRecommended cadence: weekly (warm). "
-            "Cold-start: daily for a few days with --max-artists-fetch 40 until caches fill, "
-            "then weekly. Monthly also works if you do not mind a longer listen backlog. "
-            "Default self-budget is 150 calls/UTC-day for this tool alone."
-        )
-        return 0
+        try:
+            return print_personalized_estimate(args)
+        except KeyboardInterrupt:
+            print("\nInterrupted.", file=sys.stderr)
+            return 130
 
     load_env_file(args.env_file)
     load_env_file(REPO_ROOT / ".env")
