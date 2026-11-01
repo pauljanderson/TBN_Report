@@ -37,6 +37,8 @@ Examples:
   python tools/sync_spotify_year_listen.py --year 2026
   python tools/sync_spotify_year_listen.py --max-artists-fetch 40 --spotify-daily-budget 150
   python tools/sync_spotify_year_listen.py --cache-only
+  python tools/sync_spotify_year_listen.py --year 2026 --cache-only
+  python tools/sync_spotify_year_listen.py --year 2026 --spotify-daily-budget 300
 
 Call-budget guidance (Development Mode):
   Spotify does not publish a fixed daily number; Dev Mode has a rolling 30s rate
@@ -46,6 +48,9 @@ Call-budget guidance (Development Mode):
   Run --estimate to size calls from YOUR followed-artist count (library cache).
   Weekly once warm; cold-start large follow lists over several days. Avoid stacking
   this on the same day as a full upcoming-shows or favorites-unlistened crawl.
+  If today's budget file is already at the cap, raise --spotify-daily-budget or use
+  --cache-only (auto headroom for year-playlist scan + listen rewrite). Prefer those
+  over deleting drive/spotify_year_listen/spotify_budget.json.
 """
 
 from __future__ import annotations
@@ -80,6 +85,8 @@ DEFAULT_AOTY_DATA_DIR = REPO_ROOT / "drive" / "spotify_aoty_listen"
 DEFAULT_SPOTIFY_SLEEP = 0.35
 DEFAULT_MAX_ARTISTS_FETCH = 40
 DEFAULT_SPOTIFY_DAILY_BUDGET = 150
+# Cache-only still needs auth + year light/medium/heavy scan + listen rewrite.
+CACHE_ONLY_BUDGET_HEADROOM = 80
 DEFAULT_ALBUM_CACHE_HOURS = 336.0  # 14 days — new albums are infrequent
 DEFAULT_LIBRARY_CACHE_HOURS_LOCAL = DEFAULT_LIBRARY_CACHE_HOURS
 
@@ -252,6 +259,7 @@ class SpotifyBudget:
         self.path = path
         self.daily_budget = daily_budget
         self.used = 0
+        self.allow_overage = False
         self._load()
 
     def _load(self) -> None:
@@ -275,16 +283,69 @@ class SpotifyBudget:
             encoding="utf-8",
         )
 
-    def charge(self, n: int = 1) -> None:
-        if self.used + n > self.daily_budget:
+    def remaining(self) -> int:
+        return max(0, self.daily_budget - self.used)
+
+    def ensure_headroom(self, needed: int) -> int:
+        """Raise daily_budget so at least `needed` calls remain. Returns amount added."""
+        shortfall = max(0, needed - self.remaining())
+        if shortfall:
+            self.daily_budget += shortfall
+        return shortfall
+
+    def charge(self, n: int = 1, *, allow_overage: bool | None = None) -> None:
+        overage_ok = self.allow_overage if allow_overage is None else allow_overage
+        if self.used + n > self.daily_budget and not overage_ok:
             self.save()
             raise SpotifyBudgetExceeded(
                 f"Spotify daily budget exhausted ({self.used}/{self.daily_budget}). "
                 "Re-run tomorrow; album/library caches keep progress."
             )
+        if self.used + n > self.daily_budget and overage_ok:
+            print(
+                f"  budget overage allowed: charging {n} past cap "
+                f"({self.used}/{self.daily_budget} → {self.used + n})",
+                flush=True,
+            )
         self.used += n
         if self.used % 10 == 0:
             self.save()
+
+
+def format_budget_workaround_help(
+    *,
+    year: int,
+    data_dir: Path,
+    used: int | None = None,
+    daily_budget: int | None = None,
+) -> str:
+    """Stderr guidance when the self-budget blocks a same-day rebuild."""
+    budget_path = data_dir / "spotify_budget.json"
+    lines = [
+        "To rebuild today without waiting until UTC midnight:",
+        f"  run_sync_spotify_year_listen.bat --year {year} --spotify-daily-budget 300",
+        f"  run_sync_spotify_year_listen.bat --year {year} --cache-only",
+        "  (--cache-only auto-allows headroom for year-playlist scan + listen rewrite)",
+        f"  Or delete {budget_path} and re-run (resets today's counter).",
+    ]
+    if used is not None and daily_budget is not None:
+        lines.insert(
+            0,
+            f"Spotify daily budget exhausted ({used}/{daily_budget}).",
+        )
+    return "\n".join(lines)
+
+
+def apply_cache_only_budget_policy(budget: SpotifyBudget) -> None:
+    """Ensure cache-only rebuilds can still auth / scan year lists / rewrite listen."""
+    added = budget.ensure_headroom(CACHE_ONLY_BUDGET_HEADROOM)
+    if added:
+        print(
+            f"Cache-only: daily budget already tight ({budget.used}/"
+            f"{budget.daily_budget - added}). "
+            f"Allowing +{added} call headroom for playlist rebuild "
+            f"(effective cap {budget.daily_budget})."
+        )
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
@@ -738,9 +799,29 @@ def sync(
     spotify_daily_budget: int,
     cache_only: bool,
     refresh_followed: bool,
+    ignore_budget: bool = False,
 ) -> int:
     sp = build_client(cache_path)
     budget = SpotifyBudget(data_dir / "spotify_budget.json", spotify_daily_budget)
+    if ignore_budget:
+        budget.allow_overage = True
+        print(
+            "WARNING: --ignore-budget set; self-budget will not stop this run "
+            f"(counter continues from {budget.used})."
+        )
+    elif cache_only:
+        apply_cache_only_budget_policy(budget)
+    elif budget.remaining() <= 0:
+        # Fail fast with actionable guidance instead of a traceback on first charge.
+        raise SpotifyBudgetExceeded(
+            format_budget_workaround_help(
+                year=year,
+                data_dir=data_dir,
+                used=budget.used,
+                daily_budget=budget.daily_budget,
+            )
+        )
+
     me = spotify_call(sp.current_user, budget=budget)
     print(f"Authenticated as {me.get('display_name') or me.get('id')}")
     print(f"Spotify daily budget: {budget.used}/{budget.daily_budget} used so far today (UTC)")
@@ -1213,6 +1294,41 @@ def self_test() -> None:
     assert listen_playlist_name(2026) == "2026 listen"
     assert artist_albums_cache_key("abc", 2026, "US") == "artist_albums:abc:2026:album:US"
 
+    # Budget helpers: cache-only headroom + overage charge path.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "spotify_budget.json"
+        path.write_text(
+            json.dumps(
+                {"date": datetime.now(timezone.utc).date().isoformat(), "used": 150}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        budget = SpotifyBudget(path, 150)
+        assert budget.used == 150
+        assert budget.remaining() == 0
+        try:
+            budget.charge(1)
+            raise AssertionError("expected SpotifyBudgetExceeded")
+        except SpotifyBudgetExceeded:
+            pass
+        added = budget.ensure_headroom(CACHE_ONLY_BUDGET_HEADROOM)
+        assert added == CACHE_ONLY_BUDGET_HEADROOM
+        assert budget.daily_budget == 150 + CACHE_ONLY_BUDGET_HEADROOM
+        budget.charge(1)
+        assert budget.used == 151
+        budget.allow_overage = True
+        budget.daily_budget = budget.used
+        budget.charge(1)  # must not raise when allow_overage
+        assert budget.used == 152
+        help_text = format_budget_workaround_help(
+            year=2026, data_dir=Path(tmp), used=150, daily_budget=150
+        )
+        assert "--cache-only" in help_text
+        assert "--spotify-daily-budget 300" in help_text
+
     assert normalized_text("  American   Football ") == "american football"
     assert primary_artist_name("American Football, Someone Else") == "American Football"
     key_a = album_name_key("American Football", "American Football")
@@ -1367,7 +1483,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--cache-only",
         action="store_true",
-        help="Do not fetch new discographies/album tracks; rebuild playlist from caches",
+        help=(
+            "Do not fetch new discographies/album tracks; rebuild playlist from caches. "
+            f"If today's budget is spent, auto-allows +{CACHE_ONLY_BUDGET_HEADROOM} call "
+            "headroom for year-playlist scan + listen rewrite."
+        ),
+    )
+    parser.add_argument(
+        "--ignore-budget",
+        action="store_true",
+        help=(
+            "Do not stop when the daily self-budget is exhausted (still counts calls). "
+            "Prefer --cache-only or a higher --spotify-daily-budget for normal use."
+        ),
     )
     parser.add_argument(
         "--refresh-followed",
@@ -1412,7 +1540,17 @@ def main(argv: list[str] | None = None) -> int:
             spotify_daily_budget=args.spotify_daily_budget,
             cache_only=args.cache_only,
             refresh_followed=args.refresh_followed,
+            ignore_budget=args.ignore_budget,
         )
+    except SpotifyBudgetExceeded as exc:
+        msg = str(exc).strip()
+        print(f"\nERROR: {msg}", file=sys.stderr)
+        if "run_sync_spotify_year_listen.bat" not in msg:
+            print(
+                format_budget_workaround_help(year=args.year, data_dir=args.data_dir),
+                file=sys.stderr,
+            )
+        return 3
     except SpotifyRateLimitError as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 2
