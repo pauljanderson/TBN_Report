@@ -816,7 +816,7 @@ def warn_same_direction_kalshi(rows: list[dict]) -> list[dict]:
     if unique:
         log(
             f"DANGER same-direction count={len(unique)} — run "
-            "run_kalshi_venue_kitchen_check.bat; send gate is kalshi_same_direction"
+            "run_pm_venue_kitchen_check.bat (all platforms); send gate is kalshi_same_direction"
         )
     return unique
 
