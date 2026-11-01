@@ -446,45 +446,9 @@ echo [13/13] run_gettarget>>"%LOG%"
 call "%~dp0run_gettarget.bat" >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
-rem --- 13c) Trendline + VZ 6m charts + buy-low B score + holdings sells ---
-rem Runs after getTarget so gettarget_positions.csv is current; before GitHub Pages publish.
-rem Universe: gettarget helds/opens U live DailyRun Open/Watchlist/Scanner U SPY/APP extras
-rem Live sleeves from tools\dailyrun_system_status.py DAILYRUN_REGISTRY (wired=True).
-rem Missing charts are generated then scored — no silent NO CHART skip.
-rem Holdings SELL = weekly support DOWN and/or close through support (inverse of buy-low B).
-rem Skip: set SKIP_TRENDLINES=1
-rem Output: drive\paul_studies\trendlines_opens_latest\charts\index.html
-rem         drive\paul_studies\trendlines_opens_latest\buy_today.html
-rem         drive\Trendlines_BuyToday_Latest.html + mobile_inbox\results\
-if /i "%SKIP_TRENDLINES%"=="1" (
-  echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)
-  echo [13/13] SKIPPED - run_trendlines_daily ^(SKIP_TRENDLINES=1^)>>"%LOG%"
-) else (
-  echo [13/13] run_trendlines_daily
-  echo [13/13] run_trendlines_daily>>"%LOG%"
-  call "%~dp0run_trendlines_daily.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
-)
-
-rem --- 13d) Trendline ToS (Thinkorswim) study generation (M/W/D fractal .ts files) ---
-rem Runs right after 13c chart creation; writes .ts files to drive\paul_studies\trendlines_tos_YYYYMMDD\
-rem and copies to drive\paul_studies\trendlines_opens_latest\studies\ (latest/stable location).
-rem Skip: set SKIP_TRENDLINES_TOS=1  (SKIP_TRENDLINES=1 also implies skip)
-if /i "%SKIP_TRENDLINES_TOS%"=="1" (
-  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES_TOS=1^)
-  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES_TOS=1^)>>"%LOG%"
-) else if /i "%SKIP_TRENDLINES%"=="1" (
-  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES=1^)
-  echo [13/13] SKIPPED - run_trendlines_tos_daily ^(SKIP_TRENDLINES=1^)>>"%LOG%"
-) else (
-  echo [13/13] run_trendlines_tos_daily
-  echo [13/13] run_trendlines_tos_daily>>"%LOG%"
-  call "%~dp0run_trendlines_tos_daily.bat" >>"%LOG%" 2>&1
-  if errorlevel 1 goto :fail
-)
-
-rem --- 13b) Investment report + GitHub Pages ---
-echo [13/13] publish_github_pages>>"%LOG%"
+rem --- 14b) Investment report + GitHub Pages ---
+rem --push fetches/rebases origin/main first so a long DailyRun does not fail if main moved.
+echo [14/14] publish_github_pages>>"%LOG%"
 call "%~dp0publish_github_pages.bat" --push >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
