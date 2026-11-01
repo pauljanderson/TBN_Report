@@ -380,9 +380,52 @@ def pair_net(scan, cand: dict) -> Decimal | None:
     return yes + no + fee
 
 
+def same_settlement_candidate(cand: dict) -> tuple[bool, str]:
+    """Send-time gate. Team total ≠ game total ≠ spread ≠ moneyline."""
+    import price_memory
+
+    row = cand if isinstance(cand, dict) else {}
+    why = price_memory.settlement_mismatch_reason(
+        row.get("market_type"),
+        row.get("kalshi_ticker"),
+        row.get("kalshi_yes_ticker"),
+        row.get("kalshi_no_ticker"),
+        row.get("gemini_symbol"),
+        row.get("polymarket_slug"),
+        row.get("novig_market"),
+    )
+    if why:
+        return False, why
+    return True, ""
+
+
+def same_settlement_legs(*specs: dict) -> tuple[bool, str]:
+    """REST recheck sees bet type on each instrument, not the line number alone."""
+    import price_memory
+
+    parts: list[str] = []
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        parts.append(str(spec.get("instrument") or ""))
+        parts.append(str(spec.get("market_type") or ""))
+    why = price_memory.settlement_mismatch_reason(*parts)
+    if why:
+        return False, why
+    return True, ""
+
+
 def qualifies(scan, cand: dict, title: str, game: dict) -> tuple[bool, str]:
     if historical_tennessee_13_5(title, game, cand):
         return False, "closed Tennessee vs Indianapolis 13.5 is not sent"
+    ok, why = same_settlement_candidate(cand)
+    if not ok:
+        return False, why
+    import kalshi_same_direction as ksd
+
+    bad, why_sd = ksd.candidate_is_same_direction_double(cand)
+    if bad:
+        return False, why_sd
     if scan.gemini_no_rejection(cand):
         return False, "Gemini No is not a buyable offer"
     for field in ("kalshi_status", "gemini_status"):
@@ -1025,13 +1068,29 @@ def _append(row: dict) -> None:
         _append_unlocked(row)
 
 
+def _kalshi_ticker_for_outcome(cand: dict, outcome: str) -> str:
+    """Per-leg Kalshi instrument. Yes and No must not silently share a false pair."""
+    outcome = str(outcome or "").lower()
+    specific = str(
+        cand.get(f"kalshi_{outcome}_ticker")
+        or cand.get(f"{outcome}_kalshi_ticker")
+        or cand.get(f"{outcome}_ticker")
+        or cand.get(f"{outcome}_ident")
+        or ""
+    ).strip()
+    if specific:
+        return specific
+    return str(cand.get("kalshi_ticker") or "").strip()
+
+
 def _leg_spec(cand: dict, outcome: str, tif: str = "ioc") -> dict | None:
     venue = str(cand.get(f"{outcome}_venue") or "").lower()
     pay = _dec(cand.get(f"{outcome}_price"))
     if pay is None or pay <= 0 or pay >= 1:
         return None
+    market_type = str(cand.get("market_type") or "")
     if venue == "kalshi":
-        ticker = str(cand.get("kalshi_ticker") or "")
+        ticker = _kalshi_ticker_for_outcome(cand, outcome)
         if not ticker:
             return None
         body = kalshi_order_body(ticker, outcome, pay, str(uuid.uuid4()), tif=tif)
@@ -1043,6 +1102,7 @@ def _leg_spec(cand: dict, outcome: str, tif: str = "ioc") -> dict | None:
             "limit": body["price"],
             "tif": tif,
             "body": body,
+            "market_type": market_type,
         }
     if venue == "gemini":
         symbol = str(cand.get("gemini_symbol") or "")
@@ -1057,6 +1117,7 @@ def _leg_spec(cand: dict, outcome: str, tif: str = "ioc") -> dict | None:
             "limit": payload["price"],
             "tif": tif,
             "body": payload,
+            "market_type": market_type,
         }
     if venue == "polymarket":
         slug = str(cand.get("polymarket_slug") or "")
@@ -1078,6 +1139,7 @@ def _leg_spec(cand: dict, outcome: str, tif: str = "ioc") -> dict | None:
             "limit": body["price"]["value"],
             "tif": tif,
             "body": body,
+            "market_type": market_type,
         }
     return None
 
@@ -1850,6 +1912,28 @@ def tick_one_leg_gtc_watches(
 
 def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     """Hard leg IOC, then easy leg GTC at L (adopted 2026-10-31)."""
+    import kalshi_same_direction as ksd
+
+    bad, why = ksd.legs_are_same_direction_double(legs)
+    if bad:
+        log(f"order skip both legs {title}; {why}")
+        _append({
+            "event": "skip",
+            "bet_key": key,
+            "game": title,
+            "note": why,
+        })
+        return
+    ok_settle, why_settle = same_settlement_legs(*legs)
+    if not ok_settle:
+        log(f"order skip both legs {title}; {why_settle}")
+        _append({
+            "event": "skip",
+            "bet_key": key,
+            "game": title,
+            "note": why_settle,
+        })
+        return
     first, second = legs[0], _with_tif(legs[1], "gtc")
     status, payload, note = _send(first)
     first_payload = payload

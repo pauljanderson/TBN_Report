@@ -1,0 +1,26 @@
+---
+description: When Paul finds a problem with agent output, always answer his three questions
+alwaysApply: true
+---
+
+# Paul problem protocol
+
+When Paul challenges a finding, reports the account/dashboard does not
+match, or otherwise finds a problem with what you told him, he will ask
+(explicitly or by habit) these three questions. **Answer all three every
+time**, even if he only pastes a complaint without numbering them:
+
+1. **How did this happen?** — exact root cause / mechanism.
+2. **What are you doing to fix it?** — concrete in-flight or shipped fix.
+3. **What are you doing so this AND ANYTHING LIKE THIS will NEVER HAPPEN AGAIN?** — class-level prevention (guard + test + automated check), not a one-off.
+
+Do not answer with analysis alone. Ship or schedule the fix and the
+prevention in the same turn when possible.
+
+Standing Kalshi/kitchen notes: secrets are local-only; use
+`run_kalshi_recon_dump.bat` for venue truth; combined dashboard P&L can
+hide Kalshi losses; Yes on player A + No on player B on Kalshi is a
+same-direction double, not a lock.
+
+Prevention shipped 2026-11-01: `tools/kalshi_same_direction.py`,
+send gates in `live_lock_orders`, `run_kalshi_venue_kitchen_check.bat`.

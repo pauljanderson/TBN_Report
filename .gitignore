@@ -13,9 +13,11 @@ secrets/
 .venv/
 venv/
 
-# IDE / local editor (keep the Cloud Agent environment config)
+# IDE / local editor (keep the Cloud Agent environment config + always-on rules)
 .cursor/*
 !.cursor/environment.json
+!.cursor/rules/
+!.cursor/rules/**
 
 # Run outputs (code check-in via git_checkin.bat skips these)
 *.csv
