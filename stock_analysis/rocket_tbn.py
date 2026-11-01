@@ -169,12 +169,12 @@ class BRTConfig:
     # Strong Pivot Qualification (STONK_DATA 3.0): pre = lookback-only (realtime-safe); post = follow-through ahead
     strong_pivots_enabled: bool = True  # When True, only strong pivots create zones/touches
     strong_pre_pivot_bars: int = 7  # Sheet "strong Pre-Pivot bars" (C17) - lookback window ending before pivot bar
-    strong_pre_pivot_pct: float = 0.081  # Sheet C13 strong Pre-Pivot move % (8.1%)
+    strong_pre_pivot_pct: float = 0.1  # House strong Pre-Pivot move % (10%; prior sheet C13 was 8.1%)
     # When > 0: pre threshold = (strong_pre_pivot_pct_atr * ATR14) / pivot_price at the pivot bar (else strong_pre_pivot_pct).
     strong_pre_pivot_pct_atr: float = 0.0
     # Sheet C10 Strong post-pivot bars: K post-drop window + AB Touch Price pullback + AZ:BB maturity lag.
     strong_post_pivot_bars: int = 7
-    strong_post_pivot_pct: float = 0.108  # Sheet C15 Strong post-pivot move % (10.8% touch pullback)
+    strong_post_pivot_pct: float = 0.1  # House strong post-pivot move % (10%; prior sheet C15 was 10.8%)
     # Legacy unused: was incorrectly split from C10 for AB pullback. Ignored by sheet-touch path;
     # -v sheet_touch_pullback_bars=X warns and maps to strong_post_pivot_bars unless that key is also set.
     sheet_touch_pullback_bars: int = 7
@@ -218,6 +218,21 @@ class BRTConfig:
     # wpbr_merge_count = member count) before breakout/retest. Default False = sheet parity.
     # Alias: -v merge_overlapping_zones=true
     wpbr_merge_overlapping_zones: bool = False
+    # Research-only: persist weekly OHLCV + WPBR zone streams in a sidecar DuckDB
+    # (data/wpbr_weekly_zone_cache.duckdb). Default False until parity is proven.
+    # Env alias: WPBR_WEEKLY_ZONE_CACHE=1. Does not change trade results when correct.
+    wpbr_weekly_zone_cache: bool = False
+    wpbr_weekly_zone_cache_db: str = ""  # empty = data/wpbr_weekly_zone_cache.duckdb
+    # WPBR incremental resume (default OFF). When True + fingerprint match, seed
+    # per-symbol state and advance the bar loop from the prior last bar.
+    # Env: WPBR_INCREMENTAL=1. Force cold rebuild: wpbr_incremental_force_full /
+    # WPBR_INCREMENTAL_FORCE_FULL=1. State dir: WPBR_incr_state under -o (or
+    # wpbr_incremental_state_dir / WPBR_INCREMENTAL_STATE_DIR).
+    wpbr_incremental: bool = False
+    wpbr_incremental_force_full: bool = False
+    wpbr_incremental_state_dir: str = ""
+    # Set by main after decide_mode: "" | "full" | "warm" (not a user freeze knob).
+    wpbr_incremental_mode: str = ""
     # --- BRT_Like_WPBR (brt_like_wpbr): daily adaptation of the WPBR B/D/E/F package on BRT zones ---
     # Package flag. When False (default): 100% classic BRT (no behavior change). When True: apply the
     # WPBR-like daily rules for B/D/E/F **together** on the existing BRT matured-zone inventory (Z1):
@@ -326,17 +341,54 @@ class BRTConfig:
     # Default next_open = predictive (signal at T close → buy T+1 open). close = EOD fill on signal bar.
     vz_entry_on: str = "next_open"
     vz_zone_kinds: str = "HL"  # comma list; freeze is HL-only
-    vz_exit_name: str = "zone_atr05_ts40"
-    vz_exit_bars: int = 40
-    vz_target_r: float = 2.0
-    vz_stop_atr_buffer: float = 0.5
+    vz_exit_name: str = "EXIT_atr4_s025_r15_ts20"
+    vz_exit_bars: int = 20
+    vz_target_r: float = 1.5
+    vz_stop_atr_buffer: float = 0.25
+    # ATR14/entry*100 gate (FILTER_atr_pct_*); 0 = off. House freeze = 4.0.
+    vz_min_atr_pct_at_entry: float = 4.0
+    # Research-only: ATR14/trigger_close*100 gate (0 = off). DailyRun stays on entry.
+    vz_min_atr_pct_at_trigger: float = 0.0
+    # Research-only (0 = off). Wilder RSI(14) on entry-date close; keep if RSI < threshold.
+    vz_max_rsi14_at_entry: float = 0.0
+    # Research-only (0 = off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= this.
+    vz_min_dist_to_52w_high_pct_at_trigger: float = 0.0
+    vz_require_hvn_overlap: bool = False  # Step C: knob exists, default OFF (HOLD not adopted)
     vz_sheet_notional: float = 45_000.0
+    vz_trade_side: str = "long"  # long | short | both (house default long)
+    # Post-TARGET re-entry cooldown (calendar days, inclusive). House adopt 20260821 = 10.
+    vz_cooldown_after_target_days: int = 10
+    # Research only: write drive/paul_experiments/vz_run_<ts>/ (BASELINE + HTML copies).
+    # House / DailyRun / run_vz.bat default OFF — live outputs stay under drive/VZ_* + LatestRun.
+    # Opt in: -v vz_write_stamp_folder=true (alias write_stamp_folder) or VZ_WRITE_STAMP_FOLDER=1.
+    vz_write_stamp_folder: bool = False
     # WRL — Weekly Range / Swing demand-zone (rocket_wrl.py). true → WRL_ prefix.
     wrl_mode: bool = False
-    wrl_target_mode: str = "scale"  # range | swing | scale
+    wrl_target_mode: str = "swing"  # swing (house: 100% at swing high) | range | scale (leftover 50/50)
     wrl_scale_frac: float = 0.50
     wrl_min_zone_pct: float = 0.0
     wrl_time_stop_bars: int = 0
+    # RSI — Relative Strength Index (rocket_rsi.py). true → RSI_ prefix.
+    # Not RS (Relative Strength vs SPY). House freeze: ob=70/os=30/exit=70/max_trigger=60/min_atr%=2.93/ts=20/roll_from_max=8/next_open. min_dist52=off.
+    rsi_mode: bool = False
+    rsi_ob: float = 70.0
+    rsi_os: float = 30.0
+    rsi_exit: float = 70.0
+    rsi_max_trigger: float = 60.0
+    rsi_min_atr_pct: float = 2.93
+    rsi_time_stop_days: int = 20
+    # EXIT: flatten next open when (in-trade max RSI14 − current) >= this. 0 = off.
+    # DailyRun / run_rsi.bat default 8 (preference adopt rsi_roll_ab_20260916).
+    rsi_roll_from_max: float = 0.0
+    rsi_entry_on: str = "next_open"
+    rsi_sheet_notional: float = 10_000.0
+    # Optional RSI play-around trigger gates (0 = off). DNA aliases in rocket_rl_config.
+    # Column-name -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= → min (keep if dist >= X).
+    # Opposite near-high cap: explicit rsi_max_dist_to_52w_high_pct_at_trigger only.
+    rsi_max_dist_to_52w_high_pct_at_trigger: float = 0.0
+    rsi_min_dist_to_52w_high_pct_at_trigger: float = 0.0
+    rsi_min_rel_vol_on_trigger: float = 0.0
+    rsi_min_rsi14_drop_from_ob: float = 0.0
     # StockBee Momentum Burst (rocket_stockbee_burst.py). true → SB_ prefix; isolate peer systems in run_sb.bat.
     sb_mode: bool = False
     burst_min_pct: float = 0.04
@@ -386,9 +438,14 @@ class BRTConfig:
     rl_watch_disable: bool = False  # If true, RL_Watchlist header only
     # --- RL engine params (portfolio_audit.awk 50-trigger; all overridable via -v) ---
     rl_sma_qual: bool = True  # AWK SMA_QUAL
-    rl_dip_pct: float = 1.041
+    rl_dip_pct: float = 1.055
     rl_50_sma_lookback: int = 4
     rl_stop_pct: float = 0.934
+    rl_stop_anchor: str = "signal_low"  # signal_low | dip_lo | entry_open | sma50 | atr2
+    rl_stop_below_pct: float = 0.0  # cushion below dip_lo anchor (research)
+    # When > 0 and rl_stop_anchor=entry_open: protective stop = entry × this.
+    # Fill gates (too_low / too_high) stay on rl_stop_pct. 0 = use rl_stop_pct (legacy).
+    rl_entry_stop_pct: float = 0.0
     # Post-TARGET re-entry window (0 bars = off). Mode is mutually exclusive; see RLConfig.
     rl_post_target_reentry_bars: int = 0
     rl_post_target_reentry_mode: str = "stop_loss"
@@ -396,13 +453,37 @@ class BRTConfig:
     rl_post_target_min_stack: float = 0.05
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
+    # When true: keep expansion hits at rl_target_pct, but do not sell at the moving
+    # SMA50 envelope. Recorded target is static entry × rl_target_pct (+20%) until the
+    # scale-out, then entry × (1 + rl_entry_target_pct) for the leftover.
+    rl_sma_target_off: bool = True
     # Fill: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default 0 = off).
     rl_too_high: float = 0.0
+    # Research entry gate (0 = off; production and frozen Control unchanged).
+    # When bars>0 and pct>0: reject the fill if any of the `bars` completed sessions
+    # immediately before the entry date has ABS((Open/prior close)-1)*100 >= pct.
+    # The entry day's own opening gap is not included. Short lookback rejects.
+    rl_pre_entry_gap_bars: int = 0
+    rl_pre_entry_gap_pct: float = 0.0
+    # abs (default) | up | down. abs keeps the original absolute-gap rule.
+    rl_pre_entry_gap_side: str = "abs"
+    # Research entry gate (0 = off). Keep the fill only when
+    # ((HIGH - entry) / (HIGH - LOW)) * 100 is at least this percent.
+    # HIGH / LOW are the highest daily high and lowest daily low in the
+    # rl_retrace_months calendar months strictly before the entry date (default 12).
+    # Undefined range rejects.
+    rl_min_retrace_12m_pct: float = 0.0
+    rl_retrace_months: int = 12
+    # Research entry gate (0 = off). Does not turn on Weekly Pivot Break and Retest (WPBR) buys.
+    # Reject the next-open fill when a prior WPBR zone's lower edge is above today's
+    # 50-day simple moving average, above the fill, and within this fraction of the fill.
+    # 0.22 means the lower edge is at most 22% above the Rocket Launcher entry.
+    rl_wpbr_overhead_band_pct: float = 0.0
     rl_expansion: float = 1.163
     rl_acc_min: int = 8
     rl_acc_count: int = 10
     rl_expansion_lookback_days: int = 10
-    rl_cut_the_losers: float = 0.25
+    rl_cut_the_losers: float = 1000.0  # OFF — Paul house baseline
     # ATR% band: None = bound off (``-v RL_ATR_LOW=off`` / ``ATR_LOW=off`` / ``RL_ATR_HIGH=off`` / empty).
     # Dual numeric 0/0 also disables the % band; $ cap (rl_atr_high_value) and rl_low_price stay on.
     rl_atr_low_percent: Optional[float] = 0.0244
@@ -419,14 +500,32 @@ class BRTConfig:
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
     rl_trail_stop2: float = 0.0
-    rl_exit_percent: float = 0.29
-    rl_exit_days: int = 10000
+    rl_exit_percent: float = 0.0  # 0 = time clock off (house freeze 2026-09-27)
+    rl_exit_days: int = 0  # trading bars after +% before timed exit (time_counter)
+    # Research-only: calendar days after first rl_exit_percent hit (days_diff(arming, today)+1).
+    # 0=off. Exit @ open as RL_EXIT_CAL. When >0, ignores trading-bar rl_exit_days timed path.
+    # Distinct from rl_max_hold_calendar_days (from entry) and rl_exit_days (trading bars).
+    rl_exit_calendar_days: int = 0
+    # Research-only hard max-hold from fill bar (trading bars). 0=off.
+    # Distinct from rl_exit_days (post-+% clock). Alias: rl_time_stop_from_entry.
+    rl_max_hold_bars: int = 0
+    # Research-only hard max-hold in calendar days from entry (Closed DAYS HELD clock:
+    # days_diff(entry, today) + 1). 0=off. Exit @ open as RL_MAX_HOLD_CAL.
+    # Distinct from rl_max_hold_bars (trading bars).
+    rl_max_hold_calendar_days: int = 0
+    # Leftover target after the 80% sale at +20%. Races the stop (stop first).
+    rl_entry_target_pct: float = 0.40
     rl_partial_exit_target: float = 0.0
     rl_partial_exit_percent: float = 0.50
     rl_partial_exit_follow_target: float = 0.1
+    rl_scale_ladder: str = "0.20:0.80:0"
     rl_spy_inclusion: bool = False  # AWK SPY_INCLUSION (50>100>200 on entry day)
     rl_avg_vol_days: int = 50  # AWK AVG_VOL_DAYS (0=off)
     rl_vol_pct_threshold: float = 0.0  # AWK VOL_PCT_THRESHOLD (0=off)
+    # PIT absolute liquidity: require trigger-bar avg_vol (over rl_avg_vol_days) >= this (shares). 0=off.
+    rl_min_avg_vol: float = 0.0
+    # PIT absolute liquidity: require trigger-bar volume (TRIGGER_VOL) >= this (shares). 0=off.
+    rl_min_trigger_vol: float = 0.0
     # When true, optional BRT entry gates (min_spy_compare_*, growth_filter, etc.) may filter RL entries.
     rl_brt_entry_gates_enabled: bool = False
     # Legacy no-op on DailyRun: charts/deep HTML are via rl_post_run_analysis.py (not in-run).
@@ -589,10 +688,28 @@ class BRTConfig:
     # signal_low↔trigger_low, entry↔entry_open, zone_low|zone_bottom↔zone_low (still accepted via -v / JSON).
     stop_loss_based: str = "trigger_low"
     stop_anchor: str = "signal_low"  # legacy; kept in sync with stop_loss_based
+    # Research high-water trail. 0 = off (today's live stop, no trail).
+    # When both are > 0: stop checked on day T uses the high through day T-1.
+    # Trail stays off until that high is at least hwm_act_pct percent above entry,
+    # then stop = entry + hwm_keep * (high-water mark - entry), never under the
+    # base stop already stored on the trade. Entry day cannot sell. DailyRun
+    # bats do not pass these. Rocket Launcher also skips its scale ladder.
+    hwm_act_pct: float = 0.0
+    hwm_keep: float = 0.0
     # If >= 0, round stop comparison prices to this many decimals for stop/gap-stop checks.
     # 2 matches spreadsheet cents-based stop hit checks (default).
     stop_compare_round_decimals: int = 2
     target_pct: float = 1.21  # Multiplier above entry (1.29=29% above)
+    # Research partial (off by default; 0 = do not scale). Long only.
+    # At entry × (1 + brt_scale_gain), sell brt_scale_sell_frac of the position.
+    # The leftover stop moves to entry × (1 + brt_scale_stop_gain) when that is
+    # tighter (0 = breakeven). The leftover target becomes entry × (1 + brt_scale_runner_gain).
+    # A bar that opens through the original stop still gaps the whole position out.
+    # After the sale, the leftover stop is checked before the leftover target.
+    brt_scale_gain: float = 0.0
+    brt_scale_sell_frac: float = 0.80
+    brt_scale_stop_gain: float = 0.0
+    brt_scale_runner_gain: float = 0.40
     # False preserves target parameters for reproducibility but disables target exits.
     target_enabled: bool = True
     # When True (and atr_target==0), long target = SMA(50) * target_pct at entry bar; short uses SMA(50) * short_target formula.
@@ -621,6 +738,14 @@ class BRTConfig:
     # Distinct from atr_days (calendar deadline → first open). SB host still uses burst_*.
     no_ft_days: int = 0
     time_stop_days: int = 0
+    # WPBR research-only velocity time stop (0 = off). bars_held = i - entry_bar (0 on entry).
+    # If High never reaches entry×(1+min_gain) on any bar while held < N, sell at the close of
+    # the bar where bars_held first reaches N. Long WPBR only; does not change DailyRun defaults.
+    wpbr_velocity_time_stop_bars: int = 0
+    wpbr_velocity_time_stop_min_gain: float = 0.10
+    # WPBR research-only: at bars_held == N, if Close < entry sell at that close.
+    # Checked only on that bar (no later re-check). 0 = off. Long WPBR only.
+    wpbr_underwater_time_stop_bars: int = 0
     # Final entry gate: block when next open is "too high" above trigger-bar low.
     # Example default 1.14 means block if entry_open > trigger_low * 1.14.
     too_high_multiplier: float = 1.058
@@ -655,13 +780,46 @@ class BRTConfig:
 
     # Growth filter: require full lookback and Close[eval] >= Close[eval - growth_bars] (sheet: 3Y).
     # Sheet anchors 756 rows from 2016-01-01; CSVs may start a few sessions later - see growth_history_slack_bars.
-    # Pre-IPO / short history: sheet daily grids often have $0 OHLC before first real bar, so
-    # Close >= Close_{1Y/2Y/3Y} PASSes when the lookback lands on $0. Engine must PASS (not block)
-    # when eval_bar < growth_min - otherwise IPO names (META 2012) drop early sheet Closed trades.
+    # Missing lookback Close (short history / IPO / no bar at eval−N): FAIL the gate — do not coerce to $0
+    # or treat as pass. Sheet AZ may still PASS when lookback lands on padded $0 OHLC; that is an
+    # intentional economics-over-sheet-parity divergence (correct growth confirmation needs a real price).
     # RS mode: when enabled, evaluated on trigger bar T (same timing as SPY_COMPARE / IND_TC), not entry open.
     growth_filter_enabled: bool = True
     growth_bars: int = 756  # e.g. 756 = 3 years; require Close[eval] >= Close[eval - growth_bars]
     growth_history_slack_bars: int = 2  # allow eval when eval_bar >= growth_bars - slack (sheet row vs CSV start)
+    # Research gate (0 = off). Require this many sessions before the trigger bar, with a real
+    # positive Close exactly that many bars earlier. No slack and no substitute bar. Runs after
+    # other entry gates, including standalone WPBR (which otherwise skips the BRT growth filter).
+    min_history_bars: int = 0
+    # With growth_filter_enabled, require Close[trigger] > Close[trigger - growth_bars] on that
+    # exact bar (no slack). Default False keeps the existing >= comparison.
+    growth_filter_strict_gt: bool = False
+    # Exact-lookback percent hurdle (0 = off). When >0 with growth_filter_enabled, the trigger
+    # close must be at least this fraction above the close exactly growth_bars earlier
+    # (0.10 = 10%). A gain that lands on the hurdle passes. 0 keeps the strict >0% comparison
+    # when growth_filter_strict_gt is on, and does not change that path.
+    growth_min_pct: float = 0.0
+    # SMA200 persistence (0 = off). When sma200_persist_bars > 0, the trigger bar must have
+    # that many sessions ending on the trigger (inclusive), and each of those sessions must
+    # have a real positive close and a 200-session simple moving average. A min fraction of
+    # 0 still requires the window to exist. A min fraction above 0 also requires at least
+    # that share of the window to close strictly above its own SMA200.
+    sma200_persist_bars: int = 0
+    sma200_persist_min_frac: float = 0.0
+    # Research gate (0 = off). On standalone WPBR, reject the entry when any earlier zone
+    # has its lower edge strictly above this entry zone's upper edge and that gap is at
+    # most this fraction of the upper edge (0.22 = 22%). Does not change the book when 0.
+    wpbr_overhead_band_pct: float = 0.0
+    # Research only (default False). When True: do not hard-skip on wpbr_overhead_band_pct.
+    # Instead, if an earlier WPBR zone sits above this zone, size long target/stop from the
+    # nearest overhead gap G (fraction): target gain = wpbr_dyn_oh_target_frac*G, stop under
+    # trigger-day low = wpbr_dyn_oh_stop_frac*(target gain). Clear sky (no overhead) keeps
+    # cfg target_pct / stop_pct (live 20/8). Applies for every constraining overhead G
+    # (including G >= 22%). Production / DailyRun leave this False.
+    wpbr_dynamic_overhead: bool = False
+    # Fractions used when wpbr_dynamic_overhead is True (research arms A/B/C).
+    wpbr_dyn_oh_target_frac: float = 0.90
+    wpbr_dyn_oh_stop_frac: float = 0.40
 
     # Signal-bar candle direction: long requires Close>Open; short requires Close<Open. Set False to skip.
     require_close_gt_open: bool = True
@@ -840,7 +998,7 @@ class BRTConfig:
     aggressive_avg_positions: float = 0.0
     aggressive_sizing_equity_cap: float = 10.0
     # When aggressive: sell existing holdings at new-entry open to free gross/cash.
-    # false | average | losers | winners
+    # false | average | losers | winners | fifo
     aggressive_sell: str = "false"
     # Fraction of total margin buying power to deploy (equity * aggressive_max_multiple).
     # Default 0.6 = 60% of 2× account. Applies to passive brt_cash / Max_DD sizing only;
@@ -1223,6 +1381,8 @@ def _output_file_prefix(cfg: "BRTConfig") -> str:
         return "MTS"
     if bool(getattr(cfg, "vz_mode", False)):
         return "VZ"
+    if bool(getattr(cfg, "rsi_mode", False)):
+        return "RSI"
     if bool(getattr(cfg, "wrl_mode", False)):
         return "WRL"
     if bool(getattr(cfg, "sb_mode", False)):
@@ -1514,6 +1674,8 @@ def _normalize_aggressive_sell(val: Any) -> str:
         return "losers"
     if s in ("winners", "winner", "best"):
         return "winners"
+    if s in ("fifo", "first", "oldest"):
+        return "fifo"
     return "false"
 
 
@@ -1682,6 +1844,165 @@ def _growth_ago_bar_index(eval_bar: int, cfg: Any) -> int:
         return -1
     ago = eval_bar - gb
     return 0 if ago < 0 else ago
+
+
+def _sma_close_above_cumsums(close_arr: np.ndarray, sma_period: int = 200) -> tuple[np.ndarray, np.ndarray]:
+    """Prefix sums of sessions whose close is above that session's simple moving average.
+
+    The first array counts close > SMA. The second counts a valid session: the average
+    exists, and the close is finite and positive. Bar 0 is index 0.
+    """
+    period = int(sma_period)
+    c = np.asarray(close_arr, dtype=np.float64)
+    sma = _compute_sma_arr(c, period)
+    finite_close = np.isfinite(c) & (c > 0.0)
+    valid = np.isfinite(sma) & finite_close
+    above = valid & (c > sma)
+    return np.cumsum(above.astype(np.int32)), np.cumsum(valid.astype(np.int32))
+
+
+def _window_sum(csum: np.ndarray, start: int, end: int) -> int:
+    total = int(csum[end])
+    if start > 0:
+        total -= int(csum[start - 1])
+    return total
+
+
+def sma200_persist_above_count(
+    close_arr: np.ndarray,
+    end_bar: int,
+    window: int,
+    sma_period: int = 200,
+) -> Optional[int]:
+    """How many of ``window`` sessions ending at ``end_bar`` (inclusive) closed above SMA.
+
+    Returns None when the window is missing or any session in it lacks a real positive
+    close or that session's simple moving average.
+    """
+    w = int(window)
+    t = int(end_bar)
+    if w <= 0 or t < w - 1 or t >= len(close_arr):
+        return None
+    above_csum, valid_csum = _sma_close_above_cumsums(close_arr, sma_period)
+    start = t - w + 1
+    if _window_sum(valid_csum, start, t) != w:
+        return None
+    return _window_sum(above_csum, start, t)
+
+
+def sma200_persist_passes(above_count: Optional[int], window: int, min_frac: float) -> tuple[bool, str]:
+    """Return whether the persistence gate passes, and an empty reason or a reject code.
+
+    ``window`` <= 0 turns the gate off. A defined window with ``min_frac`` <= 0 passes.
+    A missing window is ``SMA_HISTORY``. A defined window under the fraction is ``SMA_PERSIST``.
+    The fraction test uses millionths so 25%, 50%, and 75% of 756 sessions land on exact counts.
+    """
+    w = int(window)
+    if w <= 0:
+        return True, ""
+    if above_count is None:
+        return False, "SMA_HISTORY"
+    floor = float(min_frac or 0.0)
+    if floor <= 0.0:
+        return True, ""
+    need = int(round(floor * 1_000_000.0))
+    if int(above_count) * 1_000_000 >= need * w:
+        return True, ""
+    return False, "SMA_PERSIST"
+
+
+def _exact_lookback_close(close_arr: np.ndarray, bar: int, bars: int) -> Optional[float]:
+    """Close exactly ``bars`` sessions before ``bar``.
+
+    Returns None when that bar does not exist or either close is missing, non-finite, or not
+    positive. Does not apply growth_history_slack_bars and does not substitute bar 0.
+    """
+    n_back = int(bars)
+    i = int(bar)
+    if n_back <= 0 or i < n_back or i >= len(close_arr):
+        return None
+    ago_px = float(close_arr[i - n_back])
+    now_px = float(close_arr[i])
+    if not np.isfinite(ago_px) or ago_px <= 0.0 or not np.isfinite(now_px) or now_px <= 0.0:
+        return None
+    return ago_px
+
+
+def growth_min_gain_passes(now_px: float, ago_px: float, min_pct: float) -> tuple[bool, str]:
+    """Percent hurdle on an exact lookback close. ``min_pct`` is a fraction (0.10 = 10%).
+
+    Passes when ``now_px >= ago_px * (1 + min_pct)``. A gain that lands on the hurdle passes.
+    The caller keeps the zero-hurdle strict-greater-than check on its own path.
+    """
+    floor = float(min_pct)
+    if floor <= 0.0 or not np.isfinite(floor):
+        return True, ""
+    ago = float(ago_px)
+    now = float(now_px)
+    if not np.isfinite(ago) or ago <= 0.0 or not np.isfinite(now):
+        return False, "GROWTH"
+    need = ago * (1.0 + floor)
+    if now >= need or np.isclose(now, need, rtol=0.0, atol=1e-8):
+        return True, ""
+    return False, "GROWTH"
+
+
+def prior_overhead_zone_count(
+    born: np.ndarray,
+    lowers: np.ndarray,
+    zone_ids: list[str],
+    *,
+    active_id: str,
+    active_upper: float,
+    trigger_bar: int,
+    max_gap: float,
+) -> int:
+    """Count earlier WPBR zones whose lower edge is within ``max_gap`` above ``active_upper``.
+
+    A zone counts when it is not the active zone, its pivot week starts strictly before the
+    trigger bar, its lower edge is strictly above the active upper edge, and
+    (lower - upper) / upper is less than or equal to ``max_gap``. ``max_gap`` <= 0 counts nothing.
+    """
+    gap_cap = float(max_gap)
+    upper = float(active_upper)
+    if gap_cap <= 0.0 or not np.isfinite(gap_cap) or not np.isfinite(upper) or upper <= 0.0:
+        return 0
+    n_zones = len(zone_ids)
+    if n_zones == 0 or len(born) != n_zones or len(lowers) != n_zones:
+        return 0
+    own = np.fromiter((zid == active_id for zid in zone_ids), dtype=bool, count=n_zones)
+    gap = (lowers - upper) / upper
+    qual = (~own) & (born >= 0) & (born < int(trigger_bar)) & np.isfinite(lowers) & (lowers > upper) & (gap <= gap_cap)
+    return int(np.count_nonzero(qual))
+
+
+def prior_overhead_nearest_gap(
+    born: np.ndarray,
+    lowers: np.ndarray,
+    zone_ids: list[str],
+    *,
+    active_id: str,
+    active_upper: float,
+    trigger_bar: int,
+) -> Optional[float]:
+    """Nearest earlier WPBR overhead gap as a fraction of ``active_upper``, or None.
+
+    Same zone inventory / age rules as ``prior_overhead_zone_count``, but with no max-gap
+    cap: any earlier zone whose lower edge is strictly above the active upper edge qualifies.
+    Returns the minimum ``(lower - upper) / upper``, or None when none exist.
+    """
+    upper = float(active_upper)
+    if not np.isfinite(upper) or upper <= 0.0:
+        return None
+    n_zones = len(zone_ids)
+    if n_zones == 0 or len(born) != n_zones or len(lowers) != n_zones:
+        return None
+    own = np.fromiter((zid == active_id for zid in zone_ids), dtype=bool, count=n_zones)
+    gap = (lowers - upper) / upper
+    qual = (~own) & (born >= 0) & (born < int(trigger_bar)) & np.isfinite(lowers) & (lowers > upper) & np.isfinite(gap)
+    if not np.any(qual):
+        return None
+    return float(np.min(gap[qual]))
 
 
 def compute_pivots(
@@ -2340,8 +2661,8 @@ def compute_sheet_brt_touch_stream(
     pivot_future_move_pct: float = 0.06,
     dedup_tol_pct: float = 0.01,
     pre_pivot_bars: int = 7,
-    pre_pivot_pct: float = 0.081,
-    touch_pullback_pct: float = 0.108,
+    pre_pivot_pct: float = 0.1,
+    touch_pullback_pct: float = 0.1,
     touch_pullback_bars: int = 7,
     maturity_lag: int = 7,
     warmup_bars: int = 9,
@@ -2557,9 +2878,9 @@ def compute_touch_stream(
     lookback_short: int = 105,
     strong_pivots_enabled: bool = True,
     strong_pre_pivot_bars: int = 7,
-    strong_pre_pivot_pct: float = 0.081,
+    strong_pre_pivot_pct: float = 0.1,
     strong_post_pivot_bars: int = 7,
-    strong_post_pivot_pct: float = 0.108,
+    strong_post_pivot_pct: float = 0.1,
     strong_pivot_mode: str = "pre",
     band_pct_atr: float = 0.0,
     strong_pre_pivot_pct_atr: float = 0.0,
@@ -3283,6 +3604,9 @@ def build_level3_for_cfg(
             debug_symbol=debug_symbol,
             effective_band_pct_fn=_effective_band_pct_tp,
             compute_atr_14_fn=_compute_atr_14_arr,
+            use_weekly_zone_cache=bool(getattr(cfg, "wpbr_weekly_zone_cache", False)),
+            weekly_zone_cache_db=str(getattr(cfg, "wpbr_weekly_zone_cache_db", "") or "").strip(),
+            cache_symbol=debug_symbol,
         )
 
     streams: list[dict] = []
@@ -3321,9 +3645,9 @@ _UNION_BRT_DNA: dict[str, Any] = {
     "brt_sheet_touch": True,
     "band_pct": 0.0154,
     "strong_pre_pivot_bars": 7,
-    "strong_pre_pivot_pct": 0.081,
+    "strong_pre_pivot_pct": 0.1,
     "strong_post_pivot_bars": 7,
-    "strong_post_pivot_pct": 0.108,
+    "strong_post_pivot_pct": 0.1,
     "strong_pivot_mode": "either",
     "breakout_bars": 100,
     "tight_range_threshold_pct": 0.35,
@@ -3514,6 +3838,23 @@ class BRTTrade:
     wpbr_signal_body_pct: Optional[float] = None
     wpbr_zone_strength: Optional[float] = None
     wpbr_merge_count: Optional[float] = None
+    # Research-only. Max daily high strictly after the qualifying weekly breakout
+    # and strictly before this trade's retest, and (that high / zone top) - 1.
+    # Not an entry, exit, or eligibility gate.
+    max_pre_retest_high: Optional[float] = None
+    max_pre_retest_expansion_pct: Optional[float] = None
+    # Research-only. Daily low/close on the qualifying retest bar production
+    # already chose, versus that trade's weekly zone top and bottom.
+    # Not an entry, exit, or eligibility gate. See wpbr_zones.RETEST_VS_ZONE_FIELDS.
+    retest_date: str = ""
+    retest_zone_top: Optional[float] = None
+    retest_zone_bottom: Optional[float] = None
+    retest_low: Optional[float] = None
+    retest_close: Optional[float] = None
+    retest_low_vs_zone_top_pct: Optional[float] = None
+    retest_low_vs_zone_bottom_pct: Optional[float] = None
+    retest_close_vs_zone_top_pct: Optional[float] = None
+    retest_close_vs_zone_bottom_pct: Optional[float] = None
     touch_count: int = 0
     touch_count_short: int = 0
     touch_count_major: int = 0
@@ -3560,6 +3901,9 @@ class BRTTrade:
     zone_below_center: float = 0.0   # 0 = none
     pct_entry_to_bottom_zone_above: float = 0.0  # % from entry to bottom of zone above (target-ish)
     pct_drop_to_top_zone_below: float = 0.0     # % drop from entry to top of zone below (stop-ish)
+    # Research: nearest WPBR overhead gap % (zone-top to older zone-bottom), same definition as
+    # wpbr_overhead_band_pct. Empty/None = no constraining overhead zone (clear sky).
+    wpbr_overhead_gap_pct: Optional[float] = None
     # Growth: single-period gain at entry (price today vs price growth_bars days ago), e.g. 33.1 = 33.1% over 3Y
     growth_pct_over_period: Optional[float] = None  # None when insufficient history
     # Displacement: ABS(Close/RollingAvg - 1) at entry bar; filter passes when >= threshold (movement regime)
@@ -3582,6 +3926,14 @@ class BRTTrade:
     # Backtest-only: bar index of entry (open); ATR schedule exits use with atr_pct_at_entry
     entry_bar_index: int = -1
     atr_pct_at_entry: Optional[float] = None  # ATR_14/entry*100 at entry; used when atr_progress>0
+    # Wilder RSI(14) on the entry-date daily close (DATE_OPENED / fill bar, or last bar on/before).
+    # Used by research gates such as vz_max_rsi14_at_entry — keep as fill-bar RSI.
+    rsi14_at_entry: Optional[float] = None
+    # Wilder RSI(14) on the trigger / signal bar (prior bar when entry_on=next_open).
+    rsi14_at_trigger: Optional[float] = None
+    # Overbought / Oversold / Neutral from trigger-bar RSI (not the fill bar).
+    # Thresholds match trendline charts: Overbought >= 70, Oversold <= 30, else Neutral.
+    rsi14_ob_os: str = ""
     # Per-trigger-bar technical metrics (computed without future bars, for correlation analysis)
     z_score_at_trigger: float = 0.0
     upper_wick_atr_at_trigger: float = 0.0
@@ -6725,6 +7077,16 @@ def _brt_closed_from_open(
 ) -> "BRTTrade":
     """Build a closed BRTTrade from an open position."""
     _trade_is_long = str(getattr(open_trade, "side", "LONG") or "LONG").upper() != "SHORT"
+    sold = float(getattr(open_trade, "_brt_scale_sold_frac", 0.0) or 0.0)
+    scale_fill = float(getattr(open_trade, "_brt_scale_fill", 0.0) or 0.0)
+    remainder_px = float(exit_price)
+    if _trade_is_long and 0.0 < sold < 1.0 and scale_fill > 0.0:
+        # Blended fill matches the cash-weighted gain of the scale sale plus the leftover.
+        exit_price = sold * scale_fill + (1.0 - sold) * remainder_px
+        if not str(exit_type).startswith("SCALE+"):
+            exit_type = f"SCALE+{exit_type}"
+    else:
+        sold = 0.0
     pnl_pct, pnl_dollars = _net_trade_pnl(
         cfg,
         entry_price=float(open_trade.entry_price),
@@ -6740,7 +7102,7 @@ def _brt_closed_from_open(
         max_price = float(df.loc[mask, "High"].max()) if mask.any() else open_trade.entry_price
     else:
         max_price = open_trade.entry_price
-    return BRTTrade(
+    closed_t = BRTTrade(
         symbol=sym,
         side=getattr(open_trade, "side", "LONG"),
         date_opened=open_trade.date_opened,
@@ -6793,6 +7155,7 @@ def _brt_closed_from_open(
         zone_below_center=getattr(open_trade, "zone_below_center", 0.0),
         pct_entry_to_bottom_zone_above=getattr(open_trade, "pct_entry_to_bottom_zone_above", 0.0),
         pct_drop_to_top_zone_below=getattr(open_trade, "pct_drop_to_top_zone_below", 0.0),
+        wpbr_overhead_gap_pct=getattr(open_trade, "wpbr_overhead_gap_pct", None),
         volume_at_entry=getattr(open_trade, "volume_at_entry", None),
         avg_volume_10d_at_entry=getattr(open_trade, "avg_volume_10d_at_entry", None),
         rel_vol_at_entry=getattr(open_trade, "rel_vol_at_entry", None),
@@ -6807,6 +7170,9 @@ def _brt_closed_from_open(
         atr_14_at_entry=getattr(open_trade, "atr_14_at_entry", None),
         entry_bar_index=int(getattr(open_trade, "entry_bar_index", -1) or -1),
         atr_pct_at_entry=getattr(open_trade, "atr_pct_at_entry", None),
+        rsi14_at_entry=getattr(open_trade, "rsi14_at_entry", None),
+        rsi14_at_trigger=getattr(open_trade, "rsi14_at_trigger", None),
+        rsi14_ob_os=str(getattr(open_trade, "rsi14_ob_os", "") or ""),
         market_cap=getattr(open_trade, "market_cap", None),
         market_cap_current=getattr(open_trade, "market_cap_current", None),
         sector=getattr(open_trade, "sector", None),
@@ -6845,7 +7211,61 @@ def _brt_closed_from_open(
         ),
         entry_indicators=dict(getattr(open_trade, "entry_indicators", None) or {}),
         **_wpbr_strength_kwargs_from_trade(open_trade),
+        **_retest_vs_zone_kwargs_from_trade(open_trade),
     )
+    if sold > 0.0:
+        closed_t._brt_scale_sold_frac = sold
+        closed_t._brt_scale_fill = scale_fill
+        closed_t._brt_scale_date = str(getattr(open_trade, "_brt_scale_date", "") or "")
+        closed_t._brt_remainder_exit = remainder_px
+    return closed_t
+
+
+def _apply_brt_long_scale(
+    open_trade: "BRTTrade",
+    cfg: Any,
+    *,
+    op: float,
+    hi: float,
+    iso: str,
+) -> None:
+    """Sell part of a long at a gain, then ratchet the leftover stop and target.
+
+    Off when ``brt_scale_gain`` is 0. A bar that opens through the original stop
+    leaves the trade unchanged so the whole position gaps out. The fill is the
+    open when the bar opens through the gain price, otherwise the gain price once
+    the high reaches it. The caller checks the leftover stop before the leftover
+    target on this same bar.
+    """
+    if getattr(open_trade, "_brt_scale_done", False):
+        return
+    if str(getattr(open_trade, "side", "LONG") or "LONG").upper() == "SHORT":
+        return
+    gain = float(getattr(cfg, "brt_scale_gain", 0.0) or 0.0)
+    sell = float(getattr(cfg, "brt_scale_sell_frac", 0.0) or 0.0)
+    if gain <= 0.0 or sell <= 0.0 or sell >= 1.0:
+        return
+    entry = float(open_trade.entry_price)
+    if not (entry > 0.0):
+        return
+    orig_stop = float(open_trade.stop_price)
+    if float(op) <= orig_stop:
+        return
+    gate = entry * (1.0 + gain)
+    if float(hi) < gate and float(op) < gate:
+        return
+    fill = float(op) if float(op) > gate else gate
+    open_trade._brt_scale_done = True
+    open_trade._brt_scale_sold_frac = sell
+    open_trade._brt_scale_fill = fill
+    open_trade._brt_scale_date = str(iso)
+    stop_gain = float(getattr(cfg, "brt_scale_stop_gain", 0.0) or 0.0)
+    new_stop = entry * (1.0 + stop_gain)
+    if new_stop > float(open_trade.stop_price):
+        open_trade.stop_price = new_stop
+    runner = float(getattr(cfg, "brt_scale_runner_gain", 0.0) or 0.0)
+    if runner > 0.0:
+        open_trade.target_price = entry * (1.0 + runner)
 
 
 def _adaptive_stop_exit_label(
@@ -6919,6 +7339,12 @@ def _brt_attempt_exit_at_bar(
     """
     _trade_is_long = str(getattr(open_trade, "side", "LONG") or "LONG").upper() != "SHORT"
     _trade_side = str(getattr(open_trade, "side", "LONG") or "LONG")
+    _hwm_act = float(getattr(cfg, "hwm_act_pct", 0.0) or 0.0)
+    _hwm_keep = float(getattr(cfg, "hwm_keep", 0.0) or 0.0)
+    _hwm_on = _hwm_act > 0.0 and _hwm_keep > 0.0 and _trade_is_long
+    # Research trail: entry day cannot sell. Live path (flags absent) is unchanged.
+    if _hwm_on and str(getattr(open_trade, "date_opened", "") or "") == str(iso):
+        return None, max_high_since_entry, pending_ind_diff_exit, False
     # Peak high for gain-trail may include bar i; Chandelier uses highs only through i-1.
     max_high_since_entry = max(max_high_since_entry, hi)
     # SB-style NO_FT follow-through: any close beyond entry (long: close>entry; short: close<entry).
@@ -6926,6 +7352,17 @@ def _brt_attempt_exit_at_bar(
     if _ep_ft > 0:
         if (_trade_is_long and float(cl) > _ep_ft) or ((not _trade_is_long) and float(cl) < _ep_ft):
             setattr(open_trade, "_saw_ft", True)
+    # WPBR velocity time-stop arm: +min_gain tagged via intraday High (long only).
+    _vel_n = int(getattr(cfg, "wpbr_velocity_time_stop_bars", 0) or 0)
+    _vel_g = float(getattr(cfg, "wpbr_velocity_time_stop_min_gain", 0.10) or 0.0)
+    if (
+        _vel_n > 0
+        and bool(getattr(cfg, "wpbr_zones", False))
+        and _trade_is_long
+        and _ep_ft > 0
+        and float(hi) >= _ep_ft * (1.0 + _vel_g) - 1e-12
+    ):
+        setattr(open_trade, "_saw_wpbr_vel_gain", True)
     _pending_zscore = bool(getattr(open_trade, "_pending_zscore_exit", False))
     _zscore_exit_now = False
     if _pending_zscore:
@@ -6960,6 +7397,7 @@ def _brt_attempt_exit_at_bar(
     ):
         _ind_diff_exit_now = True
         pending_ind_diff_exit = False
+    _apply_brt_long_scale(open_trade, cfg, op=float(op), hi=float(hi), iso=str(iso))
     tp = open_trade.target_price
     trail_inc = cfg_trailing_stop_inc
     sp, inc_active, sma_active, hit_trailing_gain, inc_floor, chandelier_active = _resolve_working_stop(
@@ -6977,6 +7415,34 @@ def _brt_attempt_exit_at_bar(
         high_arr=high_arr,
         low_arr=low_arr,
     )
+    _hwm_trail_binds = False
+    if _hwm_on:
+        # Day T stop uses highs from the entry bar through T-1 only.
+        _eb = int(getattr(open_trade, "entry_bar_index", -1) or -1)
+        if _eb < 0:
+            _found = _trade_ymd_to_bar_index(
+                index_iso, str(getattr(open_trade, "date_opened", "") or "")
+            )
+            _eb = int(_found) if _found is not None else -1
+        _entry_px = float(open_trade.entry_price)
+        _base_stop = float(open_trade.stop_price)
+        _hwm = _entry_px
+        if _eb >= 0 and i > _eb and _eb < len(high_arr):
+            _window = high_arr[_eb:i]
+            if len(_window):
+                _mx = float(np.nanmax(_window))
+                if np.isfinite(_mx):
+                    _hwm = max(_entry_px, _mx)
+        sp = _base_stop
+        if (
+            _entry_px > 0.0
+            and _hwm >= _entry_px * (1.0 + _hwm_act / 100.0) - 1e-9
+        ):
+            _trail_px = _entry_px + _hwm_keep * (_hwm - _entry_px)
+            if _trail_px > _base_stop + 1e-12:
+                sp = _trail_px
+                _hwm_trail_binds = True
+                hit_trailing_gain = True
     stop_round_decimals = cfg_stop_cmp_rd
     if stop_round_decimals >= 0:
         op_cmp = round(float(op), stop_round_decimals)
@@ -7101,7 +7567,8 @@ def _brt_attempt_exit_at_bar(
         # Short favorable gap through target - keep GAP_DOWN (price-direction).
         exit_type = "GAP_DOWN"
     elif stop_hit:
-        exit_price = cl if cfg.exit_at_close_when_stopped else sp
+        # Research trail fills at the stop. Live exit_at_close_when_stopped stays as-is.
+        exit_price = sp if _hwm_on else (cl if cfg.exit_at_close_when_stopped else sp)
         exit_type = _adaptive_stop_exit_label(
             hit_inc=hit_inc_stop_touch,
             hit_chandelier=hit_chandelier_touch,
@@ -7118,8 +7585,14 @@ def _brt_attempt_exit_at_bar(
         # Portable SB-style NO_FT / TIME (bars from fill; sell at close). 0 = off.
         _no_ft_n = int(getattr(cfg, "no_ft_days", 0) or 0)
         _time_n = int(getattr(cfg, "time_stop_days", 0) or 0)
+        _vel_bars = int(getattr(cfg, "wpbr_velocity_time_stop_bars", 0) or 0)
+        _uw_bars = int(getattr(cfg, "wpbr_underwater_time_stop_bars", 0) or 0)
         _sb_style_exit = False
-        if _no_ft_n > 0 or _time_n > 0:
+        if _no_ft_n > 0 or _time_n > 0 or (
+            (_vel_bars > 0 or _uw_bars > 0)
+            and bool(getattr(cfg, "wpbr_zones", False))
+            and _trade_is_long
+        ):
             _entry_i = getattr(open_trade, "_entry_bar_i", None)
             if _entry_i is None:
                 _entry_i = _trade_ymd_to_bar_index(
@@ -7137,6 +7610,45 @@ def _brt_attempt_exit_at_bar(
                 exit_price = float(cl)
                 exit_type = "TIME"
                 _sb_style_exit = True
+            elif (
+                _vel_bars > 0
+                and bool(getattr(cfg, "wpbr_zones", False))
+                and _trade_is_long
+                and _entry_i is not None
+                and _held_bars >= _vel_bars
+            ):
+                # Day-N CLOSE when max High over entry..entry+N (inclusive) never
+                # tagged +min_gain. entry bar = 0; day-40 = bars_held == 40.
+                _vel_min = float(getattr(cfg, "wpbr_velocity_time_stop_min_gain", 0.10) or 0.0)
+                _eb = int(_entry_i)
+                _end = min(len(high_arr) - 1, _eb + _vel_bars)
+                _peak = (
+                    float(np.nanmax(high_arr[_eb : _end + 1]))
+                    if _end >= _eb
+                    else float("nan")
+                )
+                _ep_v = float(getattr(open_trade, "entry_price", 0.0) or 0.0)
+                _saw = bool(getattr(open_trade, "_saw_wpbr_vel_gain", False))
+                if _ep_v > 0 and np.isfinite(_peak):
+                    _saw = _saw or ((_peak / _ep_v) - 1.0 >= _vel_min - 1e-12)
+                if not _saw:
+                    exit_price = float(cl)
+                    exit_type = f"WPBR_VEL_TS{_vel_bars}"
+                    _sb_style_exit = True
+            elif (
+                _uw_bars > 0
+                and bool(getattr(cfg, "wpbr_zones", False))
+                and _trade_is_long
+                and _entry_i is not None
+                and _held_bars == _uw_bars
+            ):
+                # Day-N CLOSE only (no later re-check). Exit if Close is strictly
+                # below original entry. At/above entry: continue to target/stop.
+                _ep_u = float(getattr(open_trade, "entry_price", 0.0) or 0.0)
+                if _ep_u > 0 and float(cl) < _ep_u:
+                    exit_price = float(cl)
+                    exit_type = f"WPBR_UW_TS{_uw_bars}"
+                    _sb_style_exit = True
         if not _sb_style_exit:
             _ai_ok, _ai_px, _ai_typ = _atr_schedule_exit_now(
                 cfg, open_trade, i, high_arr, open_arr, index_iso
@@ -7311,6 +7823,10 @@ def run_brt_backtest(
     sma50_arr: Optional[np.ndarray] = (
         _compute_sma_arr(close_arr, 50) if bool(getattr(cfg, "use_sma50", False)) else None
     )
+    _sma_above_csum: Optional[np.ndarray] = None
+    _sma_valid_csum: Optional[np.ndarray] = None
+    if int(getattr(cfg, "sma200_persist_bars", 0) or 0) > 0:
+        _sma_above_csum, _sma_valid_csum = _sma_close_above_cumsums(close_arr, 200)
     # Report-only: look up precomputed CSV SMA20/50/100 (no rolling recompute).
     sma20_csv_arr = _precomputed_sma_arr_from_df(df, "SMA20")
     sma50_csv_arr = _precomputed_sma_arr_from_df(df, "SMA50")
@@ -7638,11 +8154,27 @@ def run_brt_backtest(
     # Per-zone lifecycle: purchases, retired, open, allow_second, resume_scan_bar
     wpbr_zone_state: dict[str, dict[str, Any]] = {}
     _wpbr_find_signal = None
+    _max_pre_retest_expansion = None
+    _retest_position_vs_zone = None
+    # Pre-round OHLC once for WPBR second-chance scans (same Decimal HALF_UP as wpbr_zones).
+    _wpbr_lo_hu: Optional[np.ndarray] = None
+    _wpbr_cl_hu: Optional[np.ndarray] = None
+    _wpbr_op_hu: Optional[np.ndarray] = None
     if _cfg_wpbr_zones:
         try:
             from wpbr_zones import find_wpbr_retest_and_signal as _wpbr_find_signal
+            from wpbr_zones import max_pre_retest_expansion as _max_pre_retest_expansion
+            from wpbr_zones import retest_position_vs_zone as _retest_position_vs_zone
+            from wpbr_zones import _half_up_array as _wpbr_half_up_array
         except ImportError:
             from stock_analysis.wpbr_zones import find_wpbr_retest_and_signal as _wpbr_find_signal
+            from stock_analysis.wpbr_zones import max_pre_retest_expansion as _max_pre_retest_expansion
+            from stock_analysis.wpbr_zones import retest_position_vs_zone as _retest_position_vs_zone
+            from stock_analysis.wpbr_zones import _half_up_array as _wpbr_half_up_array
+        if _cfg_wpbr_second_chance:
+            _wpbr_lo_hu = _wpbr_half_up_array(low_arr)
+            _wpbr_cl_hu = _wpbr_half_up_array(close_arr)
+            _wpbr_op_hu = _wpbr_half_up_array(open_arr)
         for _opp in level3.get("wpbr_entry_opportunities") or []:
             try:
                 _sb = int(_opp.get("entry_signal_bar", -1))
@@ -7672,6 +8204,19 @@ def run_brt_backtest(
             _zid = str(_ev.get("wpbr_zone_id", "") or "")
             if _zid:
                 wpbr_zone_meta[_zid] = _ev
+    _oh_band = float(getattr(cfg, "wpbr_overhead_band_pct", 0) or 0)
+    _cfg_wpbr_dynamic_overhead = bool(getattr(cfg, "wpbr_dynamic_overhead", False))
+    _oh_ids: list[str] = []
+    _oh_born = np.zeros(0, dtype=np.int32)
+    _oh_lo = np.zeros(0, dtype=np.float64)
+    if _cfg_wpbr_zones and (_oh_band > 0.0 or _cfg_wpbr_dynamic_overhead):
+        _oh_events = list(level3.get("wpbr_zone_events") or [])
+        _oh_ids = [str(_ev.get("wpbr_zone_id") or "") for _ev in _oh_events]
+        _oh_born = np.array(
+            [int(_ev.get("activation_bar") if _ev.get("activation_bar") is not None else -1) for _ev in _oh_events],
+            dtype=np.int32,
+        )
+        _oh_lo = np.array([float(_ev.get("zone_lower") or np.nan) for _ev in _oh_events], dtype=np.float64)
 
     def _wpbr_allows_new_entry(zone_id: str) -> bool:
         if not zone_id:
@@ -7973,7 +8518,68 @@ def run_brt_backtest(
         return _effective_band_pct_tp(float(zc_px), int(i_bar), atr_14_arr, float(cfg.band_pct), _cfg_band_pct_atr)
 
     _pending_ind_diff_exit = False
-    for i in range(n - 1):
+    # --- WPBR incremental resume (optional) ---
+    _wpbr_incr_enabled = bool(getattr(cfg, "wpbr_zones", False)) and (
+        bool(getattr(cfg, "wpbr_incremental", False))
+        or str(getattr(cfg, "wpbr_incremental_mode", "") or "").strip() in ("full", "warm")
+    )
+    # Env alias when cfg bool still false but mode set by main.
+    if not _wpbr_incr_enabled and bool(getattr(cfg, "wpbr_zones", False)):
+        try:
+            from wpbr_incremental import incremental_flag_enabled as _wpbr_incr_flag
+        except ImportError:
+            from stock_analysis.wpbr_incremental import incremental_flag_enabled as _wpbr_incr_flag
+        _wpbr_incr_enabled = _wpbr_incr_flag(getattr(cfg, "wpbr_incremental", None))
+    _wpbr_incr_mode = str(getattr(cfg, "wpbr_incremental_mode", "") or "").strip().lower()
+    _wpbr_loop_start = 0
+    _wpbr_seed_used = False
+    if (
+        _wpbr_incr_enabled
+        and _cfg_wpbr_zones
+        and _wpbr_incr_mode == "warm"
+    ):
+        try:
+            from wpbr_incremental import load_symbol_state as _wpbr_load_seed
+            from wpbr_incremental import resolve_resume_start as _wpbr_resolve_start
+            from wpbr_incremental import resolve_state_dir as _wpbr_resolve_state_dir
+        except ImportError:
+            from stock_analysis.wpbr_incremental import load_symbol_state as _wpbr_load_seed
+            from stock_analysis.wpbr_incremental import resolve_resume_start as _wpbr_resolve_start
+            from stock_analysis.wpbr_incremental import resolve_state_dir as _wpbr_resolve_state_dir
+        _wpbr_state_dir = _wpbr_resolve_state_dir(
+            getattr(cfg, "wpbr_incremental_state_dir", "") or "",
+            output_dir=None,
+        )
+        # Prefer absolute path already set on cfg by main.
+        _raw_sd = str(getattr(cfg, "wpbr_incremental_state_dir", "") or "").strip()
+        if _raw_sd:
+            from pathlib import Path as _P
+            _wpbr_state_dir = _P(_raw_sd)
+        _seed = _wpbr_load_seed(_wpbr_state_dir, sym)
+        if _seed is not None:
+            _start_i, _why = _wpbr_resolve_start(_seed, index_iso)
+            if _why.endswith("_full"):
+                _wpbr_loop_start = 0
+            else:
+                closed = list(_seed.get("closed") or [])
+                open_trade = _seed.get("open_trade")
+                extra_open_trades = list(_seed.get("extra_open_trades") or [])
+                wpbr_zone_state = dict(_seed.get("wpbr_zone_state") or {})
+                pending_maturities = list(_seed.get("pending_maturities") or [])
+                max_high_since_entry = float(_seed.get("max_high_since_entry") or 0.0)
+                last_exit_yyyymmdd = str(_seed.get("last_exit_yyyymmdd") or "")
+                last_exit_idx = int(_seed.get("last_exit_idx", -1) or -1)
+                last_exit_was_target = bool(_seed.get("last_exit_was_target"))
+                _pending_ind_diff_exit = bool(_seed.get("pending_ind_diff_exit"))
+                _wpbr_loop_start = int(_start_i)
+                _wpbr_seed_used = True
+                if _pbt is not None:
+                    _pbt["bt_wpbr_incremental_warm"] = _pbt.get("bt_wpbr_incremental_warm", 0.0) + 0.0
+                if _why == "no_new_bars":
+                    # Nothing to advance; fall through to watchlist rebuild with seeded state.
+                    _wpbr_loop_start = max(n - 1, 0)
+
+    for i in range(_wpbr_loop_start, n - 1):
         _t_bar = time.perf_counter() if _perf else 0.0
         _exited_this_bar = False
         iso = index_iso[i]
@@ -8218,6 +8824,7 @@ def run_brt_backtest(
                         "from_retest_row": True,
                         "wpbr_zone_id": _zid,
                         "wpbr_opportunity_index": int(opp.get("opportunity_index", 0) or 0),
+                        "wpbr_retest_bar": int(opp.get("retest_bar")) if opp.get("retest_bar") is not None else -1,
                     }
                 )
 
@@ -8225,6 +8832,7 @@ def run_brt_backtest(
                 _wpbr_append_pending(_opp)
 
             # After a profitable first purchase (when wpbr_second_chance_after_win), resume retest/signal scan.
+            # Uses pre-rounded OHLC when available (same Decimal HALF_UP) to avoid per-bar Decimal cost.
             if _cfg_wpbr_second_chance and _wpbr_find_signal is not None:
                 for _zid, _st in list(wpbr_zone_state.items()):
                     if not _st.get("allow_second") or _st.get("retired") or _st.get("open"):
@@ -8245,10 +8853,13 @@ def run_brt_backtest(
                         _max_d = int(_meta.get("max_days_after_retest", getattr(cfg, "wpbr_max_days_after_retest", 2)) or 2)
                     except (TypeError, ValueError):
                         continue
+                    _lo_sc = _wpbr_lo_hu if _wpbr_lo_hu is not None else low_arr
+                    _cl_sc = _wpbr_cl_hu if _wpbr_cl_hu is not None else close_arr
+                    _op_sc = _wpbr_op_hu if _wpbr_op_hu is not None else open_arr
                     _rt, _sig, _fill = _wpbr_find_signal(
-                        low_arr,
-                        close_arr,
-                        open_arr,
+                        _lo_sc,
+                        _cl_sc,
+                        _op_sc,
                         scan_start=_resume,
                         zone_lower=_zl,
                         zone_upper=_zh,
@@ -8256,6 +8867,7 @@ def run_brt_backtest(
                         n=n,
                         stop_at=i,
                         retest_mode=_cfg_wpbr_retest_mode,
+                        prices_already_half_up=_wpbr_lo_hu is not None,
                     )
                     if _sig == i and _fill is not None:
                         _wpbr_append_pending(
@@ -9185,20 +9797,30 @@ def run_brt_backtest(
                 elif cfg.growth_filter_enabled and int(cfg.growth_bars) > 0:
                     _growth_min = _growth_min_eval_bar_index(cfg)
                     if _growth_ago < 0:
-                        # Sheet parity: pre-IPO $0 lookback ⇒ Close >= 0 ⇒ growth OK.
-                        # Do not block IPO-era bars (e.g. META 2013–2014 Closed trades).
+                        # Need a real Close[eval−N]. Missing history ≠ sheet $0 lookback pass.
+                        _count_block("growth_not_enough_history")
                         _trace_gate(
-                            f"pass: growth_not_enough_history (eval_bar={_eval_bar} < min={_growth_min}, "
-                            f"growth_bars={cfg.growth_bars}, slack={_growth_history_slack_bars(cfg)}; "
-                            f"treat as sheet $0 lookback)"
+                            f"block: growth_not_enough_history (eval_bar={_eval_bar} < min={_growth_min}, "
+                            f"growth_bars={cfg.growth_bars}, slack={_growth_history_slack_bars(cfg)})"
                         )
                         if debug_entry and debug_date_prefix in _md_iso8:
                             print(
-                                f"[DEBUG-ENTRY] {sym} bar {i}: zone ${zc:.2f} growth_filter "
-                                f"PASS not_enough_history (eval_bar={_eval_bar} < min={_growth_min}; "
-                                f"sheet $0 lookback parity)"
+                                f"[DEBUG-ENTRY] {sym} bar {i}: zone ${zc:.2f} BLOCKED by growth_filter "
+                                f"(not enough history; eval_bar={_eval_bar} < min={_growth_min})"
                             )
+                        if _cfg_emit_would and (i + 1) < n:
+                            would_have.append({
+                                "SYMBOL": sym,
+                                "MATURITY_DATE": index_iso[maturity_bar][:4] + "-" + index_iso[maturity_bar][4:6] + "-" + index_iso[maturity_bar][6:8],
+                                "ZONE_CENTER": zc,
+                                "WOULD_ENTER_DATE": index_iso[i + 1][:4] + "-" + index_iso[i + 1][4:6] + "-" + index_iso[i + 1][6:8],
+                                "REJECT_REASON": "GROWTH",
+                            })
+                        _keep_pending()
+                        _pg()
+                        continue
                     elif growth_pct is None:
+                        # Lookback close missing/zero/NaN — do not treat as $0 pass.
                         _count_block("growth_no_data")
                         _trace_gate("block: growth_no_data")
                         if debug_entry and debug_date_prefix in _md_iso8:
@@ -9602,6 +10224,155 @@ def run_brt_backtest(
             _trace_gate("pass: all gates, proceeding to entry checks")
 
             _pg()
+            # Exact history / strict 3-year growth. Off unless -v min_history_bars or
+            # growth_filter_strict_gt is set. Standalone WPBR skips the older growth gate above.
+            _hist_n = int(getattr(cfg, "min_history_bars", 0) or 0)
+            _growth_on = bool(getattr(cfg, "growth_filter_enabled", False))
+            _strict_gt = bool(getattr(cfg, "growth_filter_strict_gt", False)) and _growth_on
+            _min_gain = float(getattr(cfg, "growth_min_pct", 0) or 0) if _growth_on else 0.0
+            _strict_bars = (
+                int(getattr(cfg, "growth_bars", 0) or 0) if (_strict_gt or _min_gain > 0.0) else 0
+            )
+            _persist_bars = int(getattr(cfg, "sma200_persist_bars", 0) or 0)
+            if _hist_n > 0 or _strict_bars > 0 or _persist_bars > 0:
+                def _bar_dash(bar_i: int) -> str:
+                    if bar_i < 0 or bar_i >= len(index_iso):
+                        return ""
+                    raw_iso = index_iso[bar_i]
+                    if len(raw_iso) < 8:
+                        return raw_iso
+                    return f"{raw_iso[:4]}-{raw_iso[4:6]}-{raw_iso[6:8]}"
+
+            if _hist_n > 0 or _strict_bars > 0:
+                _lookback_block = ""
+                _lookback_px: Optional[float] = None
+                _lookback_n = 0
+                if _hist_n > 0 and _exact_lookback_close(close_arr, int(_eval_bar), _hist_n) is None:
+                    _lookback_block = "MIN_HISTORY"
+                    _lookback_n = _hist_n
+                elif _strict_bars > 0:
+                    _lookback_px = _exact_lookback_close(close_arr, int(_eval_bar), _strict_bars)
+                    _lookback_n = _strict_bars
+                    if _lookback_px is None:
+                        _lookback_block = "MIN_HISTORY"
+                    else:
+                        _now_px = float(close_arr[int(_eval_bar)])
+                        if _min_gain > 0.0:
+                            _gain_ok, _gain_reason = growth_min_gain_passes(
+                                _now_px, float(_lookback_px), _min_gain
+                            )
+                            if not _gain_ok:
+                                _lookback_block = _gain_reason
+                        elif not (_now_px > _lookback_px):
+                            _lookback_block = "GROWTH_FLAT" if _now_px == _lookback_px else "GROWTH"
+                if _lookback_block:
+                    _count_block(_lookback_block)
+                    _trace_gate(
+                        f"block: {_lookback_block} bars={_lookback_n} eval_bar={_eval_bar} "
+                        "(exact lookback, no slack)"
+                    )
+                    if _cfg_emit_would and (i + 1) < len(index_iso):
+                        _trig_px = (
+                            float(close_arr[int(_eval_bar)])
+                            if 0 <= int(_eval_bar) < len(close_arr)
+                            else float("nan")
+                        )
+                        would_have.append({
+                            "SYMBOL": sym,
+                            "MATURITY_DATE": _bar_dash(int(maturity_bar)),
+                            "ZONE_CENTER": zc,
+                            "WOULD_ENTER_DATE": _bar_dash(i + 1),
+                            "REJECT_REASON": _lookback_block,
+                            "TRIGGER_DATE": _bar_dash(int(_eval_bar)),
+                            "TRIGGER_CLOSE": f"{_trig_px:.6f}" if np.isfinite(_trig_px) else "",
+                            "CLOSE_LOOKBACK": "" if _lookback_px is None else f"{float(_lookback_px):.6f}",
+                            "LOOKBACK_BARS": str(_lookback_n),
+                        })
+                    continue
+            if _persist_bars > 0:
+                _persist_min = float(getattr(cfg, "sma200_persist_min_frac", 0) or 0)
+                _above_n: Optional[int] = None
+                if (
+                    _sma_above_csum is None
+                    or _sma_valid_csum is None
+                    or int(_eval_bar) < _persist_bars - 1
+                    or int(_eval_bar) >= len(_sma_above_csum)
+                ):
+                    _persist_ok, _persist_reason = False, "SMA_HISTORY"
+                else:
+                    _p_start = int(_eval_bar) - _persist_bars + 1
+                    _valid_n = _window_sum(_sma_valid_csum, _p_start, int(_eval_bar))
+                    if _valid_n != _persist_bars:
+                        _persist_ok, _persist_reason = False, "SMA_HISTORY"
+                    else:
+                        _above_n = _window_sum(_sma_above_csum, _p_start, int(_eval_bar))
+                        _persist_ok, _persist_reason = sma200_persist_passes(
+                            _above_n, _persist_bars, _persist_min
+                        )
+                if not _persist_ok:
+                    _count_block(_persist_reason)
+                    _trace_gate(
+                        f"block: {_persist_reason} bars={_persist_bars} above={_above_n} "
+                        f"min_frac={_persist_min} eval_bar={_eval_bar}"
+                    )
+                    if _cfg_emit_would and (i + 1) < len(index_iso):
+                        _trig_px = (
+                            float(close_arr[int(_eval_bar)])
+                            if 0 <= int(_eval_bar) < len(close_arr)
+                            else float("nan")
+                        )
+                        would_have.append({
+                            "SYMBOL": sym,
+                            "MATURITY_DATE": _bar_dash(int(maturity_bar)),
+                            "ZONE_CENTER": zc,
+                            "WOULD_ENTER_DATE": _bar_dash(i + 1),
+                            "REJECT_REASON": _persist_reason,
+                            "TRIGGER_DATE": _bar_dash(int(_eval_bar)),
+                            "TRIGGER_CLOSE": f"{_trig_px:.6f}" if np.isfinite(_trig_px) else "",
+                            "SMA_ABOVE": "" if _above_n is None else str(int(_above_n)),
+                            "SMA_WINDOW": str(_persist_bars),
+                        })
+                    continue
+            if _wpbr_prequalified and _oh_band > 0.0 and _oh_ids and (not _cfg_wpbr_dynamic_overhead):
+                _oh_zid = str(p.get("wpbr_zone_id") or "")
+                try:
+                    _oh_upper = float(p.get("zone_high", float("nan")))
+                except (TypeError, ValueError):
+                    _oh_upper = float("nan")
+                _oh_n = prior_overhead_zone_count(
+                    _oh_born,
+                    _oh_lo,
+                    _oh_ids,
+                    active_id=_oh_zid,
+                    active_upper=_oh_upper,
+                    trigger_bar=int(_eval_bar),
+                    max_gap=_oh_band,
+                )
+                if _oh_n > 0:
+                    _count_block("OVERHEAD_22")
+                    _trace_gate(
+                        f"block: OVERHEAD_22 n={_oh_n} upper={_oh_upper:.4f} "
+                        f"max_gap={_oh_band} eval_bar={_eval_bar}"
+                    )
+                    if _cfg_emit_would and (i + 1) < len(index_iso):
+                        def _oh_dash(bar_i: int) -> str:
+                            if bar_i < 0 or bar_i >= len(index_iso):
+                                return ""
+                            raw_iso = index_iso[bar_i]
+                            if len(raw_iso) < 8:
+                                return raw_iso
+                            return f"{raw_iso[:4]}-{raw_iso[4:6]}-{raw_iso[6:8]}"
+
+                        would_have.append({
+                            "SYMBOL": sym,
+                            "MATURITY_DATE": _oh_dash(int(maturity_bar)),
+                            "ZONE_CENTER": zc,
+                            "WOULD_ENTER_DATE": _oh_dash(i + 1),
+                            "REJECT_REASON": "OVERHEAD_22",
+                            "TRIGGER_DATE": _oh_dash(int(_eval_bar)),
+                            "LOOKBACK_BARS": str(_oh_n),
+                        })
+                    continue
             _t_e = time.perf_counter() if _perf else 0.0
 
             def _pe() -> None:
@@ -9809,6 +10580,46 @@ def run_brt_backtest(
                         entry_price * (2.0 - _def_mult)
                         if cfg.stop_pct_is_multiplier
                         else entry_price * (1 + _def_frac_below)
+                    )
+            # Research: wpbr_dynamic_overhead sizes long exits from nearest overhead gap G.
+            # Clear sky keeps the static target_pct / stop_pct already computed above.
+            _wpbr_oh_gap_pct: Optional[float] = None
+            if (
+                _cfg_wpbr_dynamic_overhead
+                and _wpbr_prequalified
+                and _is_long_side
+                and _oh_ids
+            ):
+                _oh_zid_dyn = str(p.get("wpbr_zone_id") or "")
+                try:
+                    _oh_upper_dyn = float(p.get("zone_high", float("nan")))
+                except (TypeError, ValueError):
+                    _oh_upper_dyn = float("nan")
+                _g_frac = prior_overhead_nearest_gap(
+                    _oh_born,
+                    _oh_lo,
+                    _oh_ids,
+                    active_id=_oh_zid_dyn,
+                    active_upper=_oh_upper_dyn,
+                    trigger_bar=int(_eval_bar),
+                )
+                if _g_frac is not None and np.isfinite(_g_frac) and _g_frac > 0.0:
+                    _wpbr_oh_gap_pct = float(_g_frac) * 100.0
+                    _t_frac = float(getattr(cfg, "wpbr_dyn_oh_target_frac", 0.90) or 0.90)
+                    _s_frac = float(getattr(cfg, "wpbr_dyn_oh_stop_frac", 0.40) or 0.40)
+                    if not np.isfinite(_t_frac) or _t_frac <= 0.0:
+                        _t_frac = 0.90
+                    if not np.isfinite(_s_frac) or _s_frac <= 0.0:
+                        _s_frac = 0.40
+                    _tgt_gain = _t_frac * float(_g_frac)
+                    _stop_under = _s_frac * _tgt_gain
+                    target_price = float(entry_price) * (1.0 + _tgt_gain)
+                    _sig_low_dyn = float(low_arr[_eval_bar]) if 0 <= int(_eval_bar) < n else float("nan")
+                    if np.isfinite(_sig_low_dyn) and _sig_low_dyn > 0.0:
+                        stop_price = _sig_low_dyn * (1.0 - _stop_under)
+                    _trace_gate(
+                        f"dyn_oh: G={_wpbr_oh_gap_pct:.2f}% T_frac={_t_frac:.2f} S_frac={_s_frac:.2f} "
+                        f"target_gain={_tgt_gain*100:.2f}% stop_under={_stop_under*100:.2f}%"
                     )
             _ca_iso = index_iso[_eval_bar]
             close_above_date = f"{_ca_iso[:4]}-{_ca_iso[4:6]}-{_ca_iso[6:8]}" if len(_ca_iso) >= 8 else _ca_iso
@@ -10030,8 +10841,8 @@ def run_brt_backtest(
                             "ENTRY_DATE": entry_date_iso,
                             "MATURITY_DATE": maturity_date_iso,
                             "ENTRY_PRICE": round(entry_price, 4),
-                            "ZONE_CENTER": round(zc_f, 4),
                             "ZONE_LOW": round(zc_f * (1 - _bp_ent), 4),
+                            "ZONE_CENTER": round(zc_f, 4),
                             "ZONE_HIGH": round(zc_f * (1 + _bp_ent), 4),
                             "CURRENT_ZONE_TOP": round(current_zone_top, 4),
                             "TRIGGER_BOTTOM": round(trigger_bottom, 4),
@@ -10238,6 +11049,9 @@ def run_brt_backtest(
                     "stop": _sc_stop,
                     "target": _sc_target,
                     "zone_center": zc,
+                    "zone_low": float(zl) if np.isfinite(zl) else 0.0,
+                    "zone_high": float(zh) if np.isfinite(zh) else 0.0,
+                    "wpbr_zone_id": str(p.get("wpbr_zone_id", "") or ""),
                     "atr_pct_at_entry": atr_pct,
                     "atr_pct_at_trigger": atr_pct_at_trigger_val,
                     "sma20_at_trigger": sma20_at_trigger_val,
@@ -10246,6 +11060,7 @@ def run_brt_backtest(
                     **_th_lim,
                     "maturity_date": maturity_date,
                     "close_above_date": close_above_date,
+                    "breakout_date": breakout_date,
                     "entry_indicators": (
                         _snapshot_entry_indicators_for_trade(
                             _sym_indicator_pre,
@@ -10337,6 +11152,7 @@ def run_brt_backtest(
                     zone_below_center=zone_below_center,
                     pct_entry_to_bottom_zone_above=pct_entry_to_bottom_zone_above,
                     pct_drop_to_top_zone_below=pct_drop_to_top_zone_below,
+                    wpbr_overhead_gap_pct=_wpbr_oh_gap_pct,
                     volume_at_entry=vol_entry,
                     avg_volume_10d_at_entry=avg_10d,
                     rel_vol_at_entry=rel_vol,
@@ -10399,8 +11215,54 @@ def run_brt_backtest(
                     max_high_since_entry = entry_price
                 if _cfg_wpbr_zones:
                     _pzid = str(getattr(_new_trade, "wpbr_zone_id", "") or "")
+                    _zone_meta = wpbr_zone_meta.get(_pzid) or {}
                     if _pzid:
-                        _apply_wpbr_strength_to_trade(_new_trade, wpbr_zone_meta.get(_pzid) or {})
+                        _apply_wpbr_strength_to_trade(_new_trade, _zone_meta)
+                    try:
+                        _bo_bar = int(_zone_meta.get("breakout_bar", -1))
+                    except (TypeError, ValueError):
+                        _bo_bar = -1
+                    try:
+                        _rt_bar = int(p.get("wpbr_retest_bar", -1))
+                    except (TypeError, ValueError):
+                        _rt_bar = -1
+                    try:
+                        _zh_trade = float(p.get("zone_high", float("nan")))
+                    except (TypeError, ValueError):
+                        _zh_trade = float("nan")
+                    _mx_hi, _mx_pct = _max_pre_retest_expansion(
+                        high_arr,
+                        breakout_bar=_bo_bar,
+                        retest_bar=_rt_bar,
+                        zone_upper=_zh_trade,
+                    )
+                    if np.isfinite(_mx_hi) and np.isfinite(_mx_pct):
+                        _new_trade.max_pre_retest_high = float(_mx_hi)
+                        _new_trade.max_pre_retest_expansion_pct = float(_mx_pct)
+                    # Descriptive only. Uses this pending row's retest bar and the
+                    # zone bounds already resolved for this trade. Does not scan again.
+                    if _retest_position_vs_zone is not None:
+                        try:
+                            _zl_rt = float(zl)
+                        except (TypeError, ValueError):
+                            _zl_rt = float("nan")
+                        try:
+                            _zh_rt = float(zh)
+                        except (TypeError, ValueError):
+                            _zh_rt = float("nan")
+                        _pos = _retest_position_vs_zone(
+                            low_arr,
+                            close_arr,
+                            retest_bar=_rt_bar,
+                            zone_lower=_zl_rt,
+                            zone_upper=_zh_rt,
+                        )
+                        _pos_ok = np.isfinite(_pos.get("retest_low", float("nan")))
+                        if _pos_ok and 0 <= _rt_bar < len(index_iso):
+                            _new_trade.retest_date = str(index_iso[_rt_bar])[:8]
+                        for _rk, _rv in _pos.items():
+                            if np.isfinite(_rv):
+                                setattr(_new_trade, _rk, float(_rv))
                     _wpbr_on_entry(_pzid)
             if _perf:
                 _acc_bt("bt_pending_entry_build", time.perf_counter() - _t_ent_bld)
@@ -10452,6 +11314,43 @@ def run_brt_backtest(
                 )
             )
         extra_open_trades = []
+    # Persist WPBR incremental resume seed (per symbol) when enabled.
+    if _wpbr_incr_enabled and _cfg_wpbr_zones:
+        try:
+            try:
+                from wpbr_incremental import build_end_state as _wpbr_build_end
+                from wpbr_incremental import save_symbol_state as _wpbr_save_sym
+                from wpbr_incremental import resolve_state_dir as _wpbr_resolve_state_dir2
+            except ImportError:
+                from stock_analysis.wpbr_incremental import build_end_state as _wpbr_build_end
+                from stock_analysis.wpbr_incremental import save_symbol_state as _wpbr_save_sym
+                from stock_analysis.wpbr_incremental import resolve_state_dir as _wpbr_resolve_state_dir2
+            _raw_sd2 = str(getattr(cfg, "wpbr_incremental_state_dir", "") or "").strip()
+            if _raw_sd2:
+                from pathlib import Path as _P2
+                _sd2 = _P2(_raw_sd2)
+            else:
+                _sd2 = _wpbr_resolve_state_dir2("", output_dir=None)
+            _last_ymd = str(index_iso[-1]) if index_iso else ""
+            _payload = _wpbr_build_end(
+                closed=closed,
+                open_trade=open_trade,
+                extra_open_trades=extra_open_trades,
+                wpbr_zone_state=wpbr_zone_state,
+                pending_maturities=pending_maturities,
+                max_high_since_entry=max_high_since_entry,
+                last_exit_yyyymmdd=last_exit_yyyymmdd,
+                last_exit_idx=last_exit_idx,
+                last_exit_was_target=last_exit_was_target,
+                pending_ind_diff_exit=_pending_ind_diff_exit,
+                n_bars=n,
+                last_bar_ymd=_last_ymd,
+                index_iso=index_iso,
+            )
+            _wpbr_save_sym(_sd2, sym, _payload)
+        except Exception as _wpbr_save_exc:
+            print(f"[TBN] WPBR incremental: could not save state for {sym}: {_wpbr_save_exc}", flush=True)
+
     watchlist = _watchlist_for_symbol(
         sym,
         scanner,
@@ -10519,9 +11418,12 @@ def _indicator_only_scan_gates_block(
     if bool(getattr(cfg, "growth_filter_enabled", False)) and int(getattr(cfg, "growth_bars", 0) or 0) > 0:
         ago = _growth_ago_bar_index(signal_t, cfg)
         if ago < 0:
-            # Sheet pre-IPO $0 lookback ⇒ pass (do not block).
-            pass
-        elif float(close_arr[signal_t]) < float(close_arr[ago]):
+            # Missing Close[eval−N]: fail (do not treat as sheet $0 lookback pass).
+            return True
+        _ago_px = float(close_arr[ago])
+        if not np.isfinite(_ago_px) or _ago_px <= 0.0:
+            return True
+        if float(close_arr[signal_t]) < _ago_px:
             return True
     if _atr_pct_at_trigger_gate_blocks(cfg, atr_14_arr, close_arr, signal_t):
         return True
@@ -12278,17 +13180,15 @@ def _write_would_have_csv(entries: list[dict], path: str) -> None:
     """Write BRT_WouldHave CSV: SYMBOL, MATURITY_DATE, ZONE_CENTER, WOULD_ENTER_DATE, REJECT_REASON."""
     if not entries:
         return
+    headers = ["SYMBOL", "MATURITY_DATE", "ZONE_CENTER", "WOULD_ENTER_DATE", "REJECT_REASON"]
+    for extra in ("TRIGGER_DATE", "TRIGGER_CLOSE", "CLOSE_LOOKBACK", "LOOKBACK_BARS"):
+        if any(extra in row for row in entries):
+            headers.append(extra)
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["SYMBOL", "MATURITY_DATE", "ZONE_CENTER", "WOULD_ENTER_DATE", "REJECT_REASON"])
+        w.writerow(headers)
         for row in entries:
-            w.writerow([
-                row.get("SYMBOL", ""),
-                row.get("MATURITY_DATE", ""),
-                row.get("ZONE_CENTER", ""),
-                row.get("WOULD_ENTER_DATE", ""),
-                row.get("REJECT_REASON", ""),
-            ])
+            w.writerow([row.get(col, "") for col in headers])
 
 
 def _brt_indicator_header_suffix(cfg: Optional[BRTConfig]) -> list[str]:
@@ -12650,17 +13550,334 @@ def _wpbr_strength_kwargs_from_trade(trade: "BRTTrade") -> dict[str, float]:
     return out
 
 
+def _retest_vs_zone_spec():
+    """Field order and closed-CSV names for the research retest-vs-zone columns."""
+    try:
+        from wpbr_zones import RETEST_VS_ZONE_CSV_NAMES, RETEST_VS_ZONE_FIELDS
+    except ImportError:
+        from stock_analysis.wpbr_zones import RETEST_VS_ZONE_CSV_NAMES, RETEST_VS_ZONE_FIELDS
+    return RETEST_VS_ZONE_FIELDS, RETEST_VS_ZONE_CSV_NAMES
+
+
+def _retest_vs_zone_csv_header() -> list[str]:
+    fields, names = _retest_vs_zone_spec()
+    return [names[f] for f in fields]
+
+
+def _retest_vs_zone_csv_row(t: "BRTTrade") -> list[str]:
+    fields, _names = _retest_vs_zone_spec()
+    out: list[str] = []
+    for field in fields:
+        v = getattr(t, field, None)
+        if field == "retest_date":
+            out.append(str(v or ""))
+            continue
+        if v is None:
+            out.append("")
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            out.append("")
+            continue
+        out.append(f"{fv:.10f}" if np.isfinite(fv) else "")
+    return out
+
+
+def _retest_vs_zone_kwargs_from_trade(trade: "BRTTrade") -> dict[str, Any]:
+    """Copy research retest-vs-zone labels onto the closed trade. Skips blanks."""
+    fields, _names = _retest_vs_zone_spec()
+    out: dict[str, Any] = {}
+    for field in fields:
+        v = getattr(trade, field, None)
+        if field == "retest_date":
+            text = str(v or "").strip()
+            if text:
+                out[field] = text
+            continue
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(fv):
+            out[field] = fv
+    return out
+
+
+_RSI14_PERIOD = 14
+_RSI14_OVERBOUGHT = 70.0
+_RSI14_OVERSOLD = 30.0
+
+
+def _default_ohlc_data_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "newdata" / "data"
+
+
+def _wilder_rsi14_arr(close: np.ndarray, period: int = _RSI14_PERIOD) -> np.ndarray:
+    """Wilder RSI on closes (same seed/update as trendline charts)."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    delta = np.diff(close.astype(float), prepend=np.nan)
+    gain = np.where(np.isfinite(delta) & (delta > 0), delta, 0.0)
+    loss = np.where(np.isfinite(delta) & (delta < 0), -delta, 0.0)
+    avg_g = float(np.nanmean(gain[1 : period + 1]))
+    avg_l = float(np.nanmean(loss[1 : period + 1]))
+    if avg_l == 0:
+        out[period] = 100.0
+    else:
+        out[period] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    for i in range(period + 1, n):
+        avg_g = (avg_g * (period - 1) + gain[i]) / period
+        avg_l = (avg_l * (period - 1) + loss[i]) / period
+        if avg_l == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    return out
+
+
+def _rsi14_ob_os_label(rsi: Optional[float]) -> str:
+    if rsi is None:
+        return ""
+    try:
+        v = float(rsi)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    if v >= _RSI14_OVERBOUGHT:
+        return "Overbought"
+    if v <= _RSI14_OVERSOLD:
+        return "Oversold"
+    return "Neutral"
+
+
+def _bar_index_on_or_before(index_iso: list[str], date_s: str) -> Optional[int]:
+    """Exact DATE_OPENED match, else last trading bar on or before that date."""
+    exact = _trade_ymd_to_bar_index(index_iso, date_s)
+    if exact is not None:
+        return exact
+    if not date_s or not str(date_s).strip():
+        return None
+    s = str(date_s).strip()
+    if len(s) >= 10 and s[4] == "-":
+        ymd = s[:10].replace("-", "")
+    else:
+        ymd = "".join(ch for ch in s if ch.isdigit())[:8]
+    if len(ymd) != 8:
+        return None
+    last: Optional[int] = None
+    for i, iso in enumerate(index_iso):
+        if len(iso) >= 8 and iso[:8] <= ymd:
+            last = i
+        elif last is not None:
+            break
+    return last
+
+
+def _fmt_rsi14_at_entry(val: Optional[float]) -> str:
+    if val is None:
+        return ""
+    try:
+        fv = float(val)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(fv):
+        return ""
+    return f"{fv:.2f}"
+
+
+def _resolve_rsi_trigger_bar(t: BRTTrade, index_iso: list[str], entry_bar: int) -> int:
+    """Trigger / signal bar for RSI sentiment (not the next-open fill bar).
+
+    Prefer SIGNAL_DATE / close_above_date when present; otherwise the prior
+    trading bar (house entry_on=next_open).
+    """
+    n = len(index_iso)
+    sig_raw = str(getattr(t, "signal_date", "") or "").strip()
+    if not sig_raw:
+        sig_raw = str(getattr(t, "close_above_date", "") or "").strip()
+    trigger_bar = -1
+    if sig_raw:
+        mapped_sig = _trade_ymd_to_bar_index(index_iso, sig_raw)
+        if mapped_sig is None:
+            mapped_sig = _bar_index_on_or_before(index_iso, sig_raw)
+        if mapped_sig is not None:
+            trigger_bar = int(mapped_sig)
+    if trigger_bar < 0:
+        trigger_bar = entry_bar - 1 if entry_bar > 0 else entry_bar
+    if trigger_bar < 0 or trigger_bar >= n:
+        trigger_bar = entry_bar
+    return trigger_bar
+
+
+def _enrich_trades_rsi14_ob_os(
+    trades: list[BRTTrade],
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+    data_dir: Optional[Path | str] = None,
+) -> None:
+    """Fill Wilder RSI(14) at fill bar and trigger bar.
+
+    RSI14_AT_ENTRY stays on DATE_OPENED (fill). RSI14_OB_OS uses trigger-bar RSI
+    (SIGNAL_DATE / close_above_date, else prior bar when entry is next open).
+    """
+    if not trades:
+        return
+    need = list(trades)
+    cache = dict(tickers or {})
+    resolved_dir = Path(data_dir) if data_dir else _default_ohlc_data_dir()
+    missing = {
+        (t.symbol or "").strip().upper()
+        for t in need
+        if (t.symbol or "").strip() and (t.symbol or "").strip().upper() not in cache
+    }
+    if missing and resolved_dir.is_dir():
+        try:
+            loaded = load_all_tickers(str(resolved_dir), symbols_filter=missing, max_workers=8)
+            cache.update(loaded)
+        except Exception:
+            loaded = {}
+        still = missing - set(loaded)
+        for sym in still:
+            try:
+                df_one = _load_symbol_data(sym, resolved_dir)
+            except Exception:
+                df_one = None
+            if df_one is not None and not df_one.empty:
+                cache[sym] = df_one
+
+    by_sym: dict[str, list[BRTTrade]] = {}
+    for t in need:
+        by_sym.setdefault((t.symbol or "").strip().upper(), []).append(t)
+    for sym, tlist in by_sym.items():
+        if not sym:
+            continue
+        df = cache.get(sym)
+        if df is None or df.empty or "Close" not in df.columns:
+            continue
+        close_arr = df["Close"].to_numpy(dtype=np.float64)
+        rsi_arr = _wilder_rsi14_arr(close_arr)
+        index_iso = [
+            (d.strftime("%Y%m%d") if hasattr(d, "strftime") else str(d)[:10].replace("-", ""))
+            for d in df.index
+        ]
+        n = len(close_arr)
+        for t in tlist:
+            entry_bar = int(getattr(t, "entry_bar_index", -1) or -1)
+            if entry_bar < 0:
+                mapped = _bar_index_on_or_before(index_iso, str(getattr(t, "date_opened", "") or ""))
+                entry_bar = int(mapped) if mapped is not None else -1
+            if entry_bar < 0 or entry_bar >= n:
+                continue
+            entry_val = float(rsi_arr[entry_bar])
+            if np.isfinite(entry_val):
+                t.rsi14_at_entry = entry_val
+            trigger_bar = _resolve_rsi_trigger_bar(t, index_iso, entry_bar)
+            if trigger_bar < 0 or trigger_bar >= n:
+                trigger_bar = entry_bar
+            trig_val = float(rsi_arr[trigger_bar])
+            if np.isfinite(trig_val):
+                t.rsi14_at_trigger = trig_val
+                t.rsi14_ob_os = _rsi14_ob_os_label(trig_val)
+            elif np.isfinite(entry_val):
+                t.rsi14_ob_os = _rsi14_ob_os_label(entry_val)
+
+
+def enrich_closed_csv_rsi14_ob_os(
+    path: str | Path,
+    *,
+    data_dir: Optional[Path | str] = None,
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+) -> dict[str, int]:
+    """Add/refresh RSI14_AT_ENTRY, RSI14_AT_TRIGGER, RSI14_OB_OS on a Closed CSV.
+
+    RSI14_OB_OS is labeled from the trigger bar, not the fill/entry bar.
+    """
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    if not fieldnames:
+        return {"rows": 0, "filled": 0}
+    stubs: list[BRTTrade] = []
+    for row in rows:
+        sym = str(
+            row.get("SYMBOL") or row.get("Symbol") or row.get("TICKER") or ""
+        ).strip().upper()
+        opened = str(
+            row.get("DATE_OPENED") or row.get("DATE OPENED") or row.get("Date Opened") or ""
+        ).strip()
+        stub = BRTTrade(
+            symbol=sym,
+            date_opened=opened,
+            entry_price=0.0,
+            stop_price=0.0,
+            target_price=0.0,
+            close_above_date=str(
+                row.get("CLOSE_ABOVE_DATE") or row.get("CLOSE ABOVE DATE") or ""
+            ).strip(),
+        )
+        sig = str(
+            row.get("SIGNAL_DATE") or row.get("SIGNAL DATE") or row.get("TRIGGER DATE") or ""
+        ).strip()
+        if sig:
+            stub.signal_date = sig
+        stubs.append(stub)
+    _enrich_trades_rsi14_ob_os(stubs, tickers=tickers, data_dir=data_dir)
+    if "RSI14_AT_ENTRY" in fieldnames:
+        insert_at = fieldnames.index("RSI14_AT_ENTRY") + 1
+    elif "ATR_PCT_AT_ENTRY" in fieldnames:
+        insert_at = fieldnames.index("ATR_PCT_AT_ENTRY") + 1
+    else:
+        insert_at = len(fieldnames)
+    for col in ("RSI14_AT_ENTRY", "RSI14_AT_TRIGGER", "RSI14_OB_OS"):
+        if col not in fieldnames:
+            fieldnames.insert(insert_at, col)
+        insert_at = fieldnames.index(col) + 1
+    filled = 0
+    for row, t in zip(rows, stubs):
+        rsi_e = _fmt_rsi14_at_entry(getattr(t, "rsi14_at_entry", None))
+        rsi_t = _fmt_rsi14_at_entry(getattr(t, "rsi14_at_trigger", None))
+        label = str(getattr(t, "rsi14_ob_os", "") or "") or _rsi14_ob_os_label(
+            getattr(t, "rsi14_at_trigger", None)
+        )
+        row["RSI14_AT_ENTRY"] = rsi_e
+        row["RSI14_AT_TRIGGER"] = rsi_t
+        row["RSI14_OB_OS"] = label
+        if rsi_t or rsi_e:
+            filled += 1
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    return {"rows": len(rows), "filled": filled}
+
+
 def write_brt_closed(
     closed: list[BRTTrade],
     path: str,
     reference_stats: Optional[dict[str, tuple[float, float]]] = None,
     cfg: Optional[BRTConfig] = None,
+    tickers: Optional[dict[str, pd.DataFrame]] = None,
+    data_dir: Optional[Path | str] = None,
 ) -> None:
     DAYS_PER_YEAR = 365.0
+    if closed:
+        _enrich_trades_rsi14_ob_os(closed, tickers=tickers, data_dir=data_dir)
     include_zscore_cols = reference_stats is not None and len(reference_stats) > 0
     z_cols = [f"Z_{ref_name}" for ref_name in _REF_VAR_TO_ATTR] if include_zscore_cols else []
     if include_zscore_cols and cfg is not None:
         z_cols.append("REALTIME_SCORE")
+
+    # WPBR Closed only: diagnostic velocity / MFE-MAE path columns (reporting; no sim change).
+    include_wpbr_velocity = bool(getattr(cfg, "wpbr_zones", False)) if cfg is not None else False
+    if include_wpbr_velocity and closed:
+        _enrich_wpbr_closed_velocity(closed, tickers)
 
     # Precompute hist stats in O(n) when many trades (avoids O(n^2) per-trade filtering)
     hist_cache = _precompute_hist_stats(closed, DAYS_PER_YEAR) if len(closed) > 100 else None
@@ -12673,9 +13890,13 @@ def write_brt_closed(
             "ANN_ROR_PCT", "MAX_PRICE", "POST_ENTRY_GAIN_HIT",
             "DATE_FIRST_UP_10PCT", "DAYS_HELD_FIRST_UP_10PCT",
             "DATE_FIRST_UP_20PCT", "DAYS_HELD_FIRST_UP_20PCT",
+        ]
+        if include_wpbr_velocity:
+            header = header + list(_WPBR_VELOCITY_HEADER)
+        header = header + [
             "HIST_TRADES", "HIST_PNL_PCT_AVG", "HIST_ANN_ROR_AVG",
             "ZONE_CENTER", "WPBR_ZONE_ID",
-        ] + _wpbr_strength_csv_header() + [
+        ] + _wpbr_strength_csv_header() + _retest_vs_zone_csv_header() + [
             "TOUCH_COUNT", "TOUCH_COUNT_SHORT", "TOUCH_COUNT_MAJOR", "TOUCH_COUNT_MINOR", "IS_TRADEABLE_KEY_LEVEL_AC",
             "ZONE_ROLLING_TOUCHES", "SUPPORT_TEST_COUNT", "SUPPORT_TEST_AT_SIGNAL",
             "TOUCH_COUNT_AT_MATURITY", "TOUCH_COUNT_SHORT_AT_MATURITY", "ZONE_EPISODE_DN", "DAYS_SINCE_MATURITY",
@@ -12688,9 +13909,11 @@ def write_brt_closed(
             "PIVOT_RUN_H_BEFORE_ENTRY", "PIVOT_RUN_L_BEFORE_ENTRY", "PIVOT_SWITCH_H_TO_L",
             "ZONE_ABOVE_CENTER", "ZONE_BELOW_CENTER",
             "PCT_ENTRY_TO_BOTTOM_ZONE_ABOVE", "PCT_DROP_TO_TOP_ZONE_BELOW",
+            "OVERHEAD_GAP_PCT",
             "VOLUME_AT_ENTRY", "AVG_VOLUME_10D_AT_ENTRY", "REL_VOL_AT_ENTRY", "REL_VOL_ON_TRIGGER",
             "REJECTION_COUNT_PRIOR", "OVERLAPPING_MATURE_ZONES_COUNT", "REL_VOL_AT_BREAKOUT",
             "ATR_14_AT_ENTRY", "ATR_PCT_AT_ENTRY",
+            "RSI14_AT_ENTRY", "RSI14_AT_TRIGGER", "RSI14_OB_OS",
             "MARKET_CAP", "SECTOR", "INDUSTRY", "BETA", "BETA_AT_ENTRY",
             "LAST_ATH_DATE_AT_ENTRY", "TRADING_DAYS_SINCE_LAST_ATH_AT_ENTRY",
             "HIGH_52W_AT_ENTRY", "DIST_TO_52W_HIGH_PCT",
@@ -12706,6 +13929,9 @@ def write_brt_closed(
         if z_cols:
             header = header + z_cols
         header = header + ind_h
+        any_scale = any(float(getattr(t, "_brt_scale_sold_frac", 0.0) or 0.0) > 0.0 for t in closed)
+        if any_scale:
+            header = header + ["SCALE_SOLD_FRAC", "SCALE_FILL", "SCALE_DATE", "REMAINDER_EXIT_PRICE"]
         w.writerow(header)
         for t in closed:
             md = getattr(t, "maturity_date", "") or ""
@@ -12742,10 +13968,15 @@ def write_brt_closed(
                 int(getattr(t, "days_held_first_up_10pct", 0) or 0),
                 getattr(t, "date_first_up_20pct", "") or "",
                 int(getattr(t, "days_held_first_up_20pct", 0) or 0),
+            ]
+            if include_wpbr_velocity:
+                vrow = getattr(t, "_wpbr_velocity", None) or _wpbr_velocity_blank()
+                row.extend(vrow.get(col, "") for col in _WPBR_VELOCITY_HEADER)
+            row = row + [
                 hist_n, f"{hist_avg:.2f}" if hist_n else "", f"{hist_ann_ror:.2f}" if hist_n else "",
                 f"{t.zone_center:.4f}",
                 str(getattr(t, "wpbr_zone_id", "") or ""),
-            ] + _wpbr_strength_csv_row(t) + [
+            ] + _wpbr_strength_csv_row(t) + _retest_vs_zone_csv_row(t) + [
                 t.touch_count, t.touch_count_short, t.touch_count_major, t.touch_count_minor, 1 if t.is_tradeable_key_level else 0,
                 int(getattr(t, "zone_rolling_touches", 0) or 0),
                 int(getattr(t, "support_test_count", 0) or 0),
@@ -12768,6 +13999,12 @@ def write_brt_closed(
                 f"{getattr(t, 'zone_below_center', 0):.4f}" if getattr(t, "zone_below_center", 0) else "",
                 f"{getattr(t, 'pct_entry_to_bottom_zone_above', 0):.2f}" if getattr(t, "zone_above_center", 0) else "",
                 f"{getattr(t, 'pct_drop_to_top_zone_below', 0):.2f}" if getattr(t, "zone_below_center", 0) else "",
+                (
+                    f"{float(getattr(t, 'wpbr_overhead_gap_pct')):.2f}"
+                    if getattr(t, "wpbr_overhead_gap_pct", None) is not None
+                    and np.isfinite(float(getattr(t, "wpbr_overhead_gap_pct")))
+                    else ""
+                ),
                 f"{getattr(t, 'volume_at_entry', None):.0f}" if getattr(t, "volume_at_entry", None) is not None else "",
                 f"{getattr(t, 'avg_volume_10d_at_entry', None):.0f}" if getattr(t, "avg_volume_10d_at_entry", None) is not None else "",
                 f"{getattr(t, 'rel_vol_at_entry', None):.4f}" if getattr(t, "rel_vol_at_entry", None) is not None else "",
@@ -12776,6 +14013,11 @@ def write_brt_closed(
                 int(getattr(t, "overlapping_mature_zones_count", 0) or 0),
                 f"{getattr(t, 'rel_vol_at_breakout', None):.4f}" if getattr(t, "rel_vol_at_breakout", None) is not None else "",
                 atr_str, atr_pct_str,
+                _fmt_rsi14_at_entry(getattr(t, "rsi14_at_entry", None)),
+                _fmt_rsi14_at_entry(getattr(t, "rsi14_at_trigger", None)),
+                str(getattr(t, "rsi14_ob_os", "") or "") or _rsi14_ob_os_label(
+                    getattr(t, "rsi14_at_trigger", None)
+                ),
                 f"{getattr(t, 'market_cap', None):.0f}" if getattr(t, "market_cap", None) is not None else "",
                 (getattr(t, "sector", None) or "").replace(",", " "),
                 (getattr(t, "industry", None) or "").replace(",", " "),
@@ -12828,6 +14070,17 @@ def write_brt_closed(
                 if cfg is not None:
                     row.append(f"{_realtime_score_for_trade(t, cfg, reference_stats):.4f}")
             row.extend(_brt_indicator_row_suffix(cfg, t))
+            if any_scale:
+                _sold = float(getattr(t, "_brt_scale_sold_frac", 0.0) or 0.0)
+                if _sold > 0.0:
+                    row.extend([
+                        f"{_sold:.4f}",
+                        f"{float(getattr(t, '_brt_scale_fill', 0.0) or 0.0):.4f}",
+                        str(getattr(t, "_brt_scale_date", "") or ""),
+                        f"{float(getattr(t, '_brt_remainder_exit', 0.0) or 0.0):.4f}",
+                    ])
+                else:
+                    row.extend(["", "", "", ""])
             w.writerow(row)
 
 
@@ -12893,7 +14146,7 @@ def write_brt_open(
         w = csv.writer(f)
         w.writerow([
             "SYMBOL", "SIDE", "DATE_OPENED", "ENTRY_PRICE", "STOP_PRICE", "TARGET_PRICE",
-            "ZONE_CENTER", "ZONE_LOW", "ZONE_HIGH", "WPBR_ZONE_ID",
+            "ZONE_LOW", "ZONE_CENTER", "ZONE_HIGH", "WPBR_ZONE_ID",
         ] + _wpbr_strength_csv_header() + [
             "CURRENT_PRICE", "DAYS_HELD", "PNL_PCT", "PNL_DOLLARS", "ANN_ROR_PCT", "MAX_PRICE", "POST_ENTRY_GAIN_HIT",
             "HIST_TRADES", "HIST_PNL_PCT_AVG", "HIST_ANN_ROR_AVG",
@@ -12951,8 +14204,8 @@ def write_brt_open(
             w.writerow(
                 [
                 t.symbol, (getattr(t, "side", "LONG") or "LONG"), t.date_opened, f"{t.entry_price:.2f}", f"{t.stop_price:.2f}", f"{t.target_price:.2f}",
-                f"{t.zone_center:.4f}" if t.zone_center else "",
                 f"{zl_o:.4f}" if zl_o > 0 else "",
+                f"{t.zone_center:.4f}" if t.zone_center else "",
                 f"{zh_o:.4f}" if zh_o > 0 else "",
                 str(getattr(t, "wpbr_zone_id", "") or ""),
             ] + _wpbr_strength_csv_row(t) + [
@@ -13581,7 +14834,11 @@ def _growth_filter_at_trigger_gate_blocks(
     close_arr: np.ndarray,
     signal_t: int,
 ) -> bool:
-    """True when growth_filter_enabled rejects at trigger bar T (Close_T < Close_{T-growth_bars})."""
+    """True when growth_filter_enabled rejects at trigger bar T.
+
+    Requires a real Close_{T-growth_bars}: insufficient history, non-finite, or <=0 lookback
+    close fails the gate (intentional divergence from sheet AZ $0-padded lookback PASS).
+    """
     if not bool(getattr(cfg, "growth_filter_enabled", False)):
         return False
     if int(getattr(cfg, "growth_bars", 0) or 0) <= 0:
@@ -13590,9 +14847,11 @@ def _growth_filter_at_trigger_gate_blocks(
         return True
     ago = _growth_ago_bar_index(signal_t, cfg)
     if ago < 0:
-        # Sheet pre-IPO $0 lookback ⇒ do not block.
-        return False
-    return float(close_arr[signal_t]) < float(close_arr[ago])
+        return True
+    ago_px = float(close_arr[ago])
+    if not np.isfinite(ago_px) or ago_px <= 0.0:
+        return True
+    return float(close_arr[signal_t]) < ago_px
 
 
 def _cfg_spy_int_tc_lag(cfg: Any) -> int:
@@ -14873,6 +16132,19 @@ def _build_brt_watchlist(
             _open_hint = f" Short: sell only if open >= {_th_scan['MIN_ENTRY_OPEN']}."
         else:
             _open_hint = ""
+        try:
+            _sc_zl = float(s.get("zone_low") or 0)
+        except (TypeError, ValueError):
+            _sc_zl = 0.0
+        try:
+            _sc_zh = float(s.get("zone_high") or 0)
+        except (TypeError, ValueError):
+            _sc_zh = 0.0
+        _sc_zid = str(s.get("wpbr_zone_id", "") or "")
+        _sc_bd = s.get("breakout_date", "")
+        if hasattr(_sc_bd, "strftime"):
+            _sc_bd = _sc_bd.strftime("%Y-%m-%d")
+        _sc_bd = str(_sc_bd) if _sc_bd is not None else ""
         rows.append(
             {
                 "ROW_TYPE": "SCANNER",
@@ -14883,9 +16155,10 @@ def _build_brt_watchlist(
                 "STOP_LOSS": f"{float(s['stop']):.2f}" if s.get("stop") is not None else "",
                 "TARGET": f"{float(s['target']):.2f}" if s.get("target") is not None else "",
                 **_th_scan,
+                "ZONE_LOW": f"{_sc_zl:.4f}" if _sc_zl > 0 else "",
                 "ZONE_CENTER": f"{float(s.get('zone_center', 0)):.4f}" if s.get("zone_center") is not None else "",
-                "ZONE_LOW": "",
-                "ZONE_HIGH": "",
+                "ZONE_HIGH": f"{_sc_zh:.4f}" if _sc_zh > 0 else "",
+                "WPBR_ZONE_ID": _sc_zid,
                 "TOUCH_COUNT": "",
                 "STATUS": "PASSED_ALL_GATES_ENTRY_LAST_BAR",
                 "GATES_REMAINING": "",
@@ -14896,6 +16169,7 @@ def _build_brt_watchlist(
                 "LAST_CLOSE": f"{last_close:.2f}" if last_close == last_close else "",
                 "MATURITY_DATE": str(md) if md is not None else "",
                 "CLOSE_ABOVE_DATE": str(cad) if cad is not None else "",
+                "BREAKOUT_DATE": _sc_bd,
             }
         )
     # Zone centers that will appear on PENDING rows (for deduping APPROACHING_RETEST vs same setup).
@@ -14938,9 +16212,15 @@ def _build_brt_watchlist(
                 hints.append("bullish_bar: need Close>Open on evaluation bar (typical long entry gate)")
         if getattr(cfg, "growth_filter_enabled", False) and int(getattr(cfg, "growth_bars", 0) or 0) > 0:
             _g_ago = _growth_ago_bar_index(li, cfg)
-            if _g_ago >= 0 and float(close_arr[li]) < float(close_arr[_g_ago]):
-                gb = int(cfg.growth_bars)
-                hints.append(f"growth_filter: need Close >= close from {gb} bars ago on eval bar")
+            gb = int(cfg.growth_bars)
+            if _g_ago < 0:
+                hints.append(f"growth_filter: need Close from {gb} bars ago on eval bar (insufficient history)")
+            else:
+                _g_px = float(close_arr[_g_ago])
+                if not np.isfinite(_g_px) or _g_px <= 0.0:
+                    hints.append(f"growth_filter: need valid Close from {gb} bars ago on eval bar")
+                elif float(close_arr[li]) < _g_px:
+                    hints.append(f"growth_filter: need Close >= close from {gb} bars ago on eval bar")
         if zl > 0 and zh > 0:
             hints.append(f"zone_band [{zl:.4f} .. {zh:.4f}]")
         if eval_mode == "row_local":
@@ -14972,9 +16252,10 @@ def _build_brt_watchlist(
                 "STOP_LOSS": "",
                 "TARGET": "",
                 **_th_pend,
-                "ZONE_CENTER": f"{float(zc_raw):.4f}" if zc_raw is not None and str(zc_raw).strip() != "" else "",
                 "ZONE_LOW": f"{zl:.4f}" if zl > 0 else "",
+                "ZONE_CENTER": f"{float(zc_raw):.4f}" if zc_raw is not None and str(zc_raw).strip() != "" else "",
                 "ZONE_HIGH": f"{zh:.4f}" if zh > 0 else "",
+                "WPBR_ZONE_ID": str(p.get("wpbr_zone_id", "") or ""),
                 "TOUCH_COUNT": str(tc) if tc is not None else "",
                 "STATUS": "PENDING_MATURITY_NOT_ENTERED",
                 "GATES_REMAINING": "; ".join(hints) if hints else "run_full_gates_next_bar",
@@ -14982,6 +16263,7 @@ def _build_brt_watchlist(
                 "LAST_CLOSE": f"{last_close:.2f}" if last_close == last_close else "",
                 "MATURITY_DATE": mat_iso,
                 "CLOSE_ABOVE_DATE": "",
+                "BREAKOUT_DATE": "",
             }
         )
     # --- APPROACHING_RETEST: DI breakout with first retest not yet observed; growth OK; price near zone band ---
@@ -15073,9 +16355,10 @@ def _build_brt_watchlist(
                     "STOP_LOSS": "",
                     "TARGET": "",
                     **_th_br,
-                    "ZONE_CENTER": zc_s,
                     "ZONE_LOW": f"{zl:.4f}",
+                    "ZONE_CENTER": zc_s,
                     "ZONE_HIGH": f"{zu:.4f}",
+                    "WPBR_ZONE_ID": str(r.get("wpbr_zone_id", "") or ""),
                     "TOUCH_COUNT": "",
                     "STATUS": "APPROACHING_RETEST_PENDING_FIRST_OVERLAP",
                     "GATES_REMAINING": "; ".join(gates_bits),
@@ -15083,6 +16366,7 @@ def _build_brt_watchlist(
                     "LAST_CLOSE": f"{last_close:.2f}" if last_close == last_close else "",
                     "MATURITY_DATE": bo_iso,
                     "CLOSE_ABOVE_DATE": "",
+                    "BREAKOUT_DATE": bo_iso,
                     "GROWTH_OK": "yes" if growth_ok else "no",
                     "DIST_TO_ZONE_FRAC": f"{dist_frac:.6f}",
                     "BREAKOUT_ISO": bo_iso,
@@ -15108,9 +16392,10 @@ def write_brt_watchlist(watchlist: list[dict], path: str) -> None:
         "MIN_ENTRY_OPEN",
         "MAX_ENTRY_OPEN",
         "ENTRY_OPEN_BAND",
-        "ZONE_CENTER",
         "ZONE_LOW",
+        "ZONE_CENTER",
         "ZONE_HIGH",
+        "WPBR_ZONE_ID",
         "TOUCH_COUNT",
         "STATUS",
         "GATES_REMAINING",
@@ -15118,6 +16403,7 @@ def write_brt_watchlist(watchlist: list[dict], path: str) -> None:
         "LAST_CLOSE",
         "MATURITY_DATE",
         "CLOSE_ABOVE_DATE",
+        "BREAKOUT_DATE",
         "GROWTH_OK",
         "DIST_TO_ZONE_FRAC",
         "BREAKOUT_ISO",
@@ -15242,7 +16528,13 @@ def write_brt_scanner(
                 "SMA20_AT_TRIGGER",
                 "SMA50_AT_TRIGGER",
                 "SMA100_AT_TRIGGER",
+                "ZONE_LOW",
                 "ZONE_CENTER",
+                "ZONE_HIGH",
+                "WPBR_ZONE_ID",
+                "MATURITY_DATE",
+                "CLOSE_ABOVE_DATE",
+                "BREAKOUT_DATE",
             ]
             + ind_h
         )
@@ -15287,6 +16579,23 @@ def write_brt_scanner(
             _close_s = _fmt_limit_price(s.get("close"))
             _stop_s = _fmt_limit_price(s.get("stop"))
             _target_s = _fmt_limit_price(s.get("target"))
+            _zl_s = _fmt_limit_price(s.get("zone_low"))
+            _zh_s = _fmt_limit_price(s.get("zone_high"))
+            _md = s.get("maturity_date", "")
+            if hasattr(_md, "strftime"):
+                _md = _md.strftime("%Y-%m-%d")
+            _cad = s.get("close_above_date", "")
+            if hasattr(_cad, "strftime"):
+                _cad = _cad.strftime("%Y-%m-%d")
+            _bd = s.get("breakout_date", "")
+            if hasattr(_bd, "strftime"):
+                _bd = _bd.strftime("%Y-%m-%d")
+            _zc_raw = s.get("zone_center")
+            try:
+                _zc_f = float(_zc_raw) if _zc_raw is not None and str(_zc_raw).strip() != "" else float("nan")
+                _zc_s = f"{_zc_f:.4f}" if _zc_f == _zc_f and _zc_f > 0 else ""
+            except (TypeError, ValueError):
+                _zc_s = ""
             row = [
                 s["symbol"],
                 s["date"],
@@ -15314,7 +16623,13 @@ def write_brt_scanner(
                 _fmt_sma_at_trigger(s.get("sma20_at_trigger")),
                 _fmt_sma_at_trigger(s.get("sma50_at_trigger")),
                 _fmt_sma_at_trigger(s.get("sma100_at_trigger")),
-                f"{s.get('zone_center', 0):.4f}",
+                _zl_s,
+                _zc_s,
+                _zh_s,
+                str(s.get("wpbr_zone_id", "") or ""),
+                str(_md) if _md is not None else "",
+                str(_cad) if _cad is not None else "",
+                str(_bd) if _bd is not None else "",
             ]
             if ind_h:
                 ei = s.get("entry_indicators") or {}
@@ -15382,8 +16697,8 @@ def _write_zone_debug_files(
                     "CONFLUENCE_BAR",
                     "ACTIVATION_BAR",
                     "ZONE_ORIGIN",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "TOUCH_PRICE",
                     "VEC_POC",
@@ -15417,8 +16732,8 @@ def _write_zone_debug_files(
                         cf_bar,
                         ab,
                         _zone_origin_label(4),
-                        f"{zc:.4f}",
                         f"{zl:.4f}" if np.isfinite(zl) else "",
+                        f"{zc:.4f}",
                         f"{zh:.4f}" if np.isfinite(zh) else "",
                         f"{tp:.4f}",
                         f"{poc:.4f}" if np.isfinite(poc) else "",
@@ -15450,8 +16765,8 @@ def _write_zone_debug_files(
                     "PIVOT_MONDAY",
                     "ACTIVATION_BAR",
                     "ZONE_ORIGIN",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "WPBR_ZONE_ID",
                     "BREAKOUT_MONDAY",
@@ -15499,8 +16814,8 @@ def _write_zone_debug_files(
                         ev.get("pivot_monday", ""),
                         ab,
                         _zone_origin_label(5),
-                        f"{zc:.4f}",
                         f"{zl:.4f}" if np.isfinite(zl) else "",
+                        f"{zc:.4f}",
                         f"{zh:.4f}" if np.isfinite(zh) else "",
                         ev.get("wpbr_zone_id", ""),
                         ev.get("breakout_monday", ""),
@@ -15524,8 +16839,8 @@ def _write_zone_debug_files(
                     "YH_BAR",
                     "ACTIVATION_BAR",
                     "ZONE_ORIGIN",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "TOUCH_PRICE",
                     "ACTIVATION_PRICE",
@@ -15553,8 +16868,8 @@ def _write_zone_debug_files(
                         yh_bar,
                         ab,
                         _zone_origin_label(3),
-                        f"{zc:.4f}",
                         f"{zl:.4f}" if np.isfinite(zl) else "",
+                        f"{zc:.4f}",
                         f"{zh:.4f}" if np.isfinite(zh) else "",
                         f"{tp:.4f}",
                         f"{act_p:.4f}" if np.isfinite(act_p) else "",
@@ -15573,8 +16888,8 @@ def _write_zone_debug_files(
                     "BAR_INDEX",
                     "PIVOT_BAR",
                     "ZONE_ORIGIN",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "TOUCH_PRICE",
                     "MATURED_NOW",
@@ -15599,8 +16914,8 @@ def _write_zone_debug_files(
                         mb,
                         pb,
                         _zone_origin_label(1),
-                        f"{zc:.4f}",
                         f"{zl:.4f}" if np.isfinite(zl) else "",
+                        f"{zc:.4f}",
                         f"{zh:.4f}" if np.isfinite(zh) else "",
                         f"{tp:.4f}",
                         1,
@@ -15624,8 +16939,8 @@ def _write_zone_debug_files(
                     "DATE",
                     "BAR_INDEX",
                     "ZONE_ORIGIN",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "TOUCH_COUNT_LONG",
                     "TOUCH_PRICE",
@@ -15655,8 +16970,8 @@ def _write_zone_debug_files(
                         dt,
                         i,
                         _zone_origin_label(oc),
-                        f"{float(zc):.4f}",
                         f"{float(zl):.4f}" if not pd.isna(zl) else "",
+                        f"{float(zc):.4f}",
                         f"{float(zh):.4f}" if not pd.isna(zh) else "",
                         int(tc) if not pd.isna(tc) else "",
                         f"{float(tp):.4f}" if not pd.isna(tp) and tp else "",
@@ -15675,8 +16990,8 @@ def _write_zone_debug_files(
                     "ENTRY_DATE",
                     "MATURITY_DATE",
                     "ENTRY_PRICE",
-                    "ZONE_CENTER",
                     "ZONE_LOW",
+                    "ZONE_CENTER",
                     "ZONE_HIGH",
                     "CURRENT_ZONE_TOP",
                     "TRIGGER_BOTTOM",
@@ -15844,6 +17159,9 @@ def write_brt_summary(
       Start = max(FIRST_DATA_DATE, entry_start_date) when study start (``entry_start_date`` /
       ``-v start_date``) is set and later than first data; else FIRST_DATA_DATE.
       End = ``backtest_end_date`` if set, else last OHLC date, else max ``date_closed`` for the symbol.
+    - ``AVG_PNL_PCT``: mean Closed ``pnl_pct`` for the symbol.
+    - ``PROFIT_FACTOR``: gross winning ``pnl_dollars`` / |gross losing ``pnl_dollars``|
+      (same definition as Report/Audit ``Profit_Factor``). Blank when TRADES is 0.
     - ``AVG_DAYS_HELD``: mean calendar days held across this symbol's closed trades
       (same idea as Report/Audit ``Avg_Days_Held``, per symbol). Blank when no trades.
     - ``SHEET_PNL``: engine ``TOTAL_PNL`` scaled to sheet size -
@@ -15883,6 +17201,7 @@ def write_brt_summary(
                 "TOTAL_PNL",
                 "SHEET_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "PCT_OF_TOTAL_PNL",
                 "CURRENT_MARKET_CAP",
                 "SECTOR",
@@ -15903,6 +17222,12 @@ def write_brt_summary(
             total = sum(t.pnl_dollars for t in trades)
             sheet_pnl_s = f"{(total * sheet_scale):.2f}" if sheet_scale is not None else ""
             avg_pct = sum(t.pnl_pct for t in trades) / n_trades if n_trades else 0
+            sum_wins = sum(t.pnl_dollars for t in trades if t.pnl_pct > 0)
+            sum_losses = abs(sum(t.pnl_dollars for t in trades if t.pnl_pct < 0))
+            if sum_losses > 0:
+                pf = sum_wins / sum_losses
+            else:
+                pf = sum_wins if sum_wins > 0 else 0.0
             pct_of_total = (total / total_pnl_overall * 100) if total_pnl_overall and total_pnl_overall != 0 else 0.0
             days_held = [int(getattr(t, "days_held", 0) or 0) for t in trades]
             avg_days_s = f"{(sum(days_held) / n_trades):.1f}" if n_trades else ""
@@ -15944,6 +17269,7 @@ def write_brt_summary(
                     f"{total:.2f}",
                     sheet_pnl_s,
                     f"{avg_pct:.2f}%",
+                    f"{pf:.2f}",
                     f"{pct_of_total:.1f}%",
                     mc_cur_s,
                     sector,
@@ -16003,10 +17329,23 @@ def _write_brt_equity_canonical_outputs(
         pd.DataFrame(df_data).to_csv(outp / f"{file_prefix}_EquityCurve_{ts}.csv", index=False)
         raw = float(equity.get("_max_port_dd_raw", 0) or 0)
         init_sz = float(equity.get("_initial_account_size", 0) or 0)
+        # Sharpe on same series written to EquityCurve (prefer Equity_Regular when dual).
+        try:
+            from risk_adjusted_metrics import format_sharpe
+        except ImportError:
+            try:
+                from stock_analysis.risk_adjusted_metrics import format_sharpe  # type: ignore
+            except ImportError:
+                format_sharpe = None  # type: ignore
+        _eq_for_sharpe = values
+        if reg and len(reg) == len(values):
+            _eq_for_sharpe = reg
+        _sharpe_meta = format_sharpe(_eq_for_sharpe) if format_sharpe else equity.get("Sharpe", "N/A")
         meta_row = {
             "Initial_Account_Size": init_sz,
             "Max_Drawdown_fraction": raw,
             "Max_Drawdown_pct": equity.get("Max_Drawdown", ""),
+            "Sharpe": _sharpe_meta,
             "Max_Days_Underwater": int(equity.get("Max_Days_Underwater", 0) or 0),
             "Pct_Days_Underwater": equity.get("Pct_Days_Underwater", ""),
             "Aggressive": bool(equity.get("_aggressive")),
@@ -16190,6 +17529,12 @@ _AUDIT_CFG_COLS = [
     "wpbr_retest_mode",
     "wpbr_second_chance_after_win",
     "wpbr_merge_overlapping_zones",
+    "wpbr_weekly_zone_cache",
+    "wpbr_weekly_zone_cache_db",
+    "wpbr_incremental",
+    "wpbr_incremental_force_full",
+    "wpbr_incremental_state_dir",
+    "wpbr_incremental_mode",
     "rs_mode",  # audit alias of relative_strength_enabled (not a BRTConfig field)
     "rl_mode",
     "rl_sma_qual",
@@ -16211,9 +17556,17 @@ _AUDIT_CFG_COLS = [
     "rl_shock_rehab_days",
     "rl_shock_max_allowed",
     "rl_too_high",
+    "rl_pre_entry_gap_bars",
+    "rl_pre_entry_gap_pct",
+    "rl_pre_entry_gap_side",
+    "rl_min_retrace_12m_pct",
+    "rl_retrace_months",
+    "rl_wpbr_overhead_band_pct",
     "rl_spy_inclusion",
     "rl_avg_vol_days",
     "rl_vol_pct_threshold",
+    "rl_min_avg_vol",
+    "rl_min_trigger_vol",
     "rl_brt_entry_gates_enabled",
     "rl_charts",
     "rl_deep_analysis",
@@ -16224,16 +17577,22 @@ _AUDIT_CFG_COLS = [
     "rl_post_target_min_stack",
     "rl_post_target_under_sma20",
     "rl_target_pct",
+    "rl_sma_target_off",
     "rl_trail_profit",
     "rl_trail_stop",
     "rl_trail_profit2",
     "rl_trail_stop2",
     "rl_exit_percent",
     "rl_exit_days",
+    "rl_exit_calendar_days",
+    "rl_max_hold_bars",
+    "rl_max_hold_calendar_days",
+    "rl_entry_target_pct",
     "rl_flush_days",
     "rl_partial_exit_target",
     "rl_partial_exit_percent",
     "rl_partial_exit_follow_target",
+    "rl_scale_ladder",
     "rl_watch_min_score",
     "rl_watch_disable",
     "rl_cash",
@@ -16318,7 +17677,7 @@ _AUDIT_CFG_COLS = [
     "pivot_switch_h_to_l_filter",
     "entry_filter_major_pivot", "entry_filter_is_20bar_high_at_trigger",
     "entry_filter_meteoric_rise", "entry_filter_meteoric_fall",
-    "growth_filter_enabled", "growth_bars", "growth_history_slack_bars", "require_close_gt_open", "sheet_red_to_green_entry_enabled", "entry_close_min_range_position",
+    "growth_filter_enabled", "growth_bars", "growth_history_slack_bars", "min_history_bars", "growth_filter_strict_gt", "growth_min_pct", "sma200_persist_bars", "sma200_persist_min_frac", "wpbr_overhead_band_pct", "wpbr_dynamic_overhead", "wpbr_dyn_oh_target_frac", "wpbr_dyn_oh_stop_frac", "require_close_gt_open", "sheet_red_to_green_entry_enabled", "entry_close_min_range_position",
     "entry_start_date", "entry_end_date", "backtest_end_date",
     "sheet_maturity_lag_bars",
     "sheet_di_breakout_price",
@@ -16358,9 +17717,13 @@ _AUDIT_CFG_COLS = [
     "consolidation_blocker_enabled", "cb_max_box_width_pct",
     "entry_mode", "adx_period", "adx_max", "channel_length", "pending_stop_bars", "stop_order_gap_fill_at_open",
     "transaction_type", "entry_type", "zone_role_mode", "zone_role_override",
-    "brt_cash", "stop_pct", "short_stop_pct", "stop_pct_is_multiplier", "stop_loss_based", "stop_anchor", "target_pct", "target_enabled", "use_sma50", "short_target_pct", "too_high_multiplier", "too_low_multiplier",
+    "brt_cash", "stop_pct", "short_stop_pct", "stop_pct_is_multiplier", "stop_loss_based", "stop_anchor", "target_pct", "target_enabled", "use_sma50", "short_target_pct",
+    "brt_scale_gain", "brt_scale_sell_frac", "brt_scale_stop_gain", "brt_scale_runner_gain",
+    "too_high_multiplier", "too_low_multiplier",
     "atr_target", "atr_stop", "trailing_stop_increment", "atr_progress", "atr_days", "atr_progress_incremental_stop",
     "no_ft_days", "time_stop_days",
+    "wpbr_velocity_time_stop_bars", "wpbr_velocity_time_stop_min_gain",
+    "wpbr_underwater_time_stop_bars",
     "sma_stop_days", "chandelier_enabled", "chandelier_atr_period", "chandelier_atr_mult",
     "zscore_exit_enabled", "zscore_exit_lookback", "zscore_exit_k",
     "slippage_bps", "commission_per_trade", "liquidate_at_end",
@@ -16435,7 +17798,14 @@ _AUDIT_CFG_COLS = [
     "vz_exit_bars",
     "vz_target_r",
     "vz_stop_atr_buffer",
+    "vz_min_atr_pct_at_entry",
+    "vz_min_atr_pct_at_trigger",
+    "vz_max_rsi14_at_entry",
+    "vz_min_dist_to_52w_high_pct_at_trigger",
+    "vz_require_hvn_overlap",
     "vz_sheet_notional",
+    "vz_trade_side",
+    "vz_cooldown_after_target_days",
     # Weekly Range / Swing (appended; blanked on non-WRL via _fill_wrl_mode_audit)
     "wrl_mode",
     "wrl_target_mode",
@@ -16482,6 +17852,8 @@ _METRIC_AUDIT_COLS = [
     "Profit_Per_Capital_Day",
     "Ann_ROR",
     "Max_DD",
+    "Calmar",
+    "Sharpe",
     "Losing_Streak",
     "DD_Per_Trade",
     "CES_AVG",
@@ -16538,6 +17910,12 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "wpbr_retest_mode": "WPBR daily-retest forward scan: stop_looking (DEFAULT, sheet parity - first Low<=upper & Close>upper only before the first Close<zone_lower abandon-kill bar; no prior-close gate) | keep_looking (legacy engine - unbounded scan + prior Close[r-1]>=lower gate). Alias -v retest_mode=...",
     "wpbr_second_chance_after_win": "WPBR zone lifecycle: when True, a profitable first purchase from a zone allows exactly one more purchase then retire; when False (default), retire the zone after the first purchase win or loss.",
     "wpbr_merge_overlapping_zones": "WPBR only: when True, merge overlapping pivot bands into one zone (lowest low / highest high; wpbr_merge_count = member count) before breakout/retest. Default False preserves sheet parity. Alias -v merge_overlapping_zones=...",
+    "wpbr_weekly_zone_cache": "Research-only. When True, cache WPBR weekly OHLCV + zone streams in a sidecar DuckDB (default data/wpbr_weekly_zone_cache.duckdb). Reuses exact daily fingerprint hits; rebuilds on adjustments. Default False until parity proven. Env: WPBR_WEEKLY_ZONE_CACHE=1.",
+    "wpbr_weekly_zone_cache_db": "Optional path for the WPBR weekly/zone DuckDB cache file. Empty = data/wpbr_weekly_zone_cache.duckdb. Env: WPBR_WEEKLY_ZONE_CACHE_DB.",
+    "wpbr_incremental": "WPBR only. When True, persist per-symbol resume state and (on fingerprint match) advance from the prior last bar instead of replaying full history. Default False until parity proven. Env: WPBR_INCREMENTAL=1.",
+    "wpbr_incremental_force_full": "When True with wpbr_incremental, ignore prior state and full-rebuild (then rewrite state). Env: WPBR_INCREMENTAL_FORCE_FULL=1.",
+    "wpbr_incremental_state_dir": "Directory for WPBR incremental meta + by_symbol/*.pkl. Empty = <output_dir>/WPBR_incr_state. Env: WPBR_INCREMENTAL_STATE_DIR.",
+    "wpbr_incremental_mode": "Internal: '' | full | warm after main decide_mode. Do not set manually.",
     "rs_mode": (
         "Audit/CLI alias of relative_strength_enabled (true|false). "
         "Same meaning as -v rs_mode=true / --relative-strength; value is derived from "
@@ -16547,7 +17925,7 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_charts": "NOT used by DailyRun. Charts/deep HTML: python stock_analysis/rl_post_run_analysis.py --stamp <ts> --charts. If set during RL run, only prints a pointer. Cheap ONE_LINER / FIT / ImproveHints always emit from write_rl_post_reports.",
     "rl_deep_analysis": "NOT used by DailyRun. Same as rl_charts - use rl_post_run_analysis.py for CRWD-style HTML assessments. Setting true mid-run only prints a pointer.",
     "rl_sma_qual": "Master on/off for 50-SMA dip-buy (AWK SMA_QUAL; default true).",
-    "rl_dip_pct": "Dip band multiplier around SMA50 (AWK RL_DIP_PCT, default 1.041 = ±4.1%).",
+    "rl_dip_pct": "Dip band multiplier around SMA50 (AWK RL_DIP_PCT, default 1.055 = ±5.5%).",
     "rl_50_sma_lookback": "SMA50 rising lookback bars (AWK RL_50_SMA_LOOKBACK, default 4).",
     "rl_expansion": "Prior-strength expansion gate multiplier (AWK RL_EXPANSION, default 1.163).",
     "rl_expansion_lookback_days": "Window for expansion scan (AWK EXPANSION_LOOKBACK_DAYS, default 10).",
@@ -16565,11 +17943,49 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "rl_shock_rehab_days": "Shock lookback window (AWK RL_SHOCK_REHAB_DAYS, default 120).",
     "rl_shock_max_allowed": "Max shocks allowed in rehab window (AWK RL_SHOCK_MAX_ALLOWED, default 1).",
     "rl_too_high": "Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (AWK RL_TOO_HIGH, default 0=off). When on (e.g. 1.14) with stop 0.934, allows open up to ~low*1.065; rl_too_high=1 requires open <= low*0.934 (below signal low - almost never fills). 0|off|none|false|empty disables.",
+    "rl_pre_entry_gap_bars": (
+        "Research entry gate. Number of completed trading bars immediately before the entry date "
+        "to scan for overnight opening gaps. 0=off (default). Does not include the entry bar."
+    ),
+    "rl_pre_entry_gap_pct": (
+        "Research entry gate. Reject the entry if any scanned bar has absolute overnight gap "
+        "ABS((Open/prior close)-1)*100 at or above this percent. 0=off. Active only when "
+        "rl_pre_entry_gap_bars>0 as well. Example: bars=20 and pct=7 rejects a 7% or larger gap."
+    ),
+    "rl_pre_entry_gap_side": (
+        "Research entry gate. Which overnight gaps count. abs (default) uses the absolute jump. "
+        "up counts only an open at least pct above the prior close. "
+        "down counts only an open at least pct below the prior close. "
+        "Ignored unless rl_pre_entry_gap_bars and rl_pre_entry_gap_pct are both on."
+    ),
+    "rl_min_retrace_12m_pct": (
+        "Research entry gate. Minimum retrace percent: "
+        "((HIGH - entry price) / (HIGH - LOW)) * 100. "
+        "HIGH and LOW are the highest daily high and lowest daily low in the "
+        "rl_retrace_months calendar months strictly before the entry date (default 12). "
+        "0=off (default). Example: 30 keeps a buy only when that retrace is at least 30."
+    ),
+    "rl_retrace_months": (
+        "Calendar months of highs and lows used by rl_min_retrace_12m_pct. "
+        "Default 12. The entry session is excluded. Ignored when the retrace floor is off."
+    ),
+    "rl_wpbr_overhead_band_pct": (
+        "Research entry gate. 0=off (default). Does not enable WPBR entries. "
+        "Build the usual Weekly Pivot Break and Retest (WPBR) weekly zones, then reject the "
+        "Rocket Launcher next-open fill when any earlier zone has its lower edge above the "
+        "signal bar's 50-day simple moving average, strictly above the fill, and "
+        "(lower edge - fill) / fill at or under this fraction. 0.22 = within 22% overhead. "
+        "A wider gap is allowed. The zone's pivot week must start before the signal bar."
+    ),
     "rl_spy_inclusion": "When true, only enter if SPY SMA50>100>200 (AWK SPY_INCLUSION).",
     "rl_avg_vol_days": "Rolling average volume window reported/used at entry (AWK AVG_VOL_DAYS; 0=off).",
+    "rl_min_avg_vol": "RL PIT min average volume (shares) on trigger bar over rl_avg_vol_days; 0=off. Research gate (e.g. 500000).",
+    "rl_min_trigger_vol": "RL PIT min trigger-bar volume / TRIGGER_VOL (shares); 0=off. Research gate (e.g. 5000).",
     "rl_vol_pct_threshold": "Volume surge gate percent above avg (AWK VOL_PCT_THRESHOLD; 0=off).",
     "rl_brt_entry_gates_enabled": "When true, optional BRT zone gates may filter RL entries (default false / neutralized in rl_mode).",
-    "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934).",
+    "rl_stop_pct": "Stop = signal-day low × this (AWK RL_STOP_PCT, default 0.934). Also the fill-gate multiplier (too_low / too_high).",
+    "rl_stop_anchor": "Protective-stop base: signal_low (default, signal-day low × rl_stop_pct) | dip_lo | entry_open | sma50 | atr2. Fill gates stay on rl_stop_pct.",
+    "rl_entry_stop_pct": "When > 0 and rl_stop_anchor=entry_open, protective stop = entry price × this (0.91 = 9% below the fill). 0 = use rl_stop_pct. Fill gates stay on rl_stop_pct.",
     "rl_post_target_reentry_bars": (
         "Trading bars after a TARGET exit during which rl_post_target_reentry_mode applies (0=off). "
         "Alias: rl_post_target_reentry_days / RL_POST_TARGET_REENTRY_DAYS. Modes are mutually exclusive. "
@@ -16593,18 +18009,60 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "For mode=under_sma_limit: max allowed depth under SMA20 on the trigger bar; "
         "reject if close < SMA20 × (1 − limit), i.e. (SMA20−close)/SMA20 > limit (default 0.03)."
     ),
-    "rl_target_pct": "Target = prior-day SMA50 × this, recomputed daily (AWK RL_TARGET_PCT, default 1.20).",
+    "rl_target_pct": (
+        "Target multiplier, default 1.20. SMA envelope on: prior-day SMA50 × this, recomputed daily. "
+        "SMA envelope off (house): static entry × this (+20%) until the scale-out."
+    ),
+    "rl_sma_target_off": (
+        "When true/1: keep rl_target_pct for expansion-hit counting, but do not sell at the moving "
+        "SMA50 envelope. Recorded target is static entry × rl_target_pct (+20%) until the scale-out, "
+        "then entry × (1 + rl_entry_target_pct) for the leftover. House default true."
+    ),
     "rl_trail_profit": "Tier-1 trail arm gain fraction (AWK RL_TRAIL_PROFIT; 0=off).",
     "rl_trail_stop": "Tier-1 locked stop gain fraction once armed (AWK RL_TRAIL_STOP).",
     "rl_trail_profit2": "Tier-2 trail arm gain fraction (AWK RL_TRAIL_PROFIT2; 0=off).",
     "rl_trail_stop2": "Tier-2 locked stop gain fraction (AWK RL_TRAIL_STOP2).",
-    "rl_exit_percent": "Timed-exit profit trigger fraction (AWK RL_EXIT_PERCENT, default 0.29).",
-    "rl_exit_days": "Days after profit trigger before forced exit (AWK RL_EXIT_DAYS; 10000≈off).",
+    "rl_exit_percent": "Timed-exit profit trigger fraction vs entry MTM (AWK RL_EXIT_PERCENT, house 0.40).",
+    "rl_exit_days": (
+        "Trading bars after profit trigger before forced exit (AWK RL_EXIT_DAYS; house 30; "
+        "10000≈off). time_counter after rl_exit_percent hit. Ignored when rl_exit_calendar_days>0."
+    ),
+    "rl_exit_calendar_days": (
+        "Research-only: calendar days after first rl_exit_percent hit before forced exit (0=off). "
+        "Same clock as Closed DAYS HELD: days_diff(arming_iso, iso) + 1. Exit type RL_EXIT_CAL. "
+        "When >0, disables trading-bar rl_exit_days timed path (exclusive). Distinct from "
+        "rl_max_hold_calendar_days (calendar from entry) and rl_exit_days (trading bars after +%)."
+    ),
+    "rl_max_hold_bars": (
+        "Research-only: hard flatten at open when trading bars from fill >= N (0=off). "
+        "bars_held = idx − entry_bar (0 on entry bar). Stop still checked first. "
+        "Not the same as rl_exit_days (clock after rl_exit_percent). Alias rl_time_stop_from_entry."
+    ),
+    "rl_max_hold_calendar_days": (
+        "Research-only: hard flatten at open when calendar days from entry >= N (0=off). "
+        "Same clock as Closed DAYS HELD: days_diff(entry_iso, iso) + 1. Exit type RL_MAX_HOLD_CAL. "
+        "Stop still checked first; races ahead of SMA/timed. Distinct from rl_max_hold_bars "
+        "(trading bars), rl_exit_days (post-+% trading-bar clock), and rl_exit_calendar_days "
+        "(post-+% calendar clock)."
+    ),
+    "rl_entry_target_pct": (
+        "Entry-based full-exit target: exit when high >= entry × (1 + this). "
+        "0=off. Races SMA50 × rl_target_pct and rl_exit_percent/days (lowest hit price wins same bar)."
+    ),
     "rl_cash": "Rocket Launcher fixed notional per trade (AWK RL_CASH, default 47500).",
     "rl_flush_days": "Portfolio flush: sell all open RL positions after N consecutive underwater days (0=off, AWK RL_FLUSH_DAYS).",
     "rl_partial_exit_target": "Partial-exit gain trigger (AWK PARTIAL_EXIT_TARGET; 0=off).",
     "rl_partial_exit_percent": "Fraction of shares sold at partial (AWK PARTIAL_EXIT_PERCENT, default 0.50).",
-    "rl_partial_exit_follow_target": "Follow-on target increment after partial (AWK PARTIAL_EXIT_FOLLOW_TARGET).",
+    "rl_partial_exit_follow_target": (
+        "Follow-on target increment after partial (AWK PARTIAL_EXIT_FOLLOW_TARGET). "
+        "Remainder target = entry × (1 + rl_partial_exit_target + this); SMA50 × rl_target_pct is frozen."
+    ),
+    "rl_scale_ladder": (
+        "Research scale-out + stop ratchet. Steps gain:sell_frac:stop_gain separated by | "
+        "(e.g. 0.10:0.20:0|0.20:0.30:0.05). sell_frac of original shares; stop_gain is "
+        "fraction above entry (0=breakeven). Empty=off. Mutually exclusive with single "
+        "partial / Trail-1/2 on the same trade."
+    ),
     "rl_watch_min_score": "Minimum setup score for RL_Watchlist rows (AWK WATCH_MIN_SCORE, default 55).",
     "rl_watch_disable": "If true, skip RL_Watchlist rows (header-only CSV).",
     "rl100_toggle": "AWK-only: enable 100-SMA dip subsystem → RL100_Closed (default 0/off; Python port deferred).",
@@ -16627,6 +18085,50 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "growth_bars": (
         "Lookback bars for growth_filter_enabled (default 756 ≈ 3Y). "
         "RS: -v growth_filter_enabled=true -v growth_bars=N on trigger bar T."
+    ),
+    "min_history_bars": (
+        "When >0, block an entry unless the trigger bar has this many prior sessions and a real "
+        "positive close exactly that far back. No slack and no bar-0 substitute. 0 = off. "
+        "Applies on standalone WPBR."
+    ),
+    "growth_filter_strict_gt": (
+        "When true with growth_filter_enabled, require trigger close > close exactly growth_bars "
+        "earlier (no slack). Flat and down both fail. Default false keeps Close >= lookback."
+    ),
+    "growth_min_pct": (
+        "When >0 with growth_filter_enabled, require trigger close >= lookback close × (1 + this) "
+        "on the exact growth_bars bar (0.10 = at least 10% higher). A gain equal to the hurdle "
+        "passes. 0 leaves the strict >0% check unchanged when growth_filter_strict_gt is on."
+    ),
+    "wpbr_overhead_band_pct": (
+        "WPBR research gate (0 = off). Reject an entry when any earlier WPBR zone has its lower "
+        "edge strictly above this entry zone's upper edge and (lower - upper) / upper is at most "
+        "this fraction (0.22 = 22%). 0 leaves entries unchanged."
+    ),
+    "wpbr_dynamic_overhead": (
+        "WPBR research only (default false). When true, do not hard-skip on wpbr_overhead_band_pct. "
+        "If an earlier WPBR zone sits above this zone, size long target/stop from the nearest "
+        "overhead gap G for every G (including G>=22%): target gain = wpbr_dyn_oh_target_frac*G, "
+        "stop under trigger-day low = wpbr_dyn_oh_stop_frac*(target gain). "
+        "Clear sky keeps cfg target_pct / stop_pct. Production / DailyRun leave false."
+    ),
+    "wpbr_dyn_oh_target_frac": (
+        "With wpbr_dynamic_overhead: fraction of overhead gap G used as target gain "
+        "(default 0.90). Research only."
+    ),
+    "wpbr_dyn_oh_stop_frac": (
+        "With wpbr_dynamic_overhead: stop under trigger-day low as a fraction of the "
+        "dynamic target gain (default 0.40). Research only."
+    ),
+    "sma200_persist_bars": (
+        "When >0, require this many sessions ending on the trigger bar (inclusive) to each have "
+        "a positive close and a 200-session simple moving average. 0 = off. Does not by itself "
+        "require the close to be above the average; pair with sma200_persist_min_frac."
+    ),
+    "sma200_persist_min_frac": (
+        "When sma200_persist_bars > 0 and this is >0, require at least this fraction of that "
+        "window to close strictly above its own 200-session simple moving average. 0 keeps the "
+        "window requirement and accepts any fraction, including zero."
     ),
     "sheet_dw_countif_include_prior_bar_date": "When True, adds the next trading session after each retest to the COUNTIF set. Default False (strict COUNTIF(BO,D) parity).",
     "sheet_no_entry_same_bar_after_exit": "When True, suppress new entry evaluation on the same bar a position is closed (sheet IN TRADE semantics). Forced False when wpbr_zones=True (WPBR next-open fill after exit+signal bar).",
@@ -16673,7 +18175,31 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "indicator_diff": "Minimum trade-aligned (bull−bear) IND count at trigger bar close when indicator_buy is only or both (default 10). Negative values allowed (e.g. -100). LONG: bullish-aligned; SHORT: bearish-aligned.",
     "max_ind_diff_at_trigger": "Upper-bound gate: require trade-aligned IND_DIFF <= N at trigger bar close (None = off). Independent of indicator_buy; enables low-DIFF overlays on YH/BRT/etc.",
     "entry_start_date": "Inclusive earliest strategy date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries before this date; for WPBR also excludes pivots/zones with pivot Monday before this date (no BO/retest/rocket from those pivots). OHLC warmup/history before this date still loads for weekly/indicator calc. Engine-wide alias: -v start_date= (also data_start / history_start) maps here across BRT/WPBR/PBR/RL/MTS/VEC.",
-    "entry_end_date": "Inclusive latest entry eval date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries after this date; open positions may still exit later.",
+    "entry_end_date": "Inclusive latest entry eval date (YYYY-MM-DD or YYYYMMDD). Empty = off. Blocks new entries after this date; open positions may still exit later. RSI house: this is the fill / DATE_OPENED (next_open), not the signal date.",
+    "rsi_max_dist_to_52w_high_pct_at_trigger": (
+        "RSI play-around (0=off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER <= this "
+        "(% below 52w high at trigger close; near-high cap). No column-name alias — "
+        "use this explicit key so -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= stays a min."
+    ),
+    "rsi_min_dist_to_52w_high_pct_at_trigger": (
+        "RSI play-around (0=off). Keep if DIST_TO_52W_HIGH_PCT_AT_TRIGGER >= this "
+        "(% below 52w high; don't buy names hugging the high). "
+        "Alias: -v DIST_TO_52W_HIGH_PCT_AT_TRIGGER= (one number = min)."
+    ),
+    "rsi_min_rel_vol_on_trigger": (
+        "RSI play-around (0=off). Keep if REL_VOL_ON_TRIGGER >= this "
+        "(trigger volume / 10-session avg). Alias: -v REL_VOL_ON_TRIGGER=."
+    ),
+    "rsi_min_rsi14_drop_from_ob": (
+        "RSI play-around (0=off). Keep if RSI14_DROP_FROM_OB >= this "
+        "(prior >=rsi_ob RSI − trigger RSI). Alias: -v RSI14_DROP_FROM_OB=."
+    ),
+    "rsi_roll_from_max": (
+        "RSI EXIT (0=off). Sell next open when (in-trade max RSI14 − current RSI14) "
+        ">= this, else RSI14 >= rsi_exit, else the calendar time stop. "
+        "DailyRun / run_rsi.bat house default 8 (preference; not gold). "
+        "Override: -v rsi_roll_from_max=0 to disable, or 6/7/9/10 to neighbor-test."
+    ),
     "min_rel_vol_at_entry": "Require REL_VOL_AT_ENTRY (entry-day volume / 10d avg) >= this at entry (-2 = off). Knowable only after entry day closes; not a pre-entry scanner filter.",
     "sell_on_low_vol": "Exit at next session open when REL_VOL_AT_ENTRY < this (0 = off). Uses entry-day volume stored at open; e.g. 0.8592 sells if rel vol was below 0.8592 on the fill day.",
     "sell_ind_diff_below": "Exit at next session open when trade-aligned IND_DIFF on the prior held session is below N (None = off).",
@@ -16771,10 +18297,11 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "aggressive_avg_positions": "Override average positions for aggressive sizing (0 = auto from run history; see aggressive_avg_positions_actual for value used).",
     "aggressive_avg_positions_actual": "Average active positions used in this run's aggressive equity simulation (auto mean when override is 0).",
     "aggressive_sizing_equity_cap": "Cap equity used for aggressive entry sizing at initial_capital×this multiple (default 10); does not cap reported equity.",
-    "aggressive_sell": "When aggressive: false=current behavior; average=equal %% trim of all holdings at new entry; losers=trim worst unrealized PnL first; winners=trim best first.",
+    "aggressive_sell": "When aggressive: false=current behavior; average=equal %% trim of all holdings at new entry; losers=trim worst unrealized PnL first; winners=trim best first; fifo=trim oldest open positions first (entry order).",
     "margin_utilization": "Fraction of total margin buying power to deploy for passive brt_cash/Max_DD (initial_capital×aggressive_max_multiple×this). Default 0.6; --aggressive does not override (overlay sim uses full util).",
     "max_positions": "Per-slot notional divisor: deployable_margin / max_positions. 0 = auto from peak concurrent closed trades.",
     "symbol_reentry_cooldown_days": "Calendar days after closing a symbol before a new entry in that same symbol is allowed (0=off). Example: 5 blocks same-week re-entry; 20 ~ one month.",
+    "vz_cooldown_after_target_days": "Volume Zone (VZ): calendar days after a TARGET exit before a new entry on the same symbol is allowed (inclusive 0..N; 0=off). House default 10 (adopt 20260821 / ENTRY_cd_target10 live LEAN KEEP).",
     "allow_secondary_entries": "When true, allow a new entry in a symbol while another position in that same symbol is still open (default false).",
     "trailing_stop_increment": "Trailing stop: 0=off. Else working stop = initial stop + (gain%%/N)*1%% of entry (gain from peak high since entry; fractional N, not floored).",
     "sma_stop_days": "SMA trailing stop: 0=off. When >0 and Close is above SMA(N) (long) or below SMA(N) (short), working stop = max/min of other stops and SMA(N); never loosens (e.g. 20 or 8).",
@@ -16796,6 +18323,22 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "Sell at close when bars_held >= N (bars from fill bar). "
         "Same idea as StockBee burst_time_stop_days; after NO_FT, before ATR schedule. "
         "Not the same as atr_days (calendar → next open)."
+    ),
+    "wpbr_velocity_time_stop_bars": (
+        "WPBR research-only velocity time stop (0=off). bars_held = idx − entry_bar (0 on entry). "
+        "If High never reaches entry×(1+wpbr_velocity_time_stop_min_gain) while held < N, "
+        "sell at the CLOSE of the bar where bars_held first reaches N. Long + wpbr_zones only. "
+        "Exit type WPBR_VEL_TS{N}. After stop/target; with NO_FT/TIME when those are also on."
+    ),
+    "wpbr_velocity_time_stop_min_gain": (
+        "Fraction gain from entry required to arm out of wpbr_velocity_time_stop_bars "
+        "(default 0.10 = +10%). Measured on intraday High. Research-only."
+    ),
+    "wpbr_underwater_time_stop_bars": (
+        "WPBR research-only underwater time stop (0=off). bars_held = idx − entry_bar (0 on entry). "
+        "On the bar where bars_held first equals N, if Close is strictly below original entry, "
+        "sell at that CLOSE. If Close is at or above entry, do nothing and never re-check. "
+        "Long + wpbr_zones only. Exit type WPBR_UW_TS{N}. After stop/target; with NO_FT/TIME/VEL."
     ),
     # Concentration metrics
     "Pct_PNL_Max_Symbol": "Largest single-symbol contribution as % of total PnL.",
@@ -16832,6 +18375,8 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
     "Pct_Trades_Post_Entry_Gain_Hit": "Percent of closed trades with POST_ENTRY_GAIN_HIT=1 (same window/threshold as config; exit-capped).",
     # Aggressive run diagnostics
     "Aggressive_Avg_Positions": "Average active positions used by aggressive sizing logic.",
+    "Calmar": "Ann_ROR % / |Max_DD %| (Report book Ann ROR over absolute Max DD). Blank/N/A when Max_DD missing or ~0.",
+    "Sharpe": "Daily EquityCurve returns (same series as Max_DD / Equity_Regular when present), rf=0, mean/std(ddof=1)*sqrt(252). Descriptive only.",
     "Aggressive_Max_DD": "Max drawdown on the aggressive equity curve (initial_capital basis); Max_DD stays on passive/regular equity and does not change with --aggressive.",
     "Aggressive_Total_PNL": "Aggressive total PnL on initial_capital basis (includes margin + trims + interest).",
     "Aggressive_Days_AtOrBelow_Avg": "Days where desired gross stayed at or below initial_capital (no margin).",
@@ -17082,6 +18627,38 @@ def _fill_rl_awk_subsystem_audit_defaults(row: dict, cfg: Any) -> None:
             row[k] = default
 
 
+
+def _apply_calmar_sharpe_metrics(metrics: dict, equity: dict | None = None) -> None:
+    """Set Report Calmar (Ann_ROR/|Max_DD|) and Sharpe (daily equity, rf=0, sqrt(252))."""
+    try:
+        from risk_adjusted_metrics import format_calmar, format_sharpe
+    except ImportError:
+        try:
+            from stock_analysis.risk_adjusted_metrics import format_calmar, format_sharpe  # type: ignore
+        except ImportError:
+            return
+    ann = metrics.get("Annualized_ROR", metrics.get("Ann_ROR"))
+    dd = metrics.get("Max_Drawdown", metrics.get("Max_DD"))
+    metrics["Calmar"] = format_calmar(ann, dd)
+    # Prefer passive/regular equity (aligned with Max_DD) when aggressive overwrote Equity.
+    vals = None
+    if equity:
+        dates = equity.get("equity_dates") or []
+        reg = equity.get("equity_values_regular") or []
+        cur = equity.get("equity_values") or []
+        if reg and dates and len(reg) == len(dates):
+            vals = reg
+        elif cur:
+            vals = cur
+        if equity.get("Sharpe") not in (None, "", "N/A"):
+            metrics["Sharpe"] = equity.get("Sharpe")
+            return
+    if vals is not None:
+        metrics["Sharpe"] = format_sharpe(vals)
+    elif metrics.get("Sharpe") in (None, ""):
+        metrics["Sharpe"] = "N/A"
+
+
 def _metrics_to_audit_row(metrics: dict) -> dict:
     """Convert BRT metrics dict to audit row format (same as optimizer _metrics_to_row)."""
     def num(x):
@@ -17127,7 +18704,18 @@ def _metrics_to_audit_row(metrics: dict) -> dict:
         "Capital_Days": int(metrics.get("Capital_Days", 0)),
         "Profit_Per_Capital_Day": num(metrics.get("Profit_Per_Capital_Day", 0)),
         "Ann_ROR": num(metrics.get("Annualized_ROR", 0)),
-        "Max_DD": max_dd, "Losing_Streak": int(metrics.get("Losing_Streak", 0)),
+        "Max_DD": max_dd,
+        "Calmar": (
+            metrics.get("Calmar", "N/A")
+            if metrics.get("Calmar") in (None, "N/A") or str(metrics.get("Calmar", "")).strip() == "N/A"
+            else num(metrics.get("Calmar", 0))
+        ),
+        "Sharpe": (
+            metrics.get("Sharpe", "N/A")
+            if metrics.get("Sharpe") in (None, "N/A") or str(metrics.get("Sharpe", "")).strip() == "N/A"
+            else num(metrics.get("Sharpe", 0))
+        ),
+        "Losing_Streak": int(metrics.get("Losing_Streak", 0)),
         "DD_Per_Trade": dd_per_trade,
         "CES_AVG": num(metrics.get("CES_AVG", 0)),
         "CES_Median": num(metrics.get("CES_Median", 0)),
@@ -17294,6 +18882,120 @@ def _first_up_pct_from_bar(
     bi = entry_bar + int(hits[0])
     ds = pd.Timestamp(idx_norm[bi]).normalize()
     return f"{ds.year:04d}{ds.month:02d}{ds.day:02d}", int((ds - entry_n).days)
+
+
+# WPBR Closed diagnostic path metrics (reporting only; never gates entry/exit).
+_WPBR_VELOCITY_DAY_THRESHOLDS = (5.0, 10.0, 15.0, 20.0)
+_WPBR_VELOCITY_SNAPSHOT_BARS = (10, 20, 30, 40, 60, 80, 100)
+_WPBR_VELOCITY_HEADER = (
+    ["DAYS_TO_5_PCT", "DAYS_TO_10_PCT", "DAYS_TO_15_PCT", "DAYS_TO_20_PCT"]
+    + ["MFE_PCT", "DAYS_TO_MFE", "MAE_PCT", "DAYS_TO_MAE"]
+    + [f"PCT_AT_DAY_{n}" for n in _WPBR_VELOCITY_SNAPSHOT_BARS]
+    + [f"MAX_GAIN_FIRST_{n}" for n in _WPBR_VELOCITY_SNAPSHOT_BARS]
+)
+
+
+def _exit_bar_for_trade(t: BRTTrade, df: pd.DataFrame, n: int, entry_bar: int) -> int:
+    """Last bar index while the trade was open (inclusive of exit date). -1 if unknown."""
+    dc = str(getattr(t, "date_closed", "") or "").strip()
+    if not dc or entry_bar < 0:
+        return -1
+    exit_ts = _parse_trade_date(dc)
+    if exit_ts is None or pd.isna(exit_ts):
+        return -1
+    pos = int(df.index.searchsorted(exit_ts, side="left"))
+    return min(max(pos, entry_bar), n - 1)
+
+
+def _wpbr_velocity_blank() -> dict[str, str]:
+    return {k: "" for k in _WPBR_VELOCITY_HEADER}
+
+
+def _compute_wpbr_closed_velocity_row(
+    t: BRTTrade,
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    entry_bar: int,
+    exit_bar: int,
+) -> dict[str, str]:
+    """
+    Diagnostic rate-of-gain fields for one closed trade.
+
+    Uses trading-bar offsets from the entry bar (entry bar = 0). Caps all scans
+    at the exit bar so post-exit price action cannot affect measurements.
+    Long-side definitions only (WPBR). Blank strings mean "not reached / not open".
+    """
+    out = _wpbr_velocity_blank()
+    ep = float(getattr(t, "entry_price", 0) or 0)
+    if ep <= 0 or entry_bar < 0 or exit_bar < entry_bar:
+        return out
+    if exit_bar >= len(high):
+        return out
+    hi = high[entry_bar : exit_bar + 1]
+    lo = low[entry_bar : exit_bar + 1]
+    if hi.size == 0:
+        return out
+
+    for pct in _WPBR_VELOCITY_DAY_THRESHOLDS:
+        thr = ep * (1.0 + pct / 100.0)
+        hits = np.flatnonzero(hi >= thr - 1e-12)
+        if hits.size:
+            out[f"DAYS_TO_{int(pct)}_PCT"] = str(int(hits[0]))
+
+    mfe_i = int(np.argmax(hi))
+    mae_i = int(np.argmin(lo))
+    out["MFE_PCT"] = f"{(float(hi[mfe_i]) / ep - 1.0) * 100.0:.4f}"
+    out["DAYS_TO_MFE"] = str(mfe_i)
+    out["MAE_PCT"] = f"{(float(lo[mae_i]) / ep - 1.0) * 100.0:.4f}"
+    out["DAYS_TO_MAE"] = str(mae_i)
+
+    bars_open = exit_bar - entry_bar  # max offset reachable while open
+    for n in _WPBR_VELOCITY_SNAPSHOT_BARS:
+        if bars_open < n:
+            continue
+        bi = entry_bar + n
+        out[f"PCT_AT_DAY_{n}"] = f"{(float(close[bi]) / ep - 1.0) * 100.0:.4f}"
+        max_hi = float(np.max(high[entry_bar : bi + 1]))
+        out[f"MAX_GAIN_FIRST_{n}"] = f"{(max_hi / ep - 1.0) * 100.0:.4f}"
+    return out
+
+
+def _enrich_wpbr_closed_velocity(
+    closed: list[BRTTrade],
+    tickers: Optional[dict[str, pd.DataFrame]],
+) -> None:
+    """
+    Reporting-only: attach ``_wpbr_velocity`` dict on each closed trade for CSV emit.
+    Does not change PnL, exits, or any simulation fields used by the engine.
+    """
+    if not closed:
+        return
+    blank = _wpbr_velocity_blank()
+    if not tickers:
+        for t in closed:
+            setattr(t, "_wpbr_velocity", dict(blank))
+        return
+    by_sym: dict[str, list[BRTTrade]] = {}
+    for t in closed:
+        by_sym.setdefault((t.symbol or "").strip().upper(), []).append(t)
+    for sym, tlist in by_sym.items():
+        df = tickers.get(sym)
+        if df is None or df.empty or any(c not in df.columns for c in ("High", "Low", "Close")):
+            for t in tlist:
+                setattr(t, "_wpbr_velocity", dict(blank))
+            continue
+        high = np.asarray(df["High"], dtype=np.float64)
+        low = np.asarray(df["Low"], dtype=np.float64)
+        close = np.asarray(df["Close"], dtype=np.float64)
+        n = len(high)
+        for t in tlist:
+            if not _trade_is_long_side(t):
+                setattr(t, "_wpbr_velocity", dict(blank))
+                continue
+            eb = _entry_bar_for_trade(t, df, n)
+            xb = _exit_bar_for_trade(t, df, n, eb)
+            setattr(t, "_wpbr_velocity", _compute_wpbr_closed_velocity_row(t, high, low, close, eb, xb))
 
 
 def _trade_is_long_side(t: BRTTrade) -> bool:
@@ -17537,7 +19239,7 @@ def compute_metrics(closed: list[BRTTrade], cfg: BRTConfig) -> dict:
         return {
             "Total_PNL": 0, "Wins": 0, "Losses": 0, "BEs": 0,
             "Profit_Factor": 0, "Losing_Streak": 0, "Expectancy": 0, "Avg_PNL_Pct": "0.00%",
-            "Avg_Days_Held": 0, "Median_Days_Held": 0, "Annualized_ROR": 0, "Max_Drawdown": "N/A",
+            "Avg_Days_Held": 0, "Median_Days_Held": 0, "Annualized_ROR": 0, "Max_Drawdown": "N/A", "Calmar": "N/A", "Sharpe": "N/A",
             "CES_AVG": 0, "CES_Median": 0, "P90_Days": 0, "Capital_Days": 0,
             "Profit_Per_Capital_Day": 0, "Avg_Win_Pct": "0.00%", "Avg_Loss_Pct": "0.00%",
             "Win_Loss_Ratio_Dollar": 0, "Pct_PNL_Top10": "0.0%", "Pct_PNL_Bottom10": "0.0%",
@@ -18398,6 +20100,7 @@ def run_brt_backtest_batch(
                 agg_total_pnl = float(equity.get("_equity_total_pnl", 0.0) or 0.0)
                 metrics["Aggressive_Total_PNL"] = f"{agg_total_pnl:.2f}"
             md = equity["Max_Drawdown"]
+            _apply_calmar_sharpe_metrics(metrics, equity)
             if md and str(md).strip() != "N/A":
                 try:
                     pct_val = float(str(md).replace("%", "").strip()) / 100
@@ -18529,7 +20232,8 @@ def main() -> int:
         "--instrument-db",
         type=str,
         default="",
-        help="DuckDB file for run timing history (default: <output_dir>/brt_profile.duckdb)",
+        help="DuckDB file for run timing history (default: <output_dir>/brt_profile.duckdb; "
+        "env TBN_INSTRUMENT_DB overrides the default when this flag is omitted).",
     )
     ap.add_argument(
         "--post-only",
@@ -18772,6 +20476,10 @@ def main() -> int:
     if not data_dir.is_absolute():
         data_dir = repo_root / data_dir
     output_dir = Path(args.output_dir)
+    _hwm_out = os.environ.get("HWM_RESEARCH_OUT", "").strip()
+    if _hwm_out:
+        output_dir = Path(_hwm_out)
+        print(f"[TBN] Research output dir: {output_dir}", flush=True)
     if not output_dir.is_absolute():
         output_dir = repo_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -18796,6 +20504,10 @@ def main() -> int:
     pipeline: Optional[Any] = None
     if _use_instrument:
         _inst_db_raw = (getattr(args, "instrument_db", "") or "").strip()
+        if not _inst_db_raw:
+            # DailyRun's parallel wave sets this so each system writes its own
+            # timing file instead of sharing drive/brt_profile.duckdb.
+            _inst_db_raw = (os.environ.get("TBN_INSTRUMENT_DB") or "").strip()
         _inst_db = Path(_inst_db_raw) if _inst_db_raw else default_instrument_db_path(output_dir)
         pipeline = BRTPipelineInstrument(enabled=True, output_dir=output_dir, db_path=_inst_db)
     cfg_kw: dict = {"exit_at_close_when_stopped": args.exit_at_close_when_stopped}
@@ -18983,6 +20695,9 @@ def main() -> int:
             key = _pbr_to_wpbr[key]
         if key == "merge_overlapping_zones":
             key = "wpbr_merge_overlapping_zones"
+        if key == "write_stamp_folder":
+            # VZ research stamp opt-in; canonical BRT field is vz_write_stamp_folder.
+            key = "vz_write_stamp_folder"
         if key == "stop_anchor":
             # Legacy alias → stop_loss_based (signal_low↔trigger_low, entry↔entry_open).
             if "stop_loss_based" in _v_keys_normalized:
@@ -19084,6 +20799,37 @@ def main() -> int:
             print(
                 "[TBN] RS soft-defaults (override with -v): " + ", ".join(_applied)
             )
+    # Research-only env. DailyRun does not set these. They override -v so a
+    # research bat can turn the trail on without lengthening an 8191-char line.
+    _hwm_env = os.environ.get("HWM_ACT_PCT", "").strip()
+    if _hwm_env:
+        defaults["hwm_act_pct"] = float(_hwm_env)
+        _hwm_keep_env = os.environ.get("HWM_KEEP", "").strip()
+        if _hwm_keep_env:
+            defaults["hwm_keep"] = float(_hwm_keep_env)
+        _hwm_stop_env = os.environ.get("HWM_STOP_PCT", "").strip()
+        if _hwm_stop_env:
+            defaults["stop_pct"] = float(_hwm_stop_env)
+        _hwm_rl_stop_env = os.environ.get("HWM_RL_STOP_PCT", "").strip()
+        if _hwm_rl_stop_env:
+            defaults["rl_stop_pct"] = float(_hwm_rl_stop_env)
+        _hwm_ladder_env = os.environ.get("HWM_RL_SCALE_LADDER", "").strip()
+        if _hwm_ladder_env:
+            if _hwm_ladder_env.lower() in ("off", "0", "none", "false"):
+                defaults["rl_scale_ladder"] = ""
+            else:
+                defaults["rl_scale_ladder"] = _hwm_ladder_env
+        _hwm_entry_tgt_env = os.environ.get("HWM_RL_ENTRY_TARGET_PCT", "").strip()
+        if _hwm_entry_tgt_env:
+            defaults["rl_entry_target_pct"] = float(_hwm_entry_tgt_env)
+        print(
+            "[TBN] Research high-water env: "
+            f"act={defaults.get('hwm_act_pct')} keep={defaults.get('hwm_keep')} "
+            f"stop_pct={defaults.get('stop_pct')} rl_stop_pct={defaults.get('rl_stop_pct')} "
+            f"rl_scale_ladder={defaults.get('rl_scale_ladder')!r} "
+            f"rl_entry_target_pct={defaults.get('rl_entry_target_pct')}",
+            flush=True,
+        )
     cfg = BRTConfig(**defaults)
     cfg = _sync_stop_loss_cfg(cfg)
     # RS + TC Strong gate: ensure IND_TC columns / precompute even if use_indicators omitted.
@@ -19332,6 +21078,31 @@ def main() -> int:
             "by default; never signal-bar open). Engine tools/vol_zone_break_retest.py via "
             "rocket_vz.py; outputs VZ_* prefix. Isolate peers (see run_vz.bat)."
         )
+    elif bool(getattr(cfg, "rsi_mode", False)):
+        _rsi_extra = []
+        _rsi_max_d = float(getattr(cfg, "rsi_max_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+        _rsi_min_d = float(getattr(cfg, "rsi_min_dist_to_52w_high_pct_at_trigger", 0.0) or 0.0)
+        _rsi_min_rv = float(getattr(cfg, "rsi_min_rel_vol_on_trigger", 0.0) or 0.0)
+        _rsi_min_drop = float(getattr(cfg, "rsi_min_rsi14_drop_from_ob", 0.0) or 0.0)
+        if _rsi_max_d > 0:
+            _rsi_extra.append(f"max_dist52={_rsi_max_d:g}")
+        if _rsi_min_d > 0:
+            _rsi_extra.append(f"min_dist52={_rsi_min_d:g}")
+        if _rsi_min_rv > 0:
+            _rsi_extra.append(f"min_rel_vol={_rsi_min_rv:g}")
+        if _rsi_min_drop > 0:
+            _rsi_extra.append(f"min_rsi_drop={_rsi_min_drop:g}")
+        print(
+            "[TBN] Relative Strength Index (rsi_mode=true): "
+            "Wilder RSI(14) cool-off — not RS (Relative Strength vs SPY). "
+            f"ob={getattr(cfg, 'rsi_ob', 70)} os={getattr(cfg, 'rsi_os', 30)} "
+            f"exit={getattr(cfg, 'rsi_exit', 70)} max_trigger={getattr(cfg, 'rsi_max_trigger', 60)} "
+            f"min_atr%={getattr(cfg, 'rsi_min_atr_pct', 5)} ts={getattr(cfg, 'rsi_time_stop_days', 20)}d "
+            f"roll_from_max={getattr(cfg, 'rsi_roll_from_max', 0)} "
+            f"entry_on={getattr(cfg, 'rsi_entry_on', 'next_open')}"
+            + (f"; extra gates {', '.join(_rsi_extra)}" if _rsi_extra else "")
+            + ". Engine stock_analysis/rocket_rsi.py; outputs RSI_* prefix. Isolate peers (see run_rsi.bat)."
+        )
     elif bool(getattr(cfg, "wrl_mode", False)):
         print(
             "[TBN] Weekly Range / Swing (wrl_mode=true): previous-week range + walk-back swing "
@@ -19377,6 +21148,52 @@ def main() -> int:
     if cfg.stop_pct == 0 and cfg.target_pct == 0:
         print(f"[TBN] ATR stop/target: atr_target={cfg.atr_target} atr_stop={cfg.atr_stop}")
     _file_prefix = _output_file_prefix(cfg)
+    # WPBR incremental resume: fingerprint + mode (full|warm). Default OFF.
+    if bool(getattr(cfg, "wpbr_zones", False)):
+        try:
+            from wpbr_incremental import (
+                clear_state_dir as _wpbr_clear_state,
+                decide_mode as _wpbr_decide_mode,
+                incremental_flag_enabled as _wpbr_incr_on,
+            )
+        except ImportError:
+            from stock_analysis.wpbr_incremental import (
+                clear_state_dir as _wpbr_clear_state,
+                decide_mode as _wpbr_decide_mode,
+                incremental_flag_enabled as _wpbr_incr_on,
+            )
+        if _wpbr_incr_on(getattr(cfg, "wpbr_incremental", None)):
+            _syms_for_fp = list(symbol_list) if symbol_list else []
+            _dec = _wpbr_decide_mode(
+                cfg,
+                symbols=_syms_for_fp,
+                output_dir=output_dir,
+                repo_root=repo_root,
+            )
+            _sd = Path(_dec["state_dir"])
+            _mode = str(_dec.get("mode") or "full")
+            _reason = str(_dec.get("reason") or "")
+            if _mode == "full" and _reason in (
+                "fingerprint_mismatch",
+                "state_version_mismatch",
+                "force_full",
+            ):
+                _wpbr_clear_state(_sd)
+            cfg = replace(
+                cfg,
+                wpbr_incremental=True,
+                wpbr_incremental_state_dir=str(_sd),
+                wpbr_incremental_mode=_mode,
+            )
+            print(
+                f"[TBN] WPBR incremental: mode={_mode} reason={_reason} "
+                f"state={_sd} fp={(_dec.get('fingerprint') or {}).get('digest', '')[:12]}...",
+                flush=True,
+            )
+            globals()["_WPBR_INCR_DECISION"] = _dec
+        else:
+            globals()["_WPBR_INCR_DECISION"] = None
+
     if (
         float(getattr(cfg, "atr_target", 0.0) or 0.0) > 0
         and float(getattr(cfg, "atr_stop", 0.0) or 0.0) <= 0
@@ -19735,6 +21552,29 @@ def main() -> int:
         )
         _maybe_play_completion_sound(args.play_sound)
         return _vz_rc
+
+    if not skip_backtest and bool(getattr(cfg, "rsi_mode", False)):
+        try:
+            from rocket_rsi import run_rsi_from_brt_main
+        except ImportError:
+            from stock_analysis.rocket_rsi import run_rsi_from_brt_main  # type: ignore
+
+        _rsi_rc = run_rsi_from_brt_main(
+            cfg=cfg,
+            tickers=tickers,
+            ticker_list=ticker_list,
+            output_dir=output_dir,
+            ts=ts,
+            data_dir=data_dir,
+            load_symbol_fn=lambda sym, dd: _load_symbol_data(
+                sym, dd, use_duckdb=use_duckdb, db_path=db_path, db_table=db_table
+            ),
+            workers=n_workers,
+            drive_link=args.drive_link,
+            no_yfinance=bool(getattr(args, "no_yfinance", False)),
+        )
+        _maybe_play_completion_sound(args.play_sound)
+        return _rsi_rc
 
     if not skip_backtest and bool(getattr(cfg, "wrl_mode", False)):
         try:
@@ -20423,6 +22263,38 @@ def main() -> int:
                 )
             except OSError as e:
                 print(f"[TBN] Warning: could not save checkpoint: {e}", file=sys.stderr)
+        # WPBR incremental: write meta fingerprint after symbol seeds are on disk.
+        _wpbr_dec = globals().get("_WPBR_INCR_DECISION")
+        if _wpbr_dec and bool(getattr(cfg, "wpbr_zones", False)) and bool(
+            getattr(cfg, "wpbr_incremental", False)
+        ):
+            try:
+                try:
+                    from wpbr_incremental import save_meta as _wpbr_save_meta2
+                except ImportError:
+                    from stock_analysis.wpbr_incremental import save_meta as _wpbr_save_meta2
+                from datetime import datetime as _dt_wpbr, timezone as _tz_wpbr
+                _fp = _wpbr_dec.get("fingerprint") or {}
+                _meta = {
+                    "version": int(_fp.get("version", 1) or 1),
+                    "fingerprint_digest": str(_fp.get("digest", "")),
+                    "fingerprint": _fp,
+                    "last_run_ts": ts,
+                    "mode_this_run": str(getattr(cfg, "wpbr_incremental_mode", "") or ""),
+                    "n_symbols": int(n_total) if "n_total" in dir() else len(ticker_list),
+                    "saved_at_utc": _dt_wpbr.now(_tz_wpbr.utc).isoformat(),
+                }
+                # Best-effort last_bar from SPY or first ticker — workers already stored per-symbol.
+                _wpbr_save_meta2(Path(_wpbr_dec["state_dir"]), _meta)
+                print(
+                    f"[TBN] WPBR incremental state meta saved under {_wpbr_dec['state_dir']}",
+                    flush=True,
+                )
+            except Exception as _wpbr_meta_exc:
+                print(
+                    f"[TBN] Warning: WPBR incremental meta not saved: {_wpbr_meta_exc}",
+                    file=sys.stderr,
+                )
 
     if _duckdb_parallel_symbol_list is not None and not post_only:
         _trade_syms_post = _brt_trade_symbols(all_closed, all_open)
@@ -20724,7 +22596,13 @@ def main() -> int:
     _t_write_start = time.time()
     closed_path = str(output_dir / f"{_file_prefix}_Closed_{ts}.csv")
     with (pipeline.phase("write_closed") if pipeline is not None else contextlib.nullcontext()):
-        write_brt_closed(all_closed, closed_path, reference_stats=ref_stats, cfg=cfg)
+        write_brt_closed(
+            all_closed,
+            closed_path,
+            reference_stats=ref_stats,
+            cfg=cfg,
+            tickers=tickers,
+        )
     if pipeline is not None:
         pipeline.complete_phase_units("write_closed")
     if args.profile:
@@ -20864,6 +22742,7 @@ def main() -> int:
                 agg_total_pnl = float(equity.get("_equity_total_pnl", 0.0) or 0.0)
                 metrics["Aggressive_Total_PNL"] = f"{agg_total_pnl:.2f}"
             md = equity["Max_Drawdown"]
+            _apply_calmar_sharpe_metrics(metrics, equity)
             if md and str(md).strip() != "N/A":
                 try:
                     pct_val = float(str(md).replace("%", "").strip()) / 100
@@ -20893,6 +22772,7 @@ def main() -> int:
         except Exception as e:
             print(f"[WARN] Equity metrics failed: {e}", file=sys.stderr)
     with (pipeline.phase("write_reports") if pipeline is not None else contextlib.nullcontext()):
+        _apply_calmar_sharpe_metrics(metrics, None)
         write_brt_report(cfg, metrics, str(output_dir), ts, args.drive_link, file_prefix=_file_prefix)
         write_brt_audit_report(cfg, metrics, str(output_dir), ts, args.drive_link, file_prefix=_file_prefix)
     if pipeline is not None:

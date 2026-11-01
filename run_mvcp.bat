@@ -1,7 +1,7 @@
 @echo off
 rem Short alias → Minervini VCP (MVCP)
 rem Canonical implementation: run_minervini_vcp.bat
-rem Standalone: double-click or call from DailyRun step [11/14].
+rem Standalone research only (MVCP retired from DailyRun 2026-08-21).
 rem Docs: drive\paul_experiments\tbn_new_systems\minervini_vcp\HOW_TO_RUN.html
 rem Universe: drive\universes\MVCP_universe.csv (default * = full scan)
 rem Override: run_mvcp.bat path\to\test_universe.csv

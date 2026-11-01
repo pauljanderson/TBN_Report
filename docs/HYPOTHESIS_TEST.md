@@ -50,7 +50,7 @@ Copy this into `drive/paul_experiments/<experiment>/HYPOTHESIS.md` (or paste int
 | Frozen settings (everything else) | |
 | Alternatives (baseline + ≤2 values) | |
 | Candidate stamps (A/B/…) | |
-| Metrics (trades, win%, DD, robust FIT, reconcile) — not max PnL primary | |
+| Metrics (trades, win%, DD, Calmar, Sharpe, robust FIT, reconcile) — not max PnL primary | |
 | **Trade-diff HTML** (required before ToS) | `drive/paul_experiments/…` via `_gen_too_high_diff.py` |
 | ToS before path | `drive/paul_studies/…` |
 | ToS after path | `drive/paul_studies/…` |

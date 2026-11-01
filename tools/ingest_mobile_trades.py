@@ -6,9 +6,9 @@ Phone CSV columns (drive/mobile_inbox/mobile_trades.csv):
 
 Writes / updates:
   - drive/mobile_inbox/fidelity_mobile_supplement.csv  (Fidelity Accounts_History shape)
-  - gettarget_positions.csv                           (BUY upsert / SELL remove)
-  - trade_system_registry.csv                         (BUY append if missing)
-  - closed_positions_log.csv                          (SELL round-trips when buy known)
+  - gettarget_positions.csv                           (BUY: one row per symbol+system, first date)
+  - trade_system_registry.csv                         (BUY append if missing, including add-on dates)
+  - closed_positions_log.csv                          (full flatten only; trims wait for the report)
 Archives processed rows to drive/mobile_inbox/archive/ and clears pending file header.
 """
 
@@ -63,7 +63,7 @@ CLOSED_LOG_COLUMNS = (
 )
 POSITIONS_COLUMNS = ("symbol", "purchase_date", "entry_price", "system")
 ALLOWED_SYSTEMS = frozenset(
-    {"BRT", "IND", "RL", "YH", "MTS", "WPBR", "PBR", "RS", "SB", "VZ", "MVCP", "CS"}
+    {"BRT", "IND", "RL", "YH", "MTS", "WPBR", "PBR", "RS", "SB", "VZ", "MVCP", "CS", "RSI"}
 )
 _SYSTEM_ALIASES = {
     "PBR": "WPBR",
@@ -72,6 +72,9 @@ _SYSTEM_ALIASES = {
     "VCP": "MVCP",
     "CANSLIM": "CS",
     "CAN_SLIM": "CS",
+    "RSINDEX": "RSI",
+    "WILDER_RSI": "RSI",
+    "RELATIVE_STRENGTH_INDEX": "RSI",
 }
 
 
@@ -106,11 +109,16 @@ def _fidelity_row(trade: dict) -> dict:
     else:
         action = f"YOU SOLD {sym} (mobile) ({acct})"
         amount = abs(qty * price)
+    desc = str(trade.get("notes") or f"mobile {side}").strip()
+    sys = trade.get("system") or ""
+    if sys:
+        if f"system={sys}" not in desc.lower():
+            desc = f"{desc} system={sys}".strip()
     return {
         "Run Date": d_str,
         "Action": action,
         "Symbol": sym,
-        "Description": trade.get("notes") or f"mobile {side}",
+        "Description": desc,
         "Currency": "USD",
         "Price": round(price, 6),
         "Quantity": abs(qty),
@@ -178,7 +186,7 @@ def _validate_rows(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
             errors.append(f"row {row_n}: unknown system {system!r}")
             continue
         if side == "BUY" and not system:
-            errors.append(f"row {row_n}: BUY requires system (RS/SB/VZ/…)")
+            errors.append(f"row {row_n}: BUY requires system (RS/SB/VZ/RSI/…)")
             continue
         ok.append(
             {
@@ -268,21 +276,45 @@ def _save_positions(path: Path, df: pd.DataFrame) -> None:
 
 
 def _upsert_position(df: pd.DataFrame, trade: dict) -> pd.DataFrame:
+    """One gettarget row per symbol+system. Add-on buys keep the first purchase date."""
     sym = trade["symbol"]
     pd_s = trade["date"].isoformat()
-    mask = (df["symbol"].str.upper() == sym) & (
-        df["purchase_date"].astype(str).str[:10] == pd_s
-    )
+    system = _normalize_system(trade.get("system") or "")
     row = {
         "symbol": sym,
         "purchase_date": pd_s,
         "entry_price": str(round(float(trade["price"]), 6)),
-        "system": trade["system"],
+        "system": system,
     }
-    if mask.any():
-        df.loc[mask, list(row.keys())] = list(row.values())
-        return df
-    return pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    if system:
+        mask = (df["symbol"].str.upper() == sym) & (
+            df["system"].map(_normalize_system) == system
+        )
+    else:
+        mask = (df["symbol"].str.upper() == sym) & (
+            df["purchase_date"].astype(str).str[:10] == pd_s
+        )
+    if not mask.any():
+        return pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    idxs = df.index[mask].tolist()
+    keep_i = min(idxs, key=lambda i: str(df.loc[i, "purchase_date"])[:10])
+    existing_d = str(df.loc[keep_i, "purchase_date"])[:10]
+    if pd_s and (not existing_d or pd_s < existing_d):
+        df.loc[keep_i, "purchase_date"] = pd_s
+        df.loc[keep_i, "entry_price"] = row["entry_price"]
+    df.loc[keep_i, "system"] = system or df.loc[keep_i, "system"]
+    drop = [i for i in idxs if i != keep_i]
+    if drop:
+        df = df.drop(index=drop).reset_index(drop=True)
+    return df
+
+
+def _notes_say_flatten(notes: str) -> bool:
+    text = (notes or "").lower().replace(" ", "")
+    return any(
+        tok in text
+        for tok in ("flatten=1", "full_close", "remaining=0", "close_out=1", "fullyclosed")
+    )
 
 
 def _remove_position(df: pd.DataFrame, trade: dict) -> pd.DataFrame:
@@ -466,12 +498,15 @@ def ingest(
             if not dry_run and _append_registry(registry_path, t):
                 reg_adds += 1
         else:
-            if not dry_run and _append_closed_from_sell(
-                closed_log_path, positions_before, t
-            ):
-                closed_adds += 1
-            positions = _remove_position(positions, t)
-            pos_updates += 1
+            # Trims stay on the open book. Only drop gettarget + write Closed on an
+            # explicit flatten; otherwise the investment report closes at qty=0.
+            if _notes_say_flatten(t.get("notes") or ""):
+                if not dry_run and _append_closed_from_sell(
+                    closed_log_path, positions_before, t
+                ):
+                    closed_adds += 1
+                positions = _remove_position(positions, t)
+                pos_updates += 1
 
     if dry_run:
         return {

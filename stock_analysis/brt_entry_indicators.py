@@ -4,7 +4,8 @@ Point-in-time technical snapshot at BRT entry (uses only bars <= entry bar).
 Populates BRT_Closed / BRT_Open / Scanner columns IND_* / IND_*_LAST / IND_*_COUNT plus summary counts.
 States are BULL / BEAR / NEUTRAL relative to **price strength** (not Recognia).
 IND_<id>_COUNT = number of price-bullish bars for that signal in the trailing lookback window.
-IND_ENTRY_BULL_N = trade-aligned count of indicator *types* bullish at the entry bar (max 47).
+IND_ENTRY_BULL_N = trade-aligned count of indicator *types* bullish at the entry bar
+(max = len(INDICATOR_CORE_IDS); OHLC add-ons are exported but excluded from DIFF tallies).
 Summary counts IND_ENTRY_* are **trade-aligned**: for LONG, BULL=price-bullish;
 for SHORT, BULL=price-bearish (favorable to the short).
 
@@ -29,14 +30,14 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-INDICATOR_CACHE_VERSION = 4
+INDICATOR_CACHE_VERSION = 5
 # Rolling/pattern lookback slack when extending cache after new daily bars are appended.
 _INDICATOR_EXTEND_WARMUP_BARS = 350
 # Trailing bars for IND_<id>_COUNT (price-bullish firings of that signal in the window).
 INDICATOR_COUNT_LOOKBACK_BARS = 120
 
-# Each id produces columns IND_<id> and IND_<id>_LAST (YYYYMMDD)
-INDICATOR_IDS: tuple[str, ...] = (
+# Core grid used for IND_DIFF / IND_ENTRY_* / IND_SCORE (DailyRun-safe freeze).
+INDICATOR_CORE_IDS: tuple[str, ...] = (
     # Trend / moving averages
     "SMA20_OVER_SMA50",
     "SMA50_OVER_SMA200",
@@ -92,6 +93,27 @@ INDICATOR_IDS: tuple[str, ...] = (
     "CANDLE_THREE_CROWS",
     "CANDLE_DOJI",
 )
+
+# OHLC-easy add-ons (Fidelity glossary S–Z / classic TA). Exported as IND_* columns and
+# usable in mandatory/exclude JSON; excluded from IND_DIFF tallies so existing gates stay stable.
+OHLC_ADDON_INDICATOR_IDS: tuple[str, ...] = (
+    "STOCHRSI14",  # StochRSI: RSI14 → stoch period 14; BULL > 50
+    "ULTOSC",  # Ultimate Oscillator 7/14/28; BULL > 50
+    "PRICE_OVER_WMA20",  # Weighted MA period 20
+    "PRICE_OVER_VMA20",  # Volume-Weighted MA (Fidelity VMA) period 20
+    "PRICE_OVER_WILDERMA14",  # Wilder’s Smoothing period 14
+    "CHAIKIN_VOL_FAST",  # Chaikin Volatility EMA10 / ROC10; BULL when rising
+    "CHAIKIN_VOL_SLOW",  # Chaikin Volatility EMA21 / ROC21 (Fidelity Vol Fast/Slow default 21)
+    "VOL_TODAY_AVG10",  # Today / Avg10; BULL > 1
+    "VOL_TODAY_AVG30",  # Today / Avg30; BULL > 1
+    "VOL_TODAY_AVG90",  # Today / Avg90; BULL > 1
+    "VOL_AVG10_AVG90",  # Avg10 / Avg90; BULL > 1
+    "AD_SLOPE10",  # Accumulation/Distribution line slope 10 (beyond OBV)
+    "STDERR20",  # Std error of linear regression (20); expansion vs 60d median
+)
+
+# Each id produces columns IND_<id>, IND_<id>_LAST (YYYYMMDD), IND_<id>_COUNT
+INDICATOR_IDS: tuple[str, ...] = INDICATOR_CORE_IDS + OHLC_ADDON_INDICATOR_IDS
 
 # Trading Central–style Option A subset (report-only recency sums). Skip DOJI / vol-noise / fuzzy shapes.
 # MACD family, price vs MA, MA stack, ROC/momentum, RSI, CCI; a few pattern/candle fires.
@@ -453,7 +475,7 @@ def ind_score_at_bar(
     if not w:
         return None
     total = 0.0
-    for iid in INDICATOR_IDS:
+    for iid in INDICATOR_CORE_IDS:
         arr = pre.states.get(iid)
         if arr is not None and bar_i < len(arr) and int(arr[bar_i]) > 0:
             total += float(w.get(iid, 0.0))
@@ -471,7 +493,7 @@ def compute_ind_score(
     if not w:
         return None
     total = 0.0
-    for iid in INDICATOR_IDS:
+    for iid in INDICATOR_CORE_IDS:
         if entry_indicators.get(f"IND_{iid}") == "BULL":
             total += float(w.get(iid, 0.0))
     return total
@@ -671,6 +693,145 @@ def _obv(close: np.ndarray, vol: np.ndarray) -> np.ndarray:
         else:
             obv[i] = obv[i - 1]
     return obv
+
+
+def _wma(x: np.ndarray, period: int) -> np.ndarray:
+    """Linearly Weighted Moving Average (most weight on newest bar)."""
+    n = len(x)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if period <= 0 or n < period:
+        return out
+    w = np.arange(1, period + 1, dtype=np.float64)
+    wsum = float(w.sum())
+    # convolve kernel places highest weight on the newest sample in each window
+    conv = np.convolve(x, w / wsum, mode="valid")
+    out[period - 1 :] = conv
+    return out
+
+
+def _vma(close: np.ndarray, vol: np.ndarray, period: int) -> np.ndarray:
+    """Volume-Weighted Moving Average (Fidelity VMA)."""
+    cv = close * np.maximum(vol, 0.0)
+    num = pd.Series(cv).rolling(period, min_periods=period).sum().to_numpy()
+    den = pd.Series(np.maximum(vol, 0.0)).rolling(period, min_periods=period).sum().to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(den > 1e-12, num / den, np.nan)
+
+
+def _wilder_ma(x: np.ndarray, period: int) -> np.ndarray:
+    """Wilder’s Smoothing / RMA (alpha = 1/period; slower than EMA of same period)."""
+    n = len(x)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if period <= 0 or n < period:
+        return out
+    alpha = 1.0 / float(period)
+    out[period - 1] = float(np.mean(x[:period]))
+    for i in range(period, n):
+        prev = out[i - 1]
+        xi = x[i]
+        if np.isnan(xi):
+            out[i] = prev
+        else:
+            out[i] = alpha * xi + (1.0 - alpha) * prev
+    return out
+
+
+def _stochrsi(close: np.ndarray, rsi_period: int = 14, stoch_period: int = 14) -> np.ndarray:
+    """Stochastic RSI (0–100): where RSI sits in its stoch_period high/low range."""
+    rsi = _rsi(close, rsi_period)
+    lowest = pd.Series(rsi).rolling(stoch_period, min_periods=stoch_period).min().to_numpy()
+    highest = pd.Series(rsi).rolling(stoch_period, min_periods=stoch_period).max().to_numpy()
+    rng = highest - lowest
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(rng > 1e-12, (rsi - lowest) / rng * 100.0, 50.0)
+    return np.where(np.isfinite(out), out, 50.0)
+
+
+def _ultosc(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    p1: int = 7,
+    p2: int = 14,
+    p3: int = 28,
+) -> np.ndarray:
+    """Williams Ultimate Oscillator (defaults 7 / 14 / 28)."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < 2:
+        return out
+    prev = np.roll(close, 1)
+    prev[0] = close[0]
+    bp = close - np.minimum(low, prev)
+    tr = np.maximum(high, prev) - np.minimum(low, prev)
+    bp_s = pd.Series(bp)
+    tr_s = pd.Series(tr)
+    avg1 = bp_s.rolling(p1, min_periods=p1).sum() / tr_s.rolling(p1, min_periods=p1).sum().replace(0, np.nan)
+    avg2 = bp_s.rolling(p2, min_periods=p2).sum() / tr_s.rolling(p2, min_periods=p2).sum().replace(0, np.nan)
+    avg3 = bp_s.rolling(p3, min_periods=p3).sum() / tr_s.rolling(p3, min_periods=p3).sum().replace(0, np.nan)
+    uo = 100.0 * (4.0 * avg1 + 2.0 * avg2 + avg3) / 7.0
+    return uo.to_numpy(dtype=np.float64)
+
+
+def _chaikin_volatility(
+    high: np.ndarray,
+    low: np.ndarray,
+    ema_period: int = 10,
+    roc_period: int = 10,
+) -> np.ndarray:
+    """Chaikin Volatility: % ROC of EMA(high−low)."""
+    hl = high - low
+    ema_hl = _ema(hl, ema_period)
+    n = len(hl)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if roc_period <= 0 or n <= roc_period:
+        return out
+    base = ema_hl[:-roc_period]
+    cur = ema_hl[roc_period:]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[roc_period:] = np.where(
+            np.abs(base) > 1e-12,
+            (cur - base) / np.abs(base) * 100.0,
+            0.0,
+        )
+    return out
+
+
+def _ad_line(high: np.ndarray, low: np.ndarray, close: np.ndarray, vol: np.ndarray) -> np.ndarray:
+    """Accumulation/Distribution line (CLV × volume, cumulative)."""
+    n = len(close)
+    ad = np.zeros(n, dtype=np.float64)
+    for i in range(n):
+        hl = high[i] - low[i]
+        if hl > 1e-12:
+            mfm = ((close[i] - low[i]) - (high[i] - close[i])) / hl
+        else:
+            mfm = 0.0
+        mfv = mfm * max(float(vol[i]), 0.0)
+        ad[i] = (ad[i - 1] if i else 0.0) + mfv
+    return ad
+
+
+def _stderr_linreg(close: np.ndarray, period: int = 20) -> np.ndarray:
+    """Standard Error of the linear-regression estimate over ``period`` closes."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if period < 3 or n < period:
+        return out
+    x = np.arange(period, dtype=np.float64)
+    x_mean = float(x.mean())
+    ssx = float(((x - x_mean) ** 2).sum())
+    if ssx < 1e-18:
+        return out
+    df = max(period - 2, 1)
+    for i in range(period - 1, n):
+        y = close[i - period + 1 : i + 1]
+        y_mean = float(y.mean())
+        slope = float(((x - x_mean) * (y - y_mean)).sum()) / ssx
+        intercept = y_mean - slope * x_mean
+        resid = y - (intercept + slope * x)
+        out[i] = float(np.sqrt(float((resid ** 2).sum()) / df))
+    return out
 
 
 def _state_tri(x: np.ndarray, bull: np.ndarray, bear: np.ndarray) -> np.ndarray:
@@ -1438,10 +1599,13 @@ def _trade_aligned_diff_series(
     *,
     for_short: bool,
 ) -> np.ndarray:
-    """Per-bar trade-aligned IND_DIFF (matches ``snapshot_for_entry`` / ``aligned_bull_bear_diff``)."""
+    """Per-bar trade-aligned IND_DIFF (matches ``snapshot_for_entry`` / ``aligned_bull_bear_diff``).
+
+    Tallies ``INDICATOR_CORE_IDS`` only so OHLC add-ons do not shift historical DIFF gates.
+    """
     pos = np.zeros(n, dtype=np.int32)
     neg = np.zeros(n, dtype=np.int32)
-    for iid in INDICATOR_IDS:
+    for iid in INDICATOR_CORE_IDS:
         arr = states.get(iid)
         if arr is None or len(arr) != n:
             continue
@@ -1460,7 +1624,7 @@ def _trade_aligned_bull_series(
 ) -> np.ndarray:
     """Per-bar trade-aligned IND_ENTRY_BULL_N (matches ``snapshot_for_entry``)."""
     bull = np.zeros(n, dtype=np.int16)
-    for iid in INDICATOR_IDS:
+    for iid in INDICATOR_CORE_IDS:
         arr = states.get(iid)
         if arr is None or len(arr) != n:
             continue
@@ -1472,9 +1636,9 @@ def _trade_aligned_bull_series(
 
 
 def _neutral_count_series(states: dict[str, np.ndarray], n: int) -> np.ndarray:
-    """Per-bar IND_ENTRY_NEUTRAL_N (side-independent)."""
+    """Per-bar IND_ENTRY_NEUTRAL_N (side-independent; core ids only)."""
     neut = np.zeros(n, dtype=np.int16)
-    for iid in INDICATOR_IDS:
+    for iid in INDICATOR_CORE_IDS:
         arr = states.get(iid)
         if arr is None or len(arr) != n:
             continue
@@ -1555,6 +1719,58 @@ def _build_precomputed(df: pd.DataFrame) -> Optional[_Precomputed]:
     built["ATR_RATIO"] = _state_tri(z, atr_ratio > atr_med * 1.15, atr_ratio < atr_med * 0.85)
     built["OBV_SLOPE10"] = _state_tri(z, obv_slope > 0, obv_slope < 0)
     built["VOL_SURGE"] = _state_tri(z, vol_surge > 1.5, vol_surge < 0.6)
+
+    # --- OHLC-easy add-ons (exported; excluded from DIFF tallies) ---
+    stochrsi = _stochrsi(c, 14, 14)
+    built["STOCHRSI14"] = _state_tri(z, stochrsi > 50.0, stochrsi < 50.0)
+    ult = _ultosc(h, l, c, 7, 14, 28)
+    ultf = np.nan_to_num(ult, nan=50.0)
+    built["ULTOSC"] = _state_tri(z, ultf > 50.0, ultf < 50.0)
+    wma20 = _wma(c, 20)
+    built["PRICE_OVER_WMA20"] = _state_tri(
+        z,
+        np.isfinite(wma20) & (c > wma20),
+        np.isfinite(wma20) & (c < wma20),
+    )
+    vma20 = _vma(c, v, 20)
+    built["PRICE_OVER_VMA20"] = _state_tri(
+        z,
+        np.isfinite(vma20) & (c > vma20),
+        np.isfinite(vma20) & (c < vma20),
+    )
+    wilder14 = _wilder_ma(c, 14)
+    built["PRICE_OVER_WILDERMA14"] = _state_tri(
+        z,
+        np.isfinite(wilder14) & (c > wilder14),
+        np.isfinite(wilder14) & (c < wilder14),
+    )
+    cv_fast = _chaikin_volatility(h, l, ema_period=10, roc_period=10)
+    cv_fast_f = np.nan_to_num(cv_fast, nan=0.0)
+    built["CHAIKIN_VOL_FAST"] = _state_tri(z, cv_fast_f > 0.0, cv_fast_f < 0.0)
+    cv_slow = _chaikin_volatility(h, l, ema_period=21, roc_period=21)
+    cv_slow_f = np.nan_to_num(cv_slow, nan=0.0)
+    built["CHAIKIN_VOL_SLOW"] = _state_tri(z, cv_slow_f > 0.0, cv_slow_f < 0.0)
+    vol_avg10 = pd.Series(v).rolling(10, min_periods=10).mean().to_numpy()
+    vol_avg30 = pd.Series(v).rolling(30, min_periods=30).mean().to_numpy()
+    vol_avg90 = pd.Series(v).rolling(90, min_periods=90).mean().to_numpy()
+    today_avg10 = v / np.maximum(vol_avg10, 1e-12)
+    today_avg30 = v / np.maximum(vol_avg30, 1e-12)
+    today_avg90 = v / np.maximum(vol_avg90, 1e-12)
+    avg10_avg90 = vol_avg10 / np.maximum(vol_avg90, 1e-12)
+    built["VOL_TODAY_AVG10"] = _state_tri(z, today_avg10 > 1.0, today_avg10 < 1.0)
+    built["VOL_TODAY_AVG30"] = _state_tri(z, today_avg30 > 1.0, today_avg30 < 1.0)
+    built["VOL_TODAY_AVG90"] = _state_tri(z, today_avg90 > 1.0, today_avg90 < 1.0)
+    built["VOL_AVG10_AVG90"] = _state_tri(z, avg10_avg90 > 1.0, avg10_avg90 < 1.0)
+    ad = _ad_line(h, l, c, v)
+    ad_slope = pd.Series(ad).diff(10).to_numpy()
+    built["AD_SLOPE10"] = _state_tri(z, ad_slope > 0, ad_slope < 0)
+    stderr = _stderr_linreg(c, 20)
+    stderr_med = pd.Series(stderr).rolling(60, min_periods=60).median().to_numpy()
+    built["STDERR20"] = _state_tri(
+        z,
+        np.isfinite(stderr) & np.isfinite(stderr_med) & (stderr > stderr_med * 1.15),
+        np.isfinite(stderr) & np.isfinite(stderr_med) & (stderr < stderr_med * 0.85),
+    )
 
     built["DOUBLE_BOTTOM"] = _double_bottom_state(l, h, c, n, 80)
     built["DOUBLE_TOP"] = _double_top_state(h, l, c, n, 80)
@@ -1640,7 +1856,7 @@ def format_indicator_csv_row(entry_indicators: dict[str, str]) -> list[str]:
         row: list[str] = []
         for _iid in INDICATOR_IDS:
             row.extend(["NEUTRAL", "", "0"])
-        row.extend(["0", "0", "0", str(len(INDICATOR_IDS)), ""])
+        row.extend(["0", "0", "0", str(len(INDICATOR_CORE_IDS)), ""])
         row.extend([""] * len(IND_TC_EXPORT_COLS))
         return row
     apply_ind_score_to_entry_indicators(entry_indicators)
@@ -1652,7 +1868,7 @@ def format_indicator_csv_row(entry_indicators: dict[str, str]) -> list[str]:
     row.append(entry_indicators.get("IND_ENTRY_BULL_N", "0"))
     row.append(entry_indicators.get("IND_ENTRY_BEAR_N", "0"))
     row.append(entry_indicators.get("IND_DIFF", "0"))
-    row.append(entry_indicators.get("IND_ENTRY_NEUTRAL_N", str(len(INDICATOR_IDS))))
+    row.append(entry_indicators.get("IND_ENTRY_NEUTRAL_N", str(len(INDICATOR_CORE_IDS))))
     row.append(entry_indicators.get("IND_SCORE", ""))
     for col in IND_TC_EXPORT_COLS:
         row.append(entry_indicators.get(col, ""))
@@ -1679,6 +1895,8 @@ def snapshot_for_entry(pre: _Precomputed, entry_i: int, side: str) -> dict[str, 
             out[f"IND_{iid}_COUNT"] = str(int(cnt_arr[entry_i]))
         else:
             out[f"IND_{iid}_COUNT"] = "1" if st > 0 else "0"
+        if iid not in INDICATOR_CORE_IDS:
+            continue
         if st == 0:
             neut_n += 1
         elif st > 0:

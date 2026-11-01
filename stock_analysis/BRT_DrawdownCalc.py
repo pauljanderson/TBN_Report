@@ -295,7 +295,7 @@ def _gross_holdings_at(
 
 
 def _normalize_aggressive_sell(mode: Optional[str]) -> str:
-    """false | average | losers | winners (case-insensitive)."""
+    """false | average | losers | winners | fifo (case-insensitive)."""
     s = str(mode or "false").strip().lower()
     if s in ("false", "off", "0", "none", ""):
         return "false"
@@ -305,6 +305,8 @@ def _normalize_aggressive_sell(mode: Optional[str]) -> str:
         return "losers"
     if s in ("winners", "winner", "best"):
         return "winners"
+    if s in ("fifo", "first", "oldest"):
+        return "fifo"
     return "false"
 
 
@@ -444,7 +446,6 @@ def _aggressive_sell_for_amount(
             freed += sell_sh * px
         return cash, freed
 
-    reverse = mode_n == "winners"
     ranked: list[tuple[int, dict, float, float]] = []
     for hid, h in list(holdings.items()):
         px = _get_px(h["symbol"], mark_date, h["entry"], None)
@@ -452,7 +453,10 @@ def _aggressive_sell_for_amount(
         if mv <= 0.0:
             continue
         ranked.append((hid, h, px, _holding_unrealized_pct(h, px)))
-    ranked.sort(key=lambda x: x[3], reverse=reverse)
+    if mode_n == "fifo":
+        ranked.sort(key=lambda x: x[0])
+    else:
+        ranked.sort(key=lambda x: x[3], reverse=(mode_n == "winners"))
 
     for hid, h, px, _pct in ranked:
         if freed >= need - 1e-6:
@@ -505,7 +509,7 @@ def _simulate_aggressive_share_level(
     2× equity budget instead of each open name taking a full slot (which blew up with 20+
     concurrent positions).
 
-    When ``aggressive_sell`` is average|losers|winners, existing holdings are sold at the
+    When ``aggressive_sell`` is average|losers|winners|fifo, existing holdings are sold at the
     new entry open to free gross (and cash if needed) before sizing the entrant.
 
     Margin interest accrues daily on ``max(0, -cash)``.

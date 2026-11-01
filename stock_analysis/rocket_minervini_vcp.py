@@ -997,6 +997,7 @@ def write_mvcp_outputs(
                 "TOTAL_PNL",
                 "SHEET_PNL",
                 "AVG_PNL_PCT",
+                "PROFIT_FACTOR",
                 "PCT_OF_TOTAL_PNL",
                 # Same names/order as BRT/YH/RS write_brt_summary (filled by write_analysis_artifacts).
                 "CURRENT_MARKET_CAP",
@@ -1019,6 +1020,12 @@ def write_mvcp_outputs(
             avg_pct = (sum(pnls) / len(pnls)) if pnls else 0.0
             med_pct = float(np.median(pnls)) if pnls else 0.0
             max_win = max(pnls) if pnls else 0.0
+            sum_wins = sum(r.pnl_dollars for r in rows if r.pnl_pct > 1e-9)
+            sum_losses = abs(sum(r.pnl_dollars for r in rows if r.pnl_pct < -1e-9))
+            if sum_losses > 0:
+                pf = sum_wins / sum_losses
+            else:
+                pf = sum_wins if sum_wins > 0 else 0.0
             first = _first_data_date(sym)
             years = 0.0
             if first and rows:
@@ -1049,6 +1056,7 @@ def write_mvcp_outputs(
                     f"{pnl:.2f}",
                     f"{pnl:.2f}",
                     f"{avg_pct:.2f}%",
+                    f"{pf:.2f}",
                     f"{(100.0 * pnl / total_pnl_all) if total_pnl_all else 0.0:.1f}%",
                     "",  # CURRENT_MARKET_CAP (yfinance via write_analysis_artifacts)
                     "",  # SECTOR

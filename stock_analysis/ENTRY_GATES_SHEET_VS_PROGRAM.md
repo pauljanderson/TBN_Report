@@ -70,7 +70,7 @@ The sheet **AL** column only encodes **three** predicates (§1). The program may
 | Row-local / TTL (`entry_eval_mode`, `sheet_magic_touch`, `pending_max_bars`) | Touch / timing | **Not** in **AL** |
 | Bullish candle | **AK** | Program uses OHLC; does not read **AK** |
 | `entry_close_min_range_position` | Optional bar-position idea | **Not** in **AL** |
-| `growth_filter_enabled` / `growth_bars` | **AZ** / **BB** area | Sheet uses high-water *AX*/*AY*/*AZ*/*BA*; Python uses close vs close *N* bars back—parity not automatic |
+| `growth_filter_enabled` / `growth_bars` | **AZ** / **BB** area | Sheet uses high-water *AX*/*AY*/*AZ*/*BA*; Python uses close vs close *N* bars back—parity not automatic. **Missing lookback Close:** engine **FAIL**s (need a real `Close[eval−N]`; no $0 coerce). Sheet grids that pad pre-IPO OHLC as **$0** can still show AZ TRUE — intentional economics-over-parity divergence (2026-08-22). |
 | `tight_range_enabled` | Not **AI** | Extra program-only filter |
 | Zone-eligible / “DI” logic | **BM** + **BH:BI** history | When `sheet_di_gate_enabled` is on; **not** in **AL** |
 | (removed) `sheet_active_zone_gates` + DE/DF/DG ladder prefetch | — | **Deleted from `rocket_brt.py`** — compact sheet has no Zone 1–10 ladder columns |

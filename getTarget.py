@@ -5,14 +5,18 @@ Each symbol uses a **system** profile: RL (Rocket Launcher / portfolio_audit.awk
 BRT (backtest percent or ATR live params), IND (deprecated; manual/historical support),
 YH (year-high zone backtest percent params), MTS (Magic Touch sheet parity),
 WPBR, RS (Relative Strength; SPY_COMPARE + TC Strong), SB (StockBee Momentum Burst),
-MVCP (Minervini Volatility Contraction Pattern), CS (CAN SLIM price-legs),
-or WRL (Weekly Range / Swing structural targets).
+MVCP (Minervini Volatility Contraction Pattern; retired sleeve — still supported if Open lots remain), CS (CAN SLIM price-legs),
+WRL (Weekly Range / Swing — house target = swing high full exit), VZ (Volume Zone break/retest),
+or RSI (Relative Strength Index 14 — implied what-if closes for RSI≥70 and roll-from-max; fill next open).
 
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
+  That is the input book — DailyRun/publish must not drop rows you added.
+  getTarget writes getTarget_output.csv only (never overwrites the positions file).
   entry_price may be blank to use CSV Open on the entry date.
-  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, or WRL (case-insensitive).
+  system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP (retired), CS, WRL, VZ, or RSI (case-insensitive).
   Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
-  RANGE/SWING/WEEKLY_RANGE→WRL.
+  RANGE/SWING/WEEKLY_RANGE→WRL, VOLUME_ZONE/VOL_ZONE→VZ,
+  RSINDEX/WILDER_RSI/RELATIVE_STRENGTH_INDEX→RSI (not RS — that is vs-SPY).
 
 Qull / Kell use EMA trails (not fixed target_pct); they are not mapped here yet.
 
@@ -21,12 +25,14 @@ purchase_date is not in the symbol CSV yet (e.g. bought today before files updat
 Use --default-atr-pct when ATR mode needs a proxy % and history is missing.
 
 CLI sets defaults per system, e.g.:
-  --brt-atr-target 8 --ind-atr-target 2.4 --rl-target-pct 1.20 --rl-use-sma50
+  --brt-atr-target 8 --ind-atr-target 2.4
+  --rl-no-sma50 --rl-scale-gain 0.20 --rl-entry-target-pct 0.40
   --sb-target-pct 1.097 --mvcp-target-pct 1.25 --cs-target-pct 1.20
 """
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -53,10 +59,175 @@ _SYSTEM_ALIASES = {
     "RANGE": "WRL",
     "SWING": "WRL",
     "WEEKLY_RANGE": "WRL",
+    "VOLUME_ZONE": "VZ",
+    "VOL_ZONE": "VZ",
+    "VOLZONE": "VZ",
+    "RSINDEX": "RSI",
+    "WILDER_RSI": "RSI",
+    "RELATIVE_STRENGTH_INDEX": "RSI",
 }
 
-# Percent/ATR live systems (RL is separate). Order matches help text.
+# Percent/ATR live systems (RL, VZ, WRL, and RSI are separate). Order matches help text.
 PERCENT_ATR_SYSTEMS = ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "CS")
+
+# Dollar fields written to CSV / console (ceil to nearest cent at output time).
+_DOLLAR_OUTPUT_KEYS = frozenset(
+    {
+        "EntryPrice",
+        "CurrentPrice",
+        "SMA20",
+        "SMA50",
+        "SMAStopLevel",
+        "TargetPrice",
+        "Target2Price",
+        "LimitPrice",
+        "TargetPriceYesterday",
+        "StopInitial",
+        "StopTrailing",
+        "PrevStopFloor",
+        "ATR",
+        "ATRScheduleProgressPrice",
+        "ATRScheduleExitPrice",
+        "SignalLow",
+        "RangeHigh",
+        "RangeLow",
+        "SwingHigh",
+        "SwingLow",
+        "vz_zone_lo",
+        "vz_signal_entry_price",
+    }
+)
+
+
+def _ceil_cent(value: Optional[float]) -> Optional[float]:
+    """Round dollar amounts up to the nearest cent ($0.01)."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return value  # type: ignore[return-value]
+    if pd.isna(v) or not math.isfinite(v):
+        return value
+    return math.ceil(v * 100.0) / 100.0
+
+
+def _format_dollar(value: Optional[float]) -> str:
+    rounded = _ceil_cent(value)
+    if rounded is None or (isinstance(rounded, float) and pd.isna(rounded)):
+        return "NaN"
+    return f"{rounded:.2f}"
+
+
+def _apply_dollar_rounding(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    for key in _DOLLAR_OUTPUT_KEYS:
+        if key in out and out[key] is not None:
+            rounded = _ceil_cent(out[key])
+            if rounded is not None:
+                out[key] = rounded
+    return out
+
+
+def _live_style_share_fields(
+    *,
+    symbol: str,
+    system: str,
+    paid_fill: bool,
+    entry_price: Optional[float],
+    stop: Any,
+    payload: dict[str, Any],
+    current_price: Any,
+    df: Optional[pd.DataFrame],
+    as_of_effective: Optional[pd.Timestamp],
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Official live-style size: exact NNN after paid fill, range if fill unknown."""
+    try:
+        from stock_analysis.live_style_sizing import (
+            ensure_account_json,
+            size_share_range,
+            size_trade,
+        )
+    except ImportError:
+        from live_style_sizing import (  # type: ignore
+            ensure_account_json,
+            size_share_range,
+            size_trade,
+        )
+
+    acct = ensure_account_json()
+    asof = as_of_effective.date() if as_of_effective is not None else None
+    stop_f: Optional[float]
+    try:
+        stop_f = float(stop) if stop is not None and pd.notna(stop) else None
+    except (TypeError, ValueError):
+        stop_f = None
+
+    if paid_fill and entry_price:
+        sz = size_trade(
+            symbol=symbol,
+            system=str(system or ""),
+            entry=float(entry_price),
+            stop=stop_f,
+            bom_equity=acct.bom_equity,
+            current_equity=acct.current_equity,
+            open_notional_same_name=0.0,
+            asof=asof,
+            data_dir=data_dir,
+        )
+        return {
+            "SuggestedShares": int(round(sz.shares)) if sz.sized and sz.shares > 0 else None,
+            "SuggestedNotional": round(sz.notional, 2) if sz.sized else None,
+            "RiskDollar": round(sz.risk_dollar, 2),
+            "SizeLid": sz.binding_lid or sz.skip_reason or None,
+            "SuggestedSharesKind": "exact" if sz.sized else None,
+            "FillBand": _format_dollar(entry_price),
+        }
+
+    size_row: dict[str, Any] = {
+        "STOP_LOSS": stop_f,
+        "SIGNAL_LOW": payload.get("SignalLow"),
+        "ZONE_LO": payload.get("vz_zone_lo"),
+        "SWING_LOW": payload.get("SwingLow"),
+        "CLOSE": current_price,
+        "CURRENT_PRICE": current_price,
+        "ATR": payload.get("ATR"),
+        "ENTRY_OPEN_REF": entry_price,
+    }
+    if df is not None and as_of_effective is not None and as_of_effective in df.index:
+        bar = df.loc[as_of_effective]
+        if "High" in df.columns:
+            size_row["HIGH"] = bar.get("High")
+        if "Low" in df.columns:
+            size_row["LOW"] = bar.get("Low")
+        if "Open" in df.columns and size_row.get("ENTRY_OPEN_REF") is None:
+            size_row["ENTRY_OPEN_REF"] = bar.get("Open")
+    packed = size_share_range(
+        symbol=symbol,
+        system=str(system or ""),
+        row=size_row,
+        bom_equity=acct.bom_equity,
+        current_equity=acct.current_equity,
+        open_notional_same_name=0.0,
+        asof=asof,
+        data_dir=data_dir,
+    )
+    shares_txt = packed.get("SUGGESTED_SHARES")
+    notional_txt = packed.get("SUGGESTED_NOTIONAL")
+    risk_raw = packed.get("RISK_DOLLAR")
+    try:
+        risk_f = float(str(risk_raw).replace(",", "").replace("$", "")) if risk_raw else None
+    except (TypeError, ValueError):
+        risk_f = None
+    return {
+        "SuggestedShares": shares_txt if shares_txt and shares_txt != "—" else None,
+        "SuggestedNotional": notional_txt if notional_txt and notional_txt != "—" else None,
+        "RiskDollar": round(risk_f, 2) if risk_f is not None else None,
+        "SizeLid": packed.get("SIZE_LID") or packed.get("skip_reason") or None,
+        "SuggestedSharesKind": "range" if shares_txt and shares_txt != "—" else None,
+        "FillBand": packed.get("FILL_BAND"),
+    }
 
 
 def _normalize_system(system: str) -> str:
@@ -69,7 +240,7 @@ class PositionSpec:
     symbol: str
     purchase_date: str
     entry_price: Optional[float]
-    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL
+    system: str  # RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP, CS, WRL, VZ, RSI
 
 
 @dataclass
@@ -85,10 +256,16 @@ class AtrProfile:
 
 @dataclass
 class RlProfile:
-  # portfolio_audit.awk defaults
+    # House DailyRun freeze 2026-09-27: no SMA target. Sell 80% at +20% from entry,
+    # raise the leftover stop to the buy, leftover target +40%. rl_target_pct remains
+    # the old SMA50 multiplier and is used only when use_sma50_target is on.
     rl_target_pct: float = 1.20
     rl_stop_pct: float = 0.934
-    use_sma50_target: bool = True
+    use_sma50_target: bool = False
+    rl_scale_gain: float = 0.20
+    rl_scale_sell_frac: float = 0.80
+    rl_scale_stop_gain: float = 0.0
+    rl_entry_target_pct: float = 0.40
     rl_trail_profit: float = 0.0
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
@@ -107,6 +284,41 @@ class PercentProfile:
     # When stop_anchor=signal_low but signal Low is unavailable (no CSV / synthetic entry).
     # 0 = fall back to entry * stop_pct. SB uses 0.922 (burst_max_risk ≈ 7.8%).
     fallback_stop_pct: float = 0.0
+
+
+@dataclass
+class VzProfile:
+    """Volume Zone live stop/target (research freeze EXIT_atr4_s05_r15_ts20)."""
+
+    exit_name: str = "EXIT_atr4_s05_r15_ts20"
+    exit_bars: int = 20
+    target_r: float = 1.5
+    stop_atr_buffer: float = 0.5
+    lookback_days: int = 126
+    retest_window: int = 63
+    retest_eps_pct: float = 0.005
+    entry_on: str = "next_open"
+    min_touches_before_entry: int = 1
+    min_atr_pct_at_entry: float = 4.0
+    require_hvn_overlap: bool = False  # house freeze OFF (DualPaul78+764 HOLD; reconstruct HVN only if freeze on)
+    trade_side: str = "long"  # long | short | both
+    # House adopt 20260821: skip new entries ≤N calendar days after TARGET exit (parity with run_vz).
+    cooldown_after_target_days: int = 10
+
+
+@dataclass
+class RsiProfile:
+    """Relative Strength Index live exit (house DailyRun freeze). No $ stop/target."""
+
+    rsi_ob: float = 70.0
+    rsi_os: float = 30.0
+    rsi_exit: float = 70.0
+    rsi_max_trigger: float = 60.0
+    rsi_min_atr_pct: float = 2.93
+    rsi_time_stop_days: int = 20
+    rsi_roll_from_max: float = 8.0
+    rsi_entry_on: str = "next_open"
+    rsi_min_dist_to_52w_high_pct_at_trigger: float = 0.0  # off
 
 
 @dataclass
@@ -305,7 +517,7 @@ def _apply_stop_floor(
         if float(stop_trailing) < float(prev_floor):
             print(
                 f"[WARN] {sym}: computed StopTrailing would decrease "
-                f"({float(stop_trailing_raw):.4f} -> floor {float(prev_floor):.4f}); keeping floor."
+                f"({_format_dollar(float(stop_trailing_raw))} -> floor {_format_dollar(float(prev_floor))}); keeping floor."
             )
             stop_trailing = float(prev_floor)
             stop_floor_applied = True
@@ -442,6 +654,78 @@ def compute_atr_system(
     }
 
 
+def _rl_exit_levels(
+    entry_price: float,
+    stop_initial: float,
+    max_high: float,
+    profile: RlProfile,
+    sma50_as_of: float,
+    sma50_signal: float,
+) -> dict[str, Any]:
+    """Next live stop and target for one open Rocket Launcher lot.
+
+    Frozen default: until the high reaches +20%, the working target is that +20%
+    sale (80% of the original shares) and the stop stays the original stop.
+    Once that high has printed, the leftover stop moves to the buy if that is
+    tighter, and the working target is +40% on the remainder. SMA50 × rl_target_pct
+    is used only when use_sma50_target is on.
+    """
+    scale_gain = float(profile.rl_scale_gain or 0.0)
+    sell_frac = float(profile.rl_scale_sell_frac or 0.0)
+    entry_tgt = float(profile.rl_entry_target_pct or 0.0)
+    scale_px = entry_price * (1.0 + scale_gain) if scale_gain > 0 and entry_price > 0 else None
+    runner_px = entry_price * (1.0 + entry_tgt) if entry_tgt > 0 and entry_price > 0 else None
+
+    if profile.use_sma50_target and np_finite(sma50_as_of):
+        target_price = sma50_as_of * profile.rl_target_pct
+        target_note = "SMA50(as_of)"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+        if profile.rl_trail_profit2 > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit2):
+            trail_tier = 2
+            stop_trailing = entry_price * (1.0 + profile.rl_trail_stop2)
+        elif profile.rl_trail_profit > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit):
+            trail_tier = 1
+            stop_trailing = entry_price * (1.0 + profile.rl_trail_stop)
+    elif profile.use_sma50_target and np_finite(sma50_signal):
+        target_price = sma50_signal * profile.rl_target_pct
+        target_note = "SMA50(signal_bar)"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+    elif scale_px is not None and max_high >= scale_px:
+        raised = entry_price * (1.0 + float(profile.rl_scale_stop_gain or 0.0))
+        stop_trailing = raised if raised > stop_initial else stop_initial
+        target_price = runner_px if runner_px is not None else scale_px
+        target_note = "runner_40_stop_at_entry"
+        trail_tier = 1
+        scale_hit = True
+    elif scale_px is not None:
+        target_price = scale_px
+        target_note = "scale_80_at_20"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+    else:
+        target_price = entry_price * profile.rl_target_pct
+        target_note = "entry"
+        stop_trailing = stop_initial
+        trail_tier = 0
+        scale_hit = False
+
+    return {
+        "TargetPrice": target_price,
+        "TargetNote": target_note,
+        "StopTrailing": stop_trailing,
+        "RL_TrailTier": trail_tier,
+        "RL_ScalePrice": scale_px,
+        "RL_RunnerTarget": runner_px,
+        "RL_ScaleSellFrac": sell_frac if scale_px is not None else None,
+        "RL_ScaleHit": scale_hit,
+    }
+
+
 def compute_rl_system(
     sym: str,
     df: pd.DataFrame,
@@ -476,26 +760,12 @@ def compute_rl_system(
         else float("nan")
     )
 
-    if profile.use_sma50_target and np_finite(sma50_as_of):
-        target_price = sma50_as_of * profile.rl_target_pct
-        target_note = "SMA50(as_of)"
-    elif profile.use_sma50_target and np_finite(sma50_signal):
-        target_price = sma50_signal * profile.rl_target_pct
-        target_note = "SMA50(signal_bar)"
-    else:
-        target_price = entry_price * profile.rl_target_pct
-        target_note = "entry"
-
     max_high = _max_high_since_entry(df, entry_ts, entry_price, as_of_effective, entry_in_data)
-
-    trail_tier = 0
-    stop_trailing = stop_initial
-    if profile.rl_trail_profit2 > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit2):
-        trail_tier = 2
-        stop_trailing = entry_price * (1.0 + profile.rl_trail_stop2)
-    elif profile.rl_trail_profit > 0 and max_high >= entry_price * (1.0 + profile.rl_trail_profit):
-        trail_tier = 1
-        stop_trailing = entry_price * (1.0 + profile.rl_trail_stop)
+    levels = _rl_exit_levels(entry_price, stop_initial, max_high, profile, sma50_as_of, sma50_signal)
+    target_price = levels["TargetPrice"]
+    target_note = levels["TargetNote"]
+    stop_trailing = levels["StopTrailing"]
+    trail_tier = levels["RL_TrailTier"]
 
     atr_at_entry = None
     if entry_in_data and entry_ts in df.index and "ATR" in df.columns:
@@ -512,6 +782,10 @@ def compute_rl_system(
         "TargetNote": target_note,
         "StopInitial": stop_initial,
         "StopTrailing": stop_trailing,
+        "RL_ScalePrice": levels["RL_ScalePrice"],
+        "RL_RunnerTarget": levels["RL_RunnerTarget"],
+        "RL_ScaleSellFrac": levels["RL_ScaleSellFrac"],
+        "RL_ScaleHit": levels["RL_ScaleHit"],
         "atr_target": None,
         "atr_stop": None,
         "atr_increment": None,
@@ -690,6 +964,386 @@ def _entry_stop_pct(profile: PercentProfile) -> float:
     return float(profile.stop_pct)
 
 
+def _df_for_vz(df: pd.DataFrame) -> pd.DataFrame:
+    """OHLC frame with a Date column (vol_zone helpers expect column, not index)."""
+    out = df.copy()
+    if "Date" not in out.columns:
+        out = out.reset_index()
+        if "Date" not in out.columns and out.columns.size:
+            if out.columns[0] != "Date":
+                out = out.rename(columns={out.columns[0]: "Date"})
+    out["Date"] = pd.to_datetime(out["Date"])
+    return out.sort_values("Date").reset_index(drop=True)
+
+
+def _match_vz_signal(
+    sigs: list[Any],
+    df_vz: pd.DataFrame,
+    purchase_ts: pd.Timestamp,
+    exit_bars: int,
+) -> Optional[Any]:
+    """Pick the research-freeze signal that owns this open lot."""
+    if not sigs:
+        return None
+    purchase = pd.Timestamp(purchase_ts).normalize()
+    dates = pd.to_datetime(df_vz["Date"])
+    purchase_i: Optional[int] = None
+    hits = [i for i, d in enumerate(dates) if pd.Timestamp(d).normalize() == purchase]
+    if hits:
+        purchase_i = int(hits[0])
+    else:
+        earlier = [i for i, d in enumerate(dates) if pd.Timestamp(d).normalize() <= purchase]
+        if earlier:
+            purchase_i = int(earlier[-1])
+
+    exact = [s for s in sigs if pd.Timestamp(s.entry_date).normalize() == purchase]
+    if exact:
+        return exact[-1]
+
+    if purchase_i is None:
+        prior = [
+            s
+            for s in sigs
+            if pd.Timestamp(s.entry_date).normalize() <= purchase
+            and (purchase - pd.Timestamp(s.entry_date).normalize()).days <= int(exit_bars) + 5
+        ]
+        return max(prior, key=lambda s: pd.Timestamp(s.entry_date)) if prior else None
+
+    still_open = [
+        s
+        for s in sigs
+        if int(s.entry_idx) <= purchase_i
+        and (purchase_i - int(s.entry_idx)) <= int(exit_bars)
+    ]
+    if still_open:
+        return max(still_open, key=lambda s: int(s.entry_idx))
+    return None
+
+
+def compute_vz_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    profile: VzProfile,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """VZ live stop/target: zone.lo − stop_atr_buffer·ATR ; target = entry + target_r·R."""
+    try:
+        import sys
+        from dataclasses import replace as _dc_replace
+
+        _repo = Path(__file__).resolve().parent
+        if str(_repo) not in sys.path:
+            sys.path.insert(0, str(_repo))
+        from tools.vol_zone_break_retest import (  # type: ignore
+            RESEARCH_CANDIDATE_V2_RW63,
+            atr14,
+            build_zones,
+            normalize_trade_side_mode,
+            resolve_stop,
+            resolve_stop_short,
+            run_symbol_with_params,
+        )
+    except ImportError as e:
+        return {"error": f"VZ helpers unavailable: {e}"}
+
+    df_vz = _df_for_vz(df)
+    if len(df_vz) < 30:
+        return {"error": "VZ requires more OHLC history"}
+
+    params = _dc_replace(
+        RESEARCH_CANDIDATE_V2_RW63,
+        lookback_days=int(profile.lookback_days),
+        retest_window=int(profile.retest_window),
+        retest_eps_pct=float(profile.retest_eps_pct),
+        entry_on=str(profile.entry_on),  # type: ignore[arg-type]
+        min_touches_before_entry=int(profile.min_touches_before_entry),
+        first_retest_only=True,
+        zone_kinds=("HL",),
+        exit_bars=int(profile.exit_bars),
+        target_r=float(profile.target_r),
+        require_hvn_overlap=bool(getattr(profile, "require_hvn_overlap", False)),
+        trade_side=normalize_trade_side_mode(getattr(profile, "trade_side", "long")),
+    )
+    atr = atr14(df_vz)
+    zones = build_zones(df_vz, int(params.lookback_days))
+    sigs, _, _ = run_symbol_with_params(sym, df_vz, zones, atr, params)
+    thr = float(getattr(profile, "min_atr_pct_at_entry", 4.0) or 0.0)
+    if thr > 0 and sigs:
+        kept = []
+        for s in sigs:
+            i = int(s.entry_idx)
+            px = float(s.entry_price) or 0.0
+            a = float(atr[i]) if 0 <= i < len(atr) else 0.0
+            if px > 0 and (a / px * 100.0) >= thr:
+                kept.append(s)
+        sigs = kept
+    sig = _match_vz_signal(sigs, df_vz, entry_ts, int(profile.exit_bars))
+    if sig is None:
+        return {
+            "error": (
+                "VZ: no research-freeze signal near purchase "
+                f"(looked through {len(sigs)} signal(s))"
+            )
+        }
+
+    is_short = str(getattr(sig, "side", "long") or "long").lower() == "short"
+    zone_lo = next((float(z.lo) for z in zones if z.zone_id == sig.zone_id), float(sig.stop))
+    if is_short:
+        stop_px = float(resolve_stop_short(sig, atr, float(profile.stop_atr_buffer)))
+        risk = max(stop_px - float(entry_price), float(entry_price) * 0.005)
+        target_px = float(entry_price) - float(profile.target_r) * risk
+    else:
+        zone_lo = float(sig.stop)
+        stop_px = float(resolve_stop(sig, atr, float(profile.stop_atr_buffer)))
+        risk = max(float(entry_price) - stop_px, float(entry_price) * 0.005)
+        target_px = float(entry_price) + float(profile.target_r) * risk
+    atr_entry = (
+        float(atr[int(sig.entry_idx)])
+        if 0 <= int(sig.entry_idx) < len(atr)
+        else None
+    )
+
+    return {
+        "System": "VZ",
+        "EntrySource": entry_src,
+        "EntryInData": entry_in_data,
+        "TargetPrice": target_px,
+        "StopInitial": stop_px,
+        "StopTrailing": stop_px,
+        "ATR": atr_entry,
+        "ATRPct": (atr_entry / float(entry_price) * 100.0) if atr_entry and entry_price else None,
+        "SMA20": None,
+        "SMA50": None,
+        "VzMode": "zone",
+        "vz_exit_name": str(profile.exit_name),
+        "vz_target_r": float(profile.target_r),
+        "vz_stop_atr_buffer": float(profile.stop_atr_buffer),
+        "vz_exit_bars": int(profile.exit_bars),
+        "vz_zone_lo": zone_lo,
+        "vz_signal_date": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
+        "vz_signal_entry_date": str(pd.Timestamp(sig.entry_date).date()),
+        "vz_signal_entry_price": float(sig.entry_price),
+        "vz_trade_side": str(getattr(profile, "trade_side", "long") or "long"),
+        "SignalDate": str(pd.Timestamp(getattr(sig, "signal_date", sig.entry_date)).date()),
+        "AsOfUsed": str(pd.Timestamp(as_of_effective).date()) if as_of_effective is not None else None,
+    }
+
+
+def _rsi_finite(value: Any) -> Optional[float]:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(x) or not math.isfinite(x):
+        return None
+    return x
+
+
+def _rsi_target_note(profile: RsiProfile, hint: str = "ok") -> str:
+    exit_lvl = float(profile.rsi_exit)
+    if hint == "already":
+        return f"already RSI>={exit_lvl:g}; fill next open"
+    if hint == "ok":
+        return f"what-if close RSI>={exit_lvl:g}; fill next open"
+    if hint == "need_ohlc":
+        return f"need OHLC to invert RSI>={exit_lvl:g}"
+    return f"target {hint}"
+
+
+def _rsi_stop_note(profile: RsiProfile, hint: str) -> str:
+    roll = float(profile.rsi_roll_from_max or 0.0)
+    if hint == "ok":
+        return f"what-if close roll{roll:g}; fill next open"
+    if hint == "already":
+        return f"already roll{roll:g}; fill next open"
+    if hint == "need_ohlc":
+        return "need OHLC to invert roll stop"
+    return hint
+
+
+def compute_rsi_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    profile: RsiProfile,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """RSI live book: implied what-if closes for RSI>=exit and roll-from-max."""
+    try:
+        import sys
+
+        _repo = Path(__file__).resolve().parent
+        if str(_repo) not in sys.path:
+            sys.path.insert(0, str(_repo))
+        from stock_analysis.rocket_rsi import (  # type: ignore
+            _asof_session_complete,
+            _wilder_rsi14_avg_state,
+            invert_close_for_rsi_at_or_above,
+            invert_close_for_rsi_at_or_below,
+        )
+    except ImportError as e:
+        return {"error": f"RSI helpers unavailable: {e}"}
+
+    hist = df.loc[:as_of_effective] if as_of_effective is not None else df
+    if hist is None or hist.empty or "Close" not in hist.columns:
+        return {"error": "RSI requires Close history"}
+
+    close = hist["Close"].to_numpy(dtype=float)
+    rsi_arr, avg_g, avg_l = _wilder_rsi14_avg_state(close)
+    rsi_s = pd.Series(rsi_arr, index=hist.index)
+    rsi_now = _rsi_finite(rsi_s.iloc[-1]) if len(rsi_s) else None
+    last_close = _rsi_finite(close[-1]) if len(close) else None
+
+    if entry_ts in hist.index:
+        loc = hist.index.get_loc(entry_ts)
+        entry_i = int(loc.start if isinstance(loc, slice) else loc)
+    else:
+        later = hist.index[hist.index >= entry_ts]
+        if len(later):
+            loc = hist.index.get_loc(later[0])
+            entry_i = int(loc.start if isinstance(loc, slice) else loc)
+        else:
+            entry_i = 0
+
+    in_trade = rsi_s.iloc[entry_i:]
+    max_rsi = _rsi_finite(in_trade.max()) if len(in_trade) else None
+    roll_pts = None
+    if rsi_now is not None and max_rsi is not None:
+        roll_pts = max_rsi - rsi_now
+
+    days_held = max(
+        0,
+        int((pd.Timestamp(as_of_effective).normalize() - pd.Timestamp(entry_ts).normalize()).days),
+    )
+    ts_days = int(profile.rsi_time_stop_days or 0)
+    days_to_ts = max(0, ts_days - days_held) if ts_days > 0 else None
+    time_stop_date = (
+        str((pd.Timestamp(entry_ts).normalize() + pd.Timedelta(days=ts_days)).date())
+        if ts_days > 0
+        else None
+    )
+
+    roll_thr = float(profile.rsi_roll_from_max or 0.0)
+    exit_lvl = float(profile.rsi_exit)
+    armed = ""
+    if roll_thr > 0 and roll_pts is not None and roll_pts >= roll_thr:
+        armed = "ROLL8" if roll_thr == 8.0 else f"ROLL{roll_thr:g}"
+    elif rsi_now is not None and rsi_now >= exit_lvl:
+        armed = "RSI70" if exit_lvl == 70.0 else f"RSI{exit_lvl:g}"
+    elif ts_days > 0 and days_held >= ts_days:
+        armed = "TIMESTOP"
+
+    last = len(close) - 1
+    asof_d = pd.Timestamp(hist.index[-1]).date()
+    complete = _asof_session_complete(asof_d)
+    state_i = last if complete else max(0, last - 1)
+    prev_c = _rsi_finite(close[state_i])
+    ag = _rsi_finite(avg_g[state_i]) if state_i < len(avg_g) else None
+    al = _rsi_finite(avg_l[state_i]) if state_i < len(avg_l) else None
+
+    target_px: Optional[float] = None
+    target_hint = "rsi_not_ready"
+    if rsi_now is not None and rsi_now >= exit_lvl and last_close is not None:
+        target_px = last_close
+        target_hint = "already"
+    elif prev_c is not None and ag is not None and al is not None:
+        target_px, target_hint = invert_close_for_rsi_at_or_above(prev_c, ag, al, exit_lvl)
+
+    stop_px: Optional[float] = None
+    stop_hint = "n/a"
+    roll_floor = None
+    if roll_thr <= 0:
+        stop_hint = "roll_off"
+    elif max_rsi is None:
+        stop_hint = "no_max"
+    else:
+        roll_floor = max_rsi - roll_thr
+        if roll_floor <= 0:
+            stop_hint = "max_low"
+        elif rsi_now is not None and rsi_now <= roll_floor and last_close is not None:
+            stop_px = last_close
+            stop_hint = "already"
+        elif prev_c is not None and ag is not None and al is not None:
+            stop_px, stop_hint = invert_close_for_rsi_at_or_below(prev_c, ag, al, roll_floor)
+        else:
+            stop_hint = "rsi_not_ready"
+
+    return {
+        "System": "RSI",
+        "EntrySource": entry_src,
+        "EntryInData": entry_in_data,
+        "TargetPrice": target_px,
+        "TargetNote": _rsi_target_note(profile, target_hint),
+        "StopInitial": stop_px,
+        "StopTrailing": stop_px,
+        "StopNote": _rsi_stop_note(profile, stop_hint),
+        "ATR": None,
+        "ATRPct": None,
+        "SMA20": None,
+        "SMA50": None,
+        "RsiMode": "implied_close",
+        "rsi_ob": float(profile.rsi_ob),
+        "rsi_os": float(profile.rsi_os),
+        "rsi_exit": exit_lvl,
+        "rsi_max_trigger": float(profile.rsi_max_trigger),
+        "rsi_min_atr_pct": float(profile.rsi_min_atr_pct),
+        "rsi_time_stop_days": ts_days,
+        "rsi_roll_from_max": roll_thr,
+        "rsi_entry_on": str(profile.rsi_entry_on or "next_open"),
+        "Rsi14Now": round(rsi_now, 2) if rsi_now is not None else None,
+        "Rsi14MaxInTrade": round(max_rsi, 2) if max_rsi is not None else None,
+        "RsiRollPts": round(roll_pts, 2) if roll_pts is not None else None,
+        "RsiRollFloor": round(roll_floor, 2) if roll_floor is not None else None,
+        "RsiDaysHeld": days_held,
+        "RsiDaysToTimeStop": days_to_ts,
+        "RsiTimeStopDate": time_stop_date,
+        "RsiExitArmed": armed or None,
+        "RsiTargetHint": target_hint,
+        "RsiStopHint": stop_hint,
+        "AsOfUsed": str(pd.Timestamp(as_of_effective).date()) if as_of_effective is not None else None,
+    }
+
+
+def _rsi_price_only_payload(
+    entry_src: str,
+    profile: RsiProfile,
+) -> dict[str, Any]:
+    return {
+        "System": "RSI",
+        "EntrySource": entry_src,
+        "EntryInData": False,
+        "TargetPrice": None,
+        "TargetNote": _rsi_target_note(profile, "need_ohlc"),
+        "StopInitial": None,
+        "StopTrailing": None,
+        "StopNote": _rsi_stop_note(profile, "need_ohlc"),
+        "ATR": None,
+        "ATRPct": None,
+        "SMA20": None,
+        "SMA50": None,
+        "RsiMode": "implied_close",
+        "rsi_ob": float(profile.rsi_ob),
+        "rsi_os": float(profile.rsi_os),
+        "rsi_exit": float(profile.rsi_exit),
+        "rsi_max_trigger": float(profile.rsi_max_trigger),
+        "rsi_min_atr_pct": float(profile.rsi_min_atr_pct),
+        "rsi_time_stop_days": int(profile.rsi_time_stop_days or 0),
+        "rsi_roll_from_max": float(profile.rsi_roll_from_max or 0.0),
+        "rsi_entry_on": str(profile.rsi_entry_on or "next_open"),
+        "RsiTargetHint": "need_ohlc",
+        "RsiStopHint": "need_ohlc",
+    }
+
+
 def compute_price_only_payload(
     system: str,
     entry_price: float,
@@ -698,23 +1352,41 @@ def compute_price_only_payload(
     rl_profile: RlProfile,
     exit_configs: dict[str, SystemExitConfig],
     default_atr_pct: float,
+    vz_profile: Optional[VzProfile] = None,
+    rsi_profile: Optional[RsiProfile] = None,
 ) -> dict[str, Any]:
     """Target/limit from entry_price only (no OHLC file). Uses percent or default ATR %."""
+    if system == "RSI":
+        return _rsi_price_only_payload(entry_src, rsi_profile or RsiProfile())
+    if system == "VZ":
+        return {"error": "VZ requires OHLC CSV to resolve zone.lo stop/target"}
     if system == "RL":
-        target_price = entry_price * rl_profile.rl_target_pct
         stop_initial = entry_price * rl_profile.rl_stop_pct
+        levels = _rl_exit_levels(
+            entry_price,
+            stop_initial,
+            float(entry_price),
+            rl_profile,
+            float("nan"),
+            float("nan"),
+        )
         return {
             "System": "RL",
             "EntrySource": entry_src,
             "EntryInData": False,
-            "TargetPrice": target_price,
-            "TargetNote": "entry_no_csv",
+            "TargetPrice": levels["TargetPrice"],
+            "TargetNote": levels["TargetNote"],
             "StopInitial": stop_initial,
-            "StopTrailing": stop_initial,
+            "StopTrailing": levels["StopTrailing"],
+            "RL_ScalePrice": levels["RL_ScalePrice"],
+            "RL_RunnerTarget": levels["RL_RunnerTarget"],
+            "RL_ScaleSellFrac": levels["RL_ScaleSellFrac"],
+            "RL_ScaleHit": levels["RL_ScaleHit"],
             "ATR": None,
             "ATRPct": None,
             "SMA20": None,
             "SMA50": None,
+            "use_sma50": rl_profile.use_sma50_target,
         }
     if system == "WRL":
         return {"error": "WRL needs OHLC history to compute weekly range/swing levels"}
@@ -766,33 +1438,67 @@ def compute_price_only_payload(
     }
 
 
-def compute_wrl_system(
-    sym: str,
-    df: pd.DataFrame,
-    entry_ts: pd.Timestamp,
-    entry_price: float,
-    entry_src: str,
-    as_of_effective: pd.Timestamp,
-    *,
-    entry_in_data: bool = True,
-) -> dict[str, Any]:
-    """Structural WRL targets frozen from the completed-week structure as of entry."""
-    try:
-        from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
-    except ImportError:
-        from wrl_zones import attach_daily_levels, levels_for_bar  # type: ignore
+_WRL_OPEN_BY_SYMBOL: Optional[dict[str, dict[str, str]]] = None
 
-    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[:entry_ts]
-    if hist is None or len(hist) < 15:
-        return {"error": f"{sym}: insufficient history for WRL levels"}
-    _weekly, swings, week_idx = attach_daily_levels(hist)
-    bar = len(hist) - 1
-    lv = levels_for_bar(swings, week_idx, bar)
-    if lv is None:
-        return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
-    target_price = float(lv.range_high)
-    target2 = float(lv.swing_high)
-    stop_initial = float(lv.swing_low)
+
+def _wrl_open_csv_path() -> Path:
+    return Path(__file__).resolve().parent / "drive" / "WRL_LatestRun_Open.csv"
+
+
+def _load_wrl_open_by_symbol() -> dict[str, dict[str, str]]:
+    """Latest WRL open book. Locked swing levels live on these rows for the life of the trade."""
+    global _WRL_OPEN_BY_SYMBOL
+    if _WRL_OPEN_BY_SYMBOL is not None:
+        return _WRL_OPEN_BY_SYMBOL
+    path = _wrl_open_csv_path()
+    found: dict[str, dict[str, str]] = {}
+    if path.exists():
+        frame = pd.read_csv(path, dtype=str)
+        frame.columns = [str(c).strip().upper() for c in frame.columns]
+        for rec in frame.to_dict(orient="records"):
+            sym = str(rec.get("SYMBOL", "") or "").strip().upper()
+            if sym:
+                found[sym] = {str(k): "" if v is None else str(v) for k, v in rec.items()}
+    _WRL_OPEN_BY_SYMBOL = found
+    return found
+
+
+def _wrl_float(row: dict[str, str], *keys: str) -> Optional[float]:
+    for key in keys:
+        raw = str(row.get(key, "") or "").strip()
+        if not raw:
+            continue
+        try:
+            val = float(raw)
+        except ValueError:
+            continue
+        if math.isfinite(val):
+            return val
+    return None
+
+
+def _wrl_dash_date(raw: object) -> str:
+    s = str(raw or "").strip().replace("-", "")[:8]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return str(raw or "").strip()
+
+
+def _wrl_levels_payload(
+    *,
+    entry_src: str,
+    entry_in_data: bool,
+    as_of_effective: Optional[pd.Timestamp],
+    target_price: float,
+    stop_initial: float,
+    range_high: float,
+    range_low: float,
+    swing_high: float,
+    swing_low: float,
+    level_source: str,
+    watch_date: str,
+    note: str,
+) -> dict[str, Any]:
     return {
         "System": "WRL",
         "EntrySource": entry_src,
@@ -800,13 +1506,16 @@ def compute_wrl_system(
         "ATR": None,
         "ATRPct": None,
         "TargetPrice": target_price,
-        "Target2Price": target2,
+        "Target2Price": None,
         "StopInitial": stop_initial,
         "StopTrailing": stop_initial,
-        "RangeHigh": float(lv.range_high),
-        "RangeLow": float(lv.range_low),
-        "SwingHigh": float(lv.swing_high),
-        "SwingLow": float(lv.swing_low),
+        "RangeHigh": range_high,
+        "RangeLow": range_low,
+        "SwingHigh": swing_high,
+        "SwingLow": swing_low,
+        "WrlLevelSource": level_source,
+        "WrlWatchDate": watch_date or None,
+        "WrlNote": note,
         "atr_target": None,
         "atr_stop": None,
         "atr_increment": 0.0,
@@ -817,6 +1526,165 @@ def compute_wrl_system(
         "SMA50": None,
         "AsOfDate": str(as_of_effective.date()) if as_of_effective is not None else None,
     }
+
+
+def _wrl_payload_from_open_file(
+    sym: str,
+    entry_src: str,
+    entry_in_data: bool,
+    as_of_effective: Optional[pd.Timestamp],
+) -> Optional[dict[str, Any]]:
+    row = _load_wrl_open_by_symbol().get(str(sym).strip().upper())
+    if not row:
+        return None
+    stop = _wrl_float(row, "STOP_LOSS", "STOP")
+    target = _wrl_float(row, "TARGET")
+    swing_high = _wrl_float(row, "SWING_HIGH")
+    swing_low = _wrl_float(row, "SWING_LOW")
+    range_high = _wrl_float(row, "RANGE_HIGH")
+    range_low = _wrl_float(row, "RANGE_LOW")
+    if stop is None:
+        stop = swing_low
+    if target is None:
+        target = swing_high
+    if swing_high is None:
+        swing_high = target
+    if swing_low is None:
+        swing_low = stop
+    if None in (stop, target, range_high, range_low, swing_high, swing_low):
+        return None
+    watch = _wrl_dash_date(row.get("WATCH_DATE"))
+    return _wrl_levels_payload(
+        entry_src=entry_src,
+        entry_in_data=entry_in_data,
+        as_of_effective=as_of_effective,
+        target_price=float(target),
+        stop_initial=float(stop),
+        range_high=float(range_high),
+        range_low=float(range_low),
+        swing_high=float(swing_high),
+        swing_low=float(swing_low),
+        level_source="open_file",
+        watch_date=watch,
+        note="Locked WRL levels from drive/WRL_LatestRun_Open.csv (trigger watch day).",
+    )
+
+
+def _latest_wrl_trigger_levels(
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+):
+    """Most recent watch day at or before entry whose next session breaks out.
+
+    Returns (levels, watch_timestamp) or None. Levels stay frozen on that watch day.
+    """
+    try:
+        from stock_analysis.wrl_zones import (
+            attach_daily_levels,
+            breakout_up_from_demand,
+            close_in_demand_zone,
+            levels_for_bar,
+        )
+    except ImportError:
+        from wrl_zones import (  # type: ignore
+            attach_daily_levels,
+            breakout_up_from_demand,
+            close_in_demand_zone,
+            levels_for_bar,
+        )
+
+    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[df.index <= entry_ts]
+    if hist is None or len(hist) < 16:
+        return None
+    _weekly, swings, week_idx = attach_daily_levels(hist)
+    opens = hist["Open"].to_numpy(dtype=float)
+    highs = hist["High"].to_numpy(dtype=float)
+    closes = hist["Close"].to_numpy(dtype=float)
+    for brk in range(len(hist) - 1, 0, -1):
+        watch_i = brk - 1
+        lv = levels_for_bar(swings, week_idx, watch_i)
+        if lv is None:
+            continue
+        if not close_in_demand_zone(float(closes[watch_i]), lv):
+            continue
+        if breakout_up_from_demand(float(opens[brk]), float(highs[brk]), lv):
+            return lv, pd.Timestamp(hist.index[watch_i])
+    return None
+
+
+def compute_wrl_system(
+    sym: str,
+    df: pd.DataFrame,
+    entry_ts: pd.Timestamp,
+    entry_price: float,
+    entry_src: str,
+    as_of_effective: pd.Timestamp,
+    *,
+    entry_in_data: bool = True,
+) -> dict[str, Any]:
+    """Weekly Range / Swing (WRL) levels.
+
+    WRL stop/target come from the trigger watch day (open file if the symbol is open),
+    not from the purchase date's latest completed week.
+
+    House default 2026-09-22: TargetPrice = swing high (sell 100%). Stop = swing low.
+    Limit price stays the stop. RangeHigh / RangeLow are the watch-day prior-week range.
+    The typed entry price is unchanged. If no watch exists at or before the purchase
+    date and the symbol is not open, fall back to the purchase date's latest completed
+    week and label that row so a manual symbol is not a silent made-up watch.
+    """
+    locked = _wrl_payload_from_open_file(sym, entry_src, entry_in_data, as_of_effective)
+    if locked is not None:
+        return locked
+
+    try:
+        from stock_analysis.wrl_zones import attach_daily_levels, levels_for_bar
+    except ImportError:
+        from wrl_zones import attach_daily_levels, levels_for_bar  # type: ignore
+
+    trigger = _latest_wrl_trigger_levels(df, entry_ts)
+    if trigger is not None:
+        lv, watch_ts = trigger
+        return _wrl_levels_payload(
+            entry_src=entry_src,
+            entry_in_data=entry_in_data,
+            as_of_effective=as_of_effective,
+            target_price=float(lv.swing_high),
+            stop_initial=float(lv.swing_low),
+            range_high=float(lv.range_high),
+            range_low=float(lv.range_low),
+            swing_high=float(lv.swing_high),
+            swing_low=float(lv.swing_low),
+            level_source="watch_day",
+            watch_date=str(pd.Timestamp(watch_ts).date()),
+            note="WRL levels frozen on the trigger watch day (close in the demand zone; next session broke out).",
+        )
+
+    hist = df.loc[:entry_ts] if entry_ts in df.index else df.loc[df.index <= entry_ts]
+    if hist is None or len(hist) < 15:
+        return {"error": f"{sym}: insufficient history for WRL levels"}
+    _weekly, swings, week_idx = attach_daily_levels(hist)
+    bar = len(hist) - 1
+    lv = levels_for_bar(swings, week_idx, bar)
+    if lv is None:
+        return {"error": f"{sym}: no WRL weekly structure as of {entry_ts.date()}"}
+    return _wrl_levels_payload(
+        entry_src=entry_src,
+        entry_in_data=entry_in_data,
+        as_of_effective=as_of_effective,
+        target_price=float(lv.swing_high),
+        stop_initial=float(lv.swing_low),
+        range_high=float(lv.range_high),
+        range_low=float(lv.range_low),
+        swing_high=float(lv.swing_high),
+        swing_low=float(lv.swing_low),
+        level_source="purchase_date_latest_week",
+        watch_date="",
+        note=(
+            "No WRL watch at or before the purchase date. "
+            "Stop and target are the purchase date's latest completed week, not a system trigger."
+        ),
+    )
 
 
 def compute_position_payload(
@@ -833,12 +1701,38 @@ def compute_position_payload(
     exit_configs: dict[str, SystemExitConfig],
     entry_in_data: bool = True,
     default_atr_pct: float = 0.0,
+    vz_profile: Optional[VzProfile] = None,
+    rsi_profile: Optional[RsiProfile] = None,
 ) -> dict[str, Any]:
-    """Dispatch to RL or percent/ATR calculator for a given as-of date."""
+    """Dispatch to RL, VZ, WRL, RSI, or percent/ATR calculator for a given as-of date."""
     kw = dict(entry_in_data=entry_in_data, default_atr_pct=default_atr_pct)
     if system == "RL":
         return compute_rl_system(
             sym, df, entry_ts, entry_price, entry_src, as_of_effective, rl_profile, entry_in_data=entry_in_data
+        )
+    if system == "RSI":
+        return compute_rsi_system(
+            sym,
+            df,
+            entry_ts,
+            entry_price,
+            entry_src,
+            as_of_effective,
+            rsi_profile or RsiProfile(),
+            entry_in_data=entry_in_data,
+        )
+    if system == "VZ":
+        if vz_profile is None:
+            vz_profile = VzProfile()
+        return compute_vz_system(
+            sym,
+            df,
+            entry_ts,
+            entry_price,
+            entry_src,
+            as_of_effective,
+            vz_profile,
+            entry_in_data=entry_in_data,
         )
     if system == "WRL":
         return compute_wrl_system(
@@ -892,7 +1786,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Live stop/target for open positions "
-            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL; "
+            "(RL / BRT / YH / MTS / WPBR / RS / SB / MVCP / CS / WRL / VZ / RSI; "
             "deprecated IND remains available manually)."
         )
     )
@@ -977,10 +1871,44 @@ def main() -> None:
     _add_atr_profile_args(parser, "mvcp", AtrProfile())
     _add_atr_profile_args(parser, "cs", AtrProfile())
 
-    parser.add_argument("--rl-target-pct", type=float, default=1.20)
+    parser.add_argument(
+        "--rl-target-pct",
+        type=float,
+        default=1.20,
+        help="SMA50 target multiplier. Used only with --rl-use-sma50 (legacy). Default 1.20.",
+    )
     parser.add_argument("--rl-stop-pct", type=float, default=0.934)
-    parser.add_argument("--rl-use-sma50", action="store_true", default=True)
+    parser.add_argument(
+        "--rl-use-sma50",
+        action="store_true",
+        default=False,
+        help="Legacy: target = SMA50 × --rl-target-pct. Off by default (2026-09-27 freeze).",
+    )
     parser.add_argument("--rl-no-sma50", dest="rl_use_sma50", action="store_false")
+    parser.add_argument(
+        "--rl-scale-gain",
+        type=float,
+        default=0.20,
+        help="Sell the bulk of the position when the high reaches this gain from entry. Default 0.20.",
+    )
+    parser.add_argument(
+        "--rl-scale-sell-frac",
+        type=float,
+        default=0.80,
+        help="Fraction of the original shares sold at --rl-scale-gain. Default 0.80. Reported, not resized here.",
+    )
+    parser.add_argument(
+        "--rl-scale-stop-gain",
+        type=float,
+        default=0.0,
+        help="After the +20%% sale, raise the leftover stop to entry × (1 + this) when tighter. 0 = the buy price.",
+    )
+    parser.add_argument(
+        "--rl-entry-target-pct",
+        type=float,
+        default=0.40,
+        help="Leftover target as a gain from entry after the scale-out. Default 0.40.",
+    )
     parser.add_argument("--rl-trail-profit", type=float, default=0.0)
     parser.add_argument("--rl-trail-stop", type=float, default=0.0)
     parser.add_argument("--rl-trail-profit2", type=float, default=0.0)
@@ -1055,6 +1983,94 @@ def main() -> None:
     parser.add_argument("--cs-trailing-stop-increment", type=float, default=0.0)
     parser.add_argument("--cs-use-sma50", action="store_true", default=False)
     parser.add_argument(
+        "--vz-exit-name",
+        type=str,
+        default="EXIT_atr4_s025_r15_ts20",
+        help="VZ exit stamp name (house freeze: zone.lo-0.25*ATR, 1.5R, ts20).",
+    )
+    parser.add_argument("--vz-exit-bars", type=int, default=20, help="VZ time-stop bars.")
+    parser.add_argument("--vz-target-r", type=float, default=1.5, help="VZ target R multiple.")
+    parser.add_argument(
+        "--vz-stop-atr-buffer",
+        type=float,
+        default=0.25,
+        help="VZ stop = zone.lo − buffer·ATR14 (house default 0.25).",
+    )
+    parser.add_argument("--vz-lookback-days", type=int, default=126)
+    parser.add_argument("--vz-retest-window", type=int, default=63)
+    parser.add_argument("--vz-retest-eps-pct", type=float, default=0.005)
+    parser.add_argument(
+        "--vz-entry-on",
+        type=str,
+        default="next_open",
+        choices=("next_open", "close"),
+        help="VZ fill timing when reconstructing the signal (house default next_open).",
+    )
+    parser.add_argument("--vz-min-touches", type=int, default=1)
+    parser.add_argument(
+        "--vz-min-atr-pct",
+        type=float,
+        default=4.0,
+        help="VZ ATR14/entry*100 gate (house freeze 4.0).",
+    )
+    parser.add_argument(
+        "--vz-require-hvn-overlap",
+        default="false",
+        help="VZ: require zone ∩ HVN/POC at signal bar (default false / HOLD).",
+    )
+    parser.add_argument(
+        "--vz-trade-side",
+        type=str,
+        default="long",
+        choices=("long", "short", "both"),
+        help="VZ signal side: long (house), short (break-down retest), or both.",
+    )
+    parser.add_argument(
+        "--vz-cooldown-after-target-days",
+        type=int,
+        default=10,
+        help="VZ: calendar days after TARGET exit before re-entry (house adopt 10; 0=off).",
+    )
+    parser.add_argument("--rsi-ob", type=float, default=70.0, help="RSI overbought arm (house 70).")
+    parser.add_argument("--rsi-os", type=float, default=30.0, help="RSI oversold floor (house 30).")
+    parser.add_argument(
+        "--rsi-exit",
+        type=float,
+        default=70.0,
+        help="RSI14 exit level; flatten next open (house 70). No $ target.",
+    )
+    parser.add_argument(
+        "--rsi-max-trigger",
+        type=float,
+        default=60.0,
+        help="RSI trigger gate (house 60). Informational on live lots.",
+    )
+    parser.add_argument(
+        "--rsi-min-atr-pct",
+        type=float,
+        default=2.93,
+        help="RSI ATR%% gate (house 2.93). Informational on live lots.",
+    )
+    parser.add_argument(
+        "--rsi-time-stop-days",
+        type=int,
+        default=20,
+        help="RSI calendar time stop (house 20). Flatten next open when due.",
+    )
+    parser.add_argument(
+        "--rsi-roll-from-max",
+        type=float,
+        default=8.0,
+        help="RSI roll: in-trade max RSI - now >= this, next open (house 8; 0=off).",
+    )
+    parser.add_argument(
+        "--rsi-entry-on",
+        type=str,
+        default="next_open",
+        choices=("next_open", "close"),
+        help="RSI fill timing (house next_open).",
+    )
+    parser.add_argument(
         "--per-symbol-settings",
         default="",
         help="Per-symbol optimized params JSON (default: PER_SYMBOL_SETTINGS env or "
@@ -1064,8 +2080,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.list_systems:
-        print("Supported systems:", ", ".join(("RL", "WRL") + PERCENT_ATR_SYSTEMS))
+        print("Supported systems:", ", ".join(("RL", "WRL", "VZ", "RSI") + PERCENT_ATR_SYSTEMS))
         print("Aliases:", ", ".join(f"{k}->{v}" for k, v in sorted(_SYSTEM_ALIASES.items())))
+        print("RSI: implied what-if closes (Target=RSI>=70, Stop=roll8); fill still next open.")
         print("Not mapped (EMA trail): QULL, KELL")
         return
 
@@ -1116,10 +2133,60 @@ def main() -> None:
         rl_target_pct=args.rl_target_pct,
         rl_stop_pct=args.rl_stop_pct,
         use_sma50_target=bool(args.rl_use_sma50),
+        rl_scale_gain=args.rl_scale_gain,
+        rl_scale_sell_frac=args.rl_scale_sell_frac,
+        rl_scale_stop_gain=args.rl_scale_stop_gain,
+        rl_entry_target_pct=args.rl_entry_target_pct,
         rl_trail_profit=args.rl_trail_profit,
         rl_trail_stop=args.rl_trail_stop,
         rl_trail_profit2=args.rl_trail_profit2,
         rl_trail_stop2=args.rl_trail_stop2,
+    )
+
+    vz_profile = VzProfile(
+        exit_name=str(args.vz_exit_name),
+        exit_bars=int(args.vz_exit_bars),
+        target_r=float(args.vz_target_r),
+        stop_atr_buffer=float(args.vz_stop_atr_buffer),
+        lookback_days=int(args.vz_lookback_days),
+        retest_window=int(args.vz_retest_window),
+        retest_eps_pct=float(args.vz_retest_eps_pct),
+        entry_on=str(args.vz_entry_on),
+        min_touches_before_entry=int(args.vz_min_touches),
+        min_atr_pct_at_entry=float(args.vz_min_atr_pct),
+        require_hvn_overlap=str(args.vz_require_hvn_overlap).strip().lower()
+        in ("1", "true", "yes", "on"),
+        trade_side=str(args.vz_trade_side),
+        cooldown_after_target_days=int(args.vz_cooldown_after_target_days),
+    )
+    print(
+        f"[INFO] VZ using zone stop/target "
+        f"(exit={vz_profile.exit_name}, long stop=zone.lo-{vz_profile.stop_atr_buffer}*ATR, "
+        f"short stop=zone.hi+{vz_profile.stop_atr_buffer}*ATR, "
+        f"target={vz_profile.target_r}R, ts={vz_profile.exit_bars}d, "
+        f"entry_on={vz_profile.entry_on}, rw={vz_profile.retest_window}, "
+        f"min_atr={vz_profile.min_atr_pct_at_entry}, "
+        f"hvn={vz_profile.require_hvn_overlap}, trade_side={vz_profile.trade_side}, "
+        f"cd_target={vz_profile.cooldown_after_target_days})."
+    )
+
+    rsi_profile = RsiProfile(
+        rsi_ob=float(args.rsi_ob),
+        rsi_os=float(args.rsi_os),
+        rsi_exit=float(args.rsi_exit),
+        rsi_max_trigger=float(args.rsi_max_trigger),
+        rsi_min_atr_pct=float(args.rsi_min_atr_pct),
+        rsi_time_stop_days=int(args.rsi_time_stop_days),
+        rsi_roll_from_max=float(args.rsi_roll_from_max),
+        rsi_entry_on=str(args.rsi_entry_on),
+    )
+    print(
+        f"[INFO] RSI using implied what-if closes (Target=RSI>=exit, Stop=roll-from-max; fill next open) "
+        f"(ob={rsi_profile.rsi_ob:g}, os={rsi_profile.rsi_os:g}, "
+        f"exit={rsi_profile.rsi_exit:g}, max_trigger={rsi_profile.rsi_max_trigger:g}, "
+        f"min_atr={rsi_profile.rsi_min_atr_pct:g}, ts={rsi_profile.rsi_time_stop_days}d, "
+        f"roll_from_max={rsi_profile.rsi_roll_from_max:g}, "
+        f"entry_on={rsi_profile.rsi_entry_on})."
     )
 
     def _pct(
@@ -1221,22 +2288,38 @@ def main() -> None:
     data_dir = Path(args.data_dir)
     as_of_ts = pd.to_datetime(args.as_of_date) if args.as_of_date else None
     out_path = Path(args.out_csv)
+    positions_path = Path(args.positions_csv) if str(args.positions_csv).strip() else DEFAULT_POSITIONS_CSV
+    try:
+        if out_path.resolve() == positions_path.resolve():
+            out_path = Path("getTarget_output.csv")
+            print(
+                f"[getTarget] --out-csv was the positions file; writing {out_path.resolve()} instead "
+                "so edited input rows are not overwritten."
+            )
+    except OSError:
+        pass
     stop_floor_by_key: dict[tuple[str, str], float] = {}
-    if (not args.no_stop_floor) and out_path.exists():
+    prev_output_by_key: dict[tuple[str, str], dict] = {}
+    if out_path.exists():
         try:
-            prev = pd.read_csv(out_path)
-            if "Symbol" in prev.columns and "StopTrailing" in prev.columns:
-                cols = ["Symbol", "StopTrailing"]
-                if "System" in prev.columns:
-                    cols.insert(1, "System")
-                prev = prev[cols].copy()
+            prev_full = pd.read_csv(out_path)
+            if "Symbol" in prev_full.columns:
+                for _, pr in prev_full.iterrows():
+                    psym = str(pr.get("Symbol", "")).strip().upper()
+                    psys = str(pr.get("System", "")).strip().upper()
+                    if psym:
+                        prev_output_by_key[(psym, psys)] = pr.to_dict()
+            if (not args.no_stop_floor) and "StopTrailing" in prev_full.columns:
+                prev = prev_full[["Symbol", "StopTrailing"] + (
+                    ["System"] if "System" in prev_full.columns else []
+                )].copy()
                 prev["StopTrailing"] = pd.to_numeric(prev["StopTrailing"], errors="coerce")
                 prev = prev.dropna(subset=["StopTrailing"])
                 if "System" in prev.columns:
                     prev["System"] = prev["System"].astype(str).str.upper()
                     grouped = prev.groupby(["Symbol", "System"], as_index=False)["StopTrailing"].max()
                     stop_floor_by_key = {
-                        (str(r["Symbol"]), str(r["System"])): float(r["StopTrailing"])
+                        (str(r["Symbol"]), str(r["System"])): float(_ceil_cent(float(r["StopTrailing"])))
                         for _, r in grouped.iterrows()
                     }
                 else:
@@ -1245,11 +2328,33 @@ def main() -> None:
                         .set_index("Symbol")["StopTrailing"]
                         .items()
                     ):
-                        stop_floor_by_key[(str(sym), "")] = float(st)
+                        stop_floor_by_key[(str(sym), "")] = float(_ceil_cent(float(st)))
         except Exception as e:
-            print(f"[WARN] Could not read prior stop floor from {out_path}: {e}")
+            print(f"[WARN] Could not read prior output from {out_path}: {e}")
 
     results: list[dict] = []
+
+    def _keep_input_row(sym: str, pos: PositionSpec, system: str, reason: str) -> None:
+        """Never drop a positions-file symbol just because stop/size/data failed."""
+        prior = prev_output_by_key.get((sym, system)) or prev_output_by_key.get((sym, ""))
+        if prior:
+            kept = dict(prior)
+            kept["Symbol"] = sym
+            kept["System"] = system or kept.get("System")
+            kept["SizeLid"] = reason
+            results.append(kept)
+            print(f"[getTarget] kept {sym} [{system}] from prior output ({reason})")
+            return
+        results.append(
+            {
+                "Symbol": sym,
+                "System": system,
+                "PurchaseDate": str(pos.purchase_date)[:10],
+                "EntryPrice": pos.entry_price,
+                "SizeLid": reason,
+            }
+        )
+        print(f"[getTarget] kept {sym} [{system}] input row ({reason})")
 
     for sym, pos in sorted(positions.items()):
         csv_path = data_dir / f"{sym}.csv"
@@ -1272,6 +2377,7 @@ def main() -> None:
                 sma20 = float(sma20_series.loc[as_of_effective])
         elif not args.allow_missing_csv:
             print(sym, pos.purchase_date, "CSV not found:", csv_path)
+            _keep_input_row(sym, pos, system, "csv_missing")
             continue
 
         entry_ts, entry_in_data, entry_hint = resolve_entry(
@@ -1283,6 +2389,7 @@ def main() -> None:
         )
         if entry_ts is None:
             print(sym, pos.purchase_date, "entry date not found in data (set entry_price for synthetic entry)")
+            _keep_input_row(sym, pos, system, "entry_missing")
             continue
 
         if pos.entry_price is not None:
@@ -1291,17 +2398,19 @@ def main() -> None:
         elif df is not None and entry_in_data:
             if args.entry_price_col not in df.columns:
                 print(sym, "entry-price column not found:", args.entry_price_col)
+                _keep_input_row(sym, pos, system, "entry_col_missing")
                 continue
             entry_price = float(df.loc[entry_ts][args.entry_price_col])
             entry_src = f"csv:{args.entry_price_col}"
         else:
             print(sym, pos.purchase_date, "entry_price required when CSV missing or entry not in file")
+            _keep_input_row(sym, pos, system, "entry_price_required")
             continue
 
         if not entry_in_data:
             print(
                 f"[INFO] {sym}: entry {requested_ts.date()} not in CSV; "
-                f"using entry_price={entry_price:.4f} ({entry_src})"
+                f"using entry_price={_format_dollar(entry_price)} ({entry_src})"
             )
 
         _sym_ov = overrides_for_symbol(_per_symbol_settings, sym, system) if _per_symbol_settings else {}
@@ -1323,6 +2432,8 @@ def main() -> None:
             rl_profile=sym_rl_profile,
             exit_configs=sym_exit_configs,
             default_atr_pct=float(args.default_atr_pct),
+            vz_profile=vz_profile,
+            rsi_profile=rsi_profile,
         )
 
         if df is None:
@@ -1347,10 +2458,12 @@ def main() -> None:
                 **_payload_kw,
             )
         if payload.get("error"):
-            if payload.get("error", "").startswith("unknown system"):
-                print(sym, payload["error"])
+            err = str(payload.get("error") or "compute_error")
+            if err.startswith("unknown system"):
+                print(sym, err)
             else:
-                print(sym, entry_ts.date(), payload["error"])
+                print(sym, entry_ts.date(), err)
+            _keep_input_row(sym, pos, system, err)
             continue
 
         target_price_yesterday = None
@@ -1377,14 +2490,19 @@ def main() -> None:
         target_changed = None
         if target_price_yesterday is not None and target_today is not None:
             try:
-                target_changed = abs(float(target_today) - float(target_price_yesterday)) > 1e-4
+                target_changed = _ceil_cent(float(target_today)) != _ceil_cent(float(target_price_yesterday))
             except (TypeError, ValueError):
                 target_changed = None
 
         stop_trailing = payload.get("StopTrailing")
         floor_key = (sym, system)
         prev_floor = stop_floor_by_key.get(floor_key)
-        if stop_trailing is not None and pd.notna(stop_trailing):
+        if system == "RSI":
+            # Implied what-if close, not a ratcheting price stop.
+            stop_floor_applied = False
+            requires_stop_increase = False
+            prev_floor = None
+        elif stop_trailing is not None and pd.notna(stop_trailing):
             floor_map = {sym: prev_floor} if prev_floor is not None else {}
             stop_trailing, stop_floor_applied, requires_stop_increase, prev_floor = _apply_stop_floor(
                 sym, float(stop_trailing), floor_map
@@ -1433,39 +2551,123 @@ def main() -> None:
             "PrevStopFloor": float(prev_floor) if prev_floor is not None else None,
             "RequiresStopIncrease": requires_stop_increase,
             "StopFloorApplied": stop_floor_applied,
-            **{k: v for k, v in payload.items() if k not in ("error",)},
+            **{
+                k: v
+                for k, v in payload.items()
+                if k
+                not in (
+                    "error",
+                    "StopInitial",
+                    "StopTrailing",
+                    "TargetPrice",
+                    "LimitPrice",
+                )
+            },
         }
+        # Official live-style size for every system (not only 5-sys).
+        # Paid fill in gettarget_positions → exact NNN; blank entry_price → fill-band range.
+        _stop_for_size = payload.get("StopInitial") or stop_trailing
+        row_out.update(
+            _live_style_share_fields(
+                symbol=sym,
+                system=str(system or ""),
+                paid_fill=pos.entry_price is not None,
+                entry_price=float(entry_price) if entry_price else None,
+                stop=_stop_for_size,
+                payload=payload,
+                current_price=current_price,
+                df=df,
+                as_of_effective=as_of_effective,
+                data_dir=data_dir,
+            )
+        )
+        row_out = _apply_dollar_rounding(row_out)
         results.append(row_out)
 
-        tgt = payload.get("TargetPrice")
-        st = stop_trailing
+        tgt = row_out.get("TargetPrice")
+        st = row_out.get("StopTrailing")
+        limit_out = row_out.get("LimitPrice")
         extra = ""
         if payload.get("ATRProgressStopApplied"):
-            extra += f" [progress_stop={payload.get('ATRScheduleProgressPrice'):.4f}]"
-        if payload.get("SMAStopApplied") and payload.get("SMAStopLevel") is not None:
-            extra += f" [sma_stop={float(payload['SMAStopLevel']):.4f} N={payload.get('sma_stop_days')}]"
+            extra += f" [progress_stop={_format_dollar(row_out.get('ATRScheduleProgressPrice'))}]"
+        if payload.get("SMAStopApplied") and row_out.get("SMAStopLevel") is not None:
+            extra += f" [sma_stop={_format_dollar(row_out.get('SMAStopLevel'))} N={payload.get('sma_stop_days')}]"
+        if payload.get("TargetNote") and system == "RL":
+            extra += f" [RL {payload.get('TargetNote')}]"
         if payload.get("RL_TrailTier"):
             extra += f" [RL_trail_tier={payload.get('RL_TrailTier')}]"
-        if stop_floor_applied and prev_floor is not None:
-            extra += f" [floor={float(prev_floor):.4f}]"
-        if payload.get("use_sma50") and payload.get("SMA50"):
-            extra += f" [SMA50={float(payload['SMA50']):.2f}]"
-        if payload.get("SignalLow") is not None:
-            extra += f" [signal_low={float(payload['SignalLow']):.4f}]"
+        if stop_floor_applied and row_out.get("PrevStopFloor") is not None:
+            extra += f" [floor={_format_dollar(row_out.get('PrevStopFloor'))}]"
+        if payload.get("use_sma50") and row_out.get("SMA50") is not None:
+            extra += f" [SMA50={_format_dollar(row_out.get('SMA50'))}]"
+        if row_out.get("SignalLow") is not None:
+            extra += f" [signal_low={_format_dollar(row_out.get('SignalLow'))}]"
+        if system == "WRL":
+            extra += (
+                f" [wrl {payload.get('WrlLevelSource')}"
+                f" watch={payload.get('WrlWatchDate') or '—'}"
+                f" RH={_format_dollar(row_out.get('RangeHigh'))}"
+                f" RL={_format_dollar(row_out.get('RangeLow'))}]"
+            )
+            if payload.get("WrlLevelSource") == "purchase_date_latest_week":
+                extra += f" [{payload.get('WrlNote')}]"
+        if system == "VZ" and row_out.get("vz_zone_lo") is not None:
+            extra += (
+                f" [vz zone.lo={_format_dollar(row_out.get('vz_zone_lo'))}"
+                f" sig_entry={payload.get('vz_signal_entry_date')}"
+                f" exit={payload.get('vz_exit_name')}]"
+            )
+        if system == "RSI":
+            extra += (
+                f" [{payload.get('TargetNote')}"
+                f" stop={payload.get('StopNote')}"
+                f" rsi14={payload.get('Rsi14Now')}"
+                f" max={payload.get('Rsi14MaxInTrade')}"
+                f" roll={payload.get('RsiRollPts')}"
+                f" held={payload.get('RsiDaysHeld')}d"
+                f" to_ts={payload.get('RsiDaysToTimeStop')}"
+                f" armed={payload.get('RsiExitArmed') or 'none'}]"
+            )
 
+        tgt_disp = _format_dollar(tgt)
+        shares_out = row_out.get("SuggestedShares")
+        shares_kind = row_out.get("SuggestedSharesKind")
+        if shares_out is not None and shares_kind == "exact":
+            extra += (
+                f" [shares={int(round(float(shares_out)))} paid_fill"
+                f" lid={row_out.get('SizeLid') or '—'}]"
+            )
+        elif shares_out is not None:
+            extra += (
+                f" [shares={shares_out} fill_unknown"
+                f" band={row_out.get('FillBand') or '—'}"
+                f" lid={row_out.get('SizeLid') or '—'}]"
+            )
+        elif row_out.get("SizeLid"):
+            extra += f" [shares=n/a lid={row_out.get('SizeLid')}]"
         print(
             f"{sym} [{system}] {entry_ts.date()} | "
-            f"Entry={entry_price:.4f} ({entry_src}) | "
-            f"Current={current_price if current_price is not None else 'NaN'} | "
-            f"SMA20={sma20 if sma20 is not None else 'NaN'} | "
-            f"Target={tgt if tgt is not None else 'NaN'} | "
-            f"Target_yday={target_price_yesterday if target_price_yesterday is not None else 'NaN'}"
+            f"Entry={_format_dollar(entry_price)} ({entry_src}) | "
+            f"Current={_format_dollar(current_price)} | "
+            f"SMA20={_format_dollar(sma20)} | "
+            f"Target={tgt_disp} | "
+            f"Target_yday={_format_dollar(row_out.get('TargetPriceYesterday'))}"
             f"{' *CHANGED*' if target_changed else ''} | "
-            f"Limit={limit_price if limit_price is not None else 'NaN'} | "
-            f"Stop_initial={payload.get('StopInitial')} | "
-            f"Stop_trailing={st if st is not None else 'NaN'} | "
+            f"Limit={_format_dollar(limit_out)} | "
+            f"Stop_initial={_format_dollar(row_out.get('StopInitial'))} | "
+            f"Stop_trailing={_format_dollar(st)} | "
             f"as_of={as_of_effective.date() if as_of_effective is not None else requested_ts.date()}{extra}"
         )
+        if shares_out is not None and shares_kind == "exact" and entry_price:
+            print(
+                f"  -> recommended shares (paid fill {_format_dollar(entry_price)}): "
+                f"{int(round(float(shares_out)))}"
+            )
+        elif shares_out is not None:
+            print(
+                f"  -> recommended shares (fill unknown"
+                f" {row_out.get('FillBand') or 'band'}): {shares_out}"
+            )
 
     if results:
         pd.DataFrame(results).to_csv(out_path, index=False)

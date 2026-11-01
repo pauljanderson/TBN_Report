@@ -42,6 +42,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from report_page_extras import ENSURE_TABLE_WRAP_JS, RESPONSIVE_TABLE_CSS  # noqa: E402
+
 _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
@@ -51,6 +56,10 @@ if str(_SA) not in sys.path:
 
 try:
     from rocket_post_analysis import (
+        FIT_GATE_EXPECTANCY_PCT,
+        FIT_GATE_ROBUST_AVG_PNL_PCT,
+        FIT_GATE_SHEET_PNL,
+        FIT_GATE_TRADES_PER_YEAR,
         KNOWN_SYSTEM_PREFIXES,
         RL_SYSTEMS,
         _collect_improve_hints,
@@ -73,6 +82,10 @@ try:
     )
 except ImportError:
     from stock_analysis.rocket_post_analysis import (  # type: ignore[no-redef]
+        FIT_GATE_EXPECTANCY_PCT,
+        FIT_GATE_ROBUST_AVG_PNL_PCT,
+        FIT_GATE_SHEET_PNL,
+        FIT_GATE_TRADES_PER_YEAR,
         KNOWN_SYSTEM_PREFIXES,
         RL_SYSTEMS,
         _collect_improve_hints,
@@ -96,16 +109,17 @@ except ImportError:
 
 
 _SORTABLE_TH_CSS = """
-th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; }
+th.sortable-th { cursor:pointer; user-select:none; white-space:nowrap; touch-action:manipulation; -webkit-tap-highlight-color:rgba(0,0,0,.08); }
 th.sortable-th:hover { background:#e2e8f0; }
 th.sortable-th .sort-ind::after { content:" \\2195"; opacity:0.35; font-size:0.85em; }
 th.sortable-th.sort-asc .sort-ind::after { content:" \\2191"; opacity:0.9; }
 th.sortable-th.sort-desc .sort-ind::after { content:" \\2193"; opacity:0.9; }
-"""
+""" + "\n" + RESPONSIVE_TABLE_CSS
 
 _SORTABLE_TABLE_SCRIPT = """
 <script>
 (function () {
+""" + ENSURE_TABLE_WRAP_JS + """
   function parseSortValue(text, type) {
     var s = String(text || "").trim();
     if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
@@ -138,7 +152,8 @@ _SORTABLE_TABLE_SCRIPT = """
   function bind(table) {
     var ths = table.querySelectorAll("th.sortable-th");
     ths.forEach(function (th, idx) {
-      function activate() {
+      function activate(e) {
+        if (e && e.type === "touchend") e.preventDefault();
         var type = th.getAttribute("data-sort") || "text";
         var asc = !th.classList.contains("sort-asc");
         ths.forEach(function (x) { x.classList.remove("sort-asc", "sort-desc"); x.setAttribute("aria-sort", "none"); });
@@ -148,8 +163,9 @@ _SORTABLE_TABLE_SCRIPT = """
       }
       th.addEventListener("click", activate);
       th.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(e); }
       });
+      th.addEventListener("touchend", activate, { passive: false });
     });
   }
   document.querySelectorAll("table.sortable").forEach(bind);
@@ -543,6 +559,63 @@ def build_symbol_assessment(
         )
     )
     parts.append(f"<p>{html.escape(want)}</p>")
+    # House FIT_ASSESSMENT gates (Expectancy = AVG_PNL_PCT; $ = SHEET_PNL).
+    mark = lambda ok: "PASS" if ok else "FAIL"
+    parts.append("<h4>FIT assessment gates</h4>")
+    parts.append(
+        f'<p class="muted">Checklist {fr.gates_passed}/4 '
+        f"{'PASS' if fr.gates_pass else 'FAIL'} — "
+        f"Expectancy = Summary <code>AVG_PNL_PCT</code>; "
+        f"robust = <code>AVG_PNL_PCT_WO_MAX</code>; "
+        f"dollar = <code>SHEET_PNL</code> (not TOTAL_PNL).</p>"
+    )
+    parts.append('<table class="sortable"><thead><tr>')
+    for lab, typ in (
+        ("Gate", "text"),
+        ("Field", "text"),
+        ("Threshold", "text"),
+        ("Value", "num"),
+        ("Result", "text"),
+    ):
+        parts.append(_sortable_th(lab, typ))
+    parts.append("</tr></thead><tbody>")
+    gate_rows = (
+        (
+            "Expectancy",
+            "AVG_PNL_PCT",
+            f"≥ {FIT_GATE_EXPECTANCY_PCT:g}%",
+            f"{avg_pnl:+.2f}%",
+            fr.gate_expectancy,
+        ),
+        (
+            "Trades / year",
+            "AVG_TRADES_PER_YEAR",
+            f"≥ {FIT_GATE_TRADES_PER_YEAR:g}",
+            f"{avg_tpy:.2f}",
+            fr.gate_tpy,
+        ),
+        (
+            "Robustness (wo-max)",
+            "AVG_PNL_PCT_WO_MAX",
+            f"≥ {FIT_GATE_ROBUST_AVG_PNL_PCT:g}%",
+            f"{fr.avg_pnl_pct_wo_max:+.2f}%",
+            fr.gate_robust,
+        ),
+        (
+            "Sheet PnL $",
+            "SHEET_PNL",
+            f"> {FIT_GATE_SHEET_PNL:,.0f}",
+            f"{sheet_pnl:,.0f}",
+            fr.gate_sheet,
+        ),
+    )
+    for name, field, thresh, val, ok in gate_rows:
+        parts.append(
+            f"<tr><td>{html.escape(name)}</td><td><code>{html.escape(field)}</code></td>"
+            f"<td>{html.escape(thresh)}</td><td>{html.escape(val)}</td>"
+            f"<td>{mark(ok)}</td></tr>"
+        )
+    parts.append("</tbody></table>")
     parts.append(f'<p class="muted">{html.escape(fr.text)}</p>')
 
     parts.append(f"<h3>4. Improvement hypotheses → {html.escape(pref)} levers</h3><ul>")
@@ -882,7 +955,7 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         default="",
         help="Comma-separated symbols (default: all traded in Closed)",
     )
-    ap.add_argument("--dip-pct", type=float, default=0.0, help="Override rl_dip_pct (0=read Report or 1.041)")
+    ap.add_argument("--dip-pct", type=float, default=0.0, help="Override rl_dip_pct (0=read Report or 1.055)")
     ap.add_argument("--band-pct", type=float, default=0.02, help="Zone half-width for zone-system charts")
     ap.add_argument(
         "--refresh-cheap",
@@ -950,9 +1023,9 @@ def main(argv: Optional[list[str]] = None, *, default_system: str = "") -> int:
         if report.is_file() and prefix in RL_SYSTEMS:
             with report.open(newline="", encoding="utf-8") as f:
                 r = next(csv.DictReader(f), {})
-            dip = _fnum(r.get("rl_dip_pct"), 1.041) or 1.041
+            dip = _fnum(r.get("rl_dip_pct"), 1.055) or 1.055
         else:
-            dip = 1.041
+            dip = 1.055
 
     n_workers = resolve_workers(int(args.workers))
     print(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from typing import Any, Iterable, Optional
+import re
 
 # ATR% band bounds: these tokens (case-insensitive) disable that bound.
 # Empty string is treated as off only when the key is explicitly set (Python -v).
@@ -41,6 +42,34 @@ def parse_rl_too_high(val: Any) -> float:
     if s in _ATR_PCT_OFF_TOKENS:
         return 0.0
     return float(s)
+
+
+def parse_rl_scale_ladder(raw: Any) -> list[tuple[float, float, float]]:
+    """Parse ``gain:sell_frac:stop_gain`` steps.
+
+    Separators: ``|`` or ``;``. Example: ``0.10:0.20:0|0.20:0.30:0.05``
+    means sell 20% of original at +10% and move stop to breakeven, then sell
+    30% of original at +20% and move stop to +5%. Empty / off → no steps.
+    """
+    s = str(raw or "").strip()
+    if not s or s.lower() in ("0", "off", "false", "none"):
+        return []
+    out: list[tuple[float, float, float]] = []
+    for part in re.split(r"[|;]", s):
+        part = part.strip()
+        if not part:
+            continue
+        bits = [b.strip() for b in part.split(":")]
+        if len(bits) != 3:
+            continue
+        try:
+            gain, sell, stop = float(bits[0]), float(bits[1]), float(bits[2])
+        except ValueError:
+            continue
+        if gain > 0 and sell > 0:
+            out.append((gain, sell, stop))
+    out.sort(key=lambda t: t[0])
+    return out
 
 
 def atr_pct_band_passes(
@@ -88,7 +117,10 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_POST_TARGET_MIN_STACK": "rl_post_target_min_stack",
     "RL_POST_TARGET_UNDER_SMA20": "rl_post_target_under_sma20",
     "RL_TARGET_PCT": "rl_target_pct",
+    "RL_SMA_TARGET_OFF": "rl_sma_target_off",
     "RL_TOO_HIGH": "rl_too_high",
+    "RL_PRE_ENTRY_GAP_BARS": "rl_pre_entry_gap_bars",
+    "RL_PRE_ENTRY_GAP_PCT": "rl_pre_entry_gap_pct",
     "RL_EXPANSION": "rl_expansion",
     "RL_ACC_MIN": "rl_acc_min",
     "RL_ACC_COUNT": "rl_acc_count",
@@ -115,13 +147,23 @@ RL_V_ALIASES: dict[str, str] = {
     "RL_TRAIL_STOP2": "rl_trail_stop2",
     "RL_EXIT_PERCENT": "rl_exit_percent",
     "RL_EXIT_DAYS": "rl_exit_days",
+    "RL_EXIT_CALENDAR_DAYS": "rl_exit_calendar_days",
+    "RL_MAX_HOLD_BARS": "rl_max_hold_bars",
+    "rl_time_stop_from_entry": "rl_max_hold_bars",
+    "RL_TIME_STOP_FROM_ENTRY": "rl_max_hold_bars",
+    "RL_MAX_HOLD_CALENDAR_DAYS": "rl_max_hold_calendar_days",
+    "RL_ENTRY_TARGET_PCT": "rl_entry_target_pct",
     "RL_FLUSH_DAYS": "rl_flush_days",
     "PARTIAL_EXIT_TARGET": "rl_partial_exit_target",
     "PARTIAL_EXIT_PERCENT": "rl_partial_exit_percent",
     "PARTIAL_EXIT_FOLLOW_TARGET": "rl_partial_exit_follow_target",
+    "RL_SCALE_LADDER": "rl_scale_ladder",
+    "SCALE_LADDER": "rl_scale_ladder",
     "SPY_INCLUSION": "rl_spy_inclusion",
     "AVG_VOL_DAYS": "rl_avg_vol_days",
     "VOL_PCT_THRESHOLD": "rl_vol_pct_threshold",
+    "MIN_AVG_VOL": "rl_min_avg_vol",
+    "MIN_TRIGGER_VOL": "rl_min_trigger_vol",
     "WATCH_MIN_SCORE": "rl_watch_min_score",
     "WATCH_DISABLE": "rl_watch_disable",
     "EXPANSION_LOOKBACK_DAYS": "rl_expansion_lookback_days",
@@ -181,6 +223,17 @@ RL_V_ALIASES.update(
     }
 )
 
+# RSI play-around DNA columns → RsiConfig / BRTConfig rsi_* trigger gates (0 = off).
+# Column-name -v keys are sheet-style MIN: keep if feature >= value (higher is better).
+# Opposite near-high cap is explicit rsi_max_dist_to_52w_high_pct_at_trigger only.
+RL_V_ALIASES.update(
+    {
+        "DIST_TO_52W_HIGH_PCT_AT_TRIGGER": "rsi_min_dist_to_52w_high_pct_at_trigger",
+        "REL_VOL_ON_TRIGGER": "rsi_min_rel_vol_on_trigger",
+        "RSI14_DROP_FROM_OB": "rsi_min_rsi14_drop_from_ob",
+    }
+)
+
 # BRTConfig rl_* field → RLConfig field name (when they differ).
 _BRT_KEY_TO_RL: dict[str, str] = {
     "rl_sma_qual": "sma_qual",
@@ -192,6 +245,8 @@ _BRT_KEY_TO_RL: dict[str, str] = {
     "rl_spy_inclusion": "spy_inclusion",
     "rl_avg_vol_days": "avg_vol_days",
     "rl_vol_pct_threshold": "vol_pct_threshold",
+    "rl_min_avg_vol": "min_avg_vol",
+    "rl_min_trigger_vol": "min_trigger_vol",
     "rl_watch_min_score": "watch_min_score",
     "rl_watch_disable": "watch_disable",
 }
@@ -275,6 +330,9 @@ _RL_SHARED_BRT_KEYS = frozenset(
         "indicator_cache",
         "entry_start_date",
         "entry_end_date",
+        # Research high-water trail (0 = off). Same names as BRTConfig.
+        "hwm_act_pct",
+        "hwm_keep",
         # SPY TC lag-1 market filters (defaults off; match BRTConfig).
         "spy_int_tc_lag",
         "spy_tc_weak_horizon",
@@ -290,9 +348,21 @@ class RLConfig:
 
     sma_qual: bool = True
     rl_cash: float = 47_500.0
-    rl_dip_pct: float = 1.041
+    rl_dip_pct: float = 1.055
     rl_50_sma_lookback: int = 4
     rl_stop_pct: float = 0.934
+    # Stop anchor (research / Python port): where the protective stop price is set at entry.
+    #   signal_low — signal-bar Low × rl_stop_pct (AWK default / house).
+    #   dip_lo     — bottom of 50-SMA dip band × (1 − rl_stop_below_pct).
+    #   entry_open — entry fill price × rl_stop_pct (fixed % below entry).
+    #   sma50      — prior-bar SMA50 × rl_stop_pct.
+    #   atr2       — entry − 2×ATR(14) at signal (fallback signal_low × rl_stop_pct).
+    # Fill gates (too_low / too_high) always use signal_low × rl_stop_pct regardless of anchor.
+    rl_stop_anchor: str = "signal_low"
+    rl_stop_below_pct: float = 0.0  # extra cushion below dip_lo anchor (0.01 = 1% below band low)
+    # When > 0 and anchor is entry_open: protective stop = fill × this.
+    # Fill gates stay on rl_stop_pct. 0 = multiply the fill by rl_stop_pct (legacy).
+    rl_entry_stop_pct: float = 0.0
     # Post-TARGET re-entry window (0 bars = feature fully off; production unchanged).
     # When bars > 0 and prior closed trade exited TARGET with fill within N trading bars,
     # rl_post_target_reentry_mode selects one mutually exclusive policy:
@@ -309,13 +379,29 @@ class RLConfig:
     rl_post_target_min_stack: float = 0.05
     rl_post_target_under_sma20: float = 0.03
     rl_target_pct: float = 1.20
+    # When true: keep rl_target_pct for expansion-hit counting, but do not sell at the
+    # moving SMA50 envelope. Recorded target is static: entry × rl_target_pct (+20%)
+    # until the scale-out, then entry × (1 + rl_entry_target_pct) for the leftover.
+    # House DailyRun freeze 2026-09-27: SMA target off.
+    rl_sma_target_off: bool = True
     # Fill gate: next_open <= signal_low * rl_too_high * rl_stop_pct (0 / off disables; default off).
     rl_too_high: float = 0.0
+    # Research entry gate. Both must be > 0 or the gate is off (frozen Control unchanged).
+    # Lookback is completed bars strictly before the entry date (entry-day gap excluded).
+    rl_pre_entry_gap_bars: int = 0
+    rl_pre_entry_gap_pct: float = 0.0
+    # abs | up | down. Default abs preserves the absolute overnight-gap gate.
+    rl_pre_entry_gap_side: str = "abs"
+    # Research entry gate (0 = off). Minimum retrace percent:
+    # ((HIGH - entry) / (HIGH - LOW)) * 100 over rl_retrace_months calendar months
+    # strictly before entry. Default window is 12 months.
+    rl_min_retrace_12m_pct: float = 0.0
+    rl_retrace_months: int = 12
     rl_expansion: float = 1.163
     rl_acc_min: int = 8
     rl_acc_count: int = 10
     expansion_lookback_days: int = 10
-    rl_cut_the_losers: float = 0.25
+    rl_cut_the_losers: float = 1000.0  # OFF — Paul house baseline
     # ATR% band: None = that bound off (``-v RL_ATR_LOW=off`` / ``ATR_LOW=off`` / ``RL_ATR_HIGH=off``).
     # Dual numeric 0/0 also disables the % band (see atr_pct_band_passes).
     rl_atr_low_percent: Optional[float] = 0.0244
@@ -332,15 +418,37 @@ class RLConfig:
     rl_trail_stop: float = 0.0
     rl_trail_profit2: float = 0.0
     rl_trail_stop2: float = 0.0
-    rl_exit_percent: float = 0.29
-    rl_exit_days: int = 10000
+    rl_exit_percent: float = 0.0  # 0 = time clock off (house freeze 2026-09-27)
+    rl_exit_days: int = 0  # trading bars after +% before timed exit (time_counter)
+    # Research-only: calendar days after first rl_exit_percent hit (same clock as Closed
+    # DAYS HELD: days_diff(arming_iso, iso) + 1). 0=off. Exit @ open as RL_EXIT_CAL.
+    # When >0, disables the trading-bar rl_exit_days timed path (exclusive timed clocks).
+    # Distinct from rl_max_hold_calendar_days (calendar from entry, not from +% arming).
+    rl_exit_calendar_days: int = 0
+    # Research-only hard max-hold from fill bar (trading bars). 0=off.
+    # bars_held = idx - entry_bar_0; exit @ open when bars_held >= N (stop still races first).
+    # Distinct from rl_exit_days (clock starts after rl_exit_percent hit).
+    rl_max_hold_bars: int = 0
+    # Research-only hard max-hold in calendar days from entry (same clock as Closed DAYS HELD:
+    # days_diff(entry_iso, iso) + 1). 0=off. Exit @ open as RL_MAX_HOLD_CAL. Distinct from
+    # rl_max_hold_bars (trading bars) and rl_exit_days (post-+% trading-bar clock).
+    rl_max_hold_calendar_days: int = 0
+    # Full exit when high >= entry × (1 + this). Leftover target after the 80% sale.
+    rl_entry_target_pct: float = 0.40
     rl_flush_days: int = 0
-    partial_exit_target: float = 0.0
+    partial_exit_target: float = 0.0  # 0=off; gain fraction from entry to scale out
     partial_exit_percent: float = 0.50
-    partial_exit_follow_target: float = 0.1
+    partial_exit_follow_target: float = 0.1  # remainder = entry × (1 + target + follow)
+    # Scale-out + stop ratchet. House freeze: sell 80% at +20%, leftover stop at entry.
+    rl_scale_ladder: str = "0.20:0.80:0"
     spy_inclusion: bool = False
     avg_vol_days: int = 50
     vol_pct_threshold: float = 0.0
+    min_avg_vol: float = 0.0  # PIT shares floor vs trigger avg_vol; 0=off
+    min_trigger_vol: float = 0.0  # PIT shares floor vs trigger-bar volume; 0=off
+    # Research entry gate. 0=off. Same name on BRTConfig so -v passes through.
+    # Does not enable WPBR buys. See rocket_rl._rl_wpbr_overhead_rejects.
+    rl_wpbr_overhead_band_pct: float = 0.0
     watch_min_score: int = 55
     watch_disable: bool = False
     # Optional IND-state gates (off by default). Paths resolve like BRT mandatory/exclude.
@@ -360,6 +468,9 @@ class RLConfig:
     spy_tc_weak_horizon: str = "int"
     block_entries_when_spy_int_weak: bool = False
     exit_when_spy_int_turns_weak: bool = False
+    # Research high-water trail. 0 = off (live ladder / live stop unchanged).
+    hwm_act_pct: float = 0.0
+    hwm_keep: float = 0.0
 
 
 def _brt_key_for_rl_field(rl_field_name: str) -> str:

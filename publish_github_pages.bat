@@ -3,6 +3,8 @@ rem Generate all Pages reports (including historical performance), copy to docs\
 rem   publish_github_pages.bat --push        generate + copy docs/ + fetch/rebase origin/main + push (Pages deploys from main only)
 rem   publish_github_pages.bat               generate + local docs/ only (live site unchanged)
 rem   publish_github_pages.bat --no-generate --push   copy existing Latest only, then push
+rem Off-main --push still updates origin/main via HEAD:main; it does not require a
+rem fast-forward of the current feature branch (stale cursor/* branches used to fail here).
 setlocal EnableExtensions
 cd /d "%~dp0"
 if not defined PY call "%~dp0resolve_python.bat"

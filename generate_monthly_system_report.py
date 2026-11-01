@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / MVCP / VZ).
+Monthly backtest P&L by trading system (BRT / IND (deprecated) / RL / YH / MTS / WPBR / RS / SB / VZ / RSI).
 
-Uses paper-trading outputs from the latest engine runs:
-  Drive/{BRT,IND,YH,MTS,WPBR,RS,SB,MVCP,VZ}_LatestRun_Closed.csv / _Open.csv
-  Drive/BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv (newest RL mirror)
+Uses paper-trading Closed/Open CSVs pinned to production stamps (same policy as investment.html):
+  - BRT / IND / YH / MTS / WPBR / RS / SB: max stamped Closed/Open on Drive (DailyRun production)
+  - VZ: DualPaul78 house only — VZ_house_last_run_ts.txt / house-sized Summary (never ALL / research)
+  - RSI: Relative Strength Index house only — RSI_house_last_run_ts.txt (not RS vs SPY)
+  - WRL: {PREFIX}_last_run_ts.txt when present, else LatestRun
+  - RL: newest BRT_Closed_RL_<ts>.csv / BRT_Open_RL_<ts>.csv mirror (not RL_LatestRun)
+  - MVCP: retired 2026-08-21 — omitted from this report (historical Closed stamps retained on Drive)
+
+Falls back to {SYS}_LatestRun_Closed.csv / _Open.csv when no pin resolves.
 
 Writes:
   Drive/Monthly_System_Report_<stamp>.html
@@ -27,7 +33,62 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DRIVE = ROOT / "Drive"
 ET = ZoneInfo("America/New_York")
-SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL")
+SYSTEMS = ("BRT", "IND", "RL", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL")
+
+# Open-position recommended shares only. Does not edit drive/live_style_account.json.
+MONTHLY_OPEN_SIZE_EQUITY = 245_000.0
+
+try:
+    from stock_analysis.live_style_sizing import (
+        official_live_style_callout_html as _live_style_callout,
+        parse_live_style_month_ledger as _live_style_months,
+        load_freeze_summary as _live_style_summary,
+        size_share_range as _size_share_range,
+        NAME_CAP_FRAC as _LIVE_NAME_CAP,
+        ACCOUNT_START as _LIVE_START,
+        FREEZE_STAMP as _LIVE_STAMP,
+        TABLE_UNCAP_CSS as _TABLE_UNCAP_CSS,
+    )
+except Exception:
+    try:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "stock_analysis"))
+        from live_style_sizing import (  # type: ignore
+            official_live_style_callout_html as _live_style_callout,
+            parse_live_style_month_ledger as _live_style_months,
+            load_freeze_summary as _live_style_summary,
+            size_share_range as _size_share_range,
+            NAME_CAP_FRAC as _LIVE_NAME_CAP,
+            ACCOUNT_START as _LIVE_START,
+            FREEZE_STAMP as _LIVE_STAMP,
+            TABLE_UNCAP_CSS as _TABLE_UNCAP_CSS,
+        )
+    except Exception:
+        def _live_style_callout() -> str:
+            return ""
+
+        def _live_style_months(_year: int) -> list:
+            return []
+
+        def _live_style_summary() -> dict:
+            return {}
+
+        def _size_share_range(**_kwargs):  # type: ignore
+            return {
+                "SUGGESTED_SHARES": "—",
+                "SUGGESTED_NOTIONAL": "—",
+                "SIZE_LID": "—",
+            }
+
+        _LIVE_NAME_CAP = 0.175
+        _LIVE_START = 250_000.0
+        _LIVE_STAMP = "risk_1pct_50k_adv_17name_20260917"
+        _TABLE_UNCAP_CSS = (
+            "body { max-width: none !important; } "
+            ".table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; } "
+            "table, table.sortable { width: max-content; min-width: 100%; }"
+        )
 
 try:
     from stock_analysis.exit_type_normalize import normalize_exit_type as _normalize_exit_type
@@ -41,7 +102,13 @@ except Exception:
 
         def _normalize_exit_type(exit_type: str | None) -> str:
             return (exit_type or "").strip().upper()
-SYSTEM_LABELS = {"IND": "IND (deprecated)", "SB": "SB", "MVCP": "MVCP", "VZ": "VZ", "WRL": "WRL"}
+SYSTEM_LABELS = {
+    "IND": "IND (deprecated)",
+    "SB": "SB",
+    "VZ": "VZ",
+    "RSI": "RSI",
+    "WRL": "WRL",
+}
 SYSTEMS_LABEL = " / ".join(SYSTEM_LABELS.get(sys, sys) for sys in SYSTEMS)
 MONTH_NAMES = (
     "January",
@@ -73,6 +140,12 @@ class TradeRow:
     pnl_dollars: float
     pnl_pct: float
     status: str  # closed | open
+    stop_price: Optional[float] = None
+    target_price: Optional[float] = None
+    stop_source: str = ""
+    target_source: str = ""
+    suggested_shares: str = "—"
+    size_lid: str = "—"
 
 
 def _resolve_drive(drive: Path) -> Path:
@@ -141,8 +214,8 @@ def _fmt_money(v: float) -> str:
     return f"{sign}${abs(v):,.0f}"
 
 
-def _fmt_money_plain(v: float) -> str:
-    return f"${v:,.0f}"
+def _fmt_price(v: float) -> str:
+    return f"${v:,.2f}"
 
 
 def _fmt_pct(v: float) -> str:
@@ -156,6 +229,52 @@ def _pnl_class(v: float) -> str:
     if v < 0:
         return "neg"
     return ""
+
+
+def _read_engine_last_run_ts(prefix: str, drive: Path) -> Optional[str]:
+    """12-digit yyMMddHHmmss from drive/{PREFIX}_last_run_ts.txt, if present."""
+    path = drive / f"{prefix.upper()}_last_run_ts.txt"
+    if not path.is_file():
+        return None
+    try:
+        ts = path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except OSError:
+        return None
+    return ts if re.fullmatch(r"\d{12}", ts) else None
+
+
+def _production_run_stamp(prefix: str, drive: Path) -> Optional[str]:
+    """Production/house stamp per system — mirrors generate_investment_report._latest_run_timestamp."""
+    pfx = prefix.upper()
+    if pfx == "RL":
+        return None
+    try:
+        from generate_investment_report import _latest_run_timestamp
+
+        ts = _latest_run_timestamp(pfx, drive)
+        if ts:
+            return ts
+    except Exception:
+        pass
+    return _read_engine_last_run_ts(pfx, drive)
+
+
+def _stamped_paths(prefix: str, drive: Path, ts: str) -> tuple[Optional[Path], Optional[Path]]:
+    aliases = [prefix.upper()]
+    if prefix.upper() == "WPBR":
+        aliases.append("PBR")
+    closed: Optional[Path] = None
+    open_p: Optional[Path] = None
+    for alias in aliases:
+        c = drive / f"{alias}_Closed_{ts}.csv"
+        o = drive / f"{alias}_Open_{ts}.csv"
+        if c.is_file():
+            closed = c
+        if o.is_file():
+            open_p = o
+        if closed is not None:
+            break
+    return closed, open_p
 
 
 def _newest_rl_mirror_paths(drive: Path) -> tuple[Optional[Path], Optional[Path]]:
@@ -179,13 +298,19 @@ def _resolve_system_paths(drive: Path) -> dict[str, dict[str, Optional[Path]]]:
     paths: dict[str, dict[str, Optional[Path]]] = {
         sys: {"closed": None, "open": None} for sys in SYSTEMS
     }
-    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "MVCP", "VZ", "WRL"):
-        closed = drive / f"{sys}_LatestRun_Closed.csv"
-        open_p = drive / f"{sys}_LatestRun_Open.csv"
-        if sys == "WPBR" and not closed.is_file():
-            # Legacy copy-latest / outputs before PBR→WPBR rename
-            closed = drive / "PBR_LatestRun_Closed.csv"
-            open_p = drive / "PBR_LatestRun_Open.csv"
+    for sys in ("BRT", "IND", "YH", "MTS", "WPBR", "RS", "SB", "VZ", "RSI", "WRL"):
+        closed: Optional[Path] = None
+        open_p: Optional[Path] = None
+        run_ts = _production_run_stamp(sys, drive)
+        if run_ts:
+            closed, open_p = _stamped_paths(sys, drive, run_ts)
+        if closed is None:
+            closed = drive / f"{sys}_LatestRun_Closed.csv"
+            open_p = drive / f"{sys}_LatestRun_Open.csv"
+            if sys == "WPBR" and not closed.is_file():
+                # Legacy copy-latest / outputs before PBR→WPBR rename
+                closed = drive / "PBR_LatestRun_Closed.csv"
+                open_p = drive / "PBR_LatestRun_Open.csv"
         paths[sys]["closed"] = closed if closed.is_file() else None
         paths[sys]["open"] = open_p if open_p.is_file() else None
 
@@ -226,6 +351,8 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
     pnl_d_c = _col(df, "PNL_DOLLARS")
     pnl_p_c = _col(df, "PNL_PCT")
     current_c = _col(df, "CURRENT_PRICE")
+    stop_c = _col(df, "STOP_PRICE", "STOP PRICE", "STOP_LOSS", "STOP LOSS", "STOP")
+    target_c = _col(df, "TARGET_PRICE", "TARGET PRICE", "TARGET")
 
     rows: list[TradeRow] = []
     for _, r in df.iterrows():
@@ -259,6 +386,8 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
             cur = _parse_money(r.get(current_c)) if current_c else entry
             pnl_d = _parse_money(r.get(pnl_d_c)) if pnl_d_c else 0.0
             pnl_p = _parse_pct(r.get(pnl_p_c)) if pnl_p_c else 0.0
+            stop_px = _parse_money(r.get(stop_c)) if stop_c else 0.0
+            tgt_px = _parse_money(r.get(target_c)) if target_c else 0.0
             rows.append(
                 TradeRow(
                     system=system,
@@ -272,6 +401,10 @@ def _load_brt_style(path: Path, system: str, *, status: str) -> list[TradeRow]:
                     pnl_dollars=pnl_d,
                     pnl_pct=pnl_p,
                     status="open",
+                    stop_price=stop_px if stop_px > 0 else None,
+                    target_price=tgt_px if tgt_px > 0 else None,
+                    stop_source="Latest open book" if stop_px > 0 else "",
+                    target_source="Latest open book" if tgt_px > 0 else "",
                 )
             )
     return rows
@@ -323,6 +456,45 @@ def _load_rl_native_closed(path: Path) -> list[TradeRow]:
     return rows
 
 
+def _csv_header_has(path: Path, name: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            line = f.readline()
+    except OSError:
+        return False
+    want = name.strip().upper()
+    return any(part.strip().strip('"').upper() == want for part in line.split(","))
+
+
+def _house_slot_cash(closed: list[TradeRow], system: str) -> float:
+    """Per-slot dollars already baked into that system's Closed PNL_DOLLARS.
+
+    Closed dollars are (slot cash / entry) * price move. The median of
+    PNL_DOLLARS / (PNL_PCT/100) is that slot, after host scaling.
+    """
+    samples: list[float] = []
+    for t in closed:
+        if t.system != system or abs(t.pnl_pct) < 0.05:
+            continue
+        samples.append(t.pnl_dollars / (t.pnl_pct / 100.0))
+    if not samples:
+        return 0.0
+    samples.sort()
+    return float(samples[len(samples) // 2])
+
+
+def _mark_wrl_open_unrealized(rows: list[TradeRow], slot_cash: float) -> None:
+    """House dummy mark: shares = slot_cash / entry, unrealized = shares * (mark - entry)."""
+    if slot_cash <= 0:
+        return
+    for t in rows:
+        entry = t.entry_price
+        mark = t.exit_price or 0.0
+        if entry <= 0 or mark <= 0:
+            continue
+        t.pnl_dollars = (slot_cash / entry) * (mark - entry)
+
+
 def _load_system_trades(
     paths: dict[str, dict[str, Optional[Path]]],
 ) -> tuple[list[TradeRow], list[TradeRow], list[str]]:
@@ -348,11 +520,220 @@ def _load_system_trades(
                 # Native RL open — skip unless mirror exists; RL open mirror preferred
                 pass
             else:
-                open_rows.extend(_load_brt_style(opath, sys, status="open"))
+                loaded_open = _load_brt_style(opath, sys, status="open")
+                # WRL open files omit PNL_DOLLARS. Same formula as other systems' open MTM.
+                if sys == "WRL" and not _csv_header_has(opath, "PNL_DOLLARS"):
+                    _mark_wrl_open_unrealized(loaded_open, _house_slot_cash(closed, "WRL"))
+                open_rows.extend(loaded_open)
         else:
             sources.append(f"{sys} open: (missing)")
 
     return closed, open_rows, sources
+
+
+def _usable_level(value: Optional[float]) -> bool:
+    return value is not None and value > 0
+
+
+def _as_level(value: object) -> Optional[float]:
+    try:
+        price = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if price != price or price <= 0:
+        return None
+    return price
+
+
+def _rl_target_source(note: str) -> str:
+    """Plain-English hover text for the frozen Rocket Launcher (RL) working target."""
+    key = (note or "").strip()
+    if key == "scale_80_at_20":
+        return (
+            "Live target: sell 80% at 20% above the buy. "
+            "The high since entry has not reached that yet, so the stop stays the original signal stop."
+        )
+    if key == "runner_40_stop_at_entry":
+        return (
+            "Live target: leftover shares at 40% above the buy. "
+            "The high already reached +20%, so the stop is the buy price when that is tighter."
+        )
+    if key.startswith("SMA50"):
+        return "Live target: 50-day average times the old target multiple (SMA target is on for this lot)."
+    return "Live Rocket Launcher target from the 27 September 2026 exit."
+
+
+def _house_exit_configs(gt: object) -> dict:
+    """Percent profiles matching getTarget.py defaults (ATR multipliers left at zero)."""
+    specs = {
+        "BRT": (1.21, 0.934, "entry", 0.0),
+        "IND": (1.21, 0.903, "entry", 0.0),
+        "YH": (1.27, 0.923, "entry", 0.0),
+        "MTS": (1.22, 0.934, "signal_low", 0.0),
+        "WPBR": (1.24, 0.927, "entry", 0.0),
+        "RS": (1.25, 0.88, "entry", 0.0),
+        "SB": (1.097, 1.0, "signal_low", 0.922),
+        "MVCP": (1.25, 0.92, "entry", 0.0),
+        "CS": (1.20, 0.92, "entry", 0.0),
+    }
+    configs = {}
+    for code, (target_pct, stop_pct, anchor, fallback) in specs.items():
+        percent = gt.PercentProfile(  # type: ignore[attr-defined]
+            target_pct=target_pct,
+            stop_pct=stop_pct,
+            stop_anchor=anchor,
+            fallback_stop_pct=fallback,
+        )
+        atr = gt.AtrProfile()  # type: ignore[attr-defined]
+        mode = gt.resolve_exit_mode("auto", atr)  # type: ignore[attr-defined]
+        configs[code] = gt.SystemExitConfig(  # type: ignore[attr-defined]
+            mode_resolved=mode,
+            percent=percent,
+            atr=atr,
+        )
+    return configs
+
+
+def _load_level_ohlc(gt: object, cache: dict, symbol: str):
+    if symbol in cache:
+        return cache[symbol]
+    path = gt.DEFAULT_DATA_DIR / f"{symbol}.csv"  # type: ignore[attr-defined]
+    if not path.is_file():
+        cache[symbol] = None
+        return None
+    frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date").sort_index()
+    frame["ATR"] = gt.compute_atr(frame, 14)  # type: ignore[attr-defined]
+    cache[symbol] = frame
+    return frame
+
+
+def _live_levels_for_row(gt: object, frame, trade: TradeRow, exit_configs: dict) -> dict:
+    """Same live stop/target getTarget.compute_position_payload uses for this system."""
+    entry_price = float(trade.entry_price)
+    requested = pd.Timestamp(trade.date_opened)
+    rl_profile = gt.RlProfile()  # type: ignore[attr-defined]
+    vz_profile = gt.VzProfile(  # type: ignore[attr-defined]
+        exit_name="EXIT_atr4_s025_r15_ts20",
+        stop_atr_buffer=0.25,
+    )
+    rsi_profile = gt.RsiProfile()  # type: ignore[attr-defined]
+    if frame is None or len(frame.index) == 0:
+        return gt.compute_price_only_payload(  # type: ignore[attr-defined]
+            trade.system,
+            entry_price,
+            "OPEN_BOOK",
+            rl_profile=rl_profile,
+            exit_configs=exit_configs,
+            default_atr_pct=8.0,
+            vz_profile=vz_profile,
+            rsi_profile=rsi_profile,
+        )
+    entry_ts, entry_in_data, entry_src = gt.resolve_entry(  # type: ignore[attr-defined]
+        frame,
+        requested,
+        entry_price,
+        use_next_trading_day=False,
+        allow_synthetic_entry=True,
+    )
+    if entry_ts is None:
+        return {"error": "entry date not in price history"}
+    as_of = gt._resolve_as_of(frame, None)  # type: ignore[attr-defined]
+    return gt.compute_position_payload(  # type: ignore[attr-defined]
+        trade.system,
+        trade.symbol,
+        frame,
+        entry_ts,
+        entry_price,
+        entry_src or "OPEN_BOOK",
+        as_of,
+        atr_period=14,
+        rl_profile=rl_profile,
+        exit_configs=exit_configs,
+        entry_in_data=entry_in_data,
+        default_atr_pct=8.0,
+        vz_profile=vz_profile,
+        rsi_profile=rsi_profile,
+    )
+
+
+def _apply_live_level(trade: TradeRow, payload: dict, side: str) -> None:
+    """Fill only a missing stop or target. Leave a reason when there is still no price."""
+    key = "StopTrailing" if side == "stop" else "TargetPrice"
+    note_key = "StopNote" if side == "stop" else "TargetNote"
+    price = _as_level(payload.get(key))
+    if price is None and side == "stop":
+        price = _as_level(payload.get("StopInitial"))
+    if price is not None:
+        source = "Live level (same rules as the daily target sheet)"
+        if trade.system == "RL" and side == "target":
+            source = _rl_target_source(str(payload.get("TargetNote") or ""))
+        elif trade.system == "RL" and side == "stop":
+            source = (
+                "Live stop: signal-bar low × 0.934 until the high reaches +20%, "
+                "then the buy price if that is tighter."
+            )
+        if side == "stop":
+            trade.stop_price = price
+            trade.stop_source = source
+        else:
+            trade.target_price = price
+            trade.target_source = source
+        return
+    err = str(payload.get("error") or "").strip()
+    note = str(payload.get(note_key) or "").strip()
+    if trade.system == "RSI":
+        reason = note or err or (
+            "No fixed dollar price. Relative Strength Index (RSI) exits on the RSI reading or a time stop."
+        )
+    else:
+        reason = err or note or "Not in the open book and no live price"
+    if side == "stop":
+        trade.stop_source = reason
+    else:
+        trade.target_source = reason
+
+
+def _fill_missing_levels(open_rows: list[TradeRow]) -> None:
+    """Use getTarget live levels only where the open book has no usable stop or target."""
+    pending = [
+        row
+        for row in open_rows
+        if not _usable_level(row.stop_price) or not _usable_level(row.target_price)
+    ]
+    if not pending:
+        return
+    try:
+        import getTarget as gt
+    except Exception as exc:
+        reason = f"Live levels unavailable ({exc})"
+        for row in pending:
+            if not _usable_level(row.stop_price) and not row.stop_source:
+                row.stop_source = reason
+            if not _usable_level(row.target_price) and not row.target_source:
+                row.target_source = reason
+        return
+
+    exit_configs = _house_exit_configs(gt)
+    cache: dict = {}
+    filled = 0
+    for row in pending:
+        try:
+            frame = _load_level_ohlc(gt, cache, row.symbol)
+            payload = _live_levels_for_row(gt, frame, row, exit_configs)
+        except Exception as exc:
+            payload = {"error": f"live level failed ({exc})"}
+        before_stop = _usable_level(row.stop_price)
+        before_target = _usable_level(row.target_price)
+        if not before_stop:
+            _apply_live_level(row, payload, "stop")
+        if not before_target:
+            _apply_live_level(row, payload, "target")
+        if (not before_stop and _usable_level(row.stop_price)) or (
+            not before_target and _usable_level(row.target_price)
+        ):
+            filled += 1
+    if filled:
+        print(f"[monthly] filled live stop/target on {filled} open row(s) the open book left blank")
 
 
 def _month_key(d: date) -> tuple[int, int]:
@@ -363,6 +744,22 @@ def _month_label(year: int, month: int) -> str:
     return f"{MONTH_NAMES[month - 1]} {year}"
 
 
+# Published monthly.html lives next to docs/trendlines/index.html (GitHub Pages).
+# Chart sections use id="{SYMBOL}" (see tools/gen_trendlines_charts_html.py).
+TRENDLINES_CHART_HREF = "trendlines/index.html"
+
+
+def _symbol_link(symbol: str) -> str:
+    """Clickable ticker → trendlines chart anchor (sort still uses cell text)."""
+    sym = (symbol or "").strip().upper()
+    esc = html_mod.escape(sym)
+    frag = html_mod.escape(sym, quote=True)
+    return (
+        f'<a class="sym" href="{TRENDLINES_CHART_HREF}#{frag}" '
+        f'title="Open {esc} trendline chart">{esc}</a>'
+    )
+
+
 def _sortable_th(label: str, sort_type: str) -> str:
     return (
         f'<th class="sortable-th" data-sort="{sort_type}" tabindex="0" '
@@ -371,77 +768,8 @@ def _sortable_th(label: str, sort_type: str) -> str:
     )
 
 
-_SORTABLE_TABLE_SCRIPT = """
-<script>
-(function () {
-  var MONTHS = {
-    january:1, february:2, march:3, april:4, may:5, june:6,
-    july:7, august:8, september:9, october:10, november:11, december:12
-  };
-  function parseSortValue(text, type) {
-    var s = String(text || "").trim();
-    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
-    if (type === "text") return s.toUpperCase();
-    if (type === "month") {
-      var key = s.toLowerCase().split(/\\s/)[0];
-      return MONTHS[key] || 0;
-    }
-    if (type === "date") {
-      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
-      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
-      var mdy = s.match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);
-      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
-      return 0;
-    }
-    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
-    var v = parseFloat(n);
-    return Number.isFinite(v) ? v : 0;
-  }
-  function sortTable(table, col, type, dir) {
-    var tbody = table.tBodies[0];
-    if (!tbody) return;
-    var rows = Array.from(tbody.querySelectorAll("tr"));
-    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
-    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
-    movable.sort(function (a, b) {
-      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
-      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
-      if (typeof av === "string" || typeof bv === "string") {
-        return dir * String(av).localeCompare(String(bv));
-      }
-      return dir * (av - bv);
-    });
-    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
-  }
-  function bindSortHeader(table, th, col) {
-    function onActivate(e) {
-      if (e.type === "touchend") e.preventDefault();
-      var type = th.dataset.sort || "text";
-      var dir = th.dataset.dir === "asc" ? -1 : 1;
-      table.querySelectorAll("th.sortable-th").forEach(function (h) {
-        h.dataset.dir = "";
-        h.classList.remove("sort-asc", "sort-desc");
-        h.setAttribute("aria-sort", "none");
-      });
-      th.dataset.dir = dir === 1 ? "asc" : "desc";
-      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
-      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
-      sortTable(table, col, type, dir);
-    }
-    th.addEventListener("click", onActivate);
-    th.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
-    });
-    th.addEventListener("touchend", onActivate, { passive: false });
-  }
-  document.querySelectorAll("table.sortable").forEach(function (table) {
-    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
-      bindSortHeader(table, th, col);
-    });
-  });
-})();
-</script>
-"""
+from report_page_extras import SORTABLE_TABLE_SCRIPT as _SORTABLE_TABLE_SCRIPT
+from report_page_extras import SORTABLE_TH_CSS as _SORTABLE_TH_CSS
 
 
 def _trade_detail_table(trades: list[TradeRow]) -> str:
@@ -454,7 +782,7 @@ def _trade_detail_table(trades: list[TradeRow]) -> str:
         d_open = t.date_opened.strftime("%Y-%m-%d")
         body += (
             "<tr>"
-            f"<td>{html_mod.escape(t.symbol)}</td>"
+            f"<td>{_symbol_link(t.symbol)}</td>"
             f"<td>{d_open}</td>"
             f"<td>{d_close}</td>"
             f"<td>{html_mod.escape(t.exit_type)}</td>"
@@ -482,21 +810,125 @@ def _trade_detail_table(trades: list[TradeRow]) -> str:
     )
 
 
+def _notional_high(text: str) -> float:
+    """Upper dollar of a suggested-notional cell ('12,345.00' or '10,000–12,000')."""
+    raw = (text or "").strip()
+    if not raw or raw in {"—", "-"}:
+        return 0.0
+    vals: list[float] = []
+    for part in re.split(r"[–\-]", raw):
+        s = part.replace(",", "").replace("$", "").strip()
+        if not s:
+            continue
+        try:
+            vals.append(float(s))
+        except ValueError:
+            continue
+    return max(vals) if vals else 0.0
+
+
+def _attach_recommended_shares(open_rows: list[TradeRow]) -> None:
+    """Size each open lot with the official live-style range helper.
+
+    Equity is MONTHLY_OPEN_SIZE_EQUITY for both beginning-of-month risk and the
+    name cap. When the same ticker appears in more than one system, later
+    systems (report order) only get the name-cap room still left.
+    """
+    order = sorted(
+        range(len(open_rows)),
+        key=lambda i: (
+            SYSTEMS.index(open_rows[i].system) if open_rows[i].system in SYSTEMS else 99,
+            open_rows[i].date_opened,
+            open_rows[i].symbol,
+            i,
+        ),
+    )
+    used: dict[str, float] = {}
+    for i in order:
+        t = open_rows[i]
+        sym = t.symbol.strip().upper()
+        row: dict = {
+            "SYMBOL": sym,
+            "ENTRY_PRICE": t.entry_price if t.entry_price > 0 else "",
+            "CURRENT_PRICE": t.exit_price if t.exit_price else "",
+        }
+        if t.stop_price and t.stop_price > 0:
+            row["STOP_PRICE"] = t.stop_price
+        packed = _size_share_range(
+            symbol=sym,
+            system=t.system,
+            row=row,
+            bom_equity=MONTHLY_OPEN_SIZE_EQUITY,
+            current_equity=MONTHLY_OPEN_SIZE_EQUITY,
+            open_notional_same_name=float(used.get(sym, 0.0)),
+            asof=date.today(),
+        )
+        t.suggested_shares = str(packed.get("SUGGESTED_SHARES") or "—")
+        t.size_lid = str(packed.get("SIZE_LID") or "—")
+        used[sym] = used.get(sym, 0.0) + _notional_high(
+            str(packed.get("SUGGESTED_NOTIONAL") or "")
+        )
+
+
+def _open_positions_size_note() -> str:
+    equity = f"${MONTHLY_OPEN_SIZE_EQUITY:,.0f}"
+    cap_pct = f"{float(_LIVE_NAME_CAP) * 100:.1f}".rstrip("0").rstrip(".")
+    return f"""
+<p class="small">
+  Recommended shares use the same live buy-size rules as the investment report
+  (freeze <code>{html_mod.escape(str(_LIVE_STAMP))}</code>),
+  <strong>sized off {equity} starting balance</strong>.
+  Risk dollars are the smaller of 1% of that {equity} or $50,000.
+  Share count also stays within 1% of 20-day average daily volume (ADV20),
+  and the position cannot use more than {cap_pct}% of the {equity}
+  (the name cap). Relative Strength Index (RSI) uses the frozen average-loss
+  slot instead of the distance from entry to the stop.
+  The share count is a range until the order fills (next-open band, the day’s high–low,
+  or last close ± Average True Range (ATR)).
+  Size lid names the rule that set the count:
+  <code>risk_1pct</code> (1% of the starting balance),
+  <code>risk_50k</code> ($50,000 risk ceiling),
+  <code>adv</code> (ADV20),
+  or <code>name_cap</code> ({cap_pct}% of {equity}).
+  A <code>range:</code> prefix means the two ends of the fill band hit different lids.
+  If the same ticker is open in more than one system, systems further down this page
+  only get the name-cap room left after earlier systems.
+  Dollar P&amp;L in the other columns is still the house dummy size.
+</p>
+<p class="small">
+  <strong>Stop loss</strong> and <strong>Target</strong> are the prices already on each system’s
+  latest open book (Stop price and Target price, or Weekly Range (WRL) Stop loss and Target).
+  Rocket Launcher (RL) records a static target: 20% above the buy until the high
+  reaches that price (sell 80% of the shares), then 40% above the buy for the leftover
+  shares. It does not use a moving 50-day average target. The stop stays the original
+  signal-bar stop until that 20% high prints, then moves to the buy price if that is tighter.
+  An older open book that still has a zero target is filled the same way.
+  Hover a price to see where it came from. Click column headers to sort.
+</p>
+"""
+
+
 def _open_table(trades: list[TradeRow]) -> str:
     if not trades:
         return "<p class=\"small\">No open positions.</p>"
     rows = sorted(trades, key=lambda t: t.symbol)
     body = ""
     for t in rows:
+        shares = html_mod.escape(t.suggested_shares or "—")
+        lid = html_mod.escape(t.size_lid or "—")
         body += (
             "<tr>"
-            f"<td>{html_mod.escape(t.symbol)}</td>"
+            f"<td>{_symbol_link(t.symbol)}</td>"
             f"<td>{t.date_opened.strftime('%Y-%m-%d')}</td>"
-            f"<td>{_fmt_money_plain(t.entry_price)}</td>"
-            f"<td>{_fmt_money_plain(t.exit_price or 0.0)}</td>"
+            f"<td>{_fmt_price(t.entry_price)}</td>"
+            f"<td>{_fmt_price(t.exit_price or 0.0)}</td>"
+            f"{_level_cell(t.stop_price, t.stop_source)}"
+            f"{_level_cell(t.target_price, t.target_source)}"
             f"<td>{t.days_held}</td>"
             f"<td class=\"{_pnl_class(t.pnl_pct)}\">{_fmt_pct(t.pnl_pct)}</td>"
             f"<td class=\"{_pnl_class(t.pnl_dollars)}\">{_fmt_money(t.pnl_dollars)}</td>"
+            f"<td>{shares}</td>"
+            f"<td>{lid}</td>"
             "</tr>"
         )
     head = "".join(
@@ -506,9 +938,13 @@ def _open_table(trades: list[TradeRow]) -> str:
             ("Opened", "date"),
             ("Entry", "num"),
             ("Current", "num"),
+            ("Stop loss", "num"),
+            ("Target", "num"),
             ("Days", "num"),
             ("PnL %", "num"),
             ("Unrealized $", "num"),
+            ("Recommended shares", "num"),
+            ("Size lid", "text"),
         )
     )
     return (
@@ -516,6 +952,127 @@ def _open_table(trades: list[TradeRow]) -> str:
         + body
         + "</tbody></table>"
     )
+
+
+def _level_cell(price: Optional[float], source: str) -> str:
+    """Price when the engine or live exit has one; otherwise the reason the cell is blank."""
+    if _usable_level(price):
+        title = html_mod.escape(source or "Latest open book", quote=True)
+        return f'<td title="{title}">{_fmt_price(price or 0.0)}</td>'
+    reason = (source or "Not in the open book").strip()
+    return f'<td class="muted">{html_mod.escape(reason)}</td>'
+
+
+def _live_style_250k_section(year: int) -> str:
+    """Official $250k live-style wallet for the report year. Not house dummy Closed."""
+    summ = _live_style_summary() or {}
+    live = summ.get("live175") or {}
+    rows = _live_style_months(year)
+    cap_pct = f"{float(_LIVE_NAME_CAP) * 100:.1f}".rstrip("0").rstrip(".")
+    start = float(live.get("start") or _LIVE_START)
+    asof = live.get("end")
+    ye2012 = live.get("eq_2012")
+    dd = live.get("max_dd_pct")
+
+    def _m(v: object) -> str:
+        try:
+            return f"${float(v):,.0f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    def _p(v: object) -> str:
+        try:
+            return f"{float(v):.2f}%"
+        except (TypeError, ValueError):
+            return "—"
+
+    ytd_realized = 0.0
+    realized_ok = True
+    body = ""
+    for r in rows:
+        realized = str(r.get("Realized $") or "—")
+        eom = str(r.get("EOM equity") or "—")
+        bom = str(r.get("BOM equity") or "—")
+        wd = str(r.get("Withdrawn $") or "—")
+        month = str(r.get("Month") or "—")
+        body += (
+            f"<tr><td>{html_mod.escape(month)}</td>"
+            f"<td>{html_mod.escape(bom)}</td>"
+            f"<td>{html_mod.escape(realized)}</td>"
+            f"<td>{html_mod.escape(wd)}</td>"
+            f"<td>{html_mod.escape(eom)}</td></tr>"
+        )
+        raw = realized.replace("$", "").replace(",", "").replace("+", "").replace("—", "").strip()
+        if raw:
+            try:
+                ytd_realized += float(raw)
+            except ValueError:
+                realized_ok = False
+        else:
+            realized_ok = False
+    if not rows:
+        body = (
+            "<tr><td colspan='5'>Live-style month ledger not on disk — "
+            "see <a href='live_style_monthly.html'>wallet monthly</a>.</td></tr>"
+        )
+    ytd_txt = f"${ytd_realized:,.0f}" if rows and realized_ok else "—"
+    head = "".join(
+        _sortable_th(label, sort_type)
+        for label, sort_type in (
+            ("Month", "month"),
+            ("BOM equity", "num"),
+            ("Realized $", "num"),
+            ("Withdrawn $", "num"),
+            ("EOM equity", "num"),
+        )
+    )
+    return f"""
+<section id="live-style-250k">
+<h2>If we started with $250k — official live-style size</h2>
+<p class="small">
+  Same recipe as Suggested shares: risk = min(1% beginning-of-month equity, $50k),
+  shares ≤ 1% ADV20, notional ≤ {cap_pct}% of current equity
+  (freeze <code>{html_mod.escape(str(_LIVE_STAMP))}</code>).
+  Start {_m(start)}. Path is the official <strong>6-sys</strong> compound wallet
+  (SB / RSI / VZ / MTS / RL / WRL; DailyRun wire — not gold).
+  Already includes the freeze’s $7,500/mo withdraw + 10.5% margin on borrowed cash —
+  not added here as a new wire.
+  Leftover 5-sys pin stays on <a href="system_performance.html">historical performance</a>.
+  <strong>Does not replace</strong> the house dummy Closed tables below.
+  Full ledger: <a href="live_style_monthly.html">live_style_monthly.html</a>
+  · compound story: <a href="live_style.html">live_style.html</a>.
+</p>
+<div class="cards">
+  <div class="card">
+    <h3>Start</h3>
+    <div class="metric">{_m(start)}</div>
+    <div class="small">Official 6-sys · SB / RSI / VZ / MTS / RL / WRL · leftover 5-sys pin on system_performance</div>
+  </div>
+  <div class="card">
+    <h3>YE2012</h3>
+    <div class="metric">{_m(ye2012)}</div>
+    <div class="small">vs SPY {_m(summ.get('spy_2012'))}</div>
+  </div>
+  <div class="card">
+    <h3>As-of equity</h3>
+    <div class="metric">{_m(asof)}</div>
+    <div class="small">Max DD {_p(dd)} · name cap {cap_pct}%</div>
+  </div>
+  <div class="card">
+    <h3>{year} realized (wallet)</h3>
+    <div class="metric">{ytd_txt}</div>
+    <div class="small">Sum of live-style month Realized $ · withdraws separate</div>
+  </div>
+</div>
+<p class="small">Click column headers to sort. {year} months from the locked 17.5% wallet ledger.</p>
+<div class="table-wrap">
+<table class="sortable">
+  <thead><tr>{head}</tr></thead>
+  <tbody>{body}</tbody>
+</table>
+</div>
+</section>
+"""
 
 
 def build_html(
@@ -526,6 +1083,8 @@ def build_html(
     sources: list[str],
     generated: datetime,
 ) -> str:
+    _fill_missing_levels(open_rows)
+    _attach_recommended_shares(open_rows)
     year_closed = [t for t in closed if t.date_closed and t.date_closed.year == year]
     now = generated.astimezone(ET)
     through_month = now.month if now.year == year else 12
@@ -680,16 +1239,21 @@ def build_html(
 
     sources_html = "".join(f"<li>{html_mod.escape(s)}</li>" for s in sources)
     gen_s = now.strftime("%Y-%m-%d %H:%M %Z")
+    live_section = _live_style_250k_section(year)
+    live_callout = _live_style_callout()
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monthly Backtest Report — {year}</title>
 <style>
-body {{ font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:1200px; }}
+body {{ font-family: system-ui, sans-serif; margin:24px; color:#0f172a; max-width:none; width:auto; }}
+{_TABLE_UNCAP_CSS}
 h1 {{ font-size:1.5rem; margin-bottom:4px; }}
 h2 {{ font-size:1.15rem; margin-top:28px; }}
 h3 {{ font-size:1rem; margin:16px 0 8px; color:#334155; }}
 .sub {{ color:#64748b; margin-bottom:20px; line-height:1.5; font-size:0.95rem; }}
+.ask {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:4px 16px 12px; margin:12px 0 20px; }}
+.ask h2 {{ font-size:1rem; }}
 .cards {{ display:flex; flex-wrap:wrap; gap:12px; margin:16px 0 24px; }}
 .card {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; min-width:200px; flex:1 1 220px; }}
 .card-total {{ background:#eef2ff; border-color:#c7d2fe; }}
@@ -701,29 +1265,37 @@ h3 {{ font-size:1rem; margin:16px 0 8px; color:#334155; }}
 section {{ margin-top:24px; }}
 .month-section {{ border-top:1px solid #e2e8f0; padding-top:8px; }}
 .sys-block {{ margin:12px 0 20px; }}
-.table-wrap {{ overflow-x:auto; margin:8px 0; }}
-table {{ border-collapse:collapse; font-size:12px; width:100%; min-width:640px; }}
+.table-wrap {{ overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; margin:8px 0; }}
+table {{ border-collapse:collapse; font-size:12px; width:max-content; min-width:100%; }}
 th, td {{ border:1px solid #e2e8f0; padding:7px 8px; text-align:left; vertical-align:top; }}
 th {{ background:#f1f5f9; }}
-th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; }}
+th.sortable-th {{ cursor:pointer; user-select:none; white-space:nowrap; position:relative; z-index:3; pointer-events:auto; }}
 th.sortable-th:hover {{ background:#e2e8f0; }}
 .sort-ind {{ display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }}
 th.sort-asc .sort-ind::after {{ content:"▲"; color:#334155; }}
 th.sort-desc .sort-ind::after {{ content:"▼"; color:#334155; }}
 tr.total-row th, tr.total-row td {{ background:#f8fafc; border-top:2px solid #334155; }}
 ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
+a.sym {{ color:#1d4ed8; text-decoration:none; font-weight:600; }}
+a.sym:hover {{ text-decoration:underline; }}
+{_SORTABLE_TH_CSS}
 </style></head><body>
+{live_callout}
 <h1>Monthly Backtest Report — {year}</h1>
+<p class="swipe-note">Swipe sideways to see more columns.</p>
 <p class="sub">
   Paper-trading P&amp;L from latest {SYSTEMS_LABEL} backtest runs (not live broker accounts).<br>
   Closed trades grouped by <strong>exit month</strong>. Open positions show mark-to-market unrealized P&amp;L.<br>
+  Tickers link to that symbol’s chart in <a href="{TRENDLINES_CHART_HREF}">Trendlines + VZ charts</a>.<br>
+  Dollar tables below are <strong>house dummy Closed reconcile</strong> unless labeled live-style.<br>
   Generated {html_mod.escape(gen_s)}.
 </p>
+{live_section}
 <div class="cards">{cards}</div>
 
 <section>
-<h2>Monthly realized P&amp;L by system</h2>
-<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's position sizing. Click column headers to sort.</p>
+<h2>Monthly realized P&amp;L by system (house dummy Closed)</h2>
+<p class="small">Each cell is backtest P&amp;L for trades closed that month. Dollar amounts use each engine's <strong>house dummy</strong> position sizing for reconcile — not the $250k live-style book above. Click column headers to sort.</p>
 <div class="table-wrap">
 <table class="sortable">
   <thead><tr>{pivot_head}</tr></thead>
@@ -737,6 +1309,7 @@ ul.sources {{ font-size:12px; color:#475569; line-height:1.6; }}
 <section>
 <h2>Open positions (unrealized)</h2>
 <p class="small">Current backtest open book from latest runs — what each system would show if held through the latest price update.</p>
+{_open_positions_size_note()}
 {open_sections if open_sections else '<p class="small muted">No open positions in latest backtest outputs.</p>'}
 </section>
 
