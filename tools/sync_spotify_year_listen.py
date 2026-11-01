@@ -19,6 +19,13 @@ Re-runs rebuild the playlist, so albums that later land on light/medium/heavy
 drop off automatically. sync_spotify_year_playlists.py also scrubs "{year} listen"
 immediately after it writes the year buckets.
 
+Shared playlist with AOTY sync:
+  tools/sync_spotify_aoty_listen.py appends Album-of-the-Year matches to the
+  same "{year} listen" playlist and records them in
+  drive/spotify_aoty_listen/state.json (source=aoty). This rebuild **merges**
+  those AOTY kept albums back in (still excluding year light/medium/heavy) so
+  they are not wiped. Run either tool; both own the playlist.
+
 Optimizations (Dev Mode friendly):
   - Disk-cache followed artists + artist discographies + album tracks
   - Dirty-artist queue: new follows first, then missing discography cache
@@ -69,11 +76,99 @@ from sync_spotify_year_playlists import (  # noqa: E402
 )
 
 DEFAULT_DATA_DIR = REPO_ROOT / "drive" / "spotify_year_listen"
+DEFAULT_AOTY_DATA_DIR = REPO_ROOT / "drive" / "spotify_aoty_listen"
 DEFAULT_SPOTIFY_SLEEP = 0.35
 DEFAULT_MAX_ARTISTS_FETCH = 40
 DEFAULT_SPOTIFY_DAILY_BUDGET = 150
 DEFAULT_ALBUM_CACHE_HOURS = 336.0  # 14 days — new albums are infrequent
 DEFAULT_LIBRARY_CACHE_HOURS_LOCAL = DEFAULT_LIBRARY_CACHE_HOURS
+
+
+def load_aoty_supplemental_albums(aoty_data_dir: Path) -> dict[str, dict]:
+    """Load source=aoty kept albums for merge into "{year} listen" rebuild."""
+    # Late import avoids a circular import at module load (aoty imports us).
+    from sync_spotify_aoty_listen import load_aoty_kept_albums  # noqa: WPS433
+
+    return load_aoty_kept_albums(aoty_data_dir)
+
+
+def merge_aoty_albums_into_kept(
+    kept: dict[str, dict],
+    aoty_albums: dict[str, dict],
+    on_year: YearPlaylistIndex,
+    *,
+    sp=None,
+    market: str = "US",
+    album_cache: JsonCache | None = None,
+    spotify_sleep: float = DEFAULT_SPOTIFY_SLEEP,
+    budget: SpotifyBudget | None = None,
+    allow_track_fetch: bool = True,
+) -> tuple[dict[str, dict], int]:
+    """Merge AOTY kept albums into year-listen kept; skip year-bucket hits.
+
+    Returns (kept, merged_count). When track_uris are missing and Spotify is
+    available, fetch them; otherwise skip that album.
+    """
+    merged = 0
+    # Index followed-artist kept by name_key so AOTY does not duplicate.
+    existing_keys = {
+        str(row.get("name_key") or album_name_key(str(row.get("artists") or ""), str(row.get("name") or "")))
+        for row in kept.values()
+        if isinstance(row, dict)
+    }
+    existing_ids = set(kept.keys())
+
+    for album_id, row in sorted(aoty_albums.items(), key=lambda kv: kv[0]):
+        if not isinstance(row, dict):
+            continue
+        artists = str(row.get("artists") or "")
+        name = str(row.get("name") or "")
+        aid = str(row.get("album_id") or album_id)
+        if album_on_year_playlists(aid, artists, name, on_year):
+            continue
+        name_key = str(row.get("name_key") or "") or album_name_key(artists, name)
+        if aid in existing_ids or (name_key and name_key in existing_keys):
+            continue
+        track_uris = list(row.get("track_uris") or [])
+        if not track_uris and sp is not None and album_cache is not None and budget is not None:
+            try:
+                track_uris, _ = album_track_uris(
+                    sp,
+                    aid,
+                    market,
+                    album_cache,
+                    spotify_sleep,
+                    budget,
+                    allow_fetch=allow_track_fetch,
+                )
+            except SpotifyBudgetExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! AOTY album tracks {artists} — {name}: {exc}")
+                continue
+        if not track_uris:
+            continue
+        kept[aid] = {
+            "album_id": aid,
+            "name": name,
+            "artists": artists,
+            "release_date": row.get("release_date") or "",
+            "track_uris": track_uris,
+            "source": "aoty",
+            "name_key": name_key,
+            "aoty_rank": row.get("aoty_rank"),
+            "aoty_score": row.get("aoty_score"),
+            "aoty_genres": row.get("aoty_genres") or [],
+        }
+        existing_ids.add(aid)
+        if name_key:
+            existing_keys.add(name_key)
+        merged += 1
+        print(
+            f"  KEEP [aoty] {artists} — {name} "
+            f"({row.get('release_date') or ''}) [{len(track_uris)} tracks]"
+        )
+    return kept, merged
 
 
 def listen_playlist_name(year: int) -> str:
@@ -636,6 +731,7 @@ def sync(
     dry_run: bool,
     cache_path: Path,
     data_dir: Path,
+    aoty_data_dir: Path,
     album_cache_hours: float,
     spotify_sleep: float,
     max_artists_fetch: int,
@@ -795,6 +891,7 @@ def sync(
             "artists": album.artists,
             "release_date": album.release_date,
             "track_uris": track_uris,
+            "source": "followed",
             "source_artist_id": album.source_artist_id,
             "name_key": album_name_key(album.artists, album.name),
         }
@@ -802,6 +899,41 @@ def sync(
             f"  KEEP {album.artists} — {album.name} ({album.release_date}) "
             f"[{len(track_uris)} tracks]"
         )
+
+    # Merge AOTY-sourced albums so a full rebuild does not wipe them.
+    aoty_albums = load_aoty_supplemental_albums(aoty_data_dir)
+    aoty_merged = 0
+    if aoty_albums:
+        print(
+            f"Merging {len(aoty_albums)} AOTY kept album(s) from {aoty_data_dir / 'state.json'} …"
+        )
+        try:
+            kept, aoty_merged = merge_aoty_albums_into_kept(
+                kept,
+                aoty_albums,
+                on_year,
+                sp=sp,
+                market=market,
+                album_cache=album_cache,
+                spotify_sleep=spotify_sleep,
+                budget=budget,
+                allow_track_fetch=not cache_only,
+            )
+        except SpotifyBudgetExceeded as exc:
+            print(f"\n{exc}")
+            stopped_early = True
+        print(f"AOTY albums merged into listen rebuild: {aoty_merged}")
+        # Prune AOTY state for albums that now sit on year light/medium/heavy.
+        try:
+            from sync_spotify_aoty_listen import prune_aoty_state_against_year  # noqa: WPS433
+
+            pruned = prune_aoty_state_against_year(aoty_data_dir, on_year)
+            if pruned:
+                print(f"Pruned {pruned} AOTY state album(s) now on year buckets.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! could not prune AOTY state: {exc}")
+    else:
+        print(f"No AOTY supplemental albums at {aoty_data_dir / 'state.json'}")
 
     track_uris: list[str] = []
     seen: set[str] = set()
@@ -814,13 +946,24 @@ def sync(
                 seen.add(uri)
                 track_uris.append(uri)
 
+    followed_count = sum(1 for r in kept.values() if (r.get("source") or "followed") != "aoty")
     print(
         f"\nPlaylist {playlist_name!r}: {len(track_uris)} unique track(s) "
-        f"from {len(kept)} album(s)."
+        f"from {len(kept)} album(s) "
+        f"(followed={followed_count}, aoty={aoty_merged})."
     )
 
     state["artist_pool_ids"] = sorted(followed.keys())
-    state["kept_albums"] = kept
+    # Persist followed-only kept in year_listen state; AOTY source of truth stays
+    # in drive/spotify_aoty_listen/state.json (merged above for playlist rewrite).
+    state["kept_albums"] = {
+        aid: row
+        for aid, row in kept.items()
+        if (row.get("source") or "followed") != "aoty"
+    }
+    state["aoty_merged_album_ids"] = sorted(
+        aid for aid, row in kept.items() if (row.get("source") or "") == "aoty"
+    )
     state["year"] = year
     state["market"] = market
     state["on_year_playlist_album_count"] = len(on_year.album_ids)
@@ -853,8 +996,9 @@ def sync(
             sp.playlist_change_details,
             playlist_id,
             description=(
-                f"Auto-synced: {year} albums from followed artists not yet on "
-                f"{year} light/medium/heavy (sync_spotify_year_listen.py)"
+                f"Auto-synced: {year} albums from followed artists + AOTY genre matches "
+                f"not yet on {year} light/medium/heavy "
+                f"(sync_spotify_year_listen + sync_spotify_aoty_listen)"
             ),
             budget=budget,
         )
@@ -1102,6 +1246,54 @@ def self_test() -> None:
     assert merged.name_keys == {"k1", "k2"}
     assert merged.track_count == 5
 
+    # AOTY supplemental merge: skip year-bucket hits + duplicate name keys.
+    followed_kept = {
+        "f1": {
+            "album_id": "f1",
+            "name": "Followed Album",
+            "artists": "Band A",
+            "track_uris": ["spotify:track:f"],
+            "source": "followed",
+            "name_key": album_name_key("Band A", "Followed Album"),
+        }
+    }
+    aoty_rows = {
+        "aoty1": {
+            "album_id": "aoty1",
+            "name": "Aoty Album",
+            "artists": "Band B",
+            "track_uris": ["spotify:track:a"],
+            "source": "aoty",
+            "name_key": album_name_key("Band B", "Aoty Album"),
+        },
+        "aoty_dup": {
+            "album_id": "aoty_dup",
+            "name": "Followed Album",
+            "artists": "Band A",
+            "track_uris": ["spotify:track:dup"],
+            "source": "aoty",
+            "name_key": album_name_key("Band A", "Followed Album"),
+        },
+        "aoty_year": {
+            "album_id": "aoty_year",
+            "name": "On Medium",
+            "artists": "Band C",
+            "track_uris": ["spotify:track:y"],
+            "source": "aoty",
+            "name_key": album_name_key("Band C", "On Medium"),
+        },
+    }
+    year_idx = YearPlaylistIndex(
+        album_ids=set(),
+        name_keys={album_name_key("Band C", "On Medium")},
+    )
+    merged_kept, n = merge_aoty_albums_into_kept(followed_kept, aoty_rows, year_idx)
+    assert n == 1
+    assert "aoty1" in merged_kept
+    assert "aoty_dup" not in merged_kept
+    assert "aoty_year" not in merged_kept
+    assert merged_kept["aoty1"]["source"] == "aoty"
+
     est = estimate_calls(591, cached_discographies=0, max_artists_fetch=40)
     assert est["uncached_artists"] == 591
     assert est["fetch_this_run"] == 40
@@ -1144,6 +1336,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_PATH)
     parser.add_argument("--cache-path", type=Path, default=DEFAULT_CACHE_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument(
+        "--aoty-data-dir",
+        type=Path,
+        default=DEFAULT_AOTY_DATA_DIR,
+        help=(
+            "AOTY listen state dir (default drive/spotify_aoty_listen). "
+            "source=aoty kept albums are merged into the listen rebuild."
+        ),
+    )
     parser.add_argument(
         "--album-cache-hours",
         type=float,
@@ -1204,6 +1405,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             cache_path=args.cache_path,
             data_dir=args.data_dir,
+            aoty_data_dir=args.aoty_data_dir,
             album_cache_hours=args.album_cache_hours,
             spotify_sleep=args.spotify_sleep,
             max_artists_fetch=args.max_artists_fetch,
