@@ -42,8 +42,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parse_aoty_highest_rated import (  # noqa: E402
     AotyListingRow,
+    diagnose_listing_file,
     discover_listing_files,
     filter_by_genres,
+    format_listing_debug,
     normalize_favorite_genres,
     page_number_from_path,
     parse_listing_file,
@@ -231,6 +233,7 @@ def ingest_rankings(
     pages_dir: Path,
     rankings_path: Path,
     max_pages: int,
+    debug: bool = False,
 ) -> list[AotyListingRow]:
     """Parse saved pages and/or load rankings.json; write merged rankings.json."""
     by_key: dict[tuple[str, str], AotyListingRow] = {}
@@ -261,8 +264,23 @@ def ingest_rankings(
                     by_key[(row.artist.casefold(), row.album.casefold())] = row
 
     page_files = discover_page_files(pages_dir, max_pages)
+    if debug:
+        print(
+            f"[debug] discovered {len(page_files)} page file(s) under {pages_dir} "
+            f"(max_pages={max_pages})"
+        )
+        if not page_files:
+            print(
+                "[debug] note: no *.html/*.md/*.txt files found — check pages/ path "
+                "and that Chrome *_files folders are companions, not the listings"
+            )
     for path in page_files:
-        for row in parse_listing_file(path):
+        if debug:
+            file_rows, dbg = diagnose_listing_file(path)
+            print(format_listing_debug(dbg))
+        else:
+            file_rows = parse_listing_file(path)
+        for row in file_rows:
             key = (row.artist.casefold(), row.album.casefold())
             prev = by_key.get(key)
             if prev is None or (row.rank and (not prev.rank or row.rank < prev.rank)):
@@ -387,6 +405,7 @@ def sync(
     spotify_daily_budget: int,
     max_albums_per_run: int,
     cache_only: bool,
+    debug: bool = False,
 ) -> int:
     pages_dir = data_dir / "pages"
     pages_dir.mkdir(parents=True, exist_ok=True)
@@ -406,18 +425,21 @@ def sync(
         f"(browser Save Page As from …/ratings/6-highest-rated/{year}/1 .. /{max_pages}; "
         "any *.html title works — sorted by 'Page N', page 1 has no Page label). "
         f"max_pages={max_pages} keeps pages 1..{max_pages} only. "
-        "Cloudflare blocks curl."
+        "Cloudflare blocks curl. Prefer Chrome 'Webpage, Complete' after albums are visible; "
+        "pass --debug if ingest stays at 0."
     )
 
     rows = ingest_rankings(
         pages_dir=pages_dir,
         rankings_path=rankings_path,
         max_pages=max_pages,
+        debug=debug,
     )
     print(f"Ingested rankings: {len(rows)} row(s) → {rankings_path}")
     if not rows:
         print(
-            "No rows. Drop saved pages into pages/ or a rankings.json, then re-run."
+            "No rows. Drop saved pages into pages/ or a rankings.json, then re-run. "
+            "Tip: re-run with --debug to print per-file encoding / albumListRow counts."
         )
         return 0
 
@@ -859,6 +881,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Do not call Spotify search/album-tracks; use match + track caches only",
     )
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Verbose ingest: per-file path, page#, bytes, encoding, albumListRow count, sample",
+    )
     return parser.parse_args(argv)
 
 
@@ -900,6 +927,7 @@ def main(argv: list[str] | None = None) -> int:
             spotify_daily_budget=args.spotify_daily_budget,
             max_albums_per_run=max_albums,
             cache_only=args.cache_only,
+            debug=args.debug,
         )
     except SpotifyRateLimitError as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)

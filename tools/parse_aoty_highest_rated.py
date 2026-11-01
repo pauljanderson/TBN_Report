@@ -7,6 +7,9 @@ Supports:
   - Browser Save-as-HTML listing pages (Chrome/Edge full document) with
     albumListRow / albumListTitle / albumListGenre / scoreValue / scoreText
     (Cloudflare blocks plain curl — use saved pages)
+  - Encoding quirks common on Windows saves: UTF-8 BOM, UTF-16 LE/BE
+  - Markup variants: id=rank-N optional, class/id order, en/em dashes,
+    albumBlock, JSON-LD ItemList, loose tag-stripped text
 
 Does NOT fetch the live site (plain HTTP gets Cloudflare 403 from this
 environment). Prefer saving pages locally, then:
@@ -14,6 +17,7 @@ environment). Prefer saving pages locally, then:
   python tools/parse_aoty_highest_rated.py tools/fixtures/aoty_2026_page1_sample.md
   python tools/parse_aoty_highest_rated.py tools/fixtures/aoty_2026_page1_sample.html
   python tools/parse_aoty_highest_rated.py --self-test
+  python tools/parse_aoty_highest_rated.py --debug drive/spotify_aoty_listen/pages/
 
 See tools/aoty_year_listen_design.md for the full pipeline design.
 """
@@ -33,8 +37,9 @@ HEADING_RE = re.compile(
     re.MULTILINE,
 )
 # After tag-stripping, AOTY rank markup becomes "1 . Artist - Album" (space before .).
+# Also accept en/em dashes between artist and album.
 PLAIN_HEADING_RE = re.compile(
-    r"^(\d+)\s*\.\s+(.+?)\s+-\s+(.+)$"
+    r"^(\d+)\s*\.\s+(.+?)\s+[-–—]\s+(.+)$"
 )
 DATE_RE = re.compile(
     r"^(January|February|March|April|May|June|July|August|September|"
@@ -44,7 +49,8 @@ SCORE_RE = re.compile(r"^(\d{1,3})\s*$")
 REVIEWS_RE = re.compile(r"^(\d+)\s+reviews?\s*$", re.IGNORECASE)
 SKIP_LINE_RE = re.compile(
     r"^(Vinyl|Bandcamp|SoundCloud|Critic Score|Page image:|#+\s|The Highest|"
-    r"The Best Albums|\d{4}\s*$)",
+    r"The Best Albums|\d{4}\s*$|Amazon|Spotify|iTunes|Apple Music|Music|"
+    r"Just a moment|Checking your browser)",
     re.IGNORECASE,
 )
 GENRE_LINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 /&'.+-]*(?:,\s*[A-Za-z0-9 /&'.+-]+)+\s*$")
@@ -56,9 +62,15 @@ PAGE_IN_NAME_RE = re.compile(r"(?i)\bPage\s+(\d+)\b")
 LISTING_SUFFIXES = {".md", ".html", ".htm", ".txt"}
 
 # Browser-saved AOTY highest-rated markup (albumList* classes).
+# Primary: id="rank-N" present (attribute order flexible via separate alt).
 ALBUM_LIST_ROW_RE = re.compile(
     r'<div[^>]*\bid=["\']rank-(\d+)["\'][^>]*\bclass=["\'][^"\']*\balbumListRow\b[^"\']*["\'][^>]*>(.*?)'
     r'(?=<div[^>]*\bid=["\']rank-\d+["\']|$)',
+    re.IGNORECASE | re.DOTALL,
+)
+ALBUM_LIST_ROW_CLASS_FIRST_RE = re.compile(
+    r'<div[^>]*\bclass=["\'][^"\']*\balbumListRow\b[^"\']*["\'][^>]*\bid=["\']rank-(\d+)["\'][^>]*>(.*?)'
+    r'(?=<div[^>]*\b(?:id=["\']rank-\d+|class=["\'][^"\']*\balbumListRow\b)|$)',
     re.IGNORECASE | re.DOTALL,
 )
 ALBUM_LIST_ROW_ALT_RE = re.compile(
@@ -66,16 +78,28 @@ ALBUM_LIST_ROW_ALT_RE = re.compile(
     r'(?=<div[^>]*\bclass=["\'][^"\']*\balbumListRow\b|$)',
     re.IGNORECASE | re.DOTALL,
 )
+# Some list surfaces use albumBlock / albumListItem instead of albumListRow.
+ALBUM_BLOCK_RE = re.compile(
+    r'<(?:div|li|article)[^>]*\bclass=["\'][^"\']*\b(?:albumBlock|albumListItem)\b[^"\']*["\'][^>]*>(.*?)'
+    r'(?=<(?:div|li|article)[^>]*\bclass=["\'][^"\']*\b(?:albumBlock|albumListItem)\b|$)',
+    re.IGNORECASE | re.DOTALL,
+)
 POSITION_RE = re.compile(
     r'itemprop=["\']position["\'][^>]*>\s*(\d+)\s*<',
     re.IGNORECASE,
 )
-TITLE_LINK_RE = re.compile(
-    r'class=["\'][^"\']*\balbumListTitle\b[^"\']*["\'][^>]*>.*?<a[^>]*>(.*?)</a>',
+ALBUM_LIST_RANK_RE = re.compile(
+    r'class=["\'][^"\']*\balbumListRank\b[^"\']*["\'][^>]*>(.*?)</span>',
     re.IGNORECASE | re.DOTALL,
 )
+RANK_TEXT_RE = re.compile(r"(\d+)\s*\.")
+TITLE_LINK_RE = re.compile(
+    r'class=["\'][^"\']*\b(?:albumListTitle|listLargeTitle)\b[^"\']*["\'][^>]*>.*?<a[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+# meta itemprop=name with either attribute order; allow HTML entities in content.
 META_NAME_RE = re.compile(
-    r'<meta[^>]*itemprop=["\']name["\'][^>]*content=["\']([^"\']+)["\']',
+    r'<meta\b(?=[^>]*\bitemprop=["\']name["\'])(?=[^>]*\bcontent=["\']([^"\']+)["\'])[^>]*>',
     re.IGNORECASE,
 )
 DATE_DIV_RE = re.compile(
@@ -88,14 +112,29 @@ GENRE_DIV_RE = re.compile(
 )
 GENRE_LINK_RE = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 SCORE_VALUE_RE = re.compile(
-    r'class=["\'][^"\']*\bscoreValue\b[^"\']*["\'][^>]*>\s*(\d{1,3})\s*<',
+    r'class=["\'][^"\']*\b(?:scoreValue|listScoreValue)\b[^"\']*["\'][^>]*>\s*(\d{1,3})\s*<',
     re.IGNORECASE,
 )
 SCORE_TEXT_RE = re.compile(
-    r'class=["\'][^"\']*\bscoreText\b[^"\']*["\'][^>]*>\s*(?:<strong>)?\s*(\d+)\s*(?:</strong>)?\s*reviews?',
+    r'class=["\'][^"\']*\b(?:scoreText|listScoreText)\b[^"\']*["\'][^>]*>\s*(?:<strong>)?\s*(\d+)\s*(?:</strong>)?\s*(?:reviews?|ratings?)',
+    re.IGNORECASE | re.DOTALL,
+)
+# Album detail anchors (Chrome Save-as often keeps these even when class names shift).
+ALBUM_HREF_TITLE_RE = re.compile(
+    r'<a\b[^>]*href=["\'][^"\']*/album/\d+-[^"\']+["\'][^>]*>([^<]{3,200})</a>',
+    re.IGNORECASE,
+)
+ALBUM_ALT_TITLE_RE = re.compile(
+    r'<img\b[^>]*\balt=["\']([^"\']{3,200})["\']',
+    re.IGNORECASE,
+)
+JSON_LD_RE = re.compile(
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
 )
 TAG_RE = re.compile(r"<[^>]+>")
+# Artist/album separators seen in live pages + smart-punctuation saves.
+TITLE_SPLIT_RE = re.compile(r"\s+[-–—]\s+")
 
 
 @dataclass
@@ -107,6 +146,21 @@ class AotyListingRow:
     genres: list[str] = field(default_factory=list)
     score: int | None = None
     reviews: int | None = None
+
+
+@dataclass
+class ListingFileDebug:
+    path: str
+    page: int
+    bytes: int
+    encoding: str
+    album_list_row_count: int
+    album_block_count: int
+    album_href_count: int
+    sample_stripped: str
+    rows_parsed: int
+    parse_path: str
+    notes: list[str] = field(default_factory=list)
 
 
 def _split_genres(line: str) -> list[str]:
@@ -125,7 +179,17 @@ def _is_genre_line(line: str) -> bool:
     if SINGLE_GENRE_RE.match(line) and " - " not in line and not line.endswith(":"):
         # Reject obvious non-genre leftovers.
         lowered = line.casefold()
-        if lowered in {"soundcloud", "bandcamp", "vinyl", "critic score"}:
+        if lowered in {
+            "soundcloud",
+            "bandcamp",
+            "vinyl",
+            "critic score",
+            "amazon",
+            "spotify",
+            "itunes",
+            "music",
+            "apple music",
+        }:
             return False
         return True
     return False
@@ -133,6 +197,8 @@ def _is_genre_line(line: str) -> bool:
 
 def parse_markdown_listing(text: str) -> list[AotyListingRow]:
     """Parse WebFetch-style markdown for one highest-rated listing page."""
+    # Normalize smart dashes in headings so HEADING_RE (ASCII hyphen) still works.
+    text = TITLE_SPLIT_RE.sub(" - ", text)
     matches = list(HEADING_RE.finditer(text))
     rows: list[AotyListingRow] = []
     for i, match in enumerate(matches):
@@ -180,21 +246,41 @@ def _strip_tags(fragment: str) -> str:
 
 def _split_artist_album(title: str) -> tuple[str, str] | None:
     title = html_lib.unescape((title or "").strip())
-    if " - " not in title:
+    title = re.sub(r"\s+", " ", title)
+    if not title:
         return None
-    artist, album = title.split(" - ", 1)
-    artist, album = artist.strip(), album.strip()
+    parts = TITLE_SPLIT_RE.split(title, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    artist, album = parts[0].strip(), parts[1].strip()
     if not artist or not album:
         return None
     return artist, album
 
 
-def _parse_album_list_row(chunk: str, rank_hint: int | None = None) -> AotyListingRow | None:
-    """Parse one albumListRow inner HTML block from a browser-saved page."""
+def _rank_from_chunk(chunk: str, rank_hint: int | None = None) -> int | None:
     rank = rank_hint
     m_pos = POSITION_RE.search(chunk)
     if m_pos:
         rank = int(m_pos.group(1))
+    if rank is None:
+        m_rank = ALBUM_LIST_RANK_RE.search(chunk)
+        if m_rank:
+            m_num = RANK_TEXT_RE.search(_strip_tags(m_rank.group(1)))
+            if m_num:
+                rank = int(m_num.group(1))
+    if rank is None:
+        # Bare "12." near the start of the chunk (tag-stripped prefix).
+        prefix = _strip_tags(chunk[:240])
+        m_num = RANK_TEXT_RE.match(prefix)
+        if m_num:
+            rank = int(m_num.group(1))
+    return rank
+
+
+def _parse_album_list_row(chunk: str, rank_hint: int | None = None) -> AotyListingRow | None:
+    """Parse one albumListRow / albumBlock inner HTML block from a browser-saved page."""
+    rank = _rank_from_chunk(chunk, rank_hint=rank_hint)
     if rank is None:
         return None
 
@@ -206,6 +292,14 @@ def _parse_album_list_row(chunk: str, rank_hint: int | None = None) -> AotyListi
         m_meta = META_NAME_RE.search(chunk)
         if m_meta:
             title = html_lib.unescape(m_meta.group(1)).strip()
+    if not title:
+        m_href = ALBUM_HREF_TITLE_RE.search(chunk)
+        if m_href:
+            title = html_lib.unescape(m_href.group(1)).strip()
+    if not title:
+        m_alt = ALBUM_ALT_TITLE_RE.search(chunk)
+        if m_alt:
+            title = html_lib.unescape(m_alt.group(1)).strip()
     split = _split_artist_album(title)
     if not split:
         return None
@@ -223,7 +317,7 @@ def _parse_album_list_row(chunk: str, rank_hint: int | None = None) -> AotyListi
     if m_genre:
         for gm in GENRE_LINK_RE.finditer(m_genre.group(1)):
             label = _strip_tags(gm.group(1))
-            if label and label not in genres:
+            if label and label not in genres and not SKIP_LINE_RE.match(label):
                 genres.append(label)
 
     score = None
@@ -249,42 +343,101 @@ def _parse_album_list_row(chunk: str, rank_hint: int | None = None) -> AotyListi
     )
 
 
-def parse_html_listing(html: str) -> list[AotyListingRow]:
-    """Parse browser-saved AOTY highest-rated HTML (albumListRow markup).
-
-    Primary path: structured albumList* classes from Chrome/Edge Save Page As.
-    Fallback: strip tags and reuse the markdown heading heuristic (also accepts
-    the common "1 . Artist - Album" spacing after tag removal).
-    """
-    rows: list[AotyListingRow] = []
+def _dedupe_rows(rows: list[AotyListingRow]) -> list[AotyListingRow]:
     seen_ranks: set[int] = set()
+    seen_keys: set[tuple[str, str]] = set()
+    out: list[AotyListingRow] = []
+    for row in rows:
+        key = (row.artist.casefold(), row.album.casefold())
+        if row.rank in seen_ranks or key in seen_keys:
+            continue
+        seen_ranks.add(row.rank)
+        seen_keys.add(key)
+        out.append(row)
+    out.sort(key=lambda r: r.rank)
+    return out
 
-    matches = list(ALBUM_LIST_ROW_RE.finditer(html))
-    if matches:
-        for match in matches:
-            rank_hint = int(match.group(1))
-            row = _parse_album_list_row(match.group(2), rank_hint=rank_hint)
-            if row is None or row.rank in seen_ranks:
+
+def _parse_json_ld_listing(html: str) -> list[AotyListingRow]:
+    rows: list[AotyListingRow] = []
+    for match in JSON_LD_RE.finditer(html):
+        raw = match.group(1).strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        candidates = data if isinstance(data, list) else [data]
+        for block in candidates:
+            if not isinstance(block, dict):
                 continue
-            seen_ranks.add(row.rank)
-            rows.append(row)
-    else:
-        for match in ALBUM_LIST_ROW_ALT_RE.finditer(html):
-            row = _parse_album_list_row(match.group(1))
-            if row is None or row.rank in seen_ranks:
+            items = block.get("itemListElement") or block.get("itemList") or []
+            if not isinstance(items, list):
                 continue
-            seen_ranks.add(row.rank)
-            rows.append(row)
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                rank = item.get("position")
+                node = item.get("item") if isinstance(item.get("item"), dict) else item
+                name = ""
+                if isinstance(node, dict):
+                    name = str(node.get("name") or "")
+                    if not name and isinstance(node.get("album"), dict):
+                        name = str(node["album"].get("name") or "")
+                if not name:
+                    name = str(item.get("name") or "")
+                split = _split_artist_album(name)
+                if not split:
+                    # JSON-LD sometimes separates artist + album.
+                    artist = ""
+                    album = ""
+                    if isinstance(node, dict):
+                        album = str(node.get("name") or "")
+                        by = node.get("byArtist") or node.get("author")
+                        if isinstance(by, dict):
+                            artist = str(by.get("name") or "")
+                        elif isinstance(by, list) and by and isinstance(by[0], dict):
+                            artist = str(by[0].get("name") or "")
+                    if artist and album:
+                        split = (artist.strip(), album.strip())
+                if not split:
+                    continue
+                try:
+                    rank_i = int(rank) if rank is not None else (len(rows) + 1)
+                except (TypeError, ValueError):
+                    rank_i = len(rows) + 1
+                artist, album = split
+                rows.append(AotyListingRow(rank=rank_i, artist=artist, album=album))
+    return _dedupe_rows(rows)
 
-    if rows:
-        rows.sort(key=lambda r: r.rank)
-        return rows
 
+def _parse_href_title_listing(html: str) -> list[AotyListingRow]:
+    """Last-resort: unique /album/N-… anchor texts that look like Artist - Album."""
+    rows: list[AotyListingRow] = []
+    seen: set[tuple[str, str]] = set()
+    for match in ALBUM_HREF_TITLE_RE.finditer(html):
+        title = html_lib.unescape(match.group(1)).strip()
+        split = _split_artist_album(title)
+        if not split:
+            continue
+        key = (split[0].casefold(), split[1].casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            AotyListingRow(rank=len(rows) + 1, artist=split[0], album=split[1])
+        )
+    return rows
+
+
+def _parse_text_fallback(html: str) -> list[AotyListingRow]:
     # Fallback: collapse tags → text, keep newlines for heading detection.
     text = re.sub(r"(?i)<br\s*/?>", "\n", html)
     text = re.sub(r"(?i)</(?:p|div|li|h\d)>", "\n", text)
     text = TAG_RE.sub(" ", text)
     text = html_lib.unescape(text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s+", "\n", text)
     promoted = []
@@ -296,6 +449,50 @@ def parse_html_listing(html: str) -> list[AotyListingRow]:
         else:
             promoted.append(line)
     return parse_markdown_listing("\n".join(promoted))
+
+
+def parse_html_listing(html: str) -> list[AotyListingRow]:
+    """Parse browser-saved AOTY highest-rated HTML (albumListRow markup).
+
+    Primary path: structured albumList* classes from Chrome/Edge Save Page As.
+    Fallbacks: albumBlock, JSON-LD, /album/ href titles, then strip tags and
+    reuse the markdown heading heuristic (also accepts "1 . Artist - Album"
+    and en/em dashes).
+    """
+    rows: list[AotyListingRow] = []
+
+    for match in ALBUM_LIST_ROW_RE.finditer(html):
+        row = _parse_album_list_row(match.group(2), rank_hint=int(match.group(1)))
+        if row is not None:
+            rows.append(row)
+    if not rows:
+        for match in ALBUM_LIST_ROW_CLASS_FIRST_RE.finditer(html):
+            row = _parse_album_list_row(match.group(2), rank_hint=int(match.group(1)))
+            if row is not None:
+                rows.append(row)
+    if not rows:
+        for match in ALBUM_LIST_ROW_ALT_RE.finditer(html):
+            row = _parse_album_list_row(match.group(1))
+            if row is not None:
+                rows.append(row)
+    if not rows:
+        for match in ALBUM_BLOCK_RE.finditer(html):
+            row = _parse_album_list_row(match.group(1))
+            if row is not None:
+                rows.append(row)
+
+    if rows:
+        return _dedupe_rows(rows)
+
+    json_rows = _parse_json_ld_listing(html)
+    if json_rows:
+        return json_rows
+
+    href_rows = _parse_href_title_listing(html)
+    if href_rows:
+        return href_rows
+
+    return _parse_text_fallback(html)
 
 
 def page_number_from_path(path: Path) -> int:
@@ -317,6 +514,7 @@ def discover_listing_files(pages_dir: Path, max_pages: int = 0) -> list[Path]:
     Discovers any *.html (filenames need not contain '6-highest-rated').
     When max_pages > 0, only files with page_number_from_path(p) <= max_pages
     are kept (so max_pages=6 uses pages 1–6 even if the user saved 16).
+    Ignores Chrome *_files companion folders (only files, not dirs).
     """
     if not pages_dir.is_dir():
         return []
@@ -331,12 +529,147 @@ def discover_listing_files(pages_dir: Path, max_pages: int = 0) -> list[Path]:
     return files
 
 
+def detect_and_decode(raw: bytes) -> tuple[str, str]:
+    """Decode listing bytes; handle UTF-8 BOM and UTF-16 LE/BE (Windows saves)."""
+    if raw.startswith(b"\xff\xfe"):
+        return raw.decode("utf-16-le", errors="replace"), "utf-16-le"
+    if raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16-be", errors="replace"), "utf-16-be"
+    # UTF-16 without BOM: many NULs in the first chunk of otherwise-ASCII HTML.
+    sample = raw[:4000]
+    if sample and sample[1:2] == b"\x00" and sample[0:1] != b"\x00":
+        # Likely UTF-16-LE without BOM (e.g. '<\x00h\x00t\x00m\x00l')
+        if sample[0:1] in (b"<", b"\r", b"\n", b" ") or sample[0:1].isalpha():
+            return raw.decode("utf-16-le", errors="replace"), "utf-16-le-nobom"
+    if sample and sample[0:1] == b"\x00" and sample[1:2] != b"\x00":
+        return raw.decode("utf-16-be", errors="replace"), "utf-16-be-nobom"
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig", errors="replace"), "utf-8-bom"
+    return raw.decode("utf-8", errors="replace"), "utf-8"
+
+
+def read_listing_text(path: Path) -> tuple[str, str]:
+    raw = path.read_bytes()
+    text, encoding = detect_and_decode(raw)
+    # Normalize newlines early so regexes see a stable shape.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text, encoding
+
+
+def _sample_stripped(text: str, n: int = 200) -> str:
+    stripped = TAG_RE.sub(" ", text)
+    stripped = html_lib.unescape(stripped)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    return stripped[:n]
+
+
+def diagnose_listing_file(path: Path) -> tuple[list[AotyListingRow], ListingFileDebug]:
+    """Parse one listing file and return rows + verbose diagnostics for --debug."""
+    notes: list[str] = []
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        dbg = ListingFileDebug(
+            path=str(path),
+            page=page_number_from_path(path),
+            bytes=0,
+            encoding="?",
+            album_list_row_count=0,
+            album_block_count=0,
+            album_href_count=0,
+            sample_stripped="",
+            rows_parsed=0,
+            parse_path="error",
+            notes=[f"read error: {exc}"],
+        )
+        return [], dbg
+
+    text, encoding = detect_and_decode(raw)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    suffix = path.suffix.casefold()
+    row_count = len(re.findall(r"\balbumListRow\b", text, flags=re.IGNORECASE))
+    block_count = len(
+        re.findall(r"\b(?:albumBlock|albumListItem)\b", text, flags=re.IGNORECASE)
+    )
+    href_count = len(re.findall(r"/album/\d+-", text, flags=re.IGNORECASE))
+    sample = _sample_stripped(text)
+
+    if "just a moment" in text.casefold() or "cf-browser-verification" in text.casefold():
+        notes.append(
+            "looks like a Cloudflare interstitial — re-save after the real page loads"
+        )
+    if row_count == 0 and href_count == 0 and suffix in {".html", ".htm"}:
+        notes.append(
+            "no albumListRow /album/ links — empty shell or HTML-only save of a "
+            "JS-rendered page; use Chrome 'Webpage, Complete' after albums are visible"
+        )
+    if encoding.startswith("utf-16"):
+        notes.append(f"decoded as {encoding} (Windows Unicode save)")
+
+    parse_path = "markdown"
+    if suffix in {".html", ".htm"}:
+        # Probe which strategy would win (mirrors parse_html_listing order).
+        if list(ALBUM_LIST_ROW_RE.finditer(text)) or list(
+            ALBUM_LIST_ROW_CLASS_FIRST_RE.finditer(text)
+        ):
+            parse_path = "albumListRow+id"
+        elif list(ALBUM_LIST_ROW_ALT_RE.finditer(text)):
+            parse_path = "albumListRow"
+        elif list(ALBUM_BLOCK_RE.finditer(text)):
+            parse_path = "albumBlock"
+        elif _parse_json_ld_listing(text):
+            parse_path = "json-ld"
+        elif _parse_href_title_listing(text):
+            parse_path = "album-href"
+        else:
+            parse_path = "text-fallback"
+        rows = parse_html_listing(text)
+    else:
+        rows = parse_markdown_listing(text)
+
+    if not rows:
+        notes.append("parsed 0 rows")
+        if row_count > 0:
+            notes.append(
+                "albumListRow present but title/rank extract failed "
+                "(dash variant, missing title link, or unexpected markup)"
+            )
+
+    dbg = ListingFileDebug(
+        path=str(path),
+        page=page_number_from_path(path),
+        bytes=len(raw),
+        encoding=encoding,
+        album_list_row_count=row_count,
+        album_block_count=block_count,
+        album_href_count=href_count,
+        sample_stripped=sample,
+        rows_parsed=len(rows),
+        parse_path=parse_path,
+        notes=notes,
+    )
+    return rows, dbg
+
+
+def format_listing_debug(dbg: ListingFileDebug) -> str:
+    lines = [
+        f"[debug] {dbg.path}",
+        f"  page={dbg.page} bytes={dbg.bytes} encoding={dbg.encoding} "
+        f"albumListRow={dbg.album_list_row_count} albumBlock={dbg.album_block_count} "
+        f"album_href={dbg.album_href_count} rows={dbg.rows_parsed} via={dbg.parse_path}",
+        f"  sample: {dbg.sample_stripped!r}",
+    ]
+    for note in dbg.notes:
+        lines.append(f"  note: {note}")
+    return "\n".join(lines)
+
+
 def parse_listing_file(path: Path) -> list[AotyListingRow]:
-    raw = path.read_text(encoding="utf-8", errors="replace")
+    text, _encoding = read_listing_text(path)
     suffix = path.suffix.casefold()
     if suffix in {".html", ".htm"}:
-        return parse_html_listing(raw)
-    return parse_markdown_listing(raw)
+        return parse_html_listing(text)
+    return parse_markdown_listing(text)
 
 
 # Known AOTY / paste typos → canonical display label (matched casefold).
@@ -464,6 +797,84 @@ def self_test() -> None:
     assert h_sparse.genres == []
     assert h_sparse.reviews == 7
 
+    # Real-ish Wayback-derived fixture (modern id=rank-N markup, no wayback URLs).
+    realish = fixtures / "aoty_wayback_listrow_sample.html"
+    if realish.is_file():
+        real_rows = parse_listing_file(realish)
+        assert len(real_rows) >= 3, real_rows
+        assert real_rows[0].artist and real_rows[0].album
+        assert real_rows[0].score is not None
+
+    # No id="rank-N" / no itemprop=position — rank from albumListRank text only.
+    no_id_html = (
+        '<div class="albumListRow"><h2 class="albumListTitle">'
+        '<span class="albumListRank">3. </span>'
+        '<a href="/album/1-x-y.php">No Id Artist - No Id Album</a></h2>'
+        '<div class="albumListDate">January 2, 2026</div>'
+        '<div class="albumListGenre"><a href="/genre/1/">Dream Pop</a></div>'
+        '<div class="scoreValue">81</div>'
+        '<div class="scoreText"><strong>6</strong> reviews</div></div>'
+    )
+    no_id_rows = parse_html_listing(no_id_html)
+    assert len(no_id_rows) == 1, no_id_rows
+    assert no_id_rows[0].rank == 3
+    assert no_id_rows[0].artist == "No Id Artist"
+    assert no_id_rows[0].album == "No Id Album"
+    assert no_id_rows[0].score == 81 and no_id_rows[0].reviews == 6
+    assert no_id_rows[0].genres == ["Dream Pop"]
+
+    # class before id attribute order.
+    class_first = (
+        '<div class="albumListRow" id="rank-2"><h2 class="albumListTitle">'
+        '<span itemprop="position">2</span>'
+        '<a href="/album/2-a-b.php">Class First - Album Two</a>'
+        '<meta content="Class First - Album Two" itemprop="name"/>'
+        "</h2><div class=\"scoreValue\">77</div>"
+        '<div class="scoreText"><strong>4</strong> reviews</div></div>'
+    )
+    cf_rows = parse_html_listing(class_first)
+    assert len(cf_rows) == 1 and cf_rows[0].artist == "Class First"
+    assert cf_rows[0].rank == 2
+
+    # En-dash / em-dash titles (smart punctuation).
+    en = parse_html_listing(
+        '<div id="rank-1" class="albumListRow"><h2 class="albumListTitle">'
+        "<a>En Dash Artist – En Dash Album</a></h2></div>"
+    )
+    assert len(en) == 1 and en[0].artist == "En Dash Artist" and en[0].album == "En Dash Album"
+    em = parse_html_listing(
+        '<div id="rank-1" class="albumListRow"><h2 class="albumListTitle">'
+        "<a>Em Dash Artist — Em Dash Album</a></h2></div>"
+    )
+    assert len(em) == 1 and em[0].album == "Em Dash Album"
+
+    # JSON-LD ItemList fallback.
+    ld = parse_html_listing(
+        '<script type="application/ld+json">'
+        '{"@type":"ItemList","itemListElement":['
+        '{"position":1,"item":{"name":"Json Artist - Json Album"}}]}'
+        "</script>"
+    )
+    assert len(ld) == 1 and ld[0].artist == "Json Artist" and ld[0].album == "Json Album"
+
+    # UTF-16 LE with BOM (common Windows "Unicode" save).
+    import tempfile
+
+    utf16_body = html_fixture.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        p16 = Path(tmp) / "utf16.html"
+        p16.write_bytes(b"\xff\xfe" + utf16_body.encode("utf-16-le"))
+        rows16 = parse_listing_file(p16)
+        assert len(rows16) >= 5 and rows16[0].artist == "Phoebe Bridgers"
+        _rows_d, dbg = diagnose_listing_file(p16)
+        assert dbg.encoding.startswith("utf-16")
+        assert dbg.rows_parsed >= 5
+
+        # CRLF + UTF-8 BOM.
+        p_bom = Path(tmp) / "bom.html"
+        p_bom.write_bytes(b"\xef\xbb\xbf" + utf16_body.replace("\n", "\r\n").encode("utf-8"))
+        assert parse_listing_file(p_bom)[0].artist == "Phoebe Bridgers"
+
     # Tag-strip fallback: space before period ("1 . Artist - Album").
     fallback_html = (
         "<html><body><div>1 . Fallback Artist - Fallback Album</div>"
@@ -519,6 +930,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-score", type=int, default=None)
     parser.add_argument("--min-reviews", type=int, default=None)
     parser.add_argument("--json", action="store_true", help="Print JSON array")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print per-file ingest diagnostics (encoding, albumListRow count, sample)",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
 
@@ -532,15 +948,26 @@ def main(argv: list[str] | None = None) -> int:
         files = discover_listing_files(args.path, max_pages=0)
         rows: list[AotyListingRow] = []
         seen: set[tuple[str, str]] = set()
+        if not files:
+            print(f"No listing files in {args.path}", file=sys.stderr)
         for path in files:
-            for row in parse_listing_file(path):
+            if args.debug:
+                file_rows, dbg = diagnose_listing_file(path)
+                print(format_listing_debug(dbg), file=sys.stderr)
+            else:
+                file_rows = parse_listing_file(path)
+            for row in file_rows:
                 key = (row.artist.casefold(), row.album.casefold())
                 if key in seen:
                     continue
                 seen.add(key)
                 rows.append(row)
     else:
-        rows = parse_listing_file(args.path)
+        if args.debug:
+            rows, dbg = diagnose_listing_file(args.path)
+            print(format_listing_debug(dbg), file=sys.stderr)
+        else:
+            rows = parse_listing_file(args.path)
 
     if args.genre:
         rows = filter_by_genres(rows, normalize_favorite_genres(args.genre), match=args.match)
