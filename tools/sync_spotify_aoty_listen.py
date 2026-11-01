@@ -28,8 +28,10 @@ Examples:
   python tools/sync_spotify_aoty_listen.py --dry-run
   python tools/sync_spotify_aoty_listen.py --year 2026
 
-Call-budget guidance: defaults ~80 Spotify calls/UTC-day and
---max-albums-per-run 25. Do not stack with a cold year-listen sync the same day.
+Call-budget guidance: defaults ~250 Spotify calls/UTC-day and
+--max-albums-per-run 25. Year light/medium/heavy album indexes are disk-cached
+under drive/spotify_year_listen/ so dry-runs do not re-page ~869 tracks every
+time. Do not stack with a cold year-listen sync the same day.
 """
 
 from __future__ import annotations
@@ -62,8 +64,10 @@ from sync_spotify_year_listen import (  # noqa: E402
     album_on_year_playlists,
     album_track_uris,
     artists_from_spotify_list,
+    find_playlist,
     listen_playlist_name,
     playlist_album_index,
+    playlist_index_cache,
     primary_artist_name,
     spotify_call,
     year_playlist_album_ids,
@@ -81,12 +85,54 @@ from sync_spotify_year_playlists import (  # noqa: E402
 DEFAULT_DATA_DIR = REPO_ROOT / "drive" / "spotify_aoty_listen"
 DEFAULT_EXAMPLE_CONFIG = REPO_ROOT / "tools" / "aoty_listen_config.example.json"
 DEFAULT_SPOTIFY_SLEEP = 0.35
-DEFAULT_SPOTIFY_DAILY_BUDGET = 80
+# Year light alone can be ~18 playlist_items pages; raise default so prior runs
+# that already spent ~60–70 do not die mid year-scan on dry-run.
+DEFAULT_SPOTIFY_DAILY_BUDGET = 250
+# If remaining budget is below this at sync start, auto-raise the cap (like
+# year-listen --cache-only headroom) so a cold year-index scan can finish.
+AOTY_YEAR_SCAN_BUDGET_HEADROOM = 100
 DEFAULT_MATCH_CACHE_HOURS = 336.0  # 14 days
 DEFAULT_ALBUM_CACHE_HOURS = 336.0
 DEFAULT_MAX_PAGES = 16
 DEFAULT_MAX_ALBUMS_PER_RUN = 25
 MAX_PAGES_AUTO_CAP = 20
+
+
+def format_aoty_budget_workaround_help(
+    *,
+    data_dir: Path,
+    used: int | None = None,
+    daily_budget: int | None = None,
+) -> str:
+    """Stderr guidance when the self-budget blocks a same-day AOTY sync."""
+    budget_path = data_dir / "spotify_budget.json"
+    lines = [
+        "To finish today without waiting until UTC midnight:",
+        "  run_sync_spotify_aoty_listen.bat --dry-run --spotify-daily-budget 300",
+        "  run_sync_spotify_aoty_listen.bat --spotify-daily-budget 300",
+        "  After one successful year-playlist scan, the album index caches under",
+        "  drive/spotify_year_listen/playlist_album_index_cache.json — next runs hit",
+        "  cache instead of re-paging ~869 tracks.",
+        f"  Or delete {budget_path} and re-run (resets today's counter).",
+    ]
+    if used is not None and daily_budget is not None:
+        lines.insert(
+            0,
+            f"Spotify daily budget exhausted ({used}/{daily_budget}).",
+        )
+    return "\n".join(lines)
+
+
+def apply_aoty_year_scan_budget_policy(budget: SpotifyBudget) -> None:
+    """Ensure enough headroom remains for a cold year light/medium/heavy scan."""
+    added = budget.ensure_headroom(AOTY_YEAR_SCAN_BUDGET_HEADROOM)
+    if added:
+        print(
+            f"AOTY sync: remaining budget tight ({budget.used}/"
+            f"{budget.daily_budget - added}). "
+            f"Allowing +{added} call headroom for year-playlist index scan "
+            f"(effective cap {budget.daily_budget})."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -505,18 +551,29 @@ def sync(
 
     sp = build_client(cache_path)
     budget = SpotifyBudget(data_dir / "spotify_budget.json", spotify_daily_budget)
+    if budget.remaining() < AOTY_YEAR_SCAN_BUDGET_HEADROOM:
+        apply_aoty_year_scan_budget_policy(budget)
     me = spotify_call(sp.current_user, budget=budget)
     print(f"Authenticated as {me.get('display_name') or me.get('id')}")
     print(f"Spotify daily budget: {budget.used}/{budget.daily_budget} used so far today (UTC)")
 
     match_cache = JsonCache(data_dir / "spotify_match_cache.json", ttl_hours=DEFAULT_MATCH_CACHE_HOURS)
     album_cache = JsonCache(data_dir / "album_cache.json", ttl_hours=DEFAULT_ALBUM_CACHE_HOURS)
+    # Shared with year-listen so one successful scan serves both tools.
+    pl_index_cache = playlist_index_cache()
     state = load_state(state_path, year)
     playlist_name = listen_playlist_name(year)
 
     print(f"Reading albums already on {year} light/medium/heavy …")
+    print(f"        playlist index cache={pl_index_cache.path}")
     on_year, _ = year_playlist_album_ids(
-        sp, year, name_style, budget=budget, sleep_s=spotify_sleep
+        sp,
+        year,
+        name_style,
+        budget=budget,
+        sleep_s=spotify_sleep,
+        cache=pl_index_cache,
+        debug=debug,
     )
     print(
         f"Year-playlist index: {on_year.track_count} track(s), "
@@ -525,22 +582,24 @@ def sync(
 
     # Also exclude albums already on "{year} listen"
     listen_index = YearPlaylistIndex()
-    listen_id = state.get("playlist_id") or None
-    if not listen_id:
-        listen_id = None
-        offset = 0
-        while True:
-            page = spotify_call(sp.current_user_playlists, limit=50, offset=offset, budget=budget)
-            items = page.get("items") or []
-            for playlist in items:
-                if playlist and playlist.get("name") == playlist_name:
-                    listen_id = playlist.get("id")
-                    break
-            if listen_id or page.get("next") is None:
-                break
-            offset += len(items)
+    listen_ref = find_playlist(sp, playlist_name, budget=budget)
+    listen_id = (
+        listen_ref.id
+        if listen_ref and listen_ref.id
+        else (state.get("playlist_id") or None)
+    )
     if listen_id:
-        listen_index = playlist_album_index(sp, listen_id, budget=budget, sleep_s=spotify_sleep)
+        listen_index = playlist_album_index(
+            sp,
+            listen_id,
+            budget=budget,
+            sleep_s=spotify_sleep,
+            cache=pl_index_cache,
+            snapshot_id=listen_ref.snapshot_id if listen_ref else None,
+            track_total=listen_ref.track_total if listen_ref else None,
+            label=playlist_name,
+            debug=debug,
+        )
         print(
             f"Listen playlist {playlist_name!r}: {listen_index.track_count} track(s), "
             f"{len(listen_index.album_ids)} album id(s), {len(listen_index.name_keys)} name key(s)"
@@ -915,6 +974,26 @@ def self_test() -> None:
         assert removed == 1
         assert load_aoty_kept_albums(root) == {}
 
+    # Budget headroom + workaround copy (offline).
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "spotify_budget.json"
+        path.write_text(
+            json.dumps(
+                {"date": datetime.now(timezone.utc).date().isoformat(), "used": 64}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        budget = SpotifyBudget(path, 80)
+        assert budget.remaining() == 16
+        apply_aoty_year_scan_budget_policy(budget)
+        assert budget.remaining() >= AOTY_YEAR_SCAN_BUDGET_HEADROOM
+        help_text = format_aoty_budget_workaround_help(
+            data_dir=Path(tmp), used=80, daily_budget=80
+        )
+        assert "--spotify-daily-budget 300" in help_text
+        assert "playlist_album_index_cache.json" in help_text
+
     print("self-test OK")
     print(f"  example config genre count: 47")
     print(f"  album_name_key sample: {key_a!r}")
@@ -1012,6 +1091,24 @@ def main(argv: list[str] | None = None) -> int:
             cache_only=args.cache_only,
             debug=args.debug,
         )
+    except SpotifyBudgetExceeded as exc:
+        detail = str(exc).strip()
+        used = daily = None
+        # Charge message looks like: exhausted (80/80).
+        if "(" in detail and "/" in detail:
+            try:
+                pair = detail.rsplit("(", 1)[1].split(")", 1)[0]
+                used_s, daily_s = pair.split("/", 1)
+                used, daily = int(used_s), int(daily_s)
+            except (ValueError, IndexError):
+                used = daily = None
+        print(
+            format_aoty_budget_workaround_help(
+                data_dir=args.data_dir, used=used, daily_budget=daily
+            ),
+            file=sys.stderr,
+        )
+        return 3
     except SpotifyRateLimitError as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 2

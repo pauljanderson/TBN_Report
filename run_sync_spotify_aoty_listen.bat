@@ -18,9 +18,13 @@ REM
 REM Shares "{year} listen" with sync_spotify_year_listen.py. Year-listen rebuilds
 REM re-merge AOTY albums from drive\spotify_aoty_listen\state.json so they are not wiped.
 REM
-REM Safe defaults: min_score=70, min_reviews=5, max_albums_per_run=25, ~80 Spotify calls/UTC-day.
+REM Safe defaults: min_score=70, min_reviews=5, max_albums_per_run=25, ~250 Spotify calls/UTC-day.
 REM Tip: run with --dry-run first to review AOTY → Spotify matches.
 REM Expect skipped_exclude > 0 when albums already sit on year light/medium/heavy.
+REM Year light/medium/heavy album indexes cache under drive\spotify_year_listen\
+REM (snapshot_id or track-total + ~18h TTL) so dry-runs do not re-page ~869 tracks.
+REM If today's budget is spent mid-scan:
+REM   run_sync_spotify_aoty_listen.bat --dry-run --spotify-daily-budget 300
 REM If ingest shows 0 rows, add --debug (passthrough) to print per-file parse diagnostics:
 REM   run_sync_spotify_aoty_listen.bat --dry-run --debug
 python "%~dp0tools\sync_spotify_aoty_listen.py" %*

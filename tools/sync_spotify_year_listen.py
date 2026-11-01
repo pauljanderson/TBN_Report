@@ -28,6 +28,9 @@ Shared playlist with AOTY sync:
 
 Optimizations (Dev Mode friendly):
   - Disk-cache followed artists + artist discographies + album tracks
+  - Disk-cache year light/medium/heavy (+ listen) album indexes
+    (drive/spotify_year_listen/playlist_album_index_cache.json; snapshot_id or
+    track-total + ~18h TTL) shared with AOTY sync
   - Dirty-artist queue: new follows first, then missing discography cache
   - Per-run cap on discography fetches (--max-artists-fetch)
   - Daily Spotify HTTP budget (--spotify-daily-budget); resume next run
@@ -87,6 +90,10 @@ DEFAULT_MAX_ARTISTS_FETCH = 40
 DEFAULT_SPOTIFY_DAILY_BUDGET = 150
 # Cache-only still needs auth + year light/medium/heavy scan + listen rewrite.
 CACHE_ONLY_BUDGET_HEADROOM = 80
+# Shared disk cache for year light/medium/heavy (+ listen) album indexes.
+# Snapshot-keyed hits ignore TTL; total-only hits expire after this window.
+DEFAULT_PLAYLIST_INDEX_CACHE_HOURS = 18.0
+DEFAULT_PLAYLIST_INDEX_CACHE_PATH = DEFAULT_DATA_DIR / "playlist_album_index_cache.json"
 DEFAULT_ALBUM_CACHE_HOURS = 336.0  # 14 days — new albums are infrequent
 DEFAULT_LIBRARY_CACHE_HOURS_LOCAL = DEFAULT_LIBRARY_CACHE_HOURS
 
@@ -449,19 +456,129 @@ def save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def find_playlist_id(sp, name: str, budget: SpotifyBudget | None = None) -> str | None:
+@dataclass
+class PlaylistRef:
+    """Minimal playlist metadata from current_user_playlists (no extra GET)."""
+
+    id: str
+    name: str
+    snapshot_id: str | None = None
+    track_total: int | None = None
+
+
+def find_playlist(sp, name: str, budget: SpotifyBudget | None = None) -> PlaylistRef | None:
     offset = 0
     while True:
         page = spotify_call(sp.current_user_playlists, limit=50, offset=offset, budget=budget)
         items = page.get("items") or []
         for playlist in items:
             if playlist and playlist.get("name") == name:
-                return playlist.get("id")
+                tracks = playlist.get("tracks") if isinstance(playlist.get("tracks"), dict) else {}
+                total = tracks.get("total") if isinstance(tracks, dict) else None
+                return PlaylistRef(
+                    id=str(playlist.get("id") or ""),
+                    name=name,
+                    snapshot_id=(str(playlist["snapshot_id"]) if playlist.get("snapshot_id") else None),
+                    track_total=int(total) if total is not None else None,
+                )
         offset += len(items)
         if page.get("next") is None:
             break
         time.sleep(0.05)
     return None
+
+
+def find_playlist_id(sp, name: str, budget: SpotifyBudget | None = None) -> str | None:
+    ref = find_playlist(sp, name, budget=budget)
+    return ref.id if ref and ref.id else None
+
+
+def playlist_index_cache(
+    path: Path | None = None,
+    *,
+    ttl_hours: float = DEFAULT_PLAYLIST_INDEX_CACHE_HOURS,
+) -> JsonCache:
+    """Shared year/listen playlist album-index cache (AOTY + year-listen)."""
+    return JsonCache(path or DEFAULT_PLAYLIST_INDEX_CACHE_PATH, ttl_hours=ttl_hours)
+
+
+def playlist_album_index_cache_key(playlist_id: str) -> str:
+    return f"pl_album_idx:{playlist_id}"
+
+
+def year_playlist_index_to_cache_value(
+    index: YearPlaylistIndex,
+    *,
+    snapshot_id: str | None = None,
+    track_total: int | None = None,
+) -> dict:
+    return {
+        "album_ids": sorted(index.album_ids),
+        "name_keys": sorted(index.name_keys),
+        "track_count": int(index.track_count),
+        "snapshot_id": snapshot_id,
+        "track_total": track_total,
+    }
+
+
+def year_playlist_index_from_cache_value(value: dict) -> YearPlaylistIndex:
+    return YearPlaylistIndex(
+        album_ids=set(value.get("album_ids") or []),
+        name_keys=set(value.get("name_keys") or []),
+        track_count=int(value.get("track_count") or 0),
+    )
+
+
+def load_cached_playlist_album_index(
+    cache: JsonCache | None,
+    playlist_id: str,
+    *,
+    snapshot_id: str | None = None,
+    track_total: int | None = None,
+) -> YearPlaylistIndex | None:
+    """Return a fresh index when snapshot matches, or TTL+total match otherwise."""
+    if cache is None or not playlist_id:
+        return None
+    key = playlist_album_index_cache_key(playlist_id)
+    row = cache.data.get(key)
+    if not isinstance(row, dict) or "value" not in row:
+        return None
+    value = row.get("value")
+    if not isinstance(value, dict):
+        return None
+
+    cached_snap = value.get("snapshot_id")
+    if snapshot_id and cached_snap and str(cached_snap) == str(snapshot_id):
+        # Snapshot match → treat as fresh even if TTL elapsed.
+        return year_playlist_index_from_cache_value(value)
+
+    # No usable snapshot: require TTL freshness + matching track total when known.
+    fresh = cache.get(key)
+    if not isinstance(fresh, dict):
+        return None
+    if track_total is not None:
+        cached_total = fresh.get("track_total")
+        if cached_total is None or int(cached_total) != int(track_total):
+            return None
+    return year_playlist_index_from_cache_value(fresh)
+
+
+def save_cached_playlist_album_index(
+    cache: JsonCache | None,
+    playlist_id: str,
+    index: YearPlaylistIndex,
+    *,
+    snapshot_id: str | None = None,
+    track_total: int | None = None,
+) -> None:
+    if cache is None or not playlist_id:
+        return
+    cache.set(
+        playlist_album_index_cache_key(playlist_id),
+        year_playlist_index_to_cache_value(
+            index, snapshot_id=snapshot_id, track_total=track_total
+        ),
+    )
 
 
 def playlist_album_index(
@@ -470,11 +587,32 @@ def playlist_album_index(
     *,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
+    cache: JsonCache | None = None,
+    snapshot_id: str | None = None,
+    track_total: int | None = None,
+    label: str | None = None,
+    debug: bool = False,
 ) -> YearPlaylistIndex:
-    """Album ids + name keys represented by tracks currently on a playlist."""
+    """Album ids + name keys represented by tracks currently on a playlist.
+
+    When ``cache`` is provided, prefer a disk hit keyed by playlist id +
+    snapshot_id (preferred) or playlist id + track total within the cache TTL.
+    """
+    display = label or playlist_id
+    cached = load_cached_playlist_album_index(
+        cache,
+        playlist_id,
+        snapshot_id=snapshot_id,
+        track_total=track_total,
+    )
+    if cached is not None:
+        print(f"  cache hit: {display} ({len(cached.album_ids)} albums)")
+        return cached
+
     index = YearPlaylistIndex()
     offset = 0
     logged_first_page = False
+    api_total: int | None = track_total
     while True:
         # Avoid restrictive `fields=` — Feb 2026 field renames + spotipy combos
         # can return empty/partial payloads when fields= is set. Limit max is 50.
@@ -487,23 +625,34 @@ def playlist_album_index(
             budget=budget,
         )
         items = page.get("items") or []
+        if page.get("total") is not None:
+            try:
+                api_total = int(page["total"])
+            except (TypeError, ValueError):
+                pass
         if not logged_first_page:
             logged_first_page = True
-            sample_keys: list[str] = []
-            nested: dict[str, object] = {}
-            if items and isinstance(items[0], dict):
-                sample_keys = sorted(items[0].keys())
-                for nest_key in ("track", "item"):
-                    obj = items[0].get(nest_key)
-                    if isinstance(obj, dict):
-                        nested[nest_key] = sorted(obj.keys())[:12]
-                    elif obj is not None:
-                        nested[nest_key] = type(obj).__name__
-            print(
-                f"  playlist_items id={playlist_id}: first_page={len(items)} "
-                f"api_total={page.get('total')!r} entry_keys={sample_keys}"
-                + (f" nested={nested}" if nested else "")
-            )
+            if debug:
+                sample_keys: list[str] = []
+                nested: dict[str, object] = {}
+                if items and isinstance(items[0], dict):
+                    sample_keys = sorted(items[0].keys())
+                    for nest_key in ("track", "item"):
+                        obj = items[0].get(nest_key)
+                        if isinstance(obj, dict):
+                            nested[nest_key] = sorted(obj.keys())[:12]
+                        elif obj is not None:
+                            nested[nest_key] = type(obj).__name__
+                print(
+                    f"  playlist_items id={playlist_id}: first_page={len(items)} "
+                    f"api_total={page.get('total')!r} entry_keys={sample_keys}"
+                    + (f" nested={nested}" if nested else "")
+                )
+            else:
+                print(
+                    f"  fetch: {display} first_page={len(items)} "
+                    f"api_total={page.get('total')!r}"
+                )
             if not items:
                 print(
                     f"  WARNING: playlist {playlist_id} returned 0 items on first page "
@@ -539,6 +688,14 @@ def playlist_album_index(
         if page.get("next") is None:
             break
         time.sleep(sleep_s)
+
+    save_cached_playlist_album_index(
+        cache,
+        playlist_id,
+        index,
+        snapshot_id=snapshot_id,
+        track_total=api_total if api_total is not None else track_total,
+    )
     return index
 
 
@@ -548,9 +705,24 @@ def playlist_album_ids(
     *,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
+    cache: JsonCache | None = None,
+    snapshot_id: str | None = None,
+    track_total: int | None = None,
+    label: str | None = None,
+    debug: bool = False,
 ) -> set[str]:
     """Album ids represented by tracks currently on a playlist."""
-    return playlist_album_index(sp, playlist_id, budget=budget, sleep_s=sleep_s).album_ids
+    return playlist_album_index(
+        sp,
+        playlist_id,
+        budget=budget,
+        sleep_s=sleep_s,
+        cache=cache,
+        snapshot_id=snapshot_id,
+        track_total=track_total,
+        label=label,
+        debug=debug,
+    ).album_ids
 
 
 def year_playlist_album_ids(
@@ -560,18 +732,31 @@ def year_playlist_album_ids(
     *,
     budget: SpotifyBudget | None = None,
     sleep_s: float = 0.05,
+    cache: JsonCache | None = None,
+    debug: bool = False,
 ) -> tuple[YearPlaylistIndex, dict[str, str | None]]:
     """Return (index of albums on light/medium/heavy, playlist_id by tier)."""
     names = playlist_names(year, name_style)
     ids_by_tier: dict[str, str | None] = {}
     index = YearPlaylistIndex()
     for tier, name in names.items():
-        playlist_id = find_playlist_id(sp, name, budget=budget)
+        ref = find_playlist(sp, name, budget=budget)
+        playlist_id = ref.id if ref and ref.id else None
         ids_by_tier[tier] = playlist_id
         if not playlist_id:
             print(f"  missing playlist {name!r} — treating as empty")
             continue
-        found = playlist_album_index(sp, playlist_id, budget=budget, sleep_s=sleep_s)
+        found = playlist_album_index(
+            sp,
+            playlist_id,
+            budget=budget,
+            sleep_s=sleep_s,
+            cache=cache,
+            snapshot_id=ref.snapshot_id if ref else None,
+            track_total=ref.track_total if ref else None,
+            label=name,
+            debug=debug,
+        )
         print(
             f"  {name!r}: {found.track_count} track(s), "
             f"{len(found.album_ids)} album id(s), {len(found.name_keys)} name key(s)"
@@ -900,9 +1085,16 @@ def sync(
     new_count = sum(1 for aid in followed if aid not in prev_pool)
     print(f"Followed artists: {len(followed)} (new_since_last={new_count})")
 
+    pl_index_cache = playlist_index_cache()
     print(f"Reading albums already on {year} light/medium/heavy …")
+    print(f"        playlist index cache={pl_index_cache.path}")
     on_year, _ = year_playlist_album_ids(
-        sp, year, name_style, budget=budget, sleep_s=spotify_sleep
+        sp,
+        year,
+        name_style,
+        budget=budget,
+        sleep_s=spotify_sleep,
+        cache=pl_index_cache,
     )
     print(
         f"Year-playlist index: {on_year.track_count} track(s), "
@@ -1427,6 +1619,40 @@ def self_test() -> None:
     assert merged.album_ids == {"a", "b"}
     assert merged.name_keys == {"k1", "k2"}
     assert merged.track_count == 5
+
+    # Playlist album-index disk cache: snapshot hit + total/TTL hit (offline).
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = playlist_index_cache(Path(tmp) / "pl_idx.json", ttl_hours=18.0)
+        idx = YearPlaylistIndex(
+            album_ids={"alb1", "alb2"},
+            name_keys={album_name_key("Band", "Album")},
+            track_count=12,
+        )
+        save_cached_playlist_album_index(
+            cache, "pl123", idx, snapshot_id="snap-a", track_total=12
+        )
+        hit_snap = load_cached_playlist_album_index(
+            cache, "pl123", snapshot_id="snap-a", track_total=12
+        )
+        assert hit_snap is not None
+        assert hit_snap.album_ids == {"alb1", "alb2"}
+        assert hit_snap.track_count == 12
+        # Different snapshot + different total → miss
+        assert (
+            load_cached_playlist_album_index(
+                cache, "pl123", snapshot_id="snap-b", track_total=99
+            )
+            is None
+        )
+        # No snapshot but matching total within TTL → hit
+        hit_total = load_cached_playlist_album_index(
+            cache, "pl123", snapshot_id=None, track_total=12
+        )
+        assert hit_total is not None
+        assert hit_total.name_keys == {album_name_key("Band", "Album")}
+        # Round-trip via to/from helpers
+        raw = year_playlist_index_to_cache_value(idx, snapshot_id="s", track_total=12)
+        assert year_playlist_index_from_cache_value(raw).album_ids == idx.album_ids
 
     # AOTY supplemental merge: skip year-bucket hits + duplicate name keys.
     followed_kept = {
