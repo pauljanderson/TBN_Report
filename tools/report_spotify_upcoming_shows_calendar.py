@@ -39,8 +39,8 @@ DEFAULT_OUT = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "calendar.html"
 
 @dataclass
 class CalShow:
-    artist: str
-    title: str
+    artist: str  # matched library query (secondary)
+    title: str  # event title — primary headline
     start: datetime
     city: str
     state: str
@@ -48,6 +48,7 @@ class CalShow:
     country: str
     kind: str  # headliner | tribute
     playlist_eligible: bool
+    matched_artists: tuple[str, ...] = ()
 
     @property
     def day(self) -> date:
@@ -66,6 +67,73 @@ class CalShow:
             place = f"{place} ({self.country})" if place else self.country
         return place
 
+    @property
+    def dedupe_key(self) -> tuple[str, str, str, str]:
+        """Same gig even if matched under multiple library artists."""
+        return (
+            self.start.strftime("%Y-%m-%dT%H:%M"),
+            self.venue.casefold().strip(),
+            self.city.casefold().strip(),
+            self.title.casefold().strip(),
+        )
+
+
+def dedupe_shows(shows: list[CalShow]) -> list[CalShow]:
+    """Collapse duplicate gigs; prefer headliner eligibility; merge matched queries."""
+    best: dict[tuple[str, str, str, str], CalShow] = {}
+    for show in shows:
+        key = show.dedupe_key
+        if not key[3]:  # empty title
+            key = (key[0], key[1], key[2], show.artist.casefold())
+        existing = best.get(key)
+        if existing is None:
+            best[key] = CalShow(
+                artist=show.artist,
+                title=show.title,
+                start=show.start,
+                city=show.city,
+                state=show.state,
+                venue=show.venue,
+                country=show.country,
+                kind=show.kind,
+                playlist_eligible=show.playlist_eligible,
+                matched_artists=(show.artist,),
+            )
+            continue
+        artists = list(existing.matched_artists)
+        if show.artist not in artists:
+            artists.append(show.artist)
+        # Prefer playlist-eligible / headliner row when merging.
+        if show.playlist_eligible and not existing.playlist_eligible:
+            keep = show
+            kind = show.kind
+            eligible = True
+            title = show.title or existing.title
+            start = show.start
+            city, st, venue, country = show.city, show.state, show.venue, show.country
+        else:
+            keep = existing
+            kind = existing.kind if existing.playlist_eligible else (show.kind if show.playlist_eligible else existing.kind)
+            eligible = existing.playlist_eligible or show.playlist_eligible
+            title = existing.title or show.title
+            start = existing.start
+            city, st, venue, country = existing.city, existing.state, existing.venue, existing.country
+        best[key] = CalShow(
+            artist=keep.artist,
+            title=title,
+            start=start,
+            city=city,
+            state=st,
+            venue=venue,
+            country=country,
+            kind="headliner" if eligible else kind,
+            playlist_eligible=eligible,
+            matched_artists=tuple(artists),
+        )
+    out = list(best.values())
+    out.sort(key=lambda s: (s.start, s.title.casefold()))
+    return out
+
 
 def load_shows(state_path: Path) -> tuple[list[CalShow], dict]:
     if not state_path.is_file():
@@ -82,7 +150,9 @@ def load_shows(state_path: Path) -> tuple[list[CalShow], dict]:
             start = parse_start(show.get("start_utc"))
             if start is None or start < now:
                 continue
-            title = show.get("title") or ""
+            title = (show.get("title") or "").strip()
+            if not title:
+                continue
             if "playlist_eligible" in show and "kind" in show:
                 playlist_eligible = bool(show.get("playlist_eligible"))
                 kind = str(show.get("kind") or ("headliner" if playlist_eligible else "tribute"))
@@ -102,15 +172,16 @@ def load_shows(state_path: Path) -> tuple[list[CalShow], dict]:
                     country=show.get("country") or "",
                     kind=kind,
                     playlist_eligible=playlist_eligible,
+                    matched_artists=(artist,),
                 )
             )
-    shows.sort(key=lambda s: (s.start, s.artist.casefold()))
+    shows = dedupe_shows(shows)
     return shows, state
 
 
 def show_anchor(show: CalShow) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", show.artist.casefold()).strip("-") or "artist"
-    return f"show-{int(show.start.timestamp())}-{slug}"
+    slug = re.sub(r"[^a-z0-9]+", "-", show.title.casefold()).strip("-") or "show"
+    return f"show-{int(show.start.timestamp())}-{slug[:48]}"
 
 
 def month_span(shows: list[CalShow]) -> list[tuple[int, int]]:
@@ -161,12 +232,14 @@ def render_html(shows: list[CalShow], state: dict, out_path: Path) -> str:
                 chips = []
                 for show in day_shows[:4]:
                     kind_cls = "chip-head" if show.playlist_eligible else "chip-trib"
+                    matched = ", ".join(show.matched_artists) or show.artist
                     tip = html.escape(
-                        f"{show.artist} — {show.title}\n{show.venue}\n{show.place}\n{show.when_local_label}"
+                        f"{show.title}\n{show.venue}\n{show.place}\n"
+                        f"{show.when_local_label}\nmatched: {matched}"
                     )
                     chips.append(
                         f'<a class="chip {kind_cls}" href="#{show_anchor(show)}"'
-                        f' title="{tip}">{html.escape(show.artist)}</a>'
+                        f' title="{tip}">{html.escape(show.title)}</a>'
                     )
                 more = ""
                 if len(day_shows) > 4:
@@ -200,6 +273,12 @@ def render_html(shows: list[CalShow], state: dict, out_path: Path) -> str:
         kind_cls = "headliner" if show.playlist_eligible else "tribute"
         kind_label = "on playlist" if show.playlist_eligible else "calendar only"
         anchor = show_anchor(show)
+        matched = ", ".join(show.matched_artists) or show.artist
+        matched_line = (
+            f'<p class="meta matched">matched query: {html.escape(matched)}</p>'
+            if matched and matched.casefold() not in show.title.casefold()
+            else ""
+        )
         list_items.append(
             f"""
 <article class="show {kind_cls}" id="{anchor}">
@@ -208,10 +287,10 @@ def render_html(shows: list[CalShow], state: dict, out_path: Path) -> str:
     <span class="time">{html.escape(show.start.strftime("%H:%M UTC"))}</span>
   </div>
   <div class="body">
-    <h3>{html.escape(show.artist)}</h3>
-    <p class="title">{html.escape(show.title)}</p>
+    <h3>{html.escape(show.title)}</h3>
     <p class="meta">{html.escape(show.venue or "—")}</p>
     <p class="meta">{html.escape(show.place or "—")}</p>
+    {matched_line}
   </div>
   <div class="badge">{kind_label}</div>
 </article>
@@ -360,10 +439,11 @@ body {{
 .show h3 {{
   font-family: Fraunces, Georgia, serif;
   font-size: 1.25rem;
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.35rem;
+  line-height: 1.2;
 }}
-.show .title {{ margin: 0 0 0.35rem; color: var(--ink); }}
 .show .meta {{ margin: 0; color: var(--muted); font-size: 0.92rem; }}
+.show .matched {{ margin-top: 0.35rem; font-size: 0.8rem; opacity: 0.85; }}
 .badge {{
   align-self: start;
   font-size: 0.75rem;
