@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RL Trail-1 BE overlay: one knob `rl_trail_profit` (stop=0).
 
-Default: tradable-tape Closed 260828112205 (from-scratch 764 parent).
+Control = DailyRun off (no BE) on RL_Closed_260814183604 (LatestRun fallback).
 Candidates replay the same Closed book + local OHLC:
   after first High >= entry * (1 + pct), subsequent Low <= entry → BE at entry
   (gap through BE → next/open fill — same convention as tools/be_stop_replay_ab.py).
@@ -52,16 +52,20 @@ from compare_format import (  # noqa: E402
     overlay_ann_ror_max_dd,
 )
 
-STAMP = "20260828"
-DEFAULT_CLOSED = (
-    DRIVE
-    / "paul_experiments"
-    / "rl_tradable_2010_adv2m_20260828"
-    / "runs"
-    / "tradable"
-    / "RL_Closed_260828112205.csv"
+STAMP = "20260819"
+OUT_DIR = DRIVE / "paul_experiments" / f"rl_be_trail_pct_ab_{STAMP}"
+# Prefer the PO stamp; LatestRun is only a fallback (DailyRun copy).
+CLOSED = next(
+    (
+        p
+        for p in (
+            DRIVE / "RL_Closed_260814183604.csv",
+            DRIVE / "RL_LatestRun_Closed.csv",
+        )
+        if p.is_file()
+    ),
+    DRIVE / "RL_Closed_260814183604.csv",
 )
-DEFAULT_OUT = DRIVE / "paul_experiments" / f"rl_be_trail_tradable_{STAMP}"
 IS_CUT = date(2024, 1, 1)
 INIT = DEFAULT_INITIAL_ACCOUNT
 OUT_DIR = DEFAULT_OUT
@@ -378,9 +382,8 @@ Click column headers to sort.</p>
 
 <h2>Freeze / method</h2>
 <ul>
-<li><strong>Universe:</strong> tradable 2010 / $5 / ADV$2m (764). Not house 59. Not a Paul cut.</li>
-<li><strong>Control Closed:</strong> <code>{html_mod.escape(rel)}</code> (dip=1.055 freeze, trails off).</li>
-<li><strong>Knob:</strong> EXIT <code>rl_trail_profit</code> with <code>rl_trail_stop=0</code>. Frozen: entries, dip, expansion, stop_pct, target, no Trail-2.</li>
+<li><strong>System:</strong> RL (Rocket Launcher). Control stamp: <code>drive/RL_Closed_260814183604.csv</code> (fallback <code>RL_LatestRun_Closed.csv</code>).</li>
+<li><strong>Knob:</strong> EXIT <code>rl_trail_profit</code> with <code>rl_trail_stop=0</code>. Frozen: entries, SMA target, stop_pct, no Trail-2.</li>
 <li><strong>Convention:</strong> after first High ≥ entry×(1+pct), subsequent Low ≤ entry → BE at entry; Open gap through BE → exit at Open. Fill bar arms only; never extends past original close.</li>
 <li>IS = entry_date &lt; 2024-01-01; OOS report-only. Missing local OHLC → control exit.</li>
 <li>Ann ROR / Max DD: Closed overlay at $47,500 cash / $500k initial. Not a live aggressive equity curve.</li>
@@ -411,12 +414,11 @@ def write_baseline(results: list[dict], closed: Path) -> Path:
         "",
         "| Field | Value |",
         "|---|---|",
-        "| Universe | tradable 2010 / ADV$2m (764) |",
-        f"| Control Closed | `{closed.as_posix()}` |",
-        "| Engine freeze | dip=1.055, expansion=1.163, stop=0.934, target=1.20, too_high=off |",
-        "| Knob | `rl_trail_profit` + `rl_trail_stop=0` (BE at entry) |",
-        "| Frozen | entries, dip, expansion, stop_pct, target, no Trail-2 |",
-        "| Arms | 14% (candidate), 20% (candidate); 10% reference only (prior DISMISS) |",
+        "| System | RL |",
+        "| Control | `drive/RL_Closed_260814183604.csv` (fallback LatestRun; DailyRun `rl_trail_profit=0`) |",
+        "| Knob | `rl_trail_profit` with `rl_trail_stop=0` (BE at entry) |",
+        "| Frozen | entries, SMA target, stop_pct, no Trail-2 |",
+        "| Arms | 14% (user), 20% (wider); 10% reference only |",
         "| Split | IS entry_date < 2024-01-01; OOS report-only |",
         "| Method | Closed + local OHLC replay; N fixed |",
         "",
