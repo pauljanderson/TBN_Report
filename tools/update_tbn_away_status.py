@@ -366,26 +366,25 @@ def _build_systems() -> list[SystemCard]:
         )
     )
 
-    # Minervini VCP — DailyRun wired (Theory knobs HOLD; promote despite challenge HOLD-on-knobs)
+    # Minervini VCP — RETIRED from DailyRun / active reporting (2026-08-21)
     if mv_st["has_howto"] and mv_st["has_finalize"]:
-        mv_badge = "DONE"
+        mv_badge = "RETIRED"
         mv_summary = (
             "Minervini Specific Entry Point Analysis (SEPA) / Volatility Contraction Pattern (VCP) "
-            "engine + HOW_TO_RUN; DailyRun step [11/14] via `run_mvcp.bat` (ALL universe; Theory knobs "
-            "unchanged — RS≥80, vol 1.5×, depth_shrink 0.65, chase 5%, stop 0.92, target 1.25, "
-            "time_stop 10, trail_arm 10%, cooldown 20). Reconcile freeze `260801215052`. "
-            "Fundamentals deferred (OHLCV-only)."
+            "engine retained for research; **retired** from DailyRun and active monthly/investment/"
+            "system-performance lists (2026-08-21). Standalone: `run_mvcp.bat` / `run_minervini_vcp.bat`. "
+            "Reconcile freeze `260801215052` remains archive-only (`enabled: false`)."
         )
     elif mv_st["has_howto"]:
-        mv_badge = "IN PROGRESS"
-        mv_summary = "MVCP folder has HOW_TO_RUN but finalize incomplete."
+        mv_badge = "RETIRED"
+        mv_summary = "MVCP retired from DailyRun; HOW_TO_RUN present but finalize incomplete."
     else:
-        mv_badge = "STUB"
-        mv_summary = "Minervini VCP folder missing expected docs."
+        mv_badge = "RETIRED"
+        mv_summary = "MVCP retired from DailyRun; folder docs incomplete."
     systems.append(
         SystemCard(
             key="mvcp",
-            title="Minervini VCP (MVCP)",
+            title="Minervini VCP (MVCP) — retired",
             folder="minervini_vcp",
             badge=mv_badge,
             summary=mv_summary,
@@ -630,7 +629,7 @@ def _render_html(
     run_today_candidates = [
         ("run_sb.bat", "StockBee gold universe (56) — production / DailyRun default"),
         ("run_stockbee_burst.bat", "Same as run_sb.bat (long name)"),
-        ("run_mvcp.bat", "Minervini VCP ALL universe — production / DailyRun step [11/14]"),
+        ("run_mvcp.bat", "Minervini VCP — RETIRED from DailyRun; standalone research only"),
         ("run_wrl.bat", "WRL weekly range/swing — research; repo root next to DailyRun.bat"),
         ("run_wrl_ab.bat", "WRL A/B: target mode / scale frac / stop / min-zone"),
         ("run_qull.bat", "Qull HTF / EP proxy seed run (DailyRun HOLD)"),
@@ -910,7 +909,7 @@ def _render_html(
   <h2>Open limitations</h2>
   <ul class="plain">
     <li><strong>Earnings / fundamentals:</strong> host is OHLCV-first. Full O'Neil CAN SLIM (C/A earnings growth, etc.) and true catalyst Episodic Pivot (EP) need earnings/news feeds we do not have wired.</li>
-    <li><strong>Minervini VCP (MVCP):</strong> DailyRun-wired on Theory knobs + ALL universe (reconcile <code>260801215052</code>); expand dilution / fill-chase notes remain open; fundamentals deferred.</li>
+    <li><strong>Minervini VCP (MVCP):</strong> <strong>Retired</strong> 2026-08-21 from DailyRun and active reporting; engine + historical Closed stamps kept; reconcile <code>enabled: false</code>.</li>
     <li><strong>StockBee promote:</strong> usable + DailyRun-wired on gold 56, but formal TBN “production promote” still framed as HOLD pending PO accept of risk freeze / filters.</li>
     <li><strong>Qull HTF / Kell PAC / CAN SLIM:</strong> research / early engines only — DailyRun HOLD; not full host-parity Audit for Kell/CS yet.</li>
     <li><strong>SB gate A/Bs:</strong> ATR+52w, MM+2Lynch, vol×50d — none beat control on Total PnL (see comparisons).</li>

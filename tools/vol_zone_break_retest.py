@@ -64,6 +64,8 @@ DEFAULT_OUT_DIR = REPO / "drive" / "paul_experiments"
 
 ZoneKind = Literal["OC", "HL"]
 Approach = Literal["from_above", "from_below", "inside", "unknown"]
+TradeSide = Literal["long", "short"]
+TradeSideMode = Literal["long", "short", "both"]
 
 # ---------------------------------------------------------------------------
 # Sortable HTML helpers (monthly-report convention)
@@ -213,6 +215,7 @@ class RetestSignal:
     # Never fill at Open of the signal bar (that would be look-ahead).
     signal_idx: int = -1
     signal_date: pd.Timestamp | None = None
+    side: TradeSide = "long"
 
 
 @dataclass
@@ -235,8 +238,18 @@ class SysParams:
     # lightweight exit for rough win-rate
     exit_bars: int = 20
     target_r: float = 2.0
-    # Default OFF. VP at signal_idx (not entry_idx). Missing profile → drop.
+    # Default OFF. Gate lives in generate_signals (after min_touches, before append).
+    # VP at signal_idx inclusive, not entry_idx. Missing profile → drop.
     require_hvn_overlap: bool = False
+    # long = HL break-up retest (house default); short = break-down retest; both = union.
+    trade_side: TradeSideMode = "long"
+
+
+def normalize_trade_side_mode(raw: str | None) -> TradeSideMode:
+    s = str(raw or "long").strip().lower()
+    if s in ("long", "short", "both"):
+        return s  # type: ignore[return-value]
+    return "long"
 
 
 # Research freeze (NOT production gold). Matches NVDA-shaped hypothesis.
@@ -325,7 +338,9 @@ EXIT_SPECS: tuple[ExitSpec, ...] = (
     ),
 )
 
-# Primary research exit for step-5 ABs (chosen in-sample on PaulTwenty exit compare).
+# Primary research exit for *historical* PaulTwenty step-5 ABs (in-sample horse-race).
+# House DualPaul78 sleeve (`run_vz.bat` / control 260817212836) uses EXIT_atr4_s025_r15
+# via rocket_vz.VzConfig — not this PRIMARY_EXIT identity.
 PRIMARY_EXIT = next(e for e in EXIT_SPECS if e.name == "zone_atr05_ts40")
 TOY_EXIT = next(e for e in EXIT_SPECS if e.name == "toy")
 
@@ -802,11 +817,14 @@ def generate_signals(
 
         # Signal known only after bar ``i`` completes (needs Low/High/Close of ``i``).
         signal_idx = i
+        # Real HVN gate (not an ATR-style post-filter). VP ends at signal_idx inclusive.
         if params.require_hvn_overlap:
             if not zone_overlaps_hvn_at_signal(
                 highs, lows, closes, volumes, zone, signal_idx, hvn_cache
             ):
-                # first_retest_only: consume this visit (overlay-equivalent drop).
+                # first_retest_only=true freeze: consume this visit (do not hunt a
+                # later retest). Same membership as a post-filter drop of the first
+                # fill. first_retest_only=false: continue so a later visit can pass.
                 if params.first_retest_only:
                     break
                 continue
@@ -842,6 +860,128 @@ def generate_signals(
             visit_n=len(signals) + 1,
             signal_idx=signal_idx,
             signal_date=pd.Timestamp(dates.iloc[signal_idx]),
+            side="long",
+        )
+        assert_predictive_entry(sig, params.entry_on)
+        signals.append(sig)
+        if params.first_retest_only:
+            break
+
+    return signals
+
+
+def generate_signals_short(
+    df: pd.DataFrame,
+    zone: Zone,
+    touches: list[TouchEvent],
+    breaks: list[BreakEvent],
+    params: SysParams,
+    params_tag: str,
+) -> list[RetestSignal]:
+    """After breakout-down: short on resistance retest from below (mirror of generate_signals).
+
+    Break definition: first close below zone.lo after prior context at/above zone.lo
+    (see detect_breaks direction=down). Entry when price retests the zone band from below
+    without reclaiming above zone.hi.
+    """
+    downs = [b for b in breaks if b.direction == "down"]
+    if not downs:
+        return []
+    br = downs[0]
+
+    closes = df["Close"].to_numpy(dtype=np.float64)
+    opens = df["Open"].to_numpy(dtype=np.float64)
+    lows = df["Low"].to_numpy(dtype=np.float64)
+    highs = df["High"].to_numpy(dtype=np.float64)
+    volumes = df["Volume"].to_numpy(dtype=np.float64)
+    dates = df["Date"]
+    hvn_cache: dict[int, Optional[object]] = {}
+
+    if params.require_hold_bars > 0:
+        for j in range(1, params.require_hold_bars + 1):
+            k = br.bar_idx + j
+            if k >= len(df) or float(closes[k]) > zone.lo:
+                return []
+
+    visits = _visit_summary(touches)
+    signals: list[RetestSignal] = []
+    end = min(len(df), br.bar_idx + 1 + params.retest_window)
+    eps = params.retest_eps_pct
+    band_lo = zone.lo * (1.0 - eps)
+    band_hi = zone.hi * (1.0 + eps)
+
+    in_touch = False
+    for i in range(br.bar_idx + 1, end):
+        approach = _approach(closes, i, zone, params.approach_lookback)
+        hit = _bar_intersects(band_lo, band_hi, float(lows[i]), float(highs[i]))
+        near = float(highs[i]) >= zone.lo * (1.0 - eps) and float(highs[i]) <= zone.lo * (
+            1.0 + max(eps, 0.005)
+        )
+        active = bool(hit or near)
+        if not active:
+            in_touch = False
+            continue
+        if approach != "from_below":
+            in_touch = True
+            continue
+        if float(closes[i]) > zone.hi:
+            in_touch = True
+            continue
+        if in_touch:
+            continue
+        in_touch = True
+
+        strength, n_all, n_holds, n_pre, n_post = strength_score(
+            visits,
+            i,
+            br.bar_idx,
+            count_only_holds=params.count_only_holds,
+            count_pre_break=params.count_pre_break_touches,
+            decay_halflife=params.touch_decay_halflife,
+        )
+        touch_metric = n_holds if params.count_only_holds else n_all
+        if touch_metric < params.min_touches_before_entry:
+            continue
+
+        signal_idx = i
+        if params.require_hvn_overlap:
+            if not zone_overlaps_hvn_at_signal(
+                highs, lows, closes, volumes, zone, signal_idx, hvn_cache
+            ):
+                if params.first_retest_only:
+                    break
+                continue
+        if params.entry_on == "next_open":
+            if i + 1 >= len(df):
+                continue
+            entry_idx = i + 1
+            entry_price = float(opens[entry_idx])
+        else:
+            entry_idx = i
+            entry_price = float(closes[entry_idx])
+
+        sig = RetestSignal(
+            zone_id=zone.zone_id,
+            kind=zone.kind,
+            entry_idx=entry_idx,
+            entry_date=pd.Timestamp(dates.iloc[entry_idx]),
+            entry_price=entry_price,
+            break_idx=br.bar_idx,
+            break_date=br.date,
+            bars_after_break=entry_idx - br.bar_idx,
+            touch_count_all=n_all,
+            touch_count_holds=n_holds,
+            pre_break_touches=n_pre,
+            post_break_touches=n_post,
+            strength=strength,
+            stop=zone.hi,
+            params_tag=params_tag,
+            break_dist_pct=float(br.break_pct),
+            break_atr_mult=float(br.atr_mult),
+            visit_n=len(signals) + 1,
+            signal_idx=signal_idx,
+            signal_date=pd.Timestamp(dates.iloc[signal_idx]),
+            side="short",
         )
         assert_predictive_entry(sig, params.entry_on)
         signals.append(sig)
@@ -900,6 +1040,20 @@ def resolve_stop(
         a = float(atr[sig.entry_idx])
         if np.isfinite(a) and a > 0:
             stop = stop - stop_atr_buffer * a
+    return stop
+
+
+def resolve_stop_short(
+    sig: RetestSignal,
+    atr: np.ndarray | None,
+    stop_atr_buffer: float = 0.0,
+) -> float:
+    """Stop above zone.hi for shorts, optionally buffered by ATR multiples."""
+    stop = float(sig.stop)
+    if stop_atr_buffer > 0 and atr is not None and 0 <= sig.entry_idx < len(atr):
+        a = float(atr[sig.entry_idx])
+        if np.isfinite(a) and a > 0:
+            stop = stop + stop_atr_buffer * a
     return stop
 
 
@@ -967,16 +1121,79 @@ def simulate_exit(
     }
 
 
+def simulate_exit_short(
+    df: pd.DataFrame,
+    sig: RetestSignal,
+    *,
+    exit_bars: int,
+    target_r: float,
+    stop: float | None = None,
+) -> dict:
+    """Short exit: stop above entry, target R down, time stop (mirror of simulate_exit)."""
+    highs = df["High"].to_numpy(dtype=np.float64)
+    lows = df["Low"].to_numpy(dtype=np.float64)
+    closes = df["Close"].to_numpy(dtype=np.float64)
+    entry = float(sig.entry_price)
+    stop_px = float(sig.stop if stop is None else stop)
+    risk = max(stop_px - entry, entry * 0.005)
+    target = entry - target_r * risk
+    last_i = len(df) - 1
+    time_i = int(sig.entry_idx) + int(exit_bars)
+    end = min(last_i, time_i)
+    for i in range(sig.entry_idx + 1, end + 1):
+        if float(highs[i]) >= stop_px:
+            pnl = (entry - stop_px) / entry * 100.0
+            return {
+                "pnl_pct": pnl,
+                "r_mult": (entry - stop_px) / risk,
+                "exit_reason": "stop",
+                "bars_held": i - sig.entry_idx,
+                "stop": stop_px,
+                "target": target,
+            }
+        if float(lows[i]) <= target:
+            pnl = (entry - target) / entry * 100.0
+            return {
+                "pnl_pct": pnl,
+                "r_mult": target_r,
+                "exit_reason": "target",
+                "bars_held": i - sig.entry_idx,
+                "stop": stop_px,
+                "target": target,
+            }
+    bars_held = int(end - sig.entry_idx)
+    pnl = (entry - float(closes[end])) / entry * 100.0
+    if bars_held >= int(exit_bars) and end >= time_i:
+        reason = "time"
+    else:
+        reason = "still_open"
+    return {
+        "pnl_pct": pnl,
+        "r_mult": (pnl / 100.0 * entry) / risk if risk > 0 else 0.0,
+        "exit_reason": reason,
+        "bars_held": bars_held,
+        "stop": stop_px,
+        "target": target,
+    }
+
+
 def simulate_exit_spec(
     df: pd.DataFrame,
     sig: RetestSignal,
     spec: ExitSpec,
     atr: np.ndarray | None = None,
 ) -> dict:
-    stop = resolve_stop(sig, atr, spec.stop_atr_buffer)
-    out = simulate_exit(
-        df, sig, exit_bars=spec.exit_bars, target_r=spec.target_r, stop=stop
-    )
+    side = getattr(sig, "side", "long")
+    if side == "short":
+        stop = resolve_stop_short(sig, atr, spec.stop_atr_buffer)
+        out = simulate_exit_short(
+            df, sig, exit_bars=spec.exit_bars, target_r=spec.target_r, stop=stop
+        )
+    else:
+        stop = resolve_stop(sig, atr, spec.stop_atr_buffer)
+        out = simulate_exit(
+            df, sig, exit_bars=spec.exit_bars, target_r=spec.target_r, stop=stop
+        )
     out["exit_name"] = spec.name
     return out
 
@@ -984,7 +1201,12 @@ def simulate_exit_spec(
 def rough_pnl(
     df: pd.DataFrame, sig: RetestSignal, exit_bars: int, target_r: float
 ) -> float:
-    """Exit at stop (zone.lo), target R, or time stop - return pnl %."""
+    """Exit at stop, target R, or time stop - return pnl %."""
+    spec_side = getattr(sig, "side", "long")
+    if spec_side == "short":
+        return float(
+            simulate_exit_short(df, sig, exit_bars=exit_bars, target_r=target_r)["pnl_pct"]
+        )
     return float(
         simulate_exit(df, sig, exit_bars=exit_bars, target_r=target_r)["pnl_pct"]
     )
@@ -994,6 +1216,11 @@ def rough_r(
     df: pd.DataFrame, sig: RetestSignal, exit_bars: int, target_r: float
 ) -> float:
     """Same toy exit as rough_pnl, expressed in R multiples of (entry-stop)."""
+    spec_side = getattr(sig, "side", "long")
+    if spec_side == "short":
+        return float(
+            simulate_exit_short(df, sig, exit_bars=exit_bars, target_r=target_r)["r_mult"]
+        )
     return float(
         simulate_exit(df, sig, exit_bars=exit_bars, target_r=target_r)["r_mult"]
     )
@@ -1122,6 +1349,23 @@ def precompute_zone_events(
     return out
 
 
+def _zone_signals_for_params(
+    df: pd.DataFrame,
+    z: Zone,
+    touches_eps: list[TouchEvent],
+    breaks: list[BreakEvent],
+    params: SysParams,
+    params_tag: str,
+) -> list[RetestSignal]:
+    mode = normalize_trade_side_mode(params.trade_side)
+    out: list[RetestSignal] = []
+    if mode in ("long", "both"):
+        out.extend(generate_signals(df, z, touches_eps, breaks, params, params_tag))
+    if mode in ("short", "both"):
+        out.extend(generate_signals_short(df, z, touches_eps, breaks, params, params_tag))
+    return out
+
+
 def run_system(
     df: pd.DataFrame,
     zones: list[Zone],
@@ -1142,7 +1386,7 @@ def run_system(
                 df, z, atr, params.break_pct, params.break_atr, params.break_window
             )
             signals.extend(
-                generate_signals(df, z, touches_eps, breaks, params, params_tag)
+                _zone_signals_for_params(df, z, touches_eps, breaks, params, params_tag)
             )
     else:
         for ze in cached:
@@ -1160,14 +1404,14 @@ def run_system(
                     df, z, atr, params.break_pct, params.break_atr, params.break_window
                 )
             signals.extend(
-                generate_signals(df, z, touches_eps, breaks, params, params_tag)
+                _zone_signals_for_params(df, z, touches_eps, breaks, params, params_tag)
             )
 
-    signals.sort(key=lambda s: (s.entry_idx, s.kind))
-    seen: set[tuple[str, int]] = set()
+    signals.sort(key=lambda s: (s.entry_idx, s.kind, s.side))
+    seen: set[tuple[str, int, str]] = set()
     uniq: list[RetestSignal] = []
     for s in signals:
-        key = (s.kind, s.entry_idx)
+        key = (s.zone_id, s.entry_idx, s.side)
         if key in seen:
             continue
         seen.add(key)

@@ -5,3 +5,5 @@ yfinance>=1.0
 duckdb>=1.5
 matplotlib>=3.10
 requests>=2.32
+# Spotify year-playlist sync (tools/sync_spotify_year_playlists.py)
+spotipy>=2.26

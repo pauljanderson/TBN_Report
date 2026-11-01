@@ -28,7 +28,7 @@ WHITELIST: dict[str, str] = {
     "run_gettarget": "run_gettarget",
     "regen_reports": "regen_reports",
     "publish_pages_push": "publish_pages_push",
-    # Optional research sleeve — calls run_vz.bat with NO extra args (sibling may be editing CLI).
+    # DailyRun official TBN VZ sleeve — calls run_vz.bat with NO extra args (sibling may be editing CLI).
     "run_vz": "run_vz",
 }
 

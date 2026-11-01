@@ -1,6 +1,6 @@
 @echo off
 rem Compatibility wrapper: PBR was renamed to WPBR. Prefer run_wpbr.bat.
-rem Universe: drive\universes\WPBR_universe.csv (via run_wpbr.bat)
+rem Universe: full data\newdata\data (via run_wpbr.bat). Mag9 override: run_wpbr.bat drive\universes\WPBR_universe.csv
 rem Override: run_pbr.bat path\to\test_universe.csv
 rem          set WPBR_UNIVERSE_CSV=...  /  set WPBR_SYMBOLS=...
 rem Full universe (all data\newdata\data\*.csv) — no env vars:

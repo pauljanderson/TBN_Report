@@ -24,10 +24,13 @@ NAV_FOOTER = """
   <a href="index.html">Scanner open report</a>
   · <a href="investment.html">Investment report</a>
   · <a href="convergence.html">System convergence</a>
+  · <a href="trendlines/index.html">Trendlines + VZ charts</a>
   · <a href="monthly.html">Monthly report (all systems)</a>
+  · <a href="live_style.html">Live-style compound growth</a>
   · <a href="system_performance.html">Historical performance</a>
   · <a href="system_setup_process.html">System setup process</a>
   · <a href="tbn_philosophy.html">TBN Philosophy</a>
+  · <a href="open_today.html">Today's open buys and sells</a>
   · Refresh this page for the latest copy.
 </p>
 """
@@ -37,6 +40,7 @@ SYSTEM_PAGE_SOURCES: dict[str, str] = {
     "rs.html": "systems/rs.html",
     "sb.html": "systems/sb.html",
     "vz.html": "systems/vz.html",
+    "rsi.html": "systems/rsi.html",
     "rl.html": "systems/rl.html",
     "yh.html": "systems/yh.html",
     "brt.html": "systems/brt.html",
@@ -44,6 +48,8 @@ SYSTEM_PAGE_SOURCES: dict[str, str] = {
     "mts.html": "systems/mts.html",
     "ind.html": "systems/ind.html",
     "mvcp.html": "systems/mvcp.html",
+    "wrl.html": "systems/wrl.html",
+    "mom.html": "systems/mom.html",
     "index.html": "systems/index.html",
 }
 
@@ -178,6 +184,40 @@ def _write_text_resilient(dst: Path, text: str, *, encoding: str = "utf-8", retr
     raise OSError(last_err.errno, hint, str(dst)) from last_err
 
 
+def _copy_file_resilient(src: Path, dst: Path, *, retries: int = 5) -> None:
+    """Copy binary/text files via temp+replace with retries (same lock class as HTML).
+
+    ``shutil.copy2`` opens the destination with ``'wb'`` and hits OSError
+    Errno 22 on Windows when docs/ PNGs are locked by a browser preview,
+    IDE, OneDrive, or AV — same failure mode as non-resilient HTML writes.
+    """
+    if src.resolve() == dst.resolve():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+    last_err: OSError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
+            return
+        except OSError as exc:
+            last_err = exc
+            try:
+                if tmp.is_file():
+                    tmp.unlink()
+            except OSError:
+                pass
+            if attempt < retries:
+                time.sleep(0.4 * attempt)
+    assert last_err is not None
+    hint = (
+        f"Could not copy {src.name} -> {dst} after {retries} attempts ({last_err}). "
+        "Close any IDE/browser tab previewing this file (and pause OneDrive sync if needed), then retry."
+    )
+    raise OSError(last_err.errno, hint, str(dst)) from last_err
+
+
 def prepare_html_for_pages(src: Path, dst: Path, *, show_nav: bool = False) -> None:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -247,6 +287,21 @@ def generate_performance_report(drive: Path, docs_dir: Path) -> Path:
     return out
 
 
+def publish_live_style_official(*, docs_dir: Path, rerun: bool = False) -> Path:
+    """Wire official live-style compound pages + callouts into docs/."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "publish_live_style_official",
+        ROOT / "tools" / "publish_live_style_official.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    mod.run(rerun=rerun)
+    out = docs_dir / "live_style.html"
+    print(f"[pages] Live-style compound growth -> {out}")
+    return out
 def publish_convergence(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = _resolve_drive(drive) / "System_Convergence_Latest.html"
     if not src.is_file():
@@ -312,6 +367,37 @@ def publish_system_pages(*, drive: Path, docs_dir: Path, show_nav: bool) -> list
     return written
 
 
+TRENDLINES_NAV_FOOTER = NAV_FOOTER.replace('href="', 'href="../')
+
+
+def publish_trendlines_charts(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path | None:
+    """Copy trendlines_opens_latest/charts/ → docs/trendlines/ (index + PNGs)."""
+    src_dir = _resolve_drive(drive) / "paul_studies" / "trendlines_opens_latest" / "charts"
+    src_index = src_dir / "index.html"
+    if not src_index.is_file():
+        return None
+    dst_dir = docs_dir / "trendlines"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst_index = dst_dir / "index.html"
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from report_page_extras import inject_report_page_extras
+
+    text = src_index.read_text(encoding="utf-8")
+    text = inject_report_page_extras(text)
+    if show_nav and "</body>" in text.lower():
+        text = re.sub(r"</body>", TRENDLINES_NAV_FOOTER + "\n</body>", text, count=1, flags=re.I)
+    _write_text_resilient(dst_index, text)
+    for path in src_dir.iterdir():
+        if not path.is_file():
+            continue
+        if path.name == "index.html":
+            continue
+        if path.suffix.lower() in (".png", ".md"):
+            _copy_file_resilient(path, dst_dir / path.name)
+    return dst_index
+
+
 def publish_scanner(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
     src = drive / "Scanner_Open_Report_Latest.html"
     if not src.is_file():
@@ -336,7 +422,26 @@ def ensure_logo_in_docs(docs_dir: Path) -> None:
             return
         dst = docs_dir / LOGO_FILENAME
         if src.resolve() != dst.resolve():
-            shutil.copy2(src, dst)
+            _copy_file_resilient(src, dst)
+
+
+# GitHub rejects blobs over 100MB; keep a margin so Pages push does not fail mid-DailyRun.
+GITHUB_BLOB_SOFT_LIMIT_BYTES = 95 * 1024 * 1024
+
+
+def _assert_pages_blob_size(path: Path, *, limit: int = GITHUB_BLOB_SOFT_LIMIT_BYTES) -> None:
+    if not path.is_file():
+        return
+    size = path.stat().st_size
+    if size <= limit:
+        return
+    mb = size / (1024 * 1024)
+    lim_mb = limit / (1024 * 1024)
+    raise RuntimeError(
+        f"{path.name} is {mb:.1f} MB (limit {lim_mb:.0f} MB for GitHub Pages push). "
+        "Investment report must not embed chart PNGs for every system-filter subset — "
+        "see generate_investment_report._chart_embed_subsets."
+    )
 
 
 def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
@@ -351,8 +456,9 @@ def publish_investment(*, drive: Path, docs_dir: Path, show_nav: bool) -> Path:
             if img_src.is_file():
                 img_dst = docs_dir / img_name
                 if img_src.resolve() != img_dst.resolve():
-                    shutil.copy2(img_src, img_dst)
+                    _copy_file_resilient(img_src, img_dst)
                 break
+    _assert_pages_blob_size(dst)
     return dst
 
 
@@ -425,20 +531,40 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
         raise RuntimeError(status.stderr.strip() or "git status failed")
     branch = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "HEAD"
 
+    if branch != "main":
+        print(
+            f"[pages] WARNING: HEAD is on {branch}, not main. "
+            "DailyRun/publish should normally run on main. "
+            "Will still commit locally and push HEAD → origin/main for Pages "
+            "(skipping a bare `git push` of this feature branch, which fails when "
+            "the remote branch has moved)."
+        )
+
     if not status.stdout.strip():
         print("[pages] No changes under docs/ or closed_positions_log.csv — skip commit.")
         push_origin_main(repo_root, branch)
         return
 
+    # Commit on the current branch. Do NOT bare-`git push` when off main — a stale
+    # feature branch (e.g. cursor/spotify-…) is often behind its remote and rejects
+    # non-fast-forward, aborting before Pages can update. Pages only needs origin/main.
     for step in (
         ["add", "--", *paths_to_add],
         ["commit", "-m", message],
-        ["push"],
     ):
         proc = _git(step, repo_root)
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout).strip()
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
+
+    if branch == "main":
+        # Fast path: push the branch itself (same tip as HEAD:main).
+        proc = _git(["push", "origin", "main"], repo_root)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).strip()
+            raise RuntimeError(f"git push origin main failed: {err}")
+        print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
+        return
 
     push_origin_main(repo_root, branch)
 
@@ -545,6 +671,22 @@ def main() -> int:
     elif include_investment:
         print(f"[pages] Skipped historical performance (no {performance_dst.name})")
 
+    # After monthly/performance land in docs/, publish compound growth + inject callouts.
+    if include_investment and not args.scanner_only:
+        try:
+            live_dst = publish_live_style_official(docs_dir=docs_dir, rerun=False)
+            if live_dst.is_file():
+                published.append(live_dst)
+                for extra in (
+                    docs_dir / "live_style_monthly.html",
+                    docs_dir / "live_style_compare.html",
+                ):
+                    if extra.is_file():
+                        published.append(extra)
+                show_nav = True
+        except Exception as exc:
+            print(f"[pages] Live-style official pages skipped: {exc}", file=sys.stderr)
+
     setup_src = _resolve_drive(drive) / "paul_experiments" / "system_setup_process.html"
     if setup_src.is_file():
         setup_dst = publish_setup_process(drive=drive, docs_dir=docs_dir, show_nav=False)
@@ -568,6 +710,13 @@ def main() -> int:
         # Do not inject root-relative footer into docs/systems/* (hrefs would break).
         print(f"[pages] Wrote {len(system_pages)} system description page(s) under {docs_dir / 'systems'}")
 
+    trendlines_dst = publish_trendlines_charts(drive=drive, docs_dir=docs_dir, show_nav=True)
+    if trendlines_dst is not None:
+        show_nav = True
+        print(f"[pages] Wrote {trendlines_dst}")
+    else:
+        print("[pages] Skipped trendlines charts (no drive/paul_studies/trendlines_opens_latest/charts/index.html)")
+
     if show_nav:
         for path in published:
             text = path.read_text(encoding="utf-8")
@@ -583,7 +732,9 @@ def main() -> int:
     print("[pages]   Scanner:      https://pauljanderson.github.io/TBN_Report/")
     print("[pages]   Investment:   https://pauljanderson.github.io/TBN_Report/investment.html")
     print("[pages]   Convergence:  https://pauljanderson.github.io/TBN_Report/convergence.html")
+    print("[pages]   Trendlines:   https://pauljanderson.github.io/TBN_Report/trendlines/index.html")
     print("[pages]   Monthly:      https://pauljanderson.github.io/TBN_Report/monthly.html")
+    print("[pages]   Live-style:   https://pauljanderson.github.io/TBN_Report/live_style.html")
     print("[pages]   Performance:  https://pauljanderson.github.io/TBN_Report/system_performance.html")
     print("[pages]   Setup process: https://pauljanderson.github.io/TBN_Report/system_setup_process.html")
     print("[pages]   TBN Philosophy: https://pauljanderson.github.io/TBN_Report/tbn_philosophy.html")

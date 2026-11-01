@@ -14,6 +14,8 @@ Wire from the engine via ``-v retest_mode=stop_looking|keep_looking`` (BRTConfig
 """
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Optional
 
 import numpy as np
@@ -51,7 +53,39 @@ WPBR_STRENGTH_FIELDS: tuple[str, ...] = (
     "wpbr_signal_body_pct",
     "wpbr_zone_strength",
     "wpbr_merge_count",
+    # Research labels. Filled on the trade from that trade's breakout and retest.
+    # Not an entry or exit gate.
+    "max_pre_retest_high",
+    "max_pre_retest_expansion_pct",
 )
+
+# Research-only closed-trade labels. Not an entry, exit, or eligibility gate.
+# Filled on the trade from the qualifying retest bar and weekly zone bounds
+# production already chose. Not copied from the zone-event strength dict, so a
+# later retest on the same zone does not reuse the first retest's prices.
+RETEST_VS_ZONE_FIELDS: tuple[str, ...] = (
+    "retest_date",
+    "retest_zone_top",
+    "retest_zone_bottom",
+    "retest_low",
+    "retest_close",
+    "retest_low_vs_zone_top_pct",
+    "retest_low_vs_zone_bottom_pct",
+    "retest_close_vs_zone_top_pct",
+    "retest_close_vs_zone_bottom_pct",
+)
+
+RETEST_VS_ZONE_CSV_NAMES: dict[str, str] = {
+    "retest_date": "RETEST_DATE",
+    "retest_zone_top": "ZONE_TOP",
+    "retest_zone_bottom": "ZONE_BOTTOM",
+    "retest_low": "RETEST_LOW",
+    "retest_close": "RETEST_CLOSE",
+    "retest_low_vs_zone_top_pct": "RETEST_LOW_VS_ZONE_TOP_PCT",
+    "retest_low_vs_zone_bottom_pct": "RETEST_LOW_VS_ZONE_BOTTOM_PCT",
+    "retest_close_vs_zone_top_pct": "RETEST_CLOSE_VS_ZONE_TOP_PCT",
+    "retest_close_vs_zone_bottom_pct": "RETEST_CLOSE_VS_ZONE_BOTTOM_PCT",
+}
 
 
 def _to_date(ts) -> pd.Timestamp:
@@ -79,10 +113,14 @@ def _next_week_start_after_conf(conf_week_end: pd.Timestamp) -> pd.Timestamp:
     return _week_monday(conf_week_end) + pd.Timedelta(days=7)
 
 
-def _first_daily_bar_on_or_after(day: pd.Timestamp, daily_index: pd.DatetimeIndex) -> int | None:
-    dates = pd.DatetimeIndex(daily_index).normalize()
+def _first_daily_bar_on_or_after(
+    day: pd.Timestamp,
+    daily_index: pd.DatetimeIndex,
+    dates_norm: np.ndarray | None = None,
+) -> int | None:
+    dates = dates_norm if dates_norm is not None else _dates_norm_numpy(daily_index)
     target = _to_date(day).to_numpy()
-    idx = int(np.searchsorted(dates.to_numpy(), target, side="left"))
+    idx = int(np.searchsorted(dates, target, side="left"))
     if idx >= len(dates):
         return None
     return idx
@@ -159,12 +197,46 @@ def _weekly_pivot_indices(
     return out
 
 
+# Cache Decimal quanta so hot retest loops do not rebuild 10**-dec every call.
+_HALF_UP_QUANT: dict[int, Any] = {}
+
+
+def _half_up_quant(dec: int = 2):
+    from decimal import Decimal
+
+    d = int(dec)
+    q = _HALF_UP_QUANT.get(d)
+    if q is None:
+        q = Decimal(10) ** (-d)
+        _HALF_UP_QUANT[d] = q
+    return q
+
+
 def _half_up(price: float, dec: int = 2) -> float:
     """Sheets-like ROUND(price, dec) via Decimal HALF_UP. WPBR compare helper only."""
     from decimal import ROUND_HALF_UP, Decimal
 
-    quant = Decimal(10) ** (-int(dec))
+    quant = _half_up_quant(dec)
     return float(Decimal(str(float(price))).quantize(quant, rounding=ROUND_HALF_UP))
+
+
+def _half_up_array(arr: np.ndarray, dec: int = 2) -> np.ndarray:
+    """Vector-length HALF_UP round (same Decimal path as ``_half_up``), once per series.
+
+    Used so ``find_wpbr_retest_and_signal`` can compare pre-rounded OHLC instead of
+    calling Decimal on every bar of every zone scan (was ~30%+ of zone-build time).
+    """
+    from decimal import ROUND_HALF_UP, Decimal
+
+    quant = _half_up_quant(dec)
+    out = np.empty(len(arr), dtype=np.float64)
+    for i, x in enumerate(arr):
+        xf = float(x)
+        if not np.isfinite(xf):
+            out[i] = np.nan
+        else:
+            out[i] = float(Decimal(str(xf)).quantize(quant, rounding=ROUND_HALF_UP))
+    return out
 
 
 def _round_bounds(price: float, band_pct: float, dec: int) -> tuple[float, float, float]:
@@ -175,7 +247,7 @@ def _round_bounds(price: float, band_pct: float, dec: int) -> tuple[float, float
     """
     from decimal import ROUND_HALF_UP, Decimal
 
-    quant = Decimal(10) ** (-int(dec))
+    quant = _half_up_quant(dec)
     tp = float(Decimal(str(float(price))).quantize(quant, rounding=ROUND_HALF_UP))
     dtp = Decimal(str(tp))
     db = Decimal(str(band_pct))
@@ -184,11 +256,20 @@ def _round_bounds(price: float, band_pct: float, dec: int) -> tuple[float, float
     return tp, zl, zh
 
 
-def _last_daily_bar_on_or_before(day: pd.Timestamp, daily_index: pd.DatetimeIndex) -> int | None:
+def _dates_norm_numpy(daily_index: pd.DatetimeIndex) -> np.ndarray:
+    """Normalized daily dates as numpy datetime64 (compute once per symbol)."""
+    return pd.DatetimeIndex(daily_index).normalize().to_numpy()
+
+
+def _last_daily_bar_on_or_before(
+    day: pd.Timestamp,
+    daily_index: pd.DatetimeIndex,
+    dates_norm: np.ndarray | None = None,
+) -> int | None:
     """Last daily bar whose date is <= ``day`` (normalized); None if none exist."""
-    dates = pd.DatetimeIndex(daily_index).normalize()
+    dates = dates_norm if dates_norm is not None else _dates_norm_numpy(daily_index)
     target = _to_date(day).to_numpy()
-    idx = int(np.searchsorted(dates.to_numpy(), target, side="right")) - 1
+    idx = int(np.searchsorted(dates, target, side="right")) - 1
     if idx < 0:
         return None
     return idx
@@ -419,6 +500,89 @@ def _compute_wpbr_zone_strength(metrics: dict[str, float]) -> float:
     return round(min(1.0, max(0.0, score)), 4)
 
 
+def max_pre_retest_expansion(
+    high: np.ndarray,
+    *,
+    breakout_bar: int,
+    retest_bar: int,
+    zone_upper: float,
+) -> tuple[float, float]:
+    """Max daily high strictly after the breakout bar and strictly before the retest bar.
+
+    The breakout bar is the last daily session of the qualifying weekly breakout
+    (stage 1: weekly close above the zone top). The retest bar is the qualifying
+    daily retest for this trade. Returns ``(max_high, (max_high / zone_top) - 1)``.
+    An empty interval or a missing zone top returns NaN, NaN. Does not shorten
+    the window and does not use the breakout bar or the retest bar themselves.
+    """
+    bo = int(breakout_bar)
+    rt = int(retest_bar)
+    zh = float(zone_upper)
+    if bo < 0 or rt < 0 or rt <= bo + 1 or not (np.isfinite(zh) and zh > 0.0):
+        return float("nan"), float("nan")
+    start = bo + 1
+    end = rt  # slice end is exclusive, so this stops on the bar before the retest
+    if start >= end or start >= len(high):
+        return float("nan"), float("nan")
+    window = np.asarray(high[start:end], dtype=np.float64)
+    if window.size == 0:
+        return float("nan"), float("nan")
+    finite = window[np.isfinite(window)]
+    if finite.size == 0:
+        return float("nan"), float("nan")
+    mx = float(np.max(finite))
+    if not (np.isfinite(mx) and mx > 0.0):
+        return float("nan"), float("nan")
+    return mx, (mx / zh) - 1.0
+
+
+def retest_position_vs_zone(
+    low: np.ndarray,
+    close: np.ndarray,
+    *,
+    retest_bar: int,
+    zone_lower: float,
+    zone_upper: float,
+) -> dict[str, float]:
+    """Low and close on a retest bar the caller already chose, versus that zone.
+
+    Does not search for a retest and does not rebuild the weekly zone.
+    ``retest_bar`` is the qualifying retest production already selected for this
+    trade. ``zone_lower`` and ``zone_upper`` are that trade's weekly zone bounds.
+    Returns NaN for every field when the bar or either bound cannot be used.
+    Percent fields are ``(price / bound) - 1``.
+    """
+    numeric = tuple(k for k in RETEST_VS_ZONE_FIELDS if k != "retest_date")
+    empty = {k: float("nan") for k in numeric}
+    try:
+        rt = int(retest_bar)
+    except (TypeError, ValueError):
+        return empty
+    if rt < 0 or rt >= len(low) or rt >= len(close):
+        return empty
+    try:
+        zl = float(zone_lower)
+        zh = float(zone_upper)
+        lo = float(low[rt])
+        cl = float(close[rt])
+    except (TypeError, ValueError):
+        return empty
+    if not (np.isfinite(zl) and zl > 0.0 and np.isfinite(zh) and zh > 0.0):
+        return empty
+    if not (np.isfinite(lo) and np.isfinite(cl)):
+        return empty
+    return {
+        "retest_zone_top": zh,
+        "retest_zone_bottom": zl,
+        "retest_low": lo,
+        "retest_close": cl,
+        "retest_low_vs_zone_top_pct": (lo / zh) - 1.0,
+        "retest_low_vs_zone_bottom_pct": (lo / zl) - 1.0,
+        "retest_close_vs_zone_top_pct": (cl / zh) - 1.0,
+        "retest_close_vs_zone_bottom_pct": (cl / zl) - 1.0,
+    }
+
+
 def wpbr_strength_from_event(ev: dict[str, Any]) -> dict[str, float]:
     """Extract strength metrics from a zone event dict."""
     return {k: _finite_or_nan(ev.get(k, float("nan"))) for k in WPBR_STRENGTH_FIELDS}
@@ -532,6 +696,7 @@ def find_wpbr_retest_and_signal(
     n: int,
     stop_at: int | None = None,
     retest_mode: str = RETEST_MODE_STOP_LOOKING,
+    prices_already_half_up: bool = False,
 ) -> tuple[int | None, int | None, int | None]:
     """
     Find the next retest after ``scan_start``, then the first green close signal
@@ -543,6 +708,8 @@ def find_wpbr_retest_and_signal(
 
     Price compares use Decimal HALF_UP to 2 decimals (same style as ``_round_bounds``)
     so DuckDB float noise (e.g. Low 12.180000305 vs zh 12.18) matches sheet 2-dp OHLC.
+    When ``prices_already_half_up`` is True, ``lo``/``cl``/``op`` are treated as already
+    HALF_UP-rounded (preferred path from ``compute_wpbr_touch_stream``).
 
     ``retest_mode`` controls how the forward scan terminates:
 
@@ -566,12 +733,17 @@ def find_wpbr_retest_and_signal(
     zh = _half_up(float(zone_upper))
     max_entry_days = max(0, int(max_days_after_retest))
     mode = normalize_retest_mode(retest_mode)
+    already = bool(prices_already_half_up)
     retest_bar: int | None = None
     for di in range(scan_start, end_scan + 1):
         if di <= 0:
             continue
-        lo_r = _half_up(float(lo[di]))
-        cl_r = _half_up(float(cl[di]))
+        if already:
+            lo_r = float(lo[di])
+            cl_r = float(cl[di])
+        else:
+            lo_r = _half_up(float(lo[di]))
+            cl_r = _half_up(float(cl[di]))
         if mode == RETEST_MODE_STOP_LOOKING:
             # Sheet abandon-kill: first Close < zone_lower ends the window (blank).
             if cl_r < zl:
@@ -583,7 +755,8 @@ def find_wpbr_retest_and_signal(
         # keep_looking (legacy): unbounded scan + prior-close gate.
         if not (lo_r <= zh and cl_r > zh):
             continue
-        if _half_up(float(cl[di - 1])) < zl:
+        prior_cl = float(cl[di - 1]) if already else _half_up(float(cl[di - 1]))
+        if prior_cl < zl:
             continue
         retest_bar = di
         break
@@ -591,8 +764,12 @@ def find_wpbr_retest_and_signal(
         return None, None, None
     end_di = min(end_scan, retest_bar + max_entry_days)
     for di in range(retest_bar, end_di + 1):
-        cl_r = _half_up(float(cl[di]))
-        op_r = _half_up(float(op[di]))
+        if already:
+            cl_r = float(cl[di])
+            op_r = float(op[di])
+        else:
+            cl_r = _half_up(float(cl[di]))
+            op_r = _half_up(float(op[di]))
         if cl_r > op_r and cl_r > zh:
             fill = di + 1 if di + 1 < n else None
             return retest_bar, di, fill
@@ -603,6 +780,31 @@ def _ymd8(s: str) -> str:
     """Normalize YYYY-MM-DD / YYYYMMDD / mixed to 8-digit YYYYMMDD; empty if unset."""
     digits = "".join(ch for ch in str(s or "") if ch.isdigit())
     return digits[:8] if len(digits) >= 8 else ""
+
+
+def wpbr_zone_trace_enabled(debug_symbol: Optional[str]) -> bool:
+    """True only when someone asked for per-zone lines.
+
+    Callers pass the symbol being scanned as ``debug_symbol`` on every name.
+    That used to print one line per weekly zone (about 66k lines on the full
+    warehouse). DailyRun stays quiet. Set ``WPBR_VERBOSE=1`` to print every
+    zone, or ``--debug-symbol TICKER`` to print that one ticker in-process.
+    """
+    if not debug_symbol:
+        return False
+    flag = os.environ.get("WPBR_VERBOSE", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    target = ""
+    for mod_name in ("stock_analysis.rocket_tbn", "rocket_tbn"):
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        raw = getattr(mod, "_DEBUG_SYMBOL", None)
+        if raw:
+            target = str(raw).strip().upper()
+            break
+    return bool(target) and target == str(debug_symbol).strip().upper()
 
 
 def compute_wpbr_touch_stream(
@@ -626,6 +828,10 @@ def compute_wpbr_touch_stream(
     debug_symbol: Optional[str] = None,
     effective_band_pct_fn=None,
     compute_atr_14_fn=None,
+    # Research-only DuckDB weekly/zone cache (default OFF). See wpbr_weekly_zone_cache.py.
+    use_weekly_zone_cache: bool = False,
+    weekly_zone_cache_db: str = "",
+    cache_symbol: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Weekly pivot-high zones; two-stage weekly breakout (close > upper, then high > upper*(1+conf));
@@ -691,7 +897,63 @@ def compute_wpbr_touch_stream(
         else np.full(n, np.nan, dtype=np.float64)
     )
 
-    weekly = aggregate_weekly(df)
+    # Optional DuckDB cache (weeklies + full zone stream). Default path is cold compute.
+    _cache_mod = None
+    _cache_db = None
+    _cache_sym = (cache_symbol or debug_symbol or "").strip().upper()
+    _cfg_hash = ""
+    _daily_fp = ""
+    _use_cache = bool(use_weekly_zone_cache) or (
+        str(os.environ.get("WPBR_WEEKLY_ZONE_CACHE", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if _use_cache and _cache_sym:
+        try:
+            try:
+                import wpbr_weekly_zone_cache as _cache_mod
+            except ImportError:
+                from stock_analysis import wpbr_weekly_zone_cache as _cache_mod  # type: ignore
+            _cache_db = _cache_mod.resolve_cache_db_path(weekly_zone_cache_db or None)
+            _cfg_hash = _cache_mod.config_hash(
+                band_pct=float(band_pct),
+                band_pct_atr=float(band_pct_atr or 0.0),
+                strong_pre_pivot_bars=int(strong_pre_pivot_bars),
+                strong_pre_pivot_pct=float(strong_pre_pivot_pct),
+                strong_pre_pivot_pct_atr=float(strong_pre_pivot_pct_atr or 0.0),
+                strong_post_pivot_bars=int(strong_post_pivot_bars),
+                strong_post_pivot_pct=float(strong_post_pivot_pct),
+                strong_post_pivot_pct_atr=float(strong_post_pivot_pct_atr or 0.0),
+                strong_pivot_mode=str(strong_pivot_mode or "either"),
+                breakout_confirmation=float(breakout_confirmation),
+                max_days_after_retest=int(max_days_after_retest),
+                retest_mode=str(retest_mode or RETEST_MODE_STOP_LOOKING),
+                zone_price_round_decimals=int(zone_price_round_decimals),
+                min_pivot_date=str(min_pivot_date or ""),
+                merge_overlapping_zones=bool(merge_overlapping_zones),
+            )
+            _daily_fp = _cache_mod.daily_fingerprint(df)
+            hit = _cache_mod.load_stream_cache(
+                _cache_db,
+                symbol=_cache_sym,
+                cfg_hash=_cfg_hash,
+                daily_fp=_daily_fp,
+                n_bars=n,
+                index=daily_index,
+            )
+            if hit is not None:
+                return hit
+        except Exception as _cache_exc:
+            # Keep going with cold compute; do not break WPBR/DailyRun.
+            if os.environ.get("WPBR_CACHE_DEBUG", "").strip():
+                print(f"[WPBR_CACHE] disabled for {_cache_sym}: {_cache_exc}", flush=True)
+            _cache_mod = None
+            _cache_db = None
+    if _use_cache and _cache_mod is not None and _cache_db is not None and _cache_sym:
+        weekly = _cache_mod.get_or_build_weekly(
+            df, symbol=_cache_sym, db_path=_cache_db, aggregate_fn=aggregate_weekly
+        )
+    else:
+        weekly = aggregate_weekly(df)
     if weekly.empty:
         empty = np.full(n, np.nan)
         return {
@@ -724,10 +986,12 @@ def compute_wpbr_touch_stream(
     w_index = pd.DatetimeIndex(weekly.index)
 
     atr_at_week: np.ndarray | None = None
+    # Normalize once; date helpers previously re-normalized (+ inferred freq) on every pivot.
+    dates_np = _dates_norm_numpy(daily_index)
     if pre_atr_m > 0 or post_atr_m > 0:
         atr_at_week = np.full(len(weekly), np.nan, dtype=np.float64)
         for wi in range(len(weekly)):
-            bar = _last_daily_bar_on_or_before(w_index[wi], daily_index)
+            bar = _last_daily_bar_on_or_before(w_index[wi], daily_index, dates_np)
             if bar is not None:
                 atr_at_week[wi] = float(atr_14_arr[bar])
 
@@ -750,6 +1014,11 @@ def compute_wpbr_touch_stream(
     retest_mode_norm = normalize_retest_mode(retest_mode)
     do_merge = bool(merge_overlapping_zones)
 
+    # HALF_UP OHLC once per symbol (same Decimal path); retest scans reuse these.
+    lo_hu = _half_up_array(lo, dec)
+    cl_hu = _half_up_array(cl, dec)
+    op_hu = _half_up_array(op, dec)
+
     tp_arr = np.full(n, np.nan)
     zc_arr = np.full(n, np.nan)
     zl_arr = np.full(n, np.nan)
@@ -764,7 +1033,6 @@ def compute_wpbr_touch_stream(
     entry_fill_bars: list[int] = []
     entry_opportunities: list[dict] = []
 
-    dates_norm = daily_index.normalize()
     min_pivot8 = _ymd8(min_pivot_date)
 
     candidates: list[dict] = []
@@ -776,7 +1044,7 @@ def compute_wpbr_touch_stream(
         # (zones, BO/conf, retests, rockets). Weekly lookback bars before this date still load.
         if min_pivot8 and pivot_monday.strftime("%Y%m%d") < min_pivot8:
             continue
-        atr_bar = _last_daily_bar_on_or_before(pivot_week_end_ts, daily_index)
+        atr_bar = _last_daily_bar_on_or_before(pivot_week_end_ts, daily_index, dates_np)
         if atr_bar is None:
             continue
         bp_i = float(
@@ -791,7 +1059,7 @@ def compute_wpbr_touch_stream(
         touch, zl, zh = _round_bounds(pivot_high, bp_i, dec)
         pivot_week_end = pivot_week_end_ts.strftime("%Y-%m-%d")
         pivot_daily_start = int(
-            np.searchsorted(dates_norm.to_numpy(), pivot_monday.to_numpy(), side="left")
+            np.searchsorted(dates_np, pivot_monday.to_numpy(), side="left")
         )
         if pivot_daily_start >= n:
             continue
@@ -840,24 +1108,24 @@ def compute_wpbr_touch_stream(
         if bo_week is not None:
             bo_monday = _week_monday(w_index[bo_week])
             bo_daily_end = int(
-                np.searchsorted(dates_norm.to_numpy(), _to_date(w_index[bo_week]).to_numpy(), side="right")
+                np.searchsorted(dates_np, _to_date(w_index[bo_week]).to_numpy(), side="right")
             ) - 1
             bo_daily_end = max(0, min(n - 1, bo_daily_end))
         if conf_week is not None:
             conf_monday = _week_monday(w_index[conf_week])
             next_week_start = _next_week_start_after_conf(w_index[conf_week])
             conf_daily_end = int(
-                np.searchsorted(dates_norm.to_numpy(), _to_date(w_index[conf_week]).to_numpy(), side="right")
+                np.searchsorted(dates_np, _to_date(w_index[conf_week]).to_numpy(), side="right")
             ) - 1
             conf_daily_end = max(0, min(n - 1, conf_daily_end))
 
-        # Zone cloud from pivot week forward (active even before confirmation)
-        for di in range(pivot_daily_start, n):
-            tp_arr[di] = touch
-            zc_arr[di] = touch
-            zl_arr[di] = zl
-            zh_arr[di] = zh
-            origin_arr[di] = 5
+        # Zone cloud from pivot week forward (active even before confirmation).
+        # Slice assign (same last-writer-wins semantics as the prior Python loop).
+        tp_arr[pivot_daily_start:] = touch
+        zc_arr[pivot_daily_start:] = touch
+        zl_arr[pivot_daily_start:] = zl
+        zh_arr[pivot_daily_start:] = zh
+        origin_arr[pivot_daily_start:] = 5
         if pivot_daily_start < n:
             matured_arr[pivot_daily_start] = True
 
@@ -866,18 +1134,19 @@ def compute_wpbr_touch_stream(
         entry_fill_bar: int | None = None
 
         if conf_week is not None and next_week_start is not None:
-            scan_start_bar = _first_daily_bar_on_or_after(next_week_start, daily_index)
+            scan_start_bar = _first_daily_bar_on_or_after(next_week_start, daily_index, dates_np)
             if scan_start_bar is not None:
                 retest_bar, entry_signal_bar, entry_fill_bar = find_wpbr_retest_and_signal(
-                    lo,
-                    cl,
-                    op,
+                    lo_hu,
+                    cl_hu,
+                    op_hu,
                     scan_start=scan_start_bar,
                     zone_lower=zl,
                     zone_upper=zh,
                     max_days_after_retest=max_entry_days,
                     n=n,
                     retest_mode=retest_mode_norm,
+                    prices_already_half_up=True,
                 )
                 if entry_signal_bar is not None and entry_fill_bar is not None:
                     entry_signal_bars.append(entry_signal_bar)
@@ -898,7 +1167,7 @@ def compute_wpbr_touch_stream(
                     )
 
         pivot_daily_end = int(
-            np.searchsorted(dates_norm.to_numpy(), _to_date(w_index[wi]).to_numpy(), side="right")
+            np.searchsorted(dates_np, _to_date(w_index[wi]).to_numpy(), side="right")
         ) - 1
         pivot_daily_end = max(0, min(n - 1, pivot_daily_end))
 
@@ -994,7 +1263,7 @@ def compute_wpbr_touch_stream(
         )
         audit.append(ev)
 
-        if debug_symbol:
+        if wpbr_zone_trace_enabled(debug_symbol):
             print(
                 f"[WPBR] {debug_symbol} id={zone_id} pivot={pivot_monday.date()} z=({zl},{zh}) "
                 f"merge={merge_count} "
@@ -1005,7 +1274,7 @@ def compute_wpbr_touch_stream(
             )
 
     tkl = matured_arr.copy()
-    return {
+    out = {
         "touch_price": pd.Series(tp_arr, index=df.index),
         "zone_center": pd.Series(zc_arr, index=df.index),
         "zone_low": pd.Series(zl_arr, index=df.index),
@@ -1024,3 +1293,23 @@ def compute_wpbr_touch_stream(
         "wpbr_entry_bars": sorted(set(entry_signal_bars)),
         "wpbr_audit": audit,
     }
+    if (
+        _use_cache
+        and _cache_mod is not None
+        and _cache_db is not None
+        and _cache_sym
+        and _cfg_hash
+        and _daily_fp
+    ):
+        try:
+            _cache_mod.save_stream_cache(
+                _cache_db,
+                symbol=_cache_sym,
+                cfg_hash=_cfg_hash,
+                daily_fp=_daily_fp,
+                n_bars=n,
+                stream=out,
+            )
+        except Exception:
+            pass
+    return out

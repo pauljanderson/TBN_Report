@@ -169,6 +169,17 @@ def test_backtest_watch_then_buy_scale() -> None:
     assert t.pnl_pct > 0
 
 
+def test_house_default_is_swing_full_exit() -> None:
+    assert WrlConfig().wrl_target_mode == "swing"
+    df = _synth_breakout_df()
+    closed, _, _, _ = backtest_symbol("TEST", df, WrlConfig())
+    assert len(closed) == 1
+    t = closed[0]
+    # Fill bar skips exits; next bar High tags swing high → 100% out at 110.
+    assert abs(t.exit_price - 110.0) < 1e-6
+    assert t.exit_type in ("TARGET", "TARGET2", "GAP_UP")
+
+
 def test_backtest_range_target_only() -> None:
     df = _synth_breakout_df()
     closed, _, _, _ = backtest_symbol("TEST", df, WrlConfig(wrl_target_mode="range"))
@@ -354,6 +365,7 @@ if __name__ == "__main__":
         test_daily_maps_to_completed_week_not_in_progress,
         test_watch_and_breakout_helpers,
         test_backtest_watch_then_buy_scale,
+        test_house_default_is_swing_full_exit,
         test_backtest_range_target_only,
         test_end_of_series_watch,
         test_aggregate_weekly_used,

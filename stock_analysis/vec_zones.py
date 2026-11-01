@@ -170,6 +170,58 @@ def compute_volume_profile(
     )
 
 
+def format_hvn_overlap_display(
+    prof: DailyVolumeProfile,
+    zone_lo: float,
+    zone_hi: float,
+) -> tuple[str, str, str]:
+    """POC price, overlapping HVN bin-center range, and vz_require_hvn_overlap pass."""
+    zlo = min(float(zone_lo), float(zone_hi))
+    zhi = max(float(zone_lo), float(zone_hi))
+    poc_str = f"{prof.poc:.2f}"
+    centers: list[float] = []
+    for i in prof.hvn_idx:
+        blo, bhi = prof.bin_range(int(i))
+        if zlo <= bhi and zhi >= blo:
+            centers.append((blo + bhi) / 2.0)
+    if centers:
+        lo, hi = min(centers), max(centers)
+        hvn_str = f"{lo:.2f}" if abs(hi - lo) < 0.005 else f"{lo:.2f}–{hi:.2f}"
+    else:
+        hvn_str = "—"
+    pass_str = "Yes" if prof.overlaps_hvn_or_poc(zlo, zhi) else "No"
+    return poc_str, hvn_str, pass_str
+
+
+def hvn_gate_fields_at_bar(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray,
+    end_bar: int,
+    zone_lo: float,
+    zone_hi: float,
+    *,
+    lookback: int = VP_LOOKBACK,
+    bin_pct: float = VP_BIN_PCT,
+    hvn_frac: float = VP_HVN_FRAC,
+) -> Optional[tuple[str, str, str]]:
+    """VP ending at ``end_bar`` inclusive; None when profile unavailable."""
+    prof = compute_volume_profile(
+        high,
+        low,
+        close,
+        volume,
+        int(end_bar),
+        lookback=lookback,
+        bin_pct=bin_pct,
+        hvn_frac=hvn_frac,
+    )
+    if prof is None:
+        return None
+    return format_hvn_overlap_display(prof, zone_lo, zone_hi)
+
+
 def compute_volume_poc(
     high: np.ndarray,
     low: np.ndarray,

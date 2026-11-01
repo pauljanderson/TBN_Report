@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<script>
+(function () {
+  "use strict";
+  function cacheBustUrl() {
+    var u = new URL(window.location.href);
+    u.searchParams.set("_", String(Date.now()));
+    return u.toString();
+  }
+  function forceHardReload(ev) {
+    var k = ev.key;
+    if (
+      k === "F5" ||
+      ((ev.ctrlKey || ev.metaKey) && (k === "r" || k === "R"))
+    ) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      window.location.replace(cacheBustUrl());
+    }
+  }
+  window.addEventListener("keydown", forceHardReload, true);
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.replace(cacheBustUrl());
+    }
+  });
+})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RSI — Relative Strength Index</title>
+<style>
+  :root {
+    --bg: #f7f6f2; --ink: #1c1b19; --muted: #5a574f; --line: #d4d0c4;
+    --card: #ffffff; --accent: #2a4a5c; --accent-soft: #e8eef2;
+    --ok: #2d6a4f; --ok-bg: #e8f2ec; --warn: #8a5a12; --warn-bg: #f7efe0;
+    --fill: #f0eee6; --bad: #9b2226; --bad-bg: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Georgia, serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink);
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, #e4ebe8 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, #ebe6dc 0%, transparent 50%),
+      var(--bg);
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 36px 24px 64px; }
+  header.doc-head { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 650; margin: 0 0 6px;
+  }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.2; }
+  h2 { font-size: 1.12rem; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.0rem; margin: 18px 0 8px; }
+  .lede { margin: 0; color: var(--muted); max-width: 72ch; }
+  .back { font-size: 0.9rem; margin: 0 0 10px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.04em; padding: 2px 8px; margin: 10px 0 0;
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-muted { background: var(--fill); color: var(--muted); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  p, li { margin: 0 0 10px; }
+  ul, ol { padding-left: 1.25rem; margin: 0 0 12px; }
+  ol.steps li { margin: 0.35em 0; }
+  a { color: var(--accent); }
+  code, .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 0.86em; background: var(--fill); padding: 0.08em 0.3em;
+  }
+  .callout { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 14px; margin: 14px 0 18px; }
+  .callout.warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .callout.ok { background: var(--ok-bg); border-left-color: var(--ok); }
+  .callout.bad { background: var(--bad-bg); border-left-color: var(--bad); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 0 0 14px;
+  }
+  .table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+  table.sortable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+  thead th { background: var(--fill); }
+  th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable-th:hover { background: #e8e4d8; }
+  .sort-ind { display: inline-block; width: 0.9em; margin-left: 4px; color: #9a9588; font-size: 10px; }
+  th.sort-asc .sort-ind::after { content: "▲"; color: var(--ink); }
+  th.sort-desc .sort-ind::after { content: "▼"; color: var(--ink); }
+  caption { text-align: left; font-size: 0.82rem; color: var(--muted); margin: 0 0 6px; caption-side: top; }
+  footer { margin-top: 28px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="back"><a href="../tbn_philosophy.html">&larr; TBN Philosophy</a></p>
+  <header class="doc-head">
+    <p class="eyebrow">Production · Relative Strength Index (RSI)</p>
+    <h1>RSI — Relative Strength Index</h1>
+    <p class="lede"><strong>RSI</strong> (Relative Strength Index) is Wilder's 14-period heat gauge — how stretched a name is on its own tape — <strong>not</strong> <strong>RS</strong> (Relative Strength vs SPY). It buys a cool-off after a hot run, then sells when RSI is hot again, rolls off a peak, or the calendar clock hits. <strong>DailyRun sleeve — not walk-forward gold.</strong></p>
+    <div class="badge badge-ok">DailyRun / TBN official</div>
+    <div class="meta-row"><span>Mode <code>rsi_mode=true</code></span><span>Runner <code>run_rsi.bat</code></span><span>Engine <span class='path'>stock_analysis/rocket_rsi.py</span></span><span>Prefix <code>RSI_*</code></span><span>Freeze ob70 / os30 / exit70 / maxrsi60 / atr2.93 / roll8 / ts20 / next_open</span></div>
+  </header>
+
+<div class="callout">
+  <strong>Not RS vs SPY:</strong> <strong>RSI</strong> here is J. Welles Wilder's Relative Strength Index (14) —
+  up-closes vs down-closes on this symbol. <strong>RS</strong> (Relative Strength) is the other sleeve
+  that scores excess return vs SPY plus Trend Condition (TC). Do not mix the two books, prefixes, or reports.
+</div>
+<div class="callout ok">
+  <strong>Status:</strong> DailyRun official TBN sleeve · step [10c/13] · preference-adopt.
+  Universe <code>drive/universes/rsi_universe.csv</code> — <strong>149</strong> High-FIT / in-sample (IS)-good names.
+  House freeze from <code>run_rsi.bat</code> / DailyRun:
+  prior bar RSI(14) ≥ 70, then close with 30 &lt; RSI &lt; 60 and trigger RSI &lt; 60,
+  Average True Range (ATR)% ≥ 2.93, fill next open;
+  sell RSI(14) ≥ 70 next open, or roll-8, or 20 calendar-day clock.
+  <strong>No price stop. Dummy $10k sheet notional. Watchlist, not Scanner.
+  Not walk-forward gold.</strong>
+  Skip with <code>SKIP_RSI=1</code>.
+</div>
+<div class="callout warn">
+  <strong>Honesty:</strong> DailyRun-wired is not the gold bar. Roll-8 and ATR% 2.93 are
+  preference adopts (see adopt stamps below). Out-of-sample (OOS) is report-only — do not retune.
+  Research A/B stamps (RSI 75 exit, ATR% 4, 7.18 distance-to-52-week-high, Kelly size) are
+  <strong>not</strong> this page’s house freeze.
+</div>
+<div class="callout ok">
+  <strong>Predictive timing:</strong> signal known at trigger-bar <em>close</em>
+  (Wilder RSI(14) + ATR% on that close). Default fill = <strong>next open</strong> (T+1).
+  Never buys the open of the signal morning. Gates are not re-checked on the fill bar.
+</div>
+
+<h2>1. What it is</h2>
+<p>
+  Hypothesis: after a name runs hot (RSI(14) ≥ 70), a pullback into a cooler band
+  (still above oversold) on a lively tape is worth a short hold until heat returns,
+  the move gives back, or time runs out.
+  Role: short-hold heat-gauge sleeve vs multi-month <strong>RS</strong> (vs SPY) leadership
+  and zone-retest books (Break and ReTest / Year High / Pivot Break and Retest / Volume Zone).
+</p>
+<p>
+  One position at a time per symbol. Live surface is <strong>Watchlist</strong>
+  (<code>RSI_Watchlist_&lt;ts&gt;.csv</code>) — there is no <code>RSI_Scanner</code> file.
+  Watchlist rows include what-if closes (price that would print RSI &lt; 60 tomorrow, and
+  the range needed for the ATR% floor).
+</p>
+
+<h2>2. Entry logic</h2>
+<p>Signal bar <strong>T</strong> close — then fill at T+1 open. Engine: <code>_signal</code> path in
+<code>rocket_rsi.py</code> (<code>buy_base</code> + <code>gate_ok</code>).</p>
+<ol class="steps">
+  <li><strong>Was hot:</strong> prior bar RSI(14) ≥ <code>rsi_ob</code> (house <strong>70</strong>).
+      This arms the setup; it is not the buy.</li>
+  <li><strong>Cool-off band:</strong> T close has 30 &lt; RSI(14) &lt; 70
+      (<code>rsi_os=30</code>, still below the overbought line). Below 30 is oversold here — not a buy.</li>
+  <li><strong>Trigger cap:</strong> T’s RSI must be <strong>&lt; <code>rsi_max_trigger</code></strong>
+      (house <strong>60</strong>). Combined with the band: house buy is
+      prior ≥ 70, then <strong>30 &lt; RSI &lt; 60</strong> and trigger RSI &lt; 60.</li>
+  <li><strong>Volatility floor:</strong> 14-day ATR / close × 100 ≥ <code>rsi_min_atr_pct</code>
+      (house <strong>2.93</strong>) at the trigger close. Quiet names never enter.
+      This is not a stop.</li>
+  <li><strong>Optional DNA gates (house off):</strong>
+      <code>rsi_min_dist_to_52w_high_pct_at_trigger=0</code> (do not pass 7.18 — that wire was reverted),
+      rel-vol min off, RSI-drop-from-overbought min off, near-high cap off.</li>
+  <li><strong>Fill:</strong> <code>rsi_entry_on=next_open</code> → Open of T+1.
+      Alternate research: close of T. Do not buy T’s open using T’s close.</li>
+  <li>One name at a time. <code>symbol_reentry_cooldown_days=0</code> in house (off).</li>
+</ol>
+
+<h2>3. Exit logic</h2>
+<p>
+  Evaluated on each bar’s close while in the trade; fills are the <strong>next open</strong>.
+  Priority if more than one fires on the same bar:
+</p>
+<ol class="steps">
+  <li><strong>Roll-8</strong> (<code>RSI_ROLL</code>): in-trade max RSI(14) − current RSI(14) ≥
+      <code>rsi_roll_from_max</code> (house <strong>8</strong>) → sell next open.</li>
+  <li><strong>Overbought</strong> (<code>OVERBOUGHT</code>): RSI(14) ≥ <code>rsi_exit</code>
+      (house <strong>70</strong>) → sell next open.</li>
+  <li><strong>Clock</strong> (<code>TIME</code>): calendar days from entry ≥
+      <code>rsi_time_stop_days</code> (house <strong>20</strong>) → sell next open.</li>
+</ol>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Price stop</td><td><strong>None</strong> — Closed <code>STOP_PRICE=0</code>. Not a broker stop.</td></tr><tr><td>Dollar target</td><td><strong>None</strong> — Closed <code>TARGET_PRICE=0</code>. Not a broker target.</td></tr><tr><td>getTarget prices</td><td>Implied what-if closes (RSI ≥ 70 / roll-8 invert) for the sheet — <strong>not</strong> live exits.</td></tr><tr><td>Fill on exit</td><td>Next session open (same as entry). Last bar of the tape cannot fill inside the backtest window.</td></tr></tbody></table></div>
+<div class="callout warn">
+  <strong>Fidelity:</strong> there is no price stop and no dollar target to park at the broker.
+  Sell when Watchlist / Open says RSI ≥ 70, roll-8, or the 20-calendar-day date.
+  <code>getTarget.py</code> RSI rows are implied closes for those RSI events — not live exits.
+</div>
+
+<h2>4. Levers</h2>
+<p>House values from <code>run_rsi.bat</code> / DailyRun. Effects are directional tendencies — not guarantees.
+Research A/B knobs below stay off unless a later stamp adopts them.</p>
+<div class="table-wrap"><table class="sortable"><caption>Frozen production (or adopted research) knobs. Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Lever<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">What it does<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Freeze / prod<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Count vs quality (tendency)<span class="sort-ind"></span></th></tr></thead><tbody><tr><td><code>rsi_ob</code></td><td>Prior-bar “was hot” line that arms the setup</td><td><strong>70</strong></td><td>Higher → fewer armed setups</td></tr><tr><td><code>rsi_os</code></td><td>Neutral-band floor (below = oversold, not a buy)</td><td><strong>30</strong></td><td>Higher floor → fewer deep pullbacks</td></tr><tr><td><code>rsi_max_trigger</code></td><td>Trigger RSI must be strictly below this</td><td><strong>60</strong></td><td>Lower → cooler entries, fewer trades</td></tr><tr><td><code>rsi_min_atr_pct</code></td><td>14-day ATR must be ≥ this % of trigger close</td><td><strong>2.93</strong></td><td>Higher → fewer quiet names. Preference adopt vs prior 5.0</td></tr><tr><td><code>rsi_exit</code></td><td>Sell when RSI reaches this again (next open)</td><td><strong>70</strong></td><td>Higher → longer holds / fewer OVERBOUGHT exits</td></tr><tr><td><code>rsi_roll_from_max</code></td><td>EXIT: flatten next open when in-trade max RSI − now ≥ this (0 = off)</td><td><strong>8</strong></td><td>Tighter roll → more RSI_ROLL, shorter holds. Engine default is 0; house is 8</td></tr><tr><td><code>rsi_time_stop_days</code></td><td>Calendar-day clock from entry (0 = off)</td><td><strong>20</strong></td><td>Shorter → more TIME exits</td></tr><tr><td><code>rsi_entry_on</code></td><td>Fill at trigger close vs next open</td><td><strong>next_open</strong></td><td>close = same-bar fill (research only)</td></tr><tr><td><code>rsi_sheet_notional</code></td><td>Dummy sheet cash per name (Closed $ PnL scale)</td><td><strong>10000</strong></td><td>Kelly / risk-frac A/Bs are research only — house stays $10k</td></tr><tr><td><code>rsi_min_dist_to_52w_high_pct_at_trigger</code></td><td>Keep if distance-to-52-week-high % ≥ X (0 = off)</td><td><strong>0</strong> (off)</td><td>Do not pass 7.18 — that DailyRun wire was reverted</td></tr><tr><td>Universe CSV</td><td>Whitelist symbols</td><td><strong>149</strong> High-FIT / IS-good</td><td>ALL / research CSVs must not steal the house pin</td></tr></tbody></table></div>
+<h2>5. Universe / status</h2>
+<div class="table-wrap"><table class="sortable"><caption>Click column headers to sort.</caption><thead><tr><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Item<span class="sort-ind"></span></th><th class="sortable-th" data-sort="text" tabindex="0" role="columnheader" aria-sort="none">Value<span class="sort-ind"></span></th></tr></thead><tbody><tr><td>Status</td><td><strong>DailyRun official TBN sleeve</strong> — preference-adopt, not walk-forward gold</td></tr><tr><td>TBN mode</td><td><code>rsi_mode=true</code> (early dispatch in <code>rocket_tbn.py</code>)</td></tr><tr><td>Runner</td><td><code>run_rsi.bat</code> · DailyRun step [10c/13] · <code>SKIP_RSI=1</code> to skip</td></tr><tr><td>Universe</td><td><code>drive/universes/rsi_universe.csv</code> (N=149; copy of <code>RSIN_HighFIT_ISgood_maxrsi60_20260911.csv</code>)</td></tr><tr><td>Live list</td><td><strong>Watchlist</strong> — no Scanner output</td></tr><tr><td>Sizing</td><td>Dummy <strong>$10k</strong> sheet notional (<code>rsi_sheet_notional=10000</code>). Host 500k / 2× / 0.6 flags are neutralized for this book’s $ PnL.</td></tr><tr><td>House pin</td><td><code>drive/RSI_house_last_run_ts.txt</code> — ALL / research lists must not steal it</td></tr><tr><td>Outputs</td><td><code>drive/RSI_*_&lt;ts&gt;.*</code> — Closed / Open / Watchlist / Summary / Report / Audit / Equity / LatestRun copies</td></tr><tr><td>Adopt (roll-8)</td><td><code>drive/paul_experiments/rsi_roll_ab_20260916/</code></td></tr><tr><td>Prior ATR% adopt</td><td><code>drive/paul_experiments/rsi_atr293_dailyrun_20260916/</code> (replaced house ATR% 5)</td></tr><tr><td>Reverted wire</td><td><code>drive/paul_experiments/rsi_mindist52_718_20260916/</code> — 7.18 min-dist is off</td></tr><tr><td>IS / OOS</td><td>IS = entry before 2024-01-01; OOS = 2024+ — report-only</td></tr></tbody></table></div>
+<h2>6. Caveats</h2>
+<ul>
+  <li><strong>Not Relative Strength vs SPY.</strong> Prefix <code>RSI_*</code> is this sleeve; <code>RS_*</code> is the other.</li>
+  <li>No price stop and no dollar target. A gap through the next-open sell is the live risk.</li>
+  <li>Dummy $10k notional means Closed dollar columns are sheet-scale, not a 500k deployable book. Do not change DailyRun host sizing from this page.</li>
+  <li>Watchlist is the live surface. Convergence / reports that look for <code>RSI_Scanner</code> will show missing — that is expected.</li>
+  <li>Roll-8 and ATR% 2.93 are preference adopts, not walk-forward gold. OOS is report-only; do not retune to “fix” OOS.</li>
+  <li>Optional trigger DNA (7.18 min-dist, rel-vol, RSI-drop) stays off in house. Passing them silently is a different system.</li>
+  <li>Never pass <code>entry_start_date</code> / <code>entry_end_date</code> on production runs (research shop only).</li>
+  <li><code>run_rsi.bat ALL</code> / research CSVs write their own stamps and must not overwrite <code>RSI_house_last_run_ts.txt</code>.</li>
+</ul>
+
+<h2>Canonical links</h2>
+<ul>
+  <li><code>run_rsi.bat</code> — production CLI + freeze comments</li>
+  <li><span class="path">stock_analysis/rocket_rsi.py</span> — <code>rsi_mode</code> engine</li>
+  <li><span class="path">drive/universes/rsi_universe.csv</span> — house 149</li>
+  <li><span class="path">drive/paul_experiments/rsi_roll_ab_20260916/</span> — roll-8 EXIT adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr293_dailyrun_20260916/</span> — ATR% 2.93 adopt</li>
+  <li><span class="path">drive/paul_experiments/rsi_atr5_dailyrun_20260914/</span> — prior ATR% 5 house</li>
+  <li><a href="../tbn_philosophy.html#rsi">TBN Philosophy § RSI</a> · <a href="../system_setup_process.html">System setup process</a></li>
+</ul>
+
+  <footer>Canonical RSI write-up · Twin Beacon Networks (TBN) · production knobs from run_rsi.bat</footer>
+</div>
+
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

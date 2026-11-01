@@ -2,12 +2,14 @@
 data/
 Drive/
 drive/
+local/
 logs/
 *.duckdb
 *.pkl
 __pycache__/
 *.pyc
 .env
+secrets/
 .venv/
 venv/
 

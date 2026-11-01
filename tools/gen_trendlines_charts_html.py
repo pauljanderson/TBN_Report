@@ -1,0 +1,1158 @@
+#!/usr/bin/env python3
+"""HTML chart pack: M/W/D trendlines + HV6m + house VZ HL zone + RSI(14) OB/OS.
+
+Reads a frozen trendline stamp (segments.json from gen_trendlines_tos_studies.py)
+and writes per-symbol PNGs + an index HTML under stamp/charts/.
+
+VZ zone drawn = house Vol Zone HL. When a live Open / Watchlist row exists,
+the **trigger** High–Low box (``ZONE_ID``) is always drawn — even if it is
+older than the current 126-bar rolling max-volume winner. The latest unused
+winner may still be shown, faded. Window start extends left so the trigger
+write day is on-screen. Display-only (``tools/vz_chart_zones.py``).
+HV6m gold box comes from segments.json (calendar 6m max-vol High–Low).
+Bottom panel: Wilder RSI(14) with classic 70/30 overbought/oversold bands.
+
+Examples:
+  python tools/gen_trendlines_charts_html.py
+  python tools/gen_trendlines_charts_html.py --stamp-dir drive/paul_studies/trendlines_opens_spy_20260902
+"""
+from __future__ import annotations
+
+import argparse
+import html as html_mod
+import json
+import sys
+import time
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.dates as mdates  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Rectangle  # noqa: E402
+
+_REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO / "tools"))
+
+from vol_zone_break_retest import Zone, load_ohlcv  # noqa: E402
+from vz_chart_zones import (  # noqa: E402
+    CHART_MONTHS,
+    LOOKBACK_DAYS,
+    VzChartPack,
+    latest_unused_label,
+    load_vz_trigger_specs,
+    nearest_hl_zones,
+    resolve_vz_chart_pack,
+    trigger_label,
+    visible_window_start,
+)
+
+DEFAULT_STAMP = _REPO / "drive" / "paul_studies" / "trendlines_opens_latest"
+# Durable company-name cache (yfinance shortName/longName). Survives DailyRun;
+# only new symbols hit the network.
+COMPANY_NAMES_CACHE = _REPO / "drive" / "company_names_cache.json"
+RSI_PERIOD = 14
+RSI_OVERBOUGHT = 70.0
+RSI_OVERSOLD = 30.0
+
+SMA_STYLE = {
+    20: {"color": "#ec407a", "lw": 0.9, "label": "SMA20"},
+    50: {"color": "#ef6c00", "lw": 0.9, "label": "SMA50"},
+    100: {"color": "#6d4c41", "lw": 0.9, "label": "SMA100"},
+}
+
+TF_STYLE = {
+    "monthly": {"color": "#ba68c8", "lw": 1.8, "label": "M"},
+    "weekly": {"color": "#ff9800", "lw": 1.5, "label": "W"},
+    "daily": {"color": "#00bcd4", "lw": 1.2, "label": "D"},
+}
+HV6M_FACE = "#d4a84b"
+VZ_HL_FACE = "#7e57c2"  # latest unused / current-when-no-trigger
+VZ_TRIGGER_FACE = "#4527a0"  # engine trigger HL
+VZ_OC_FACE = "#42a5f5"
+
+_SORTABLE_TABLE_SCRIPT = """
+<script>
+(function () {
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "date") {
+      var iso = s.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) { return r.classList.contains("total-row"); });
+    var movable = rows.filter(function (r) { return !r.classList.contains("total-row"); });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+  }
+  function bindSortHeader(table, th, col) {
+    function onActivate(e) {
+      if (e.type === "touchend") e.preventDefault();
+      var type = th.dataset.sort || "text";
+      var dir = th.dataset.dir === "asc" ? -1 : 1;
+      table.querySelectorAll("th.sortable-th").forEach(function (h) {
+        h.dataset.dir = "";
+        h.classList.remove("sort-asc", "sort-desc");
+        h.setAttribute("aria-sort", "none");
+      });
+      th.dataset.dir = dir === 1 ? "asc" : "desc";
+      th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+      th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+      sortTable(table, col, type, dir);
+    }
+    th.addEventListener("click", onActivate);
+    th.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); }
+    });
+    th.addEventListener("touchend", onActivate, { passive: false });
+  }
+  document.querySelectorAll("table.sortable").forEach(function (table) {
+    table.querySelectorAll("th.sortable-th").forEach(function (th, col) {
+      bindSortHeader(table, th, col);
+    });
+  });
+})();
+</script>
+"""
+
+
+def _sortable_th(label: str, sort_type: str) -> str:
+    return (
+        f'<th class="sortable-th" data-sort="{html_mod.escape(sort_type)}" '
+        f'tabindex="0" role="columnheader" aria-sort="none">'
+        f"{html_mod.escape(label)}<span class=\"sort-ind\"></span></th>"
+    )
+
+
+def _parse_ymd(s: str) -> date:
+    return datetime.strptime(s[:10], "%Y-%m-%d").date()
+
+
+def wilder_rsi(close: np.ndarray, period: int = RSI_PERIOD) -> np.ndarray:
+    """Wilder RSI on closes (same seed/update as house MR helpers)."""
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    delta = np.diff(close.astype(float), prepend=np.nan)
+    gain = np.where(np.isfinite(delta) & (delta > 0), delta, 0.0)
+    loss = np.where(np.isfinite(delta) & (delta < 0), -delta, 0.0)
+    avg_g = float(np.nanmean(gain[1 : period + 1]))
+    avg_l = float(np.nanmean(loss[1 : period + 1]))
+    if avg_l == 0:
+        out[period] = 100.0
+    else:
+        out[period] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    for i in range(period + 1, n):
+        avg_g = (avg_g * (period - 1) + gain[i]) / period
+        avg_l = (avg_l * (period - 1) + loss[i]) / period
+        if avg_l == 0:
+            out[i] = 100.0
+        else:
+            out[i] = 100.0 - (100.0 / (1.0 + avg_g / avg_l))
+    return out
+
+
+def rsi_ob_os_label(rsi: float | None) -> str:
+    if rsi is None or not np.isfinite(rsi):
+        return "—"
+    if rsi >= RSI_OVERBOUGHT:
+        return "Overbought"
+    if rsi <= RSI_OVERSOLD:
+        return "Oversold"
+    return "Neutral"
+
+
+def _pick_company_name(info: dict[str, Any]) -> str:
+    """Prefer shortName, then longName / displayName; skip blank / ticker-only."""
+    for key in ("shortName", "longName", "displayName"):
+        raw = info.get(key)
+        if raw is None:
+            continue
+        name = str(raw).strip()
+        if not name:
+            continue
+        return name
+    return ""
+
+
+def _load_company_names_cache(path: Path = COMPANY_NAMES_CACHE) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        sym = str(k).strip().upper()
+        name = str(v or "").strip()
+        if sym and name:
+            out[sym] = name
+    return out
+
+
+def _save_company_names_cache(
+    names: dict[str, str], path: Path = COMPANY_NAMES_CACHE
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ordered = {k: names[k] for k in sorted(names)}
+    path.write_text(json.dumps(ordered, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _fetch_company_name_yfinance(symbol: str) -> str:
+    try:
+        import yfinance as yf  # local import: optional at module load
+    except ImportError:
+        return ""
+    try:
+        info = dict(getattr(yf.Ticker(symbol), "info", None) or {})
+    except Exception:  # noqa: BLE001 — batch resilience
+        return ""
+    return _pick_company_name(info)
+
+
+def resolve_company_names(
+    symbols: list[str],
+    *,
+    cache_path: Path = COMPANY_NAMES_CACHE,
+    fetch_missing: bool = True,
+) -> dict[str, str]:
+    """Map SYMBOL -> company name. Cache first; yfinance fill for misses."""
+    cache = _load_company_names_cache(cache_path)
+    out: dict[str, str] = {}
+    missing: list[str] = []
+    for sym in symbols:
+        key = str(sym).strip().upper()
+        if not key:
+            continue
+        if key in cache and cache[key]:
+            out[key] = cache[key]
+        else:
+            missing.append(key)
+    if fetch_missing and missing:
+        print(f"[company] fetching {len(missing)} names via yfinance ...")
+        for i, sym in enumerate(missing, 1):
+            name = _fetch_company_name_yfinance(sym)
+            if name:
+                out[sym] = name
+                cache[sym] = name
+                print(f"[company] [{i}/{len(missing)}] {sym} -> {name}")
+            else:
+                print(f"[company] [{i}/{len(missing)}] {sym} -> (missing)")
+        _save_company_names_cache(cache, cache_path)
+    return out
+
+
+def symbol_display(symbol: str, company_name: str | None = None) -> str:
+    """``NVDA — NVIDIA Corporation`` or bare symbol when name unknown."""
+    name = (company_name or "").strip()
+    if not name:
+        return symbol
+    # Avoid "AAPL — AAPL" style noise
+    if name.upper() == symbol.upper():
+        return symbol
+    return f"{symbol} — {name}"
+
+
+def _zone_band_label(z: Zone | None) -> str:
+    if z is None:
+        return "—"
+    day = pd.Timestamp(z.max_vol_date).date()
+    return f"{day} {z.lo:.2f}–{z.hi:.2f}"
+
+
+def _line_y_at_x(d1: date, p1: float, d2: date, p2: float, x: date) -> float:
+    t1 = mdates.date2num(d1)
+    t2 = mdates.date2num(d2)
+    tx = mdates.date2num(x)
+    if abs(t2 - t1) < 1e-12:
+        return p2
+    return p1 + (p2 - p1) * (tx - t1) / (t2 - t1)
+
+
+def _draw_candles(ax, dates, o, h, l, c) -> None:
+    x = mdates.date2num(dates)
+    up = c >= o
+    # wicks
+    ax.vlines(x, l, h, color="#78909c", lw=0.45, zorder=2)
+    body_lo = np.minimum(o, c)
+    body_hi = np.maximum(o, c)
+    height = np.maximum(body_hi - body_lo, np.maximum(np.abs(c) * 1e-4, 1e-4))
+    for i in range(len(x)):
+        color = "#2e7d32" if up[i] else "#c62828"
+        ax.add_patch(
+            Rectangle(
+                (x[i] - 0.32, body_lo[i]),
+                0.64,
+                height[i],
+                facecolor=color,
+                edgecolor=color,
+                linewidth=0.3,
+                alpha=0.9,
+                zorder=3,
+            )
+        )
+
+
+def _format_header_line(sym_info: dict[str, Any] | None) -> str:
+    if not sym_info:
+        return ""
+    systems = sym_info.get("systems") or []
+    sys_txt = ", ".join(systems) if systems else "—"
+    scan = sym_info.get("scanner_systems") or []
+    scan_txt = ", ".join(scan) if scan else ""
+    pd_raw = sym_info.get("purchase_date") or ""
+    ep = sym_info.get("entry_price")
+    src = sym_info.get("price_source") or ""
+    port = sym_info.get("in_portfolio")
+    if ep is not None and pd_raw:
+        buy = f"{pd_raw} @ {float(ep):.2f}"
+        if port:
+            buy += " (our book)"
+        elif src:
+            buy += f" ({src})"
+    elif pd_raw:
+        buy = pd_raw
+    else:
+        buy = "—"
+    parts = [f"Open in: {sys_txt}"]
+    if scan_txt:
+        parts.append(f"Scanner: {scan_txt}")
+    parts.append(f"Buy: {buy}")
+    return "  ·  ".join(parts)
+
+
+def plot_symbol_chart(
+    symbol: str,
+    df: pd.DataFrame,
+    meta: dict[str, Any],
+    vz: VzChartPack,
+    all_zones: list[Zone],
+    sym_info: dict[str, Any] | None,
+    out_png: Path,
+    company_name: str | None = None,
+) -> dict[str, Any]:
+    """Plot last ~6 calendar months (extended left if the VZ trigger is older)."""
+    end_ts = pd.Timestamp(df["Date"].iloc[-1]).normalize()
+    start_ts = visible_window_start(
+        end_ts,
+        months=CHART_MONTHS,
+        trigger=vz.trigger_hl or vz.trigger_oc,
+    )
+    plot_df = df[(df["Date"] >= start_ts) & (df["Date"] <= end_ts)].copy()
+    if plot_df.empty:
+        raise ValueError(f"{symbol}: empty plot window")
+
+    # SMA on full history, then slice to plot window
+    close_full = df["Close"].astype(float)
+    sma_lines: dict[int, pd.Series] = {}
+    for period in (20, 50, 100):
+        sma_lines[period] = close_full.rolling(period, min_periods=period).mean()
+
+    plot_mask = (df["Date"] >= start_ts) & (df["Date"] <= end_ts)
+
+    plot_df = plot_df.copy()
+    plot_df["Date"] = pd.to_datetime(plot_df["Date"])
+    dates = plot_df["Date"]
+    o = plot_df["Open"].to_numpy(float)
+    h = plot_df["High"].to_numpy(float)
+    l = plot_df["Low"].to_numpy(float)
+    c = plot_df["Close"].to_numpy(float)
+    win_start = dates.iloc[0].date()
+    win_end = dates.iloc[-1].date()
+
+    rsi_full = wilder_rsi(close_full.to_numpy(float), RSI_PERIOD)
+    rsi_plot = rsi_full[plot_mask.to_numpy()]
+    last_rsi_raw = float(rsi_full[-1]) if len(rsi_full) and np.isfinite(rsi_full[-1]) else float("nan")
+    last_rsi: float | None = last_rsi_raw if np.isfinite(last_rsi_raw) else None
+    rsi_state = rsi_ob_os_label(last_rsi)
+
+    fig, (ax, ax_rsi) = plt.subplots(
+        2,
+        1,
+        figsize=(11.5, 7.6),
+        dpi=110,
+        sharex=True,
+        gridspec_kw={"height_ratios": [3.15, 1.0], "hspace": 0.08},
+        layout="constrained",
+    )
+    _draw_candles(ax, dates, o, h, l, c)
+
+    y_extra: list[float] = []
+    for period, style in SMA_STYLE.items():
+        sma_slice = sma_lines[period][plot_mask]
+        if sma_slice.notna().any():
+            ax.plot(
+                dates,
+                sma_slice.to_numpy(float),
+                color=style["color"],
+                lw=style["lw"],
+                alpha=0.85,
+                zorder=4,
+                label=style["label"],
+            )
+            y_extra.extend(float(x) for x in sma_slice.dropna().tolist())
+
+    # --- VZ HL: engine trigger always, plus latest unused winner if different ---
+    trigger_hl = vz.trigger_hl
+    trigger_oc = vz.trigger_oc
+    current_hl = vz.current_hl
+    current_oc = vz.current_oc
+    # What we report as "the" VZ box: trigger first, else current winner.
+    vz_hl = trigger_hl or current_hl
+    vz_oc = trigger_oc or current_oc
+    show_unused = (
+        current_hl is not None
+        and trigger_hl is not None
+        and not vz.trigger_is_current
+    )
+
+    def _span_zone(z: Zone, face: str, alpha: float, label: str, *, lw: float = 0.8) -> None:
+        # Draw from max-vol day through last bar — same gating as HV6m / ToS.
+        z_day = pd.Timestamp(z.max_vol_date).date()
+        d0 = max(win_start, z_day)
+        d1 = win_end
+        if d0 > d1:
+            return
+        x0 = mdates.date2num(d0)
+        x1 = mdates.date2num(d1) + 0.6
+        ax.add_patch(
+            Rectangle(
+                (x0, z.lo),
+                x1 - x0,
+                z.hi - z.lo,
+                facecolor=face,
+                edgecolor=face,
+                alpha=alpha,
+                linewidth=lw,
+                zorder=1,
+                label=label,
+            )
+        )
+        if win_start <= z_day <= win_end:
+            ax.axvline(z_day, color=face, ls=":", lw=1.0, alpha=0.7, zorder=4)
+        y_extra.extend([z.lo, z.hi])
+
+    if show_unused and current_hl is not None:
+        _span_zone(
+            current_hl,
+            VZ_HL_FACE,
+            0.10,
+            f"VZ latest unused {pd.Timestamp(current_hl.max_vol_date).date()}",
+        )
+        if current_oc is not None:
+            _span_zone(
+                current_oc,
+                VZ_OC_FACE,
+                0.06,
+                f"VZ OC latest {pd.Timestamp(current_oc.max_vol_date).date()}",
+            )
+    if trigger_hl is not None:
+        _span_zone(
+            trigger_hl,
+            VZ_TRIGGER_FACE,
+            0.22,
+            f"VZ trigger {pd.Timestamp(trigger_hl.max_vol_date).date()}",
+            lw=1.2,
+        )
+        if trigger_oc is not None:
+            _span_zone(
+                trigger_oc,
+                VZ_OC_FACE,
+                0.10,
+                f"VZ OC trigger {pd.Timestamp(trigger_oc.max_vol_date).date()}",
+            )
+    elif current_hl is not None:
+        _span_zone(
+            current_hl,
+            VZ_HL_FACE,
+            0.16,
+            f"VZ HL {pd.Timestamp(current_hl.max_vol_date).date()}",
+        )
+        if current_oc is not None:
+            _span_zone(
+                current_oc,
+                VZ_OC_FACE,
+                0.10,
+                f"VZ OC {pd.Timestamp(current_oc.max_vol_date).date()}",
+            )
+
+    # --- HV6m gold box (from segments freeze) ---
+    hv = meta.get("hv6m") or {}
+    if hv and hv.get("day"):
+        hv_day = _parse_ymd(str(hv["day"]))
+        hv_hi = float(hv["high"])
+        hv_lo = float(hv["low"])
+        # Match ToS: from HV day through last bar
+        box_x0 = mdates.date2num(max(hv_day, win_start))
+        box_x1 = mdates.date2num(win_end) + 0.6
+        if box_x1 > box_x0:
+            ax.add_patch(
+                Rectangle(
+                    (box_x0, hv_lo),
+                    box_x1 - box_x0,
+                    hv_hi - hv_lo,
+                    facecolor=HV6M_FACE,
+                    edgecolor=HV6M_FACE,
+                    alpha=0.22,
+                    linewidth=1.0,
+                    zorder=1.5,
+                    label=f"HV6m {hv_day}",
+                )
+            )
+            y_extra.extend([hv_lo, hv_hi])
+            if win_start <= hv_day <= win_end:
+                ax.axvline(hv_day, color=HV6M_FACE, ls="--", lw=1.1, alpha=0.85, zorder=4)
+
+    # --- Trendline segments (extend right to chart end) ---
+    segs = meta.get("segments") or []
+    for seg in segs:
+        tf = str(seg.get("timeframe", "daily"))
+        side = str(seg.get("side", "support"))
+        d1 = _parse_ymd(str(seg["d1"]))
+        d2 = _parse_ymd(str(seg["d2"]))
+        p1 = float(seg["p1"])
+        p2 = float(seg["p2"])
+        style = TF_STYLE.get(tf, TF_STYLE["daily"])
+        # Draw from max(d1, win_start) through win_end (extend right)
+        x_left = max(d1, win_start)
+        x_right = win_end
+        if x_left >= x_right and d2 < win_start:
+            # entire segment before window — still extend into window if slope continues
+            x_left = win_start
+        y_left = _line_y_at_x(d1, p1, d2, p2, x_left)
+        y_right = _line_y_at_x(d1, p1, d2, p2, x_right)
+        ls = "-" if side == "support" else "--"
+        ax.plot(
+            [x_left, x_right],
+            [y_left, y_right],
+            color=style["color"],
+            lw=style["lw"],
+            ls=ls,
+            solid_capstyle="round",
+            zorder=5,
+            alpha=0.95,
+        )
+        # pivot markers if inside window
+        for dd, pp in ((d1, p1), (d2, p2)):
+            if win_start <= dd <= win_end:
+                ax.scatter(
+                    [dd],
+                    [pp],
+                    s=18,
+                    color=style["color"],
+                    zorder=6,
+                    edgecolors="white",
+                    linewidths=0.4,
+                )
+        y_extra.extend([y_left, y_right])
+
+    # Y limits: price window + nearby overlays
+    bar_lo, bar_hi = float(np.nanmin(l)), float(np.nanmax(h))
+    mid = 0.5 * (bar_lo + bar_hi) if bar_hi > bar_lo else (abs(bar_hi) or 1.0)
+    y_min, y_max = bar_lo, bar_hi
+    for y in y_extra:
+        if not np.isfinite(y):
+            continue
+        gap = 0.0
+        if y < bar_lo:
+            gap = (bar_lo - y) / mid
+        elif y > bar_hi:
+            gap = (y - bar_hi) / mid
+        if gap <= 0.35:  # include overlays within 35% of mid
+            y_min = min(y_min, y)
+            y_max = max(y_max, y)
+    pad = (y_max - y_min) * 0.08 if y_max > y_min else abs(y_max) * 0.02
+    ax.set_ylim(y_min - pad, y_max + pad)
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax.set_xlim(dates.iloc[0] - pd.Timedelta(days=2), dates.iloc[-1] + pd.Timedelta(days=3))
+    ax.grid(True, alpha=0.25)
+    ax.set_ylabel("Price")
+    ax.tick_params(labelbottom=False)
+    last = float(c[-1])
+    ax.axhline(last, color="#546e7a", ls=":", lw=0.7, alpha=0.6)
+
+    zone_above, zone_below = nearest_hl_zones(all_zones, last)
+    if zone_above is not None:
+        ax.axhspan(zone_above.lo, zone_above.hi, color="#c62828", alpha=0.08, zorder=0)
+        ax.axhline(zone_above.lo, color="#c62828", ls="--", lw=0.8, alpha=0.55)
+    if zone_below is not None:
+        ax.axhspan(zone_below.lo, zone_below.hi, color="#2e7d32", alpha=0.08, zorder=0)
+        ax.axhline(zone_below.hi, color="#2e7d32", ls="--", lw=0.8, alpha=0.55)
+
+    # --- RSI(14) panel: numbers + classic 70/30 OB/OS ---
+    ax_rsi.plot(dates, rsi_plot, color="#5c6bc0", lw=1.15, zorder=3, label=f"RSI({RSI_PERIOD})")
+    ax_rsi.axhspan(RSI_OVERBOUGHT, 100, color="#c62828", alpha=0.12, zorder=0)
+    ax_rsi.axhspan(0, RSI_OVERSOLD, color="#2e7d32", alpha=0.12, zorder=0)
+    ax_rsi.axhline(RSI_OVERBOUGHT, color="#c62828", ls="--", lw=0.85, alpha=0.75)
+    ax_rsi.axhline(RSI_OVERSOLD, color="#2e7d32", ls="--", lw=0.85, alpha=0.75)
+    ax_rsi.axhline(50, color="#90a4ae", ls=":", lw=0.7, alpha=0.55)
+    ax_rsi.set_ylim(0, 100)
+    ax_rsi.set_ylabel(f"RSI({RSI_PERIOD})")
+    ax_rsi.grid(True, alpha=0.25)
+    ax_rsi.xaxis.set_major_locator(mdates.MonthLocator())
+    ax_rsi.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    if last_rsi is not None:
+        ax_rsi.scatter(
+            [dates.iloc[-1]],
+            [last_rsi],
+            s=28,
+            color="#5c6bc0",
+            zorder=5,
+            edgecolors="white",
+            linewidths=0.5,
+        )
+        ax_rsi.annotate(
+            f"{last_rsi:.1f} {rsi_state}",
+            xy=(dates.iloc[-1], last_rsi),
+            xytext=(-4, 8),
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="#37474f",
+            bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85, "edgecolor": "#cfd8dc"},
+        )
+
+    vz_note = "—"
+    if trigger_hl is not None:
+        vz_note = trigger_label(trigger_hl, is_current=vz.trigger_is_current)
+        if show_unused and current_hl is not None:
+            vz_note += f"   ·   {latest_unused_label(current_hl)}"
+    elif current_hl is not None:
+        vz_note = (
+            f"HL {pd.Timestamp(current_hl.max_vol_date).date()} "
+            f"{current_hl.lo:.2f}–{current_hl.hi:.2f}"
+        )
+    hv_note = "—"
+    if hv and hv.get("day"):
+        hv_note = f"{hv['day']} {float(hv['low']):.2f}–{float(hv['high']):.2f}"
+
+    header = _format_header_line(sym_info)
+    near_note = (
+        f"Nearest HL above: {_zone_band_label(zone_above)}   ·   "
+        f"Nearest HL below: {_zone_band_label(zone_below)}"
+    )
+    rsi_note = (
+        f"RSI({RSI_PERIOD})={last_rsi:.1f} ({rsi_state})"
+        if last_rsi is not None
+        else f"RSI({RSI_PERIOD})=—"
+    )
+    label = symbol_display(symbol, company_name)
+    title_lines = [
+        f"{label}  |  {win_start} → {win_end}  |  last={last:.2f}  |  {rsi_note}",
+    ]
+    if header:
+        title_lines.append(header)
+    title_lines.append(
+        f"VZ HL (126d): {vz_note}   ·   HV6m: {hv_note}   ·   {near_note}"
+    )
+    ax.set_title("\n".join(title_lines), fontsize=9.5)
+
+    handles = [
+        Line2D([0], [0], color="#ba68c8", lw=2, label="M trendline"),
+        Line2D([0], [0], color="#ff9800", lw=2, label="W trendline"),
+        Line2D([0], [0], color="#00bcd4", lw=2, label="D trendline"),
+        Line2D([0], [0], color="#d4a84b", lw=6, alpha=0.45, label="HV6m box"),
+        Line2D([0], [0], color="#4527a0", lw=6, alpha=0.55, label="VZ trigger zone"),
+        Line2D([0], [0], color="#7e57c2", lw=6, alpha=0.35, label="VZ latest unused"),
+        Line2D([0], [0], color="#42a5f5", lw=6, alpha=0.35, label="VZ OC (context)"),
+        Line2D([0], [0], color="#ec407a", lw=1.2, label="SMA20"),
+        Line2D([0], [0], color="#ef6c00", lw=1.2, label="SMA50"),
+        Line2D([0], [0], color="#6d4c41", lw=1.2, label="SMA100"),
+        Line2D([0], [0], color="#c62828", lw=1.2, ls="--", label="Nearest HL above"),
+        Line2D([0], [0], color="#2e7d32", lw=1.2, ls="--", label="Nearest HL below"),
+        Line2D([0], [0], color="#78909c", lw=1.5, ls="-", label="Support solid / Res dashed"),
+        Line2D([0], [0], color="#5c6bc0", lw=1.2, label=f"RSI({RSI_PERIOD}) panel"),
+    ]
+    ax.legend(handles=handles, loc="upper left", fontsize=6.5, framealpha=0.9, ncol=2)
+
+    fig.autofmt_xdate(rotation=30, ha="right")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, bbox_inches="tight")
+    plt.close(fig)
+
+    cname = (company_name or "").strip()
+    return {
+        "symbol": symbol,
+        "company_name": cname,
+        "display": symbol_display(symbol, cname),
+        "last": last,
+        "rsi14": last_rsi,
+        "rsi_state": rsi_state,
+        "win_start": str(win_start),
+        "win_end": str(win_end),
+        "n_bars": int(len(plot_df)),
+        "n_segs": int(len(segs)),
+        "hv6m_day": str(hv.get("day") or ""),
+        "vz_hl_day": str(pd.Timestamp(vz_hl.max_vol_date).date()) if vz_hl else "",
+        "vz_hl_lo": float(vz_hl.lo) if vz_hl else None,
+        "vz_hl_hi": float(vz_hl.hi) if vz_hl else None,
+        "vz_oc_day": str(pd.Timestamp(vz_oc.max_vol_date).date()) if vz_oc else "",
+        "vz_trigger_day": (
+            str(pd.Timestamp(trigger_hl.max_vol_date).date()) if trigger_hl else ""
+        ),
+        "vz_trigger_lo": float(trigger_hl.lo) if trigger_hl else None,
+        "vz_trigger_hi": float(trigger_hl.hi) if trigger_hl else None,
+        "vz_trigger_id": (vz.trigger_spec.zone_id if vz.trigger_spec else ""),
+        "vz_trigger_is_current": bool(vz.trigger_is_current),
+        "vz_latest_day": (
+            str(pd.Timestamp(current_hl.max_vol_date).date()) if current_hl else ""
+        ),
+        "systems": ", ".join(sym_info.get("systems") or []) if sym_info else "",
+        "scanner_systems": ", ".join(sym_info.get("scanner_systems") or []) if sym_info else "",
+        "purchase_date": str(sym_info.get("purchase_date") or "") if sym_info else "",
+        "entry_price": sym_info.get("entry_price") if sym_info else None,
+        "price_source": str(sym_info.get("price_source") or "") if sym_info else "",
+        "in_portfolio": bool(sym_info.get("in_portfolio")) if sym_info else False,
+        "zone_above": _zone_band_label(zone_above),
+        "zone_below": _zone_band_label(zone_below),
+        "header_line": _format_header_line(sym_info),
+        "png": out_png.name,
+    }
+
+
+def write_index_html(
+    out_dir: Path,
+    stamp: str,
+    rows: list[dict[str, Any]],
+    skipped: list[dict[str, str]],
+) -> Path:
+    rows_sorted = sorted(rows, key=lambda r: r["symbol"])
+    nav_links = " · ".join(
+        f'<a href="#{html_mod.escape(r["symbol"])}" title="{html_mod.escape(r.get("display") or r["symbol"])}">'
+        f'{html_mod.escape(r["symbol"])}</a>'
+        for r in rows_sorted
+    )
+    table_rows = []
+    for r in rows_sorted:
+        vz = "—"
+        if r.get("vz_trigger_day") and r.get("vz_trigger_lo") is not None:
+            tag = "trigger"
+            if r.get("vz_trigger_is_current"):
+                tag = "trigger=current"
+            vz = (
+                f'{html_mod.escape(tag)} {html_mod.escape(r["vz_trigger_day"])} '
+                f'{r["vz_trigger_lo"]:.2f}–{r["vz_trigger_hi"]:.2f}'
+            )
+            latest = r.get("vz_latest_day") or ""
+            if latest and latest != r.get("vz_trigger_day"):
+                vz += f' · latest {html_mod.escape(latest)}'
+        elif r.get("vz_hl_day"):
+            vz = (
+                f'{html_mod.escape(r["vz_hl_day"])} '
+                f'{r["vz_hl_lo"]:.2f}–{r["vz_hl_hi"]:.2f}'
+            )
+        buy = "—"
+        if r.get("purchase_date"):
+            ep = r.get("entry_price")
+            buy = f'{html_mod.escape(r["purchase_date"])}'
+            if ep is not None:
+                buy += f" @ {float(ep):.2f}"
+            if r.get("in_portfolio"):
+                buy += " (our book)"
+            elif r.get("price_source"):
+                buy += f' ({html_mod.escape(r["price_source"])})'
+        company = r.get("company_name") or "—"
+        rsi_cell = f'{float(r["rsi14"]):.1f}' if r.get("rsi14") is not None else "—"
+        table_rows.append(
+            "<tr>"
+            f'<td><a href="#{html_mod.escape(r["symbol"])}">{html_mod.escape(r["symbol"])}</a></td>'
+            f"<td>{html_mod.escape(company)}</td>"
+            f'<td>{html_mod.escape(r.get("systems") or "—")}</td>'
+            f'<td>{html_mod.escape(r.get("scanner_systems") or "—")}</td>'
+            f"<td>{buy}</td>"
+            f'<td>{html_mod.escape(r["win_start"])}</td>'
+            f'<td>{html_mod.escape(r["win_end"])}</td>'
+            f'<td>{r["last"]:.2f}</td>'
+            f"<td>{rsi_cell}</td>"
+            f'<td>{html_mod.escape(r.get("rsi_state") or "—")}</td>'
+            f'<td>{html_mod.escape(r.get("zone_above") or "—")}</td>'
+            f'<td>{html_mod.escape(r.get("zone_below") or "—")}</td>'
+            f'<td>{r["n_segs"]}</td>'
+            f'<td>{html_mod.escape(r.get("hv6m_day") or "—")}</td>'
+            f"<td>{vz}</td>"
+            f'<td><a href="{html_mod.escape(r["png"])}">PNG</a></td>'
+            "</tr>"
+        )
+
+    chart_blocks = []
+    for r in rows_sorted:
+        hdr = html_mod.escape(r.get("header_line") or "")
+        hdr_p = f'<p class="meta">{hdr}</p>' if hdr else ""
+        display = r.get("display") or r["symbol"]
+        rsi_txt = (
+            f'{r["rsi14"]:.1f} ({html_mod.escape(r.get("rsi_state") or "—")})'
+            if r.get("rsi14") is not None
+            else "—"
+        )
+        chart_blocks.append(
+            f'<section class="chart" id="{html_mod.escape(r["symbol"])}">'
+            f"<h2>{html_mod.escape(display)}</h2>"
+            f"{hdr_p}"
+            f'<p class="meta">Window {html_mod.escape(r["win_start"])} → '
+            f'{html_mod.escape(r["win_end"])} · last={r["last"]:.2f} · '
+            f'RSI(14)={rsi_txt} · '
+            f'Nearest HL above={html_mod.escape(r.get("zone_above") or "—")} · '
+            f'below={html_mod.escape(r.get("zone_below") or "—")} · '
+            f'segs={r["n_segs"]} · HV6m={html_mod.escape(r.get("hv6m_day") or "—")} · '
+            f'VZ={html_mod.escape(r.get("vz_trigger_id") or r.get("vz_hl_day") or "—")}</p>'
+            f'<a href="{html_mod.escape(r["png"])}">'
+            f'<img src="{html_mod.escape(r["png"])}" alt="{html_mod.escape(display)} chart" loading="lazy"/>'
+            f"</a></section>"
+        )
+
+    skip_html = ""
+    if skipped:
+        items = "".join(
+            f"<li><code>{html_mod.escape(s['symbol'])}</code>: {html_mod.escape(s['reason'])}</li>"
+            for s in skipped
+        )
+        skip_html = f"<h2>Skipped</h2><ul>{items}</ul>"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Trendlines + VZ charts — {html_mod.escape(stamp)}</title>
+<style>
+:root {{
+  --bg: #f6f4ef;
+  --ink: #1c2430;
+  --muted: #5c6b7a;
+  --card: #fff;
+  --line: #d5d0c6;
+  --accent: #2f5d50;
+}}
+* {{ box-sizing: border-box; }}
+body {{
+  margin: 0; padding: 1.25rem 1.5rem 3rem;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  color: var(--ink); background: var(--bg); line-height: 1.45;
+}}
+h1 {{ font-size: 1.45rem; margin: 0 0 0.35rem; color: var(--accent); }}
+h2 {{ font-size: 1.15rem; margin: 1.4rem 0 0.4rem; }}
+.sub, .meta {{ color: var(--muted); font-size: 0.92rem; }}
+.nav {{
+  position: sticky; top: 0; z-index: 5;
+  background: rgba(246,244,239,0.95); backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0; margin: 0.75rem 0 1rem;
+  font-size: 0.82rem; line-height: 1.7; max-height: 7.5rem; overflow: auto;
+}}
+.nav a {{ color: var(--accent); text-decoration: none; margin-right: 0.15rem; }}
+.nav a:hover {{ text-decoration: underline; }}
+table.sortable {{
+  width: 100%; border-collapse: collapse; background: var(--card);
+  font-size: 0.88rem; margin: 0.5rem 0 1.25rem;
+}}
+th, td {{ border: 1px solid var(--line); padding: 0.35rem 0.5rem; text-align: left; }}
+th.sortable-th {{ cursor: pointer; user-select: none; background: #ece8df; }}
+th.sortable-th .sort-ind::after {{ content: " ↕"; opacity: 0.35; }}
+th.sortable-th.sort-asc .sort-ind::after {{ content: " ↑"; opacity: 0.9; }}
+th.sortable-th.sort-desc .sort-ind::after {{ content: " ↓"; opacity: 0.9; }}
+section.chart {{
+  margin: 1.25rem 0 2rem; padding: 0.75rem 0.85rem 1rem;
+  background: var(--card); border: 1px solid var(--line);
+}}
+section.chart img {{
+  width: 100%; max-width: 1100px; height: auto; display: block;
+  border: 1px solid var(--line);
+}}
+.defs {{
+  background: var(--card); border: 1px solid var(--line);
+  padding: 0.75rem 1rem; margin: 0.75rem 0 1rem; font-size: 0.9rem;
+}}
+.defs code {{ font-size: 0.85em; }}
+.top {{ font-size: 0.85rem; }}
+.top a {{ color: var(--accent); }}
+</style>
+</head>
+<body>
+<h1>Trendlines + HV6m + VZ zone charts</h1>
+<p class="sub">Stamp <code>{html_mod.escape(stamp)}</code> · {len(rows_sorted)} charts ·
+generated {datetime.now().strftime("%Y-%m-%d %H:%M")} · offline PNGs ·
+Click column headers to sort · <a class="top" href="#charts">Jump to charts</a></p>
+
+<div class="defs">
+<strong>Overlays</strong>
+<ul>
+<li><b>M / W / D trendlines</b> — frozen fractal support (solid) &amp; resistance (dashed) from
+<code>segments.json</code> / <code>gen_trendlines_tos_studies.py</code> (same geometry as ToS studies).</li>
+<li><b>HV6m</b> — gold box: max-Volume day High–Low in last 6 <em>calendar</em> months (from stamp),
+drawn from HV day through last bar.</li>
+<li><b>VZ trigger zone (house)</b> — deep purple band: the High–Low box the live
+Volume Zone (VZ) Open / Watchlist row is based on (<code>ZONE_ID</code>). Always drawn,
+even when a newer 126-day max-volume winner exists. Window start extends left so
+the trigger write day is on-screen. Lighter purple = latest unused winner (context).
+Light blue = same day's <b>OC</b> band (not the house entry filter).
+Helper: <code>tools/vz_chart_zones.py</code>.</li>
+<li><b>SMA20 / SMA50 / SMA100</b> — simple moving averages on daily close (pink / orange / brown).</li>
+<li><b>RSI(14)</b> — bottom panel Wilder RSI; red band ≥{int(RSI_OVERBOUGHT)} overbought,
+green band ≤{int(RSI_OVERSOLD)} oversold; last value annotated on the panel and listed in the table.</li>
+<li><b>Nearest HL above / below</b> — closest house Vol Zone <b>HL</b> band (126d history via
+<code>build_zones</code>) with zone low above last close (above) or zone high below last close (below).
+Dashed red/green guides on chart.</li>
+<li>HV6m (calendar) and VZ HL (126 bars) often match but can differ on ties / window edges.</li>
+</ul>
+</div>
+
+<nav class="nav" aria-label="Symbol navigation">{nav_links}</nav>
+
+<table class="sortable">
+<thead><tr>
+{_sortable_th("Symbol", "text")}
+{_sortable_th("Company", "text")}
+{_sortable_th("Systems", "text")}
+{_sortable_th("Scanner", "text")}
+{_sortable_th("Buy", "text")}
+{_sortable_th("Window start", "date")}
+{_sortable_th("Window end", "date")}
+{_sortable_th("Last", "num")}
+{_sortable_th("RSI(14)", "num")}
+{_sortable_th("OB/OS", "text")}
+{_sortable_th("HL above", "text")}
+{_sortable_th("HL below", "text")}
+{_sortable_th("Segs", "num")}
+{_sortable_th("HV6m day", "date")}
+{_sortable_th("VZ trigger", "text")}
+{_sortable_th("PNG", "text")}
+</tr></thead>
+<tbody>
+{"".join(table_rows)}
+</tbody>
+</table>
+
+{skip_html}
+
+<h2 id="charts">Charts</h2>
+{"".join(chart_blocks)}
+
+{_SORTABLE_TABLE_SCRIPT}
+</body>
+</html>
+"""
+    path = out_dir / "index.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--stamp-dir",
+        type=Path,
+        default=DEFAULT_STAMP,
+        help="Trendline stamp with segments.json",
+    )
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Output charts dir (default: stamp-dir/charts)",
+    )
+    ap.add_argument("--limit", type=int, default=0, help="Optional symbol cap for smoke")
+    ap.add_argument(
+        "--symbol-meta",
+        type=Path,
+        default=None,
+        help="JSON from trendlines_opens_universe (systems, buy date/price)",
+    )
+    ap.add_argument(
+        "--only-missing",
+        action="store_true",
+        help="Reuse existing PNGs; only plot symbols that have no chart yet. Still rebuilds index.",
+    )
+    ap.add_argument(
+        "--symbols",
+        default="",
+        help="Optional comma list to restrict plotting (index still includes all segments).",
+    )
+    args = ap.parse_args()
+
+    stamp_dir = args.stamp_dir if args.stamp_dir.is_absolute() else _REPO / args.stamp_dir
+    seg_path = stamp_dir / "segments.json"
+    if not seg_path.is_file():
+        print(f"[error] missing {seg_path}", file=sys.stderr)
+        return 1
+
+    open_meta: dict[str, Any] = {}
+    meta_path = args.symbol_meta or (stamp_dir / "symbol_meta.json")
+    if meta_path.is_file():
+        open_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    payload = json.loads(seg_path.read_text(encoding="utf-8"))
+    symbols_meta: dict[str, Any] = payload.get("symbols") or {}
+    stamp = str(payload.get("stamp") or stamp_dir.name)
+    out_dir = args.out_dir or (stamp_dir / "charts")
+    if not out_dir.is_absolute():
+        out_dir = _REPO / out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    syms = sorted(symbols_meta.keys())
+    if args.limit and args.limit > 0:
+        syms = syms[: args.limit]
+
+    trigger_specs = load_vz_trigger_specs(_REPO / "drive")
+    if trigger_specs:
+        print(f"[vz] {len(trigger_specs)} live trigger zone(s) from Open/Watchlist")
+
+    company_names = resolve_company_names(syms)
+    missing_names = [s for s in syms if s not in company_names]
+    if missing_names:
+        print(f"[company] no name for {len(missing_names)}: {', '.join(missing_names[:20])}"
+              + (" …" if len(missing_names) > 20 else ""))
+
+    only_syms = {
+        s.strip().upper()
+        for s in str(args.symbols or "").split(",")
+        if s.strip()
+    }
+    rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    t0 = time.time()
+    for i, sym in enumerate(syms, 1):
+        meta = symbols_meta[sym]
+        data_note = meta.get("data_note") or ""
+        csv_path = Path(data_note) if data_note else _REPO / "data" / "newdata" / "data" / f"{sym}.csv"
+        if not csv_path.is_file():
+            alt = _REPO / "data" / "newdata" / "data" / f"{sym}.csv"
+            if alt.is_file():
+                csv_path = alt
+            else:
+                skipped.append({"symbol": sym, "reason": f"missing OHLC {csv_path}"})
+                print(f"[skip] {sym}: missing OHLC")
+                continue
+        png = out_dir / f"{sym}_tl_vz_6m.png"
+        if args.only_missing and png.is_file() and (not only_syms or sym not in only_syms):
+            vz_meta = meta.get("vz") or {}
+            last_close = vz_meta.get("last_close")
+            try:
+                last_f = float(last_close) if last_close is not None else 0.0
+            except (TypeError, ValueError):
+                last_f = 0.0
+            hv = meta.get("hv6m") or {}
+            sym_info = open_meta.get(sym) or {}
+            rows.append(
+                {
+                    "symbol": sym,
+                    "company_name": "",
+                    "display": sym,
+                    "last": last_f,
+                    "rsi14": None,
+                    "rsi_state": "",
+                    "win_start": "",
+                    "win_end": str(meta.get("last_date") or ""),
+                    "n_bars": int(meta.get("n_bars") or 0),
+                    "n_segs": int(len(meta.get("segments") or [])),
+                    "hv6m_day": str(hv.get("day") or ""),
+                    "vz_hl_day": "",
+                    "vz_hl_lo": None,
+                    "vz_hl_hi": None,
+                    "vz_oc_day": "",
+                    "vz_trigger_day": "",
+                    "vz_trigger_lo": None,
+                    "vz_trigger_hi": None,
+                    "vz_trigger_id": "",
+                    "vz_trigger_is_current": False,
+                    "vz_latest_day": "",
+                    "systems": ", ".join(sym_info.get("systems") or []),
+                    "scanner_systems": ", ".join(sym_info.get("scanner_systems") or []),
+                    "purchase_date": str(sym_info.get("purchase_date") or ""),
+                    "entry_price": sym_info.get("entry_price"),
+                    "price_source": str(sym_info.get("price_source") or ""),
+                    "in_portfolio": bool(sym_info.get("in_portfolio")),
+                    "zone_above": "",
+                    "zone_below": "",
+                    "header_line": "",
+                    "png": png.name,
+                }
+            )
+            print(f"[{i}/{len(syms)}] {sym}  reuse {png.name}")
+            continue
+        if only_syms and sym not in only_syms and png.is_file():
+            continue
+        try:
+            df = load_ohlcv(csv_path)
+            spec = trigger_specs.get(sym)
+            vz = resolve_vz_chart_pack(df, lookback=LOOKBACK_DAYS, trigger_spec=spec)
+            all_zones = vz.all_zones
+            sym_info = open_meta.get(sym)
+            info = plot_symbol_chart(
+                sym,
+                df,
+                meta,
+                vz,
+                all_zones,
+                sym_info,
+                png,
+                company_name=company_names.get(sym),
+            )
+            rows.append(info)
+            print(
+                f"[{i}/{len(syms)}] {info.get('display') or sym}  bars={info['n_bars']}  "
+                f"vz={info.get('vz_trigger_id') or info.get('vz_hl_day') or '—'}  "
+                f"above={info.get('zone_above') or '—'}  -> {png.name}"
+            )
+        except Exception as exc:  # noqa: BLE001 — batch resilience
+            skipped.append({"symbol": sym, "reason": str(exc)})
+            print(f"[skip] {sym}: {exc}")
+
+    index = write_index_html(out_dir, stamp, rows, skipped)
+    # Also drop a short README for the charts folder
+    (out_dir / "README.md").write_text(
+        f"""# Charts — {stamp}
+
+- **Index:** `index.html`
+- **N charts:** {len(rows)}
+- **Skipped:** {len(skipped)}
+- **VZ zone drawn:** engine **trigger** High–Low (`ZONE_ID` from live Open/Watchlist) is
+  always included (`tools/vz_chart_zones.py`). Latest 126d winner may also be drawn
+  faded when it is a newer unused box. Window extends left so the trigger write day
+  is on-screen. Light OC band = same day for context.
+- **HV6m:** calendar-6m max-vol High–Low box from parent `segments.json`.
+- **Trendlines:** M/W/D fractal support/resistance from `segments.json`.
+
+Generated {datetime.now().isoformat(timespec="seconds")}.
+""",
+        encoding="utf-8",
+    )
+
+    elapsed = time.time() - t0
+    print(f"\nDone: {len(rows)} charts, {len(skipped)} skipped in {elapsed:.1f}s")
+    print(f"HTML: {index}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,491 @@
+"""Partial exit vs the same exit with a different too-high fill ceiling.
+
+Control (reuse): rl_too_high=1.13 on the locked partial exit.
+1: 1.110
+2: 1.12
+3: 1.14
+4: 1.16
+
+One knob. Capital days: full slot through the +20% sale, then 20%.
+IS = entry < 2024-01-01. OOS report-only. Research-only.
+
+Usage:
+  python tools/rl_partial_too_high_ab.py --workers 8
+  python tools/rl_partial_too_high_ab.py --summarize-only
+"""
+from __future__ import annotations
+
+import argparse
+import html as html_mod
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+DRIVE = ROOT / "drive"
+DATA_DIR = ROOT / "data" / "newdata" / "data"
+STAMP = "20260927"
+OUT_DIR = DRIVE / "paul_experiments" / f"rl_partial_too_high_ab_{STAMP}"
+RUNS_DIR = OUT_DIR / "runs"
+TAG = "RL-PARTIAL-TOO-HIGH"
+CONTROL_DATA_END = "20260904"
+
+CTRL_SRC = (
+    DRIVE
+    / "paul_experiments"
+    / "rl_pct20_vs_p80_be_vs_origstop_ab_20260927"
+    / "runs"
+    / "p80_be_40"
+)
+CTRL_ID = "partial"
+ARMS = (
+    (CTRL_ID, None, "Control: partial exit, too high 1.13", "control"),
+    ("th_1110", 1.110, "1: too high 1.110", "candidate"),
+    ("th_112", 1.12, "2: too high 1.12", "candidate"),
+    ("th_114", 1.14, "3: too high 1.14", "candidate"),
+    ("th_116", 1.16, "4: too high 1.16", "candidate"),
+)
+CAND_IDS = [aid for aid, val, *_rest in ARMS if val is not None]
+NAMES = {CTRL_ID: "Control", "th_1110": "1", "th_112": "2", "th_114": "3", "th_116": "4"}
+REUSE_SRC = {CTRL_ID: CTRL_SRC}
+
+REQUEST_PROMPT = """\
+Can you run an AB test using the partial exit as control vs. same exit strategy, but change too high to 1. 1.110, 2. 1.12, 3. 1.14, 4. 1.16. same reports
+"""
+
+LAYMAN_TRANSLATION = """\
+Every book uses the same sell plan: sell 80% once the price is 20% above the buy, move the leftover \
+stop up to the buy price, and try to sell that last 20% at 40% above the buy. There is no waiting \
+period and no moving-average profit target. The only change is how high the next morning's open is \
+allowed to be. Control allows an open up to 1.13 times the stop line. Book 1 tightens that to 1.110, \
+book 2 to 1.12, book 3 loosens it to 1.14, and book 4 to 1.16. A morning that opens above that line \
+is skipped. After the 80% sale, only one-fifth of the money still counts. The years before 2024 \
+decide the call. 2024 onward is shown and is not used to pick a number.
+"""
+
+INTERPRETATION = """\
+Control reuses the locked partial exit from p80_be_40, including rl_too_high=1.13. The other four \
+books change only rl_too_high, to 1.110, 1.12, 1.14, and 1.16. The fill is allowed when the next \
+open is at or below the signal-day low times rl_too_high times rl_stop_pct (0.934). Simple Moving \
+Average (SMA) target is off. No time clock. Ladder 0.20:0.80:0, leftover target +40%, leftover stop \
+at breakeven. New buys stop after 2026-09-04. Capital Days, profit per capital day, and annualized \
+return count a full slot through the +20% sale day and 20% of a slot after that. Choosing a ceiling \
+after seeing this table is in-sample selection. Research-only.
+"""
+
+sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(DRIVE / "paul_experiments"))
+from be_stop_replay_ab import SORTABLE_TABLE_SCRIPT, SORTABLE_TH_CSS, sortable_th  # noqa: E402
+from compare_format import filter_html_compare_columns  # noqa: E402
+from rl_partial_vs_gap7_ab import (  # noqa: E402
+    _apply_exposure,
+    _arm_from_dir,
+    _copy_patterns,
+    _line,
+    _read_rows,
+)
+from rl_univ_compare_lists import (  # noqa: E402
+    IS_CUT,
+    PER_SYMBOL,
+    SA,
+    _find_latest,
+    _resolve_python,
+    compare_row,
+    load_trades,
+    pack_result,
+    pairwise_delta_row,
+    verdict_vs_control,
+    write_metrics_csv,
+)
+
+
+def _freeze(too_high: float | None) -> list[str]:
+    value = 1.13 if too_high is None else too_high
+    return [
+        "rl_mode=true",
+        "brt_zones=false",
+        "yh_zones=false",
+        "wpbr_zones=false",
+        "indicator_buy=off",
+        "rl_sma_qual=1",
+        "ATR_LOW=off",
+        "ATR_HIGH=off",
+        "rl_slope_threshold=0",
+        "rl_dip_pct=1.055",
+        "rl_expansion=1.163",
+        "rl_stop_pct=0.934",
+        "rl_target_pct=1.2",
+        "rl_sma_target_off=1",
+        "rl_cut_the_losers=1000",
+        "rl_exit_percent=0",
+        "rl_exit_days=0",
+        "rl_exit_calendar_days=0",
+        "rl_max_hold_bars=0",
+        "rl_max_hold_calendar_days=0",
+        "rl_entry_target_pct=0.40",
+        "rl_post_target_reentry_bars=0",
+        f"rl_too_high={value}",
+        "rl_min_avg_vol=10000",
+        "rl_min_trigger_vol=5000",
+        f"entry_end_date={CONTROL_DATA_END}",
+        "rl_scale_ladder=0.20:0.80:0",
+    ]
+
+
+def build_cmd(py: str, outdir: Path, workers: int, too_high: float) -> list[str]:
+    cmd = [
+        py,
+        str(SA / "rocket_tbn.py"),
+        str(DATA_DIR),
+        "-o",
+        str(outdir),
+        "-w",
+        str(workers),
+        "--aggressive",
+        "--use-duckdb",
+        "--no-regression",
+    ]
+    if PER_SYMBOL.is_file():
+        cmd.extend(["--per-symbol-settings", str(PER_SYMBOL)])
+    for v in _freeze(too_high):
+        cmd.extend(["-v", v])
+    return cmd
+
+
+def run_fresh(py: str, arm_id: str, label: str, too_high: float, workers: int, skip_existing: bool) -> dict[str, Any]:
+    arm_dir = RUNS_DIR / arm_id
+    arm_dir.mkdir(parents=True, exist_ok=True)
+    closed = _find_latest(arm_dir, "RL_Closed_*.csv")
+    if skip_existing and closed and closed.stat().st_size > 0 and load_trades(closed):
+        return _arm_from_dir(arm_id, label, "candidate", arm_dir)
+    cmd = build_cmd(py, arm_dir, workers, too_high)
+    log_path = arm_dir / "run.log"
+    t0 = time.time()
+    with log_path.open("w", encoding="utf-8", errors="replace") as log:
+        log.write("CMD: " + " ".join(cmd) + "\n\n")
+        log.flush()
+        proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=str(ROOT))
+    print(f"[{TAG}] {arm_id} elapsed={time.time() - t0:.0f}s exit={proc.returncode}", flush=True)
+    run = _arm_from_dir(arm_id, label, "candidate", arm_dir)
+    run["ok"] = proc.returncode == 0 and run["ok"]
+    run["exit_code"] = proc.returncode
+    return run
+
+
+def _weight(packed: list[dict[str, Any]], rows_by_id: dict[str, list[dict[str, Any]]]) -> None:
+    for p in packed:
+        rows = rows_by_id[p["arm"]["id"]]
+        if len(rows) != int(p["m_full"]["n"]):
+            print(
+                f"[{TAG}] exposure row mismatch {p['arm']['id']}: csv={len(rows)} metrics={p['m_full']['n']}",
+                flush=True,
+            )
+        _apply_exposure(p["m_full"], rows)
+        _apply_exposure(p["m_is"], [r for r in rows if r["opened"] < IS_CUT])
+        _apply_exposure(p["m_oos"], [r for r in rows if r["opened"] >= IS_CUT])
+
+
+def _call(is_v: str, oos_v: str) -> str:
+    if is_v == "DISMISS":
+        return "DISMISS"
+    if is_v in ("KEEP", "LEAN KEEP") and oos_v in ("DISMISS", "HOLD"):
+        return "HOLD"
+    if is_v in ("KEEP", "LEAN KEEP"):
+        return is_v
+    return "HOLD"
+
+
+def write_html(packed, calls, verdicts) -> Path:
+    by_id = {p["arm"]["id"]: p for p in packed}
+    baseline = by_id[CTRL_ID]
+    th = "".join(
+        sortable_th(a, b)
+        for a, b in filter_html_compare_columns(
+            [
+                ("Arm", "text"),
+                ("Univ N", "num"),
+                ("Trades", "num"),
+                ("WR%", "num"),
+                ("Avg PnL%", "num"),
+                ("Avg% w/o max", "num"),
+                ("Avg win%", "num"),
+                ("Avg loss%", "num"),
+                ("PF", "num"),
+                ("Ann ROR%", "num"),
+                ("Max DD%", "num"),
+                ("Calmar", "num"),
+                ("Sharpe", "num"),
+                ("Expect $", "num"),
+                ("Avg days", "num"),
+                ("Cap days", "num"),
+                ("PPCD", "num"),
+                ("Lose streak", "num"),
+                ("Trades/yr", "num"),
+                ("Mean Paul", "num"),
+                ("Mean FIT", "num"),
+                ("Mean robust FIT", "num"),
+                ("Δ Avg% vs ctrl", "num"),
+                ("Δ WR vs ctrl", "num"),
+                ("Δ PF vs ctrl", "num"),
+                ("Δ Ann ROR vs ctrl", "num"),
+                ("Δ Max DD vs ctrl", "num"),
+                ("Δ Calmar vs ctrl", "num"),
+                ("IS pick", "text"),
+            ]
+        )
+    )
+    note = (
+        "Control too high is 1.13. Books 1-4 use 1.110, 1.12, 1.14, and 1.16. "
+        "The next open must be at or below the signal low times that number times 0.934. "
+        "Capital days count a full slot through the +20% sale day, then 20% of a slot. "
+        "Deltas are versus control. Click column headers to sort."
+    )
+    sections = []
+    for split_key, title in (("m_is", "IS"), ("m_oos", "OOS (report-only)"), ("m_full", "FULL book")):
+        body = "".join(compare_row(p, split_key, baseline, "", CTRL_ID) for p in packed)
+        sections.append(
+            f"<section><h2>{title}</h2><p class=\"muted\">{note}</p>"
+            f"<div class=\"table-wrap\"><table class=\"sortable\"><thead><tr>{th}</tr></thead>"
+            f"<tbody>{body}</tbody></table></div></section>"
+        )
+    pw_th = "".join(
+        sortable_th(a, b)
+        for a, b in filter_html_compare_columns(
+            [
+                ("Pair", "text"),
+                ("Δ Trades", "num"),
+                ("Δ Avg%", "num"),
+                ("Δ WO_MAX", "num"),
+                ("Δ WR", "num"),
+                ("Δ PF", "num"),
+                ("Δ Sheet $", "num"),
+                ("Δ Ann ROR", "num"),
+                ("Δ Max DD", "num"),
+            ]
+        )
+    )
+    pairs = [(f"{NAMES[aid]} − Control", baseline, by_id[aid]) for aid in CAND_IDS]
+    pw = []
+    for split_key, title in (("m_is", "IS"), ("m_oos", "OOS"), ("m_full", "FULL")):
+        rows = "".join(pairwise_delta_row(a, b, split_key, lbl) for lbl, a, b in pairs)
+        pw.append(
+            f"<section><h2>Pairwise — {title}</h2>"
+            f"<div class=\"table-wrap\"><table class=\"sortable\"><thead><tr>{pw_th}</tr></thead>"
+            f"<tbody>{rows}</tbody></table></div></section>"
+        )
+    items = []
+    for aid in CAND_IDS:
+        vis, nis = verdicts[aid]["is"]
+        voos, noos = verdicts[aid]["oos"]
+        items.append(
+            f"<li><strong>{NAMES[aid]} {html_mod.escape(aid)}: {html_mod.escape(calls[aid])}</strong> "
+            f"IS <code>{html_mod.escape(vis)}</code> — {html_mod.escape(nis)} "
+            f"OOS <code>{html_mod.escape(voos)}</code> — {html_mod.escape(noos)}</li>"
+        )
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Partial exit too-high grid — {STAMP}</title>
+<style>
+:root {{ --bg:#0f1419; --card:#1a2332; --text:#e7ecf3; --muted:#9aa7b8; --line:#2a3545; --accent:#5b9fd4; --ctrl:#243044; }}
+*{{box-sizing:border-box}}
+body{{margin:0;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.45}}
+header{{padding:1.25rem 1rem 0.5rem;max-width:1400px;margin:0 auto}}
+h1{{font-size:1.35rem;margin:0 0 .35rem}}
+h2{{font-size:1.05rem;margin:.2rem 0 .4rem;color:var(--accent)}}
+.muted{{color:var(--muted);font-size:.92rem}}
+.callout{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.75rem 1rem;margin:.75rem 0}}
+.req pre{{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:.82rem;margin:.4rem 0 0;color:var(--text)}}
+.req .layman{{margin:.55rem 0 0;font-size:.95rem}}
+main{{max-width:1400px;margin:0 auto;padding:0 1rem 2.5rem}}
+section{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.75rem 1rem 1rem;margin:1rem 0}}
+.table-wrap{{overflow-x:auto}}
+table{{border-collapse:collapse;width:100%;font-size:.78rem;min-width:900px}}
+th,td{{border-bottom:1px solid var(--line);padding:.35rem .4rem;text-align:right}}
+th:first-child,td:first-child{{text-align:left}}
+tr.ctrl-row{{background:var(--ctrl)}}
+{SORTABLE_TH_CSS.replace('th.sortable-th:hover{{background:#e8e4d8}}', 'th.sortable-th:hover{{background:#2a3545}}')}
+</style>
+</head>
+<body>
+<header>
+<h1>Partial exit with four too-high fill ceilings.</h1>
+<p class="muted">Stamp <code>rl_partial_too_high_ab_{STAMP}</code>. Research-only. Not gold. Not DailyRun.</p>
+</header>
+<main>
+<div class="callout req">
+<strong>What you asked</strong>
+<pre>{html_mod.escape(REQUEST_PROMPT.strip())}</pre>
+<p class="layman"><strong>In plain English:</strong> {html_mod.escape(LAYMAN_TRANSLATION.strip())}</p>
+<p class="layman"><strong>Interpretation:</strong> {html_mod.escape(INTERPRETATION.strip())}</p>
+</div>
+<div class="callout">
+<strong>Calls versus control (too high 1.13)</strong>
+<ul>{''.join(items)}</ul>
+<p class="muted">Judge average gain and profit factor. A softer out-of-sample result is a hold. Picking one ceiling after seeing this table is in-sample selection. Research-only.</p>
+</div>
+{''.join(sections)}
+{''.join(pw)}
+</main>
+{SORTABLE_TABLE_SCRIPT}
+</body></html>
+"""
+    path = OUT_DIR / "compare.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+def write_docs(packed, html_path, calls, verdicts) -> None:
+    by_id = {p["arm"]["id"]: p for p in packed}
+    lines = [
+        f"# BASELINE — `rl_partial_too_high_ab_{STAMP}`",
+        "",
+        "**Status:** RESEARCH only. One knob: `rl_too_high`. Partial exit otherwise frozen.",
+        f"**Control `{CTRL_ID}`:** `rl_too_high=1.13`. Reuse `{CTRL_SRC.as_posix()}`.",
+        "**1 `th_1110`:** `rl_too_high=1.110`.",
+        "**2 `th_112`:** `rl_too_high=1.12`.",
+        "**3 `th_114`:** `rl_too_high=1.14`.",
+        "**4 `th_116`:** `rl_too_high=1.16`.",
+        "Ladder `0.20:0.80:0`, leftover target +40%, breakeven leftover stop. Not gold. Not DailyRun.",
+        "",
+        "## What you asked",
+        "",
+        "```",
+        REQUEST_PROMPT.strip(),
+        "```",
+        "",
+        "## In plain English",
+        "",
+        LAYMAN_TRANSLATION.strip(),
+        "",
+        "## Interpretation",
+        "",
+        INTERPRETATION.strip(),
+        "",
+        "## Capital-weighted hold",
+        "",
+        "Through the day the 80% piece is sold (inclusive), the trade uses a full slot. "
+        "Every later calendar day uses 20% of a slot until the leftover exits.",
+        "",
+        "## Split metrics",
+        "",
+    ]
+    for aid, _val, _label, _role in ARMS:
+        for key, label in (("m_is", "IS"), ("m_oos", "OOS"), ("m_full", "FULL")):
+            lines.append(f"- **{NAMES[aid]} {label}:** {_line(by_id[aid], key)}")
+    lines.extend(["", "## Verdict versus control", ""])
+    for aid in CAND_IDS:
+        v, n = verdicts[aid]["is"]
+        vo, no = verdicts[aid]["oos"]
+        lines.append(f"- **{NAMES[aid]} `{aid}` {calls[aid]}** IS `{v}` ({n}); OOS `{vo}` ({no}).")
+    lines.extend(
+        [
+            "",
+            "- OOS is report-only. Do not retune. Do not pick a ceiling from this table alone.",
+            "",
+            f"Compare: `{html_path.as_posix()}`",
+            "",
+        ]
+    )
+    (OUT_DIR / "BASELINE.md").write_text("\n".join(lines), encoding="utf-8")
+    summary = [f"# SUMMARY — `rl_partial_too_high_ab_{STAMP}`", ""]
+    for aid in CAND_IDS:
+        v, n = verdicts[aid]["is"]
+        vo, no = verdicts[aid]["oos"]
+        summary.append(f"- **{NAMES[aid]} `{aid}` {calls[aid]}** IS `{v}` ({n}); OOS `{vo}` ({no}).")
+    summary.append("")
+    for aid, _val, _label, _role in ARMS:
+        for key, label in (("m_is", "IS"), ("m_oos", "OOS"), ("m_full", "FULL")):
+            summary.append(f"- {NAMES[aid]} {label}: {_line(by_id[aid], key)}")
+    summary.extend(["", f"Compare: `{html_path.as_posix()}`", ""])
+    (OUT_DIR / "SUMMARY.md").write_text("\n".join(summary), encoding="utf-8")
+
+
+def _notify(py: str, html_path: Path, message: str, title: str) -> None:
+    ntfy = ROOT / "tools" / "ntfy_job_done.py"
+    if ntfy.is_file():
+        subprocess.run([py, str(ntfy), "--path", str(html_path), "-t", title, "-m", message], cwd=str(ROOT))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--summarize-only", action="store_true")
+    parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--workers", type=int, default=8)
+    args = parser.parse_args()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    py = _resolve_python()
+    skip = args.skip_existing or args.summarize_only
+
+    def fail(msg: str) -> int:
+        path = OUT_DIR / "compare.html"
+        path.write_text(
+            "<html><body><h1>Partial exit too-high grid failed</h1>"
+            f"<p>{html_mod.escape(msg)}</p>"
+            f"<pre>{html_mod.escape(REQUEST_PROMPT.strip())}</pre>"
+            f"<p>{html_mod.escape(LAYMAN_TRANSLATION.strip())}</p></body></html>",
+            encoding="utf-8",
+        )
+        _notify(py, path, msg, "Partial exit too-high grid FAILED")
+        print(f"[{TAG}] {msg}", flush=True)
+        return 1
+
+    runs: dict[str, dict[str, Any]] = {}
+    try:
+        for aid, src in REUSE_SRC.items():
+            label = next(lbl for i, _v, lbl, _r in ARMS if i == aid)
+            runs[aid] = _arm_from_dir(aid, label, "control", src)
+            _copy_patterns(src, RUNS_DIR / aid)
+    except FileNotFoundError as exc:
+        return fail(str(exc))
+
+    fresh = [(aid, val, lbl) for aid, val, lbl, _role in ARMS if aid not in REUSE_SRC]
+    if skip:
+        for aid, _val, lbl in fresh:
+            try:
+                runs[aid] = _arm_from_dir(aid, lbl, "candidate", RUNS_DIR / aid)
+            except FileNotFoundError as exc:
+                return fail(str(exc))
+    else:
+        with ThreadPoolExecutor(max_workers=max(1, len(fresh))) as ex:
+            futs = {
+                ex.submit(run_fresh, py, aid, lbl, val, args.workers, False): aid
+                for aid, val, lbl in fresh
+            }
+            for fut in as_completed(futs):
+                runs[futs[fut]] = fut.result()
+
+    if not all(runs[aid].get("ok") for aid, *_rest in ARMS):
+        return fail("one or more arms failed")
+
+    ordered = [runs[aid] for aid, *_rest in ARMS]
+    packed = [pack_result(r) for r in ordered]
+    rows = {r["arm"]["id"]: _read_rows(Path(r["closed"])) for r in ordered}
+    _weight(packed, rows)
+    by_id = {p["arm"]["id"]: p for p in packed}
+    verdicts = {
+        aid: {
+            "is": verdict_vs_control(by_id[aid], by_id[CTRL_ID], "m_is"),
+            "oos": verdict_vs_control(by_id[aid], by_id[CTRL_ID], "m_oos"),
+        }
+        for aid in CAND_IDS
+    }
+    calls = {aid: _call(verdicts[aid]["is"][0], verdicts[aid]["oos"][0]) for aid in CAND_IDS}
+    html_path = write_html(packed, calls, verdicts)
+    write_metrics_csv(packed, "", OUT_DIR / "metrics_all.csv")
+    write_docs(packed, html_path, calls, verdicts)
+    for aid in CAND_IDS:
+        print(f"[{TAG}] {aid} {calls[aid]} IS={verdicts[aid]['is'][0]} OOS={verdicts[aid]['oos'][0]}", flush=True)
+    print(f"[{TAG}] Wrote {html_path}", flush=True)
+    bits = " ".join(f"{NAMES[aid]}={calls[aid]}" for aid in CAND_IDS)
+    _notify(py, html_path, f"Partial exit too-high grid 1.110 / 1.12 / 1.14 / 1.16. {bits}", "Partial exit too-high grid")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

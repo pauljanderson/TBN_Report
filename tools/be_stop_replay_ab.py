@@ -24,10 +24,16 @@ from typing import Any, Optional
 
 import pandas as pd
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from report_page_extras import ENSURE_TABLE_WRAP_JS, RESPONSIVE_TABLE_CSS  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "drive" / "paul_experiments"))
 from compare_format import (  # noqa: E402
     ann_ror_from_closed,
+    filter_html_compare_columns,
     format_money,
     format_money_delta,
 )
@@ -356,11 +362,14 @@ th.sortable-th:hover{background:#e8e4d8}
 .sort-ind{display:inline-block;width:0.9em;margin-left:4px;color:#9a9588;font-size:10px}
 th.sort-asc .sort-ind::after{content:"▲";color:#1c1b19}
 th.sort-desc .sort-ind::after{content:"▼";color:#1c1b19}
-"""
+""" + "\n" + RESPONSIVE_TABLE_CSS
 
+# Already includes <script>…</script>. Emit with {SORTABLE_TABLE_SCRIPT} only —
+# do NOT wrap again in <script>…</script> (nested tags make JS a syntax error).
 SORTABLE_TABLE_SCRIPT = r"""
 <script>
 (function () {
+""" + ENSURE_TABLE_WRAP_JS + r"""
   function parseSortValue(text, type) {
     var s = String(text || "").trim();
     if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
@@ -523,23 +532,25 @@ def run_job(job: dict) -> dict[str, Any]:
 
 def metric_rows_html(results: list[dict]) -> str:
     parts = []
-    headers = [
-        ("System", "text"),
-        ("Book", "text"),
-        ("N", "num"),
-        ("Win%", "num"),
-        ("Avg PnL%", "num"),
-        ("AVG_PNL_PCT_WO_MAX", "num"),
-        ("Avg win%", "num"),
-        ("Avg loss%", "num"),
-        ("PF", "num"),
-        ("Sheet PnL $", "num"),
-        ("Total PnL $", "num"),
-        ("Ann ROR%", "num"),
-        ("Avg days", "num"),
-        ("BE hits", "num"),
-        ("Exit mix", "text"),
-    ]
+    headers = filter_html_compare_columns(
+        [
+            ("System", "text"),
+            ("Book", "text"),
+            ("N", "num"),
+            ("Win%", "num"),
+            ("Avg PnL%", "num"),
+            ("AVG_PNL_PCT_WO_MAX", "num"),
+            ("Avg win%", "num"),
+            ("Avg loss%", "num"),
+            ("PF", "num"),
+            ("Sheet PnL $", "num"),
+            ("Total PnL $", "num"),
+            ("Ann ROR%", "num"),
+            ("Avg days", "num"),
+            ("BE hits", "num"),
+            ("Exit mix", "text"),
+        ]
+    )
     th = "".join(sortable_th(a, b) for a, b in headers)
     for r in results:
         job = r["job"]
@@ -560,8 +571,6 @@ def metric_rows_html(results: list[dict]) -> str:
                     fmt_pp(a["avg_win"] - b["avg_win"]),
                     fmt_pp(a["avg_loss"] - b["avg_loss"]),
                     f"{a['pf']-b['pf']:+.2f}",
-                    format_money_delta(a["sheet"] - b["sheet"]),
-                    format_money_delta(a["pnl_d"] - b["pnl_d"]),
                     fmt_pp(a["ann_ror"] - b["ann_ror"]),
                     f"{a['avg_days']-b['avg_days']:+.1f}",
                     str(a["be_n"]),
@@ -578,8 +587,6 @@ def metric_rows_html(results: list[dict]) -> str:
                     fmt_pct(m["avg_win"]),
                     fmt_pct(m["avg_loss"]),
                     f"{m['pf']:.2f}",
-                    format_money(m["sheet"]),
-                    format_money(m["pnl_d"]),
                     fmt_pct(m["ann_ror"]),
                     f"{m['avg_days']:.1f}",
                     str(m["be_n"]),
@@ -590,19 +597,21 @@ def metric_rows_html(results: list[dict]) -> str:
 
 
 def isoos_html(results: list[dict]) -> str:
-    headers = [
-        ("System", "text"),
-        ("Arm", "text"),
-        ("Split", "text"),
-        ("N", "num"),
-        ("Win%", "num"),
-        ("Avg PnL%", "num"),
-        ("WO_MAX", "num"),
-        ("PF", "num"),
-        ("Sheet PnL $", "num"),
-        ("Ann ROR%", "num"),
-        ("Avg days", "num"),
-    ]
+    headers = filter_html_compare_columns(
+        [
+            ("System", "text"),
+            ("Arm", "text"),
+            ("Split", "text"),
+            ("N", "num"),
+            ("Win%", "num"),
+            ("Avg PnL%", "num"),
+            ("WO_MAX", "num"),
+            ("PF", "num"),
+            ("Sheet PnL $", "num"),
+            ("Ann ROR%", "num"),
+            ("Avg days", "num"),
+        ]
+    )
     th = "".join(sortable_th(a, b) for a, b in headers)
     parts = []
     for r in results:
@@ -623,7 +632,6 @@ def isoos_html(results: list[dict]) -> str:
                             fmt_pct(m["avg_pnl"]),
                             fmt_pct(m["wo_max"]),
                             f"{m['pf']:.2f}",
-                            format_money(m["sheet"]),
                             fmt_pct(m["ann_ror"]),
                             f"{m['avg_days']:.1f}",
                         ]

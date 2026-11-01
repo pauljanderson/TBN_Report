@@ -60,6 +60,8 @@ if not defined SB_SIZE_FROM_STOP set "SB_SIZE_FROM_STOP=false"
 if not defined SB_RISK_FRAC set "SB_RISK_FRAC=0.01"
 if not defined SB_MAX_POSITIONS set "SB_MAX_POSITIONS=0"
 if not defined SB_AGGRESSIVE set "SB_AGGRESSIVE=true"
+rem DailyRun -w sets DAILYRUN_WORKERS. Standalone default stays 5. Explicit SB_WORKERS wins.
+if not defined SB_WORKERS if defined DAILYRUN_WORKERS set "SB_WORKERS=%DAILYRUN_WORKERS%"
 if not defined SB_WORKERS set "SB_WORKERS=5"
 
 set "SB_AGG_FLAG="
