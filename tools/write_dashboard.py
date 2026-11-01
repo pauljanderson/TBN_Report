@@ -353,7 +353,19 @@ def stats_for(
         picked.append(row)
     filled = [row for row in picked if row.get("filled") == "yes"]
     missed = [row for row in picked if str(row.get("outcome") or "") == "missed send"]
-    by = {letter: {"sent": 0, "filled": 0, "missed": 0, "open": 0, "settled": 0, "pnl": Decimal("0")} for letter in LETTERS}
+    by = {
+        letter: {
+            "sent": 0,
+            "filled": 0,
+            "missed": 0,
+            "open": 0,
+            "settled": 0,
+            "pnl": Decimal("0"),
+            "invested": Decimal("0"),
+            "roi": None,
+        }
+        for letter in LETTERS
+    }
     seen_pnl: set[tuple] = set()
     for row in picked:
         letter = str(row.get("system") or "")
@@ -373,8 +385,9 @@ def stats_for(
             if key not in seen_pnl and row.get("realized") not in ("", None):
                 seen_pnl.add(key)
                 slot["pnl"] += _num(row, "realized")
-    # Cluster-level P&L (one per filled cluster, not per leg) for the window.
+    # Cluster-level P&L / invested (one per filled cluster, not per leg) for the window.
     pnl_by = {letter: Decimal("0") for letter in LETTERS}
+    invested_by = {letter: Decimal("0") for letter in LETTERS}
     for cluster in clusters or []:
         if int(cluster.get("n_fill_legs") or 0) < 1:
             continue
@@ -390,8 +403,11 @@ def stats_for(
         letter = system_letter(cluster)
         if letter in pnl_by:
             pnl_by[letter] += ddec(cluster.get("realized")) or Decimal("0")
-    for letter, amount in pnl_by.items():
-        by[letter]["pnl"] = amount
+            invested_by[letter] += wop.invested_from_clusters([cluster])
+    for letter in LETTERS:
+        by[letter]["pnl"] = pnl_by[letter]
+        by[letter]["invested"] = invested_by[letter]
+        by[letter]["roi"] = wop.roi_pct(pnl_by[letter], invested_by[letter])
     open_games = set()
     open_dollars = Decimal("0")
     for row in open_rows or []:
@@ -400,6 +416,7 @@ def stats_for(
             open_games.add(key)
         open_dollars += ddec(row.get("exposure")) or Decimal("0")
     total_pnl = sum(pnl_by.values(), Decimal("0"))
+    total_invested = sum(invested_by.values(), Decimal("0"))
     stats = {
         "n_sent": len(picked),
         "n_filled": len(filled),
@@ -409,8 +426,11 @@ def stats_for(
         "n_open_overlay": len(open_games),
         "open_dollars": open_dollars,
         "pnl": total_pnl,
+        "invested": total_invested,
+        "roi": wop.roi_pct(total_pnl, total_invested),
         "by": by,
         "pnl_by": pnl_by,
+        "invested_by": invested_by,
         "filled_by": {letter: by[letter]["filled"] for letter in LETTERS},
         "missed_by": {letter: by[letter]["missed"] for letter in LETTERS},
         "open_by": {letter: 0 for letter in LETTERS},
@@ -850,9 +870,12 @@ def kpi_card(label: str, value: str, *, tone: str = "") -> str:
 def kpi_strip(stats: dict) -> str:
     pnl = stats.get("pnl") or Decimal("0")
     tone = "up" if pnl > 0 else ("down" if pnl < 0 else "")
+    roi = stats.get("roi")
+    roi_tone = "up" if (roi is not None and roi > 0) else ("down" if (roi is not None and roi < 0) else "")
     return (
         '<div class="kpis">'
         + kpi_card("With-fee P&L", money_signed(pnl), tone=tone)
+        + kpi_card("ROI", wop.fmt_roi(roi), tone=roi_tone)
         + kpi_card("N sent", str(stats.get("n_sent") or 0))
         + kpi_card("N filled (qty > 0)", str(stats.get("n_filled") or 0), tone="up")
         + kpi_card("N missed send", str(stats.get("n_missed") or 0), tone="down")
@@ -925,9 +948,19 @@ def by_system_today_table(stats: dict) -> str:
         ("N open", "num"),
         ("N settled", "num"),
         ("With-fee P&L", "num"),
+        ("ROI %", "num"),
     ]
     rows = []
-    empty = {"sent": 0, "filled": 0, "missed": 0, "open": 0, "settled": 0, "pnl": Decimal("0")}
+    empty = {
+        "sent": 0,
+        "filled": 0,
+        "missed": 0,
+        "open": 0,
+        "settled": 0,
+        "pnl": Decimal("0"),
+        "invested": Decimal("0"),
+        "roi": None,
+    }
     for letter, _sid, name, _code in wop.SYSTEM_SPECS:
         slot = (stats.get("by") or {}).get(letter) or empty
         rows.append([
@@ -938,6 +971,7 @@ def by_system_today_table(stats: dict) -> str:
             slot["open"],
             slot["settled"],
             money_signed(slot["pnl"]),
+            wop.fmt_roi(slot.get("roi")),
         ])
     total = [
         "Combined",
@@ -947,6 +981,7 @@ def by_system_today_table(stats: dict) -> str:
         stats["n_open_today_fills"],
         stats["n_settled"],
         money_signed(stats["pnl"]),
+        wop.fmt_roi(stats.get("roi")),
     ]
     return wop.table(headers, rows, total)
 
@@ -1291,21 +1326,49 @@ def load_cache() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _empty_system_slot() -> dict:
+    return {
+        "sent": 0,
+        "filled": 0,
+        "missed": 0,
+        "open": 0,
+        "settled": 0,
+        "pnl": Decimal("0"),
+        "invested": Decimal("0"),
+        "roi": None,
+    }
+
+
 def _revive_stats(raw: dict | None) -> dict:
     data = dict(raw or {})
-    for key in ("pnl", "open_dollars"):
+    for key in ("pnl", "open_dollars", "invested"):
         if key in data:
             data[key] = ddec(data.get(key)) or Decimal("0")
+    if "invested" not in data:
+        data["invested"] = Decimal("0")
     by = {}
     for letter, slot in (data.get("by") or {}).items():
         item = dict(slot)
         item["pnl"] = ddec(item.get("pnl")) or Decimal("0")
+        item["invested"] = ddec(item.get("invested")) or Decimal("0")
+        if item.get("roi") in (None, ""):
+            item["roi"] = wop.roi_pct(item["pnl"], item["invested"])
+        else:
+            item["roi"] = ddec(item.get("roi"))
         by[letter] = item
-    data["by"] = by or {letter: {"sent": 0, "filled": 0, "missed": 0, "open": 0, "settled": 0, "pnl": Decimal("0")} for letter in LETTERS}
+    data["by"] = by or {letter: _empty_system_slot() for letter in LETTERS}
     pnl_by = {}
     for letter, amount in (data.get("pnl_by") or {}).items():
         pnl_by[letter] = ddec(amount) or Decimal("0")
     data["pnl_by"] = pnl_by or {letter: Decimal("0") for letter in LETTERS}
+    invested_by = {}
+    for letter, amount in (data.get("invested_by") or {}).items():
+        invested_by[letter] = ddec(amount) or Decimal("0")
+    data["invested_by"] = invested_by or {letter: Decimal("0") for letter in LETTERS}
+    if data.get("roi") in (None, ""):
+        data["roi"] = wop.roi_pct(data.get("pnl"), data.get("invested"))
+    else:
+        data["roi"] = ddec(data.get("roi"))
     for key in ("filled_by", "missed_by", "open_by", "settled_by"):
         data[key] = {str(k): int(v or 0) for k, v in (data.get(key) or {}).items()}
     return data
