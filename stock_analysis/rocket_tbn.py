@@ -367,6 +367,8 @@ class BRTConfig:
     wrl_target_mode: str = "swing"  # swing (house: 100% at swing high) | range | scale (leftover 50/50)
     wrl_scale_frac: float = 0.50
     wrl_min_zone_pct: float = 0.0
+    wrl_min_rr: float = 0.0
+    wrl_min_rr_target: str = "range"  # range | swing | primary
     wrl_time_stop_bars: int = 0
     # RSI — Relative Strength Index (rocket_rsi.py). true → RSI_ prefix.
     # Not RS (Relative Strength vs SPY). House freeze: ob=70/os=30/exit=70/max_trigger=60/min_atr%=2.93/ts=20/roll_from_max=8/next_open. min_dist52=off.
@@ -17811,6 +17813,8 @@ _AUDIT_CFG_COLS = [
     "wrl_target_mode",
     "wrl_scale_frac",
     "wrl_min_zone_pct",
+    "wrl_min_rr",
+    "wrl_min_rr_target",
     "wrl_time_stop_bars",
 ]
 
@@ -18163,6 +18167,15 @@ _AUDIT_FIELD_GLOSSARY: dict[str, str] = {
         "distances; missing either side skips the trade. Typically paired with zone_exits=true "
         "or zone_exits_union=true (e.g. -v zone_exits_union=true -v zone_rr_min=2). "
         "Does not alone change exits."
+    ),
+    "wrl_min_rr": (
+        "WRL entry gate (0=off): skip the fill unless structural reward/risk is at least this. "
+        "Risk = fill − stop (swing low × stop_pct). Reward depends on wrl_min_rr_target. "
+        "Knowable at fill. Distinct from zone_rr_min (nearest matured zone inventory)."
+    ),
+    "wrl_min_rr_target": (
+        "Which WRL target feeds wrl_min_rr: range (range high / T1, default) | swing (swing high / T2) "
+        "| primary (the first target of wrl_target_mode). Example: -v wrl_min_rr=2 -v wrl_min_rr_target=range."
     ),
     "use_indicators": "When True, append IND_* / IND_ENTRY_* / IND_TC_* columns at entry (see brt_entry_indicators).",
     "use_ind_score": "When True, append IND_SCORE = sum of per-indicator weights for each IND_<id> that is BULL at entry (see ind_score_weights.json).",

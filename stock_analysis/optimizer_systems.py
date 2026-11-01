@@ -269,6 +269,8 @@ WRL_PLAN: dict[str, tuple[Any, ...]] = {
     "wrl_scale_frac": (0.33, 0.50, 0.67),
     "stop_pct": (0.98, 0.99, 1.0),
     "wrl_min_zone_pct": (0.0, 0.01, 0.02),
+    "wrl_min_rr": (0.0, 1.5, 2.0, 3.0, 4.0),
+    "wrl_min_rr_target": ("range", "swing"),
 }
 
 
