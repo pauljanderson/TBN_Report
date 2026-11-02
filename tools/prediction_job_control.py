@@ -465,7 +465,13 @@ def _lock_open_text() -> str:
     try:
         import live_lock_orders
 
-        return str(len(live_lock_orders.open_lock_keys()))
+        venue_n = len(live_lock_orders.open_lock_keys(overlay=True))
+        house_n = len(live_lock_orders.open_lock_keys(overlay=False))
+        cap = live_lock_orders.effective_max_open_locks()
+        text = f"{venue_n} / {cap}"
+        if house_n > venue_n + 2:
+            text += f" (house tape {house_n} — ghosts ignored for send)"
+        return text
     except Exception:
         return "—"
 

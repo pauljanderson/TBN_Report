@@ -691,15 +691,27 @@ def lock_bot_holds_game(title: str) -> bool:
     try:
         rows = live_lock_orders.load_all_watches()
     except Exception:
-        rows = []
+        try:
+            rows = live_lock_orders.open_second_leg_gtc_watches()
+        except Exception:
+            rows = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         game = str(row.get("game") or "")
         if game and same_game(game, title):
-            if live_lock_orders.watch_is_active(row) or row.get("filled_venue"):
+            try:
+                active = bool(live_lock_orders.watch_is_active(row))
+            except Exception:
+                active = False
+            if active or row.get("filled_venue"):
                 return True
-    if live_lock_orders.ORDERS_STOP.exists():
+    stop = getattr(live_lock_orders, "ORDERS_STOP", None)
+    try:
+        latch_present = bool(stop is not None and stop.exists())
+    except Exception:
+        latch_present = False
+    if latch_present:
         try:
             import prediction_job_control
 

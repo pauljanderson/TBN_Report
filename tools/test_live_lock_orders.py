@@ -427,6 +427,77 @@ def test_gemini_private_call_refuses_order_when_quote_only():
         gemini_private.GEMINI_ORDERS_ENABLED = saved
 
 
+def test_ghost_open_cap_empty_venues_allow_send():
+    """House tape can list hundreds of settled fills; venue books empty → send OK.
+
+    Regression for 2026-11-02: Open now A was 0 while send gate said
+    Already have 331 open lock pair(s); max_open_locks=10.
+    """
+    tape = []
+    for i in range(331):
+        tape.append(
+            {
+                "bet_key": f"ghost-{i}",
+                "game": f"Ghost Match {i}",
+                "event": "filled",
+                "venue": "kalshi",
+                "instrument": f"KX-GHOST-{i}",
+                "confirm_qty": "1",
+                "system": "lock",
+            }
+        )
+    house = live_lock_orders.open_lock_keys(rows=tape, overlay=False, include_watches=False)
+    assert len(house) == 331
+    empty = {
+        "kalshi_ok": True,
+        "poly_ok": True,
+        "kalshi": [],
+        "poly": [],
+        "kalshi_by_ticker": {},
+        "poly_by_slug": {},
+    }
+    venue = live_lock_orders.open_lock_keys(
+        rows=tape, overlay=True, snapshot=empty, include_watches=False
+    )
+    assert venue == []
+    assert not live_lock_orders.lock_slots_full(venue)
+
+
+def test_venue_open_counts_only_held_qty():
+    tape = [
+        {
+            "bet_key": "live-1",
+            "game": "Live Match",
+            "event": "filled",
+            "venue": "kalshi",
+            "instrument": "KX-LIVE-1",
+            "confirm_qty": "1",
+            "system": "lock",
+        },
+        {
+            "bet_key": "gone-1",
+            "game": "Settled Match",
+            "event": "filled",
+            "venue": "kalshi",
+            "instrument": "KX-GONE-1",
+            "confirm_qty": "1",
+            "system": "lock",
+        },
+    ]
+    snap = {
+        "kalshi_ok": True,
+        "poly_ok": True,
+        "kalshi": [{"ticker": "KX-LIVE-1", "qty": "1", "title": "Live"}],
+        "poly": [],
+        "kalshi_by_ticker": {"KX-LIVE-1": {"ticker": "KX-LIVE-1", "qty": "1"}},
+        "poly_by_slug": {},
+    }
+    keys = live_lock_orders.open_lock_keys(
+        rows=tape, overlay=True, snapshot=snap, include_watches=False
+    )
+    assert keys == ["live-1"]
+
+
 if __name__ == "__main__":
     from pathlib import Path
     import tempfile
@@ -457,4 +528,6 @@ if __name__ == "__main__":
     test_exit_specs_build_for_kalshi_and_gemini()
     test_spot_order_path_is_refused()
     test_gemini_private_call_refuses_order_when_quote_only()
+    test_ghost_open_cap_empty_venues_allow_send()
+    test_venue_open_counts_only_held_qty()
     print("ok")
