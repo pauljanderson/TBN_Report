@@ -2419,7 +2419,7 @@ def complementary_legs(legs: list[dict]) -> bool:
     return False
 
 
-def promote_orphan_venue_filled(orders: list[dict]) -> list[dict]:
+def promote_orphan_venue_filled(orders: list[dict], *, persist: bool = False) -> list[dict]:
     """Turn legacy event=filled venue_open_miss rows into claim+sent pairs.
 
     cluster_lock_attempts ignores filled rows with no preceding claim — that is
@@ -2427,6 +2427,7 @@ def promote_orphan_venue_filled(orders: list[dict]) -> list[dict]:
     """
     out: list[dict] = []
     seen_keys: set[str] = set()
+    newly: list[dict] = []
     for row in orders:
         if not isinstance(row, dict):
             continue
@@ -2482,8 +2483,17 @@ def promote_orphan_venue_filled(orders: list[dict]) -> list[dict]:
             if new_key:
                 seen_keys.add(new_key)
             out.extend(pair)
+            newly.extend(pair)
         except Exception:
             out.append(row)
+    if persist and newly:
+        try:
+            import venue_open_miss_ingest as vomi
+
+            for row in newly:
+                vomi._append_order(row)
+        except Exception:
+            pass
     return out
 
 
@@ -6352,22 +6362,23 @@ def main() -> int:
             sync = vomi.ingest_from_venue_pulls(
                 persist=True, live=False, include_fills=True, rebuild=False
             )
-            added = int(sync.get("added") or 0)
-            if added:
-                print(
-                    f"venue sync ingest added={added} "
-                    f"kalshi_open={sync.get('kalshi_open_n')} poly_open={sync.get('poly_open_n')} "
-                    f"kalshi_fills_added={(sync.get('kalshi_fills') or {}).get('added')} "
-                    f"poly_fills_added={(sync.get('polymarket_fills') or {}).get('added')}",
-                    flush=True,
-                )
+            print(
+                f"venue sync ingest added={sync.get('added')} skipped={sync.get('skipped')} "
+                f"since={sync.get('since')} tape_last={sync.get('tape_last_fill_at')} "
+                f"kalshi_open={sync.get('kalshi_open_n')} poly_open={sync.get('poly_open_n')} "
+                f"kalshi_fill_n={sync.get('kalshi_fill_n')} poly_fill_n={sync.get('poly_fill_n')} "
+                f"kalshi_fills_added={(sync.get('kalshi_fills') or {}).get('added')} "
+                f"poly_fills_added={(sync.get('polymarket_fills') or {}).get('added')} "
+                f"order_io_added={(sync.get('order_io_fills') or {}).get('added')}",
+                flush=True,
+            )
         except Exception as exc:
             print(f"venue sync ingest skipped: {type(exc).__name__}: {exc}", flush=True)
 
     print("loading tape", flush=True)
     orders = _load_jsonl(ORDERS)
     # Promote legacy orphan venue_open filled rows into claim+sent so they cluster.
-    orders = promote_orphan_venue_filled(orders)
+    orders = promote_orphan_venue_filled(orders, persist=True)
     io_all = _load_jsonl(RAW / "order_io.jsonl")
     by_id, io_list = io_indexes(io_all)
     watch = load_json(B_WATCH) or {}

@@ -112,6 +112,7 @@ def _qty_of(row: dict) -> Decimal:
 
 
 def _tape_has(instrument: str, venue: str, side: str, rows: list[dict]) -> bool:
+    """True when this open instrument+side is already on the kitchen tape."""
     want_i = instrument.lower()
     want_v = venue.lower()
     want_s = side.lower()
@@ -122,7 +123,6 @@ def _tape_has(instrument: str, venue: str, side: str, rows: list[dict]) -> bool:
             continue
         inst = _instrument_of(row).lower()
         if inst != want_i:
-            # Also match bet_key venue-open|venue-fill tabs.
             key = str(row.get("bet_key") or "").lower()
             if want_i and want_i not in key:
                 continue
@@ -134,6 +134,57 @@ def _tape_has(instrument: str, venue: str, side: str, rows: list[dict]) -> bool:
         if event == "flatten_filled":
             return True
     return False
+
+
+def _tape_has_order_id(order_id: str, rows: list[dict]) -> bool:
+    want = str(order_id or "").strip()
+    if not want:
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("order_id") or "").strip() == want:
+            return True
+        key = str(row.get("bet_key") or "")
+        if want in key:
+            return True
+    return False
+
+
+def last_tape_fill_at(rows: list[dict] | None = None) -> datetime | None:
+    """Latest sent_at/at on a kitchen fill/sent row (ET)."""
+    best = None
+    for row in rows if rows is not None else _read_orders():
+        if not isinstance(row, dict):
+            continue
+        event = str(row.get("event") or "")
+        if event not in {"sent", "filled", "one_leg", "claim"}:
+            continue
+        # Prefer rows that look filled.
+        qty = _qty_of(row)
+        if event == "sent" and qty <= 0 and not row.get("confirm_known"):
+            continue
+        for key in ("sent_at", "at", "compared_at"):
+            stamp = _parse_when(row.get(key))
+            if stamp is None:
+                continue
+            if best is None or stamp > best:
+                best = stamp
+    return best
+
+
+def fill_ingest_since(rows: list[dict] | None = None) -> datetime:
+    """Book venue fills since the last kitchen fill (not merely midnight today).
+
+    Dashboard stayed blank after 2026-11-01 08:20 ET because ingest only looked
+    at 'today' and skipped Nov-1 afternoon venue fills still in the dump.
+    """
+    last = last_tape_fill_at(rows)
+    floor = datetime.now(ET) - timedelta(days=3)
+    if last is None:
+        return floor
+    # Include anything strictly after the last tape stamp (1s pad).
+    return max(floor, last + timedelta(seconds=1))
 
 
 def _read_orders() -> list[dict]:
@@ -188,8 +239,12 @@ def claim_sent_pair(
         pay = "yes"
     stamp = when or _iso_now()
     prefix = "venue-open" if kind == "open" else "venue-fill"
-    bet_key = f"{prefix}\t{shop}\t{inst}\t{pay}"
-    oid = order_id or f"{prefix}|{shop}|{inst}|{pay}"
+    oid = order_id or f"{prefix}|{shop}|{inst}|{pay}|{stamp}"
+    # Fills must be unique per order_id so a second ticket on the same market shows.
+    if kind == "fill":
+        bet_key = f"{prefix}\t{shop}\t{inst}\t{pay}\t{oid}"
+    else:
+        bet_key = f"{prefix}\t{shop}\t{inst}\t{pay}"
     claim = {
         "event": "claim",
         "bet_key": bet_key,
@@ -304,10 +359,10 @@ def ingest_recent_fills(
     persist: bool = True,
     since: datetime | None = None,
 ) -> dict:
-    """Book venue fills from today (ET) that never hit orders.jsonl."""
+    """Book venue fills after the last kitchen fill that never hit orders.jsonl."""
     shop = str(venue or "").lower()
     rows = list(tape) if tape is not None else _read_orders()
-    start = since or datetime.now(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = since or fill_ingest_since(rows)
     added = 0
     skipped = 0
     written: list[dict] = []
@@ -326,6 +381,7 @@ def ingest_recent_fills(
         when = (
             _parse_when(fill.get("created_time"))
             or _parse_when(fill.get("created_ts"))
+            or _parse_when(fill.get("createTime"))
             or _parse_when(fill.get("ts"))
             or _parse_when(fill.get("timestamp"))
             or _parse_when(fill.get("filled_at"))
@@ -335,9 +391,6 @@ def ingest_recent_fills(
             skipped += 1
             continue
         side = _side_of(fill)
-        if _tape_has(inst, shop, side, rows):
-            skipped += 1
-            continue
         oid = str(
             fill.get("order_id")
             or fill.get("trade_id")
@@ -345,6 +398,14 @@ def ingest_recent_fills(
             or fill.get("id")
             or ""
         )
+        # Dedup by order_id (not instrument) so a new ticket on a known market shows.
+        if oid and _tape_has_order_id(oid, rows):
+            skipped += 1
+            continue
+        if not oid and _tape_has(inst, shop, side, rows):
+            # No order id — fall back to instrument match to stay idempotent.
+            skipped += 1
+            continue
         pair = claim_sent_pair(
             venue=shop,
             instrument=inst,
@@ -522,10 +583,84 @@ def _poly_rows_from_payload(payload: dict | None) -> list[dict]:
     return rows
 
 
+def _poly_side_from_trade(trade: dict) -> str:
+    intent = str(trade.get("intent") or trade.get("side") or "").upper()
+    if "SHORT" in intent or intent in {"ASK", "SELL", "NO"}:
+        return "no"
+    if "LONG" in intent or intent in {"BID", "BUY", "YES"}:
+        return "yes"
+    if trade.get("isAggressor") is False:
+        # Maker on a buy-short still books No — prefer explicit outcome fields.
+        pass
+    outcome = str(trade.get("outcome") or trade.get("side") or "").lower()
+    if outcome in {"yes", "no"}:
+        return outcome
+    return "yes"
+
+
 def _poly_fills_from_payload(payload: dict | None) -> list[dict]:
+    """Parse dump_pm_recon polymarket block (activities) or a flat fills list."""
     rows: list[dict] = []
     if not isinstance(payload, dict):
         return rows
+    body = payload.get("body") if isinstance(payload.get("body"), dict) else payload
+    activities = None
+    if isinstance(body, dict):
+        activities = body.get("activities")
+    if activities is None:
+        activities = payload.get("activities")
+    if isinstance(activities, list) and activities:
+        for item in activities:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("type") or "")
+            if kind and kind not in {"ACTIVITY_TYPE_TRADE", "TRADE"}:
+                continue
+            trade = item.get("trade") if isinstance(item.get("trade"), dict) else item
+            if not isinstance(trade, dict):
+                continue
+            slug = str(
+                trade.get("marketSlug")
+                or trade.get("slug")
+                or trade.get("instrument")
+                or trade.get("market")
+                or ""
+            ).strip()
+            if not slug:
+                continue
+            qty = trade.get("qtyDecimal")
+            if qty in (None, ""):
+                qty = trade.get("qty") or trade.get("size") or trade.get("amount")
+            aggressor = trade.get("aggressor") if isinstance(trade.get("aggressor"), dict) else {}
+            oid = (
+                aggressor.get("id")
+                or trade.get("order_id")
+                or trade.get("id")
+                or item.get("id")
+                or ""
+            )
+            px = trade.get("price")
+            if isinstance(px, dict):
+                px = px.get("value") or px.get("price")
+            rows.append(
+                {
+                    "venue": "polymarket",
+                    "slug": slug,
+                    "instrument": slug,
+                    "qty": qty,
+                    "side": _poly_side_from_trade(trade),
+                    "outcome": _poly_side_from_trade(trade),
+                    "created_time": trade.get("createTime")
+                    or trade.get("updateTime")
+                    or item.get("createTime")
+                    or item.get("timestamp"),
+                    "order_id": str(oid or ""),
+                    "price": px,
+                    "title": trade.get("title") or slug,
+                }
+            )
+        if rows:
+            return rows
     fills = payload.get("fills")
     if isinstance(fills, dict):
         fills = fills.get("fills") or fills.get("data") or fills.get("trades") or []
@@ -561,6 +696,128 @@ def _poly_fills_from_payload(payload: dict | None) -> list[dict]:
             }
         )
     return rows
+
+
+def ingest_order_io_misses(
+    *,
+    tape: list[dict] | None = None,
+    persist: bool = True,
+    since: datetime | None = None,
+) -> dict:
+    """order_io.jsonl fills with no matching orders.jsonl claim/sent → book them.
+
+    This is the common 'saw it on the platform / in the POST log, blank on
+    dashboard' path: venue confirm landed in order_io but never got a kitchen
+    claim+sent cluster.
+    """
+    rows = list(tape) if tape is not None else _read_orders()
+    start = since or fill_ingest_since(rows)
+    path = RAW / "order_io.jsonl"
+    added = 0
+    skipped = 0
+    written: list[dict] = []
+    if not path.is_file():
+        return {"added": 0, "skipped": 0, "written": [], "since": start.isoformat(timespec="seconds")}
+    try:
+        import json
+
+        import live_lock_orders
+    except Exception as exc:
+        return {"added": 0, "skipped": 0, "error": type(exc).__name__, "since": start.isoformat(timespec="seconds")}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"added": 0, "skipped": 0, "written": [], "since": start.isoformat(timespec="seconds")}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            skipped += 1
+            continue
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        kind = str(item.get("kind") or "order")
+        if kind not in {"order", ""}:
+            skipped += 1
+            continue
+        payload = item.get("response")
+        try:
+            qty = live_lock_orders.filled_contracts(payload) if payload is not None else Decimal("0")
+        except Exception:
+            qty = Decimal("0")
+        if qty <= 0:
+            skipped += 1
+            continue
+        when = _parse_when(item.get("timestamp") or item.get("at") or item.get("sent_at"))
+        if when is None or when < start:
+            skipped += 1
+            continue
+        try:
+            oid = str(live_lock_orders._order_id(payload) or "")
+        except Exception:
+            oid = str((payload or {}).get("order_id") or (payload or {}).get("id") or "") if isinstance(payload, dict) else ""
+        if oid and _tape_has_order_id(oid, rows):
+            skipped += 1
+            continue
+        shop = str(item.get("venue") or "").lower()
+        if shop not in {"kalshi", "polymarket", "gemini", "novig"}:
+            skipped += 1
+            continue
+        req = item.get("request") if isinstance(item.get("request"), dict) else {}
+        inst = str(
+            item.get("instrument")
+            or req.get("ticker")
+            or req.get("market_ticker")
+            or req.get("symbol")
+            or req.get("marketSlug")
+            or req.get("slug")
+            or ""
+        ).strip()
+        if not inst and isinstance(payload, dict):
+            inst = str(
+                payload.get("ticker")
+                or payload.get("market_ticker")
+                or payload.get("symbol")
+                or payload.get("marketSlug")
+                or ""
+            ).strip()
+        if not inst:
+            skipped += 1
+            continue
+        side = _side_of({**req, **item, "side": item.get("side") or req.get("side") or req.get("action")})
+        if not oid and _tape_has(inst, shop, side, rows):
+            skipped += 1
+            continue
+        pair = claim_sent_pair(
+            venue=shop,
+            instrument=inst,
+            side=side,
+            qty=qty,
+            game=str(item.get("game") or inst),
+            when=when.isoformat(timespec="seconds"),
+            source="order_io_miss_ingest",
+            kind="fill",
+            order_id=oid or f"order-io|{shop}|{inst}|{side}|{when.isoformat(timespec='seconds')}",
+            limit_price=str(req.get("price") or req.get("yes_price") or item.get("quote_price") or ""),
+            note="order_io fill missing from kitchen tape; booked for dashboard sync",
+        )
+        written.extend(pair)
+        rows.extend(pair)
+        added += 1
+    if persist and written:
+        for row in written:
+            _append_order(row)
+        _schedule_rebuild()
+    return {
+        "added": added,
+        "skipped": skipped,
+        "written": written,
+        "since": start.isoformat(timespec="seconds"),
+    }
 
 
 def load_kalshi_open_positions(*, live: bool = False) -> list[dict]:
@@ -695,34 +952,45 @@ def ingest_from_venue_pulls(
     include_fills: bool = True,
     rebuild: bool = False,
 ) -> dict:
-    """Venue open books (+ today fills) → orders.jsonl → optional dashboard rebuild."""
+    """Venue opens + fills after last kitchen fill + order_io orphans → tape → dashboard."""
     kalshi = load_kalshi_open_positions(live=live)
     poly = load_poly_open_positions(live=live)
     tape = _read_orders()
+    since = fill_ingest_since(tape)
+    tape_last = last_tape_fill_at(tape)
     k_rep = ingest_open_positions(kalshi, venue="kalshi", tape=tape, persist=persist)
     for row in k_rep.get("written") or []:
         tape.append(row)
     p_rep = ingest_open_positions(poly, venue="polymarket", tape=tape, persist=persist)
     for row in p_rep.get("written") or []:
         tape.append(row)
-    k_fill = {"added": 0, "skipped": 0}
-    p_fill = {"added": 0, "skipped": 0}
+    k_fill = {"added": 0, "skipped": 0, "since": since.isoformat(timespec="seconds")}
+    p_fill = {"added": 0, "skipped": 0, "since": since.isoformat(timespec="seconds")}
+    io_rep = {"added": 0, "skipped": 0, "since": since.isoformat(timespec="seconds")}
+    kalshi_fill_rows: list[dict] = []
+    poly_fill_rows: list[dict] = []
     if include_fills:
+        kalshi_fill_rows = load_kalshi_recent_fills()
+        poly_fill_rows = load_poly_recent_fills()
         k_fill = ingest_recent_fills(
-            load_kalshi_recent_fills(), venue="kalshi", tape=tape, persist=persist
+            kalshi_fill_rows, venue="kalshi", tape=tape, persist=persist, since=since
         )
         for row in k_fill.get("written") or []:
             tape.append(row)
         p_fill = ingest_recent_fills(
-            load_poly_recent_fills(), venue="polymarket", tape=tape, persist=persist
+            poly_fill_rows, venue="polymarket", tape=tape, persist=persist, since=since
         )
         for row in p_fill.get("written") or []:
+            tape.append(row)
+        io_rep = ingest_order_io_misses(tape=tape, persist=persist, since=since)
+        for row in io_rep.get("written") or []:
             tape.append(row)
     combined_added = (
         int(k_rep.get("added") or 0)
         + int(p_rep.get("added") or 0)
         + int(k_fill.get("added") or 0)
         + int(p_fill.get("added") or 0)
+        + int(io_rep.get("added") or 0)
     )
     same_n = 0
     try:
@@ -732,20 +1000,27 @@ def ingest_from_venue_pulls(
     except Exception:
         same_n = max(int(k_rep.get("same_direction_n") or 0), int(p_rep.get("same_direction_n") or 0))
     rebuild_rep = None
-    if rebuild and combined_added:
+    # Always rebuild when asked — even added=0 — so promote/heal paths refresh HTML.
+    if rebuild:
         rebuild_rep = rebuild_dashboard_now(reason="venue_sync_ingest")
     return {
         "added": combined_added,
         "skipped": int(k_rep.get("skipped") or 0)
         + int(p_rep.get("skipped") or 0)
         + int(k_fill.get("skipped") or 0)
-        + int(p_fill.get("skipped") or 0),
+        + int(p_fill.get("skipped") or 0)
+        + int(io_rep.get("skipped") or 0),
         "same_direction_n": same_n,
+        "since": since.isoformat(timespec="seconds"),
+        "tape_last_fill_at": tape_last.isoformat(timespec="seconds") if tape_last else None,
         "kalshi": {k: v for k, v in k_rep.items() if k != "written"},
         "polymarket": {k: v for k, v in p_rep.items() if k != "written"},
         "kalshi_fills": {k: v for k, v in k_fill.items() if k != "written"},
         "polymarket_fills": {k: v for k, v in p_fill.items() if k != "written"},
+        "order_io_fills": {k: v for k, v in io_rep.items() if k != "written"},
         "kalshi_open_n": len(kalshi),
         "poly_open_n": len(poly),
+        "kalshi_fill_n": len(kalshi_fill_rows),
+        "poly_fill_n": len(poly_fill_rows),
         "rebuild": rebuild_rep,
     }

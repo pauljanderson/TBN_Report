@@ -542,6 +542,32 @@ def main() -> int:
             )
             report["attribution_healed"] = heal_rep
 
+    # Self-heal dashboard blank: dump/order_io fills after last kitchen fill → claim+sent.
+    sync_rep = None
+    if venue_packs:
+        try:
+            import venue_open_miss_ingest as vomi
+
+            sync_rep = vomi.ingest_from_venue_pulls(
+                persist=True, live=False, include_fills=True, rebuild=True
+            )
+            report["venue_sync"] = {
+                k: v
+                for k, v in sync_rep.items()
+                if k
+                not in {
+                    "kalshi",
+                    "polymarket",
+                    "kalshi_fills",
+                    "polymarket_fills",
+                    "order_io_fills",
+                    "rebuild",
+                }
+            }
+        except Exception as exc:
+            sync_rep = {"added": 0, "error": f"{type(exc).__name__}: {exc}"}
+            report["venue_sync_error"] = sync_rep["error"]
+
     if args.json_out:
         out = Path(args.json_out)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -558,6 +584,16 @@ def main() -> int:
         )
     if heal_rep and heal_rep.get("added"):
         print(f"attribution healed: {heal_rep.get('gaps')}")
+    if sync_rep is not None:
+        print(
+            f"venue_sync added={sync_rep.get('added')} "
+            f"since={sync_rep.get('since')} tape_last={sync_rep.get('tape_last_fill_at')} "
+            f"kalshi_fill_n={sync_rep.get('kalshi_fill_n')} poly_fill_n={sync_rep.get('poly_fill_n')} "
+            f"order_io_added={(sync_rep.get('order_io_fills') or {}).get('added')} "
+            f"rebuild={bool((sync_rep.get('rebuild') or {}).get('orders_performance') or (sync_rep.get('rebuild') or {}).get('dashboard'))}"
+        )
+        if sync_rep.get("error"):
+            print(f"venue_sync error: {sync_rep.get('error')}")
     if report["attribution_gap_venues"]:
         print("ATTRIBUTION GAPS:", ", ".join(report["attribution_gap_venues"]))
     if report["missing_dumps"]:
