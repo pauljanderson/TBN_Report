@@ -1,4 +1,4 @@
-"""Detect Kalshi same-direction doubles that look like locks but are not.
+"""Detect same-direction doubles that look like locks but are not.
 
 On Kalshi tennis/team moneylines, each player (or team) is its own market under
 one event ticker prefix:
@@ -8,6 +8,10 @@ one event ticker prefix:
 
 Yes on GIM + No on PEN both pay if Gima wins. That is a same-direction double,
 not a hedge / lock. GIMPEN 2026-11-01 lost both legs (−$0.85). TAGDAR won both.
+No-A + Yes-B is the same class (set of outcomes is still {yes, no}).
+
+The same pattern can appear on Polymarket/Gemini/Novig when two opponent
+instruments share an event prefix and a Yes+No pair is taken across them.
 
 A true lock is Yes + No of the *same* market ticker, or Yes on one venue and No
 on another venue for the same settlement.
@@ -230,48 +234,93 @@ def open_book_blocks_same_direction(
     return False, ""
 
 
+def _resolved_outcome(row: dict) -> str:
+    """Prefer explicit yes/no; else infer from position / yes_count / no_count."""
+    outcome = _outcome_of(row)
+    if outcome in {"yes", "no"}:
+        return outcome
+    pos = _dec(row.get("position_fp") or row.get("position") or row.get("qty"))
+    if pos is not None:
+        if pos > 0:
+            return "yes"
+        if pos < 0:
+            return "no"
+    yes_n = _dec(row.get("yes_count_fp"))
+    no_n = _dec(row.get("no_count_fp"))
+    if yes_n is not None and yes_n > 0:
+        return "yes"
+    if no_n is not None and no_n > 0:
+        return "no"
+    return ""
+
+
+def _event_key_for_stack(inst: str) -> str:
+    """Group key for recon stacks. Kalshi event prefix, else slug/symbol stem."""
+    text = str(inst or "").strip()
+    if not text:
+        return ""
+    kalshi = kalshi_event_prefix(text)
+    if kalshi:
+        return kalshi
+    upper = text.upper()
+    for sep in ("-", "_"):
+        if sep in upper:
+            parts = upper.split(sep)
+            if len(parts) >= 2 and 2 <= len(parts[-1]) <= 12:
+                return sep.join(parts[:-1])
+    return ""
+
+
 def find_same_direction_stacks(rows: Iterable[dict]) -> list[dict]:
-    """Group fill/position/settlement rows by event prefix; flag Yes+No complementary stacks."""
+    """Group fill/position/settlement rows by event; flag Yes+No complementary stacks.
+
+    Works for Kalshi -CODE tickers and for Polymarket/Gemini ids that share a
+    trailing-token event stem (via complementary_instruments).
+    """
     by_event: dict[str, list[dict]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         inst = _instrument_of(row)
-        event = kalshi_event_prefix(inst)
+        event = _event_key_for_stack(inst)
         if not event:
             continue
         by_event.setdefault(event, []).append(row)
     found: list[dict] = []
     for event, group in sorted(by_event.items()):
-        # Collapse to one row per ticker with a representative outcome.
         by_ticker: dict[str, dict] = {}
         for row in group:
-            inst = _instrument_of(row).upper()
-            # Prefer an explicit yes/no outcome; position sign can imply side.
-            outcome = _outcome_of(row)
-            if outcome not in {"yes", "no"}:
-                pos = _dec(row.get("position_fp") or row.get("position") or row.get("qty"))
-                if pos is not None:
-                    outcome = "yes" if pos > 0 else "no" if pos < 0 else ""
-                yes_n = _dec(row.get("yes_count_fp"))
-                no_n = _dec(row.get("no_count_fp"))
-                if yes_n is not None and yes_n > 0:
-                    outcome = "yes"
-                elif no_n is not None and no_n > 0:
-                    outcome = "no"
+            inst = _instrument_of(row)
+            if not inst:
+                continue
+            outcome = _resolved_outcome(row)
             if outcome not in {"yes", "no"}:
                 continue
-            by_ticker[inst] = {"instrument": inst, "outcome": outcome, "venue": "kalshi", "raw": row}
+            venue = str(row.get("venue") or "").lower() or "unknown"
+            by_ticker[inst.upper()] = {
+                "instrument": inst,
+                "outcome": outcome,
+                "venue": venue,
+                "raw": row,
+            }
         tickers = list(by_ticker.values())
         for i, left in enumerate(tickers):
             for right in tickers[i + 1 :]:
-                if is_same_direction_kalshi_double(left, right):
+                if is_same_direction_double(left, right):
                     found.append(
                         {
                             "event": event,
                             "legs": [
-                                {"ticker": left["instrument"], "outcome": left["outcome"]},
-                                {"ticker": right["instrument"], "outcome": right["outcome"]},
+                                {
+                                    "ticker": left["instrument"],
+                                    "outcome": left["outcome"],
+                                    "venue": left["venue"],
+                                },
+                                {
+                                    "ticker": right["instrument"],
+                                    "outcome": right["outcome"],
+                                    "venue": right["venue"],
+                                },
                             ],
                             "reason": same_direction_reason(left, right),
                         }
