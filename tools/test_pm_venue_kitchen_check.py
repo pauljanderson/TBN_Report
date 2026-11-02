@@ -51,6 +51,11 @@ def test_settled_pnl_by_venue():
     got = check.settled_pnl_by_venue(store)
     assert got["kalshi"] == Decimal("-0.30")
     assert got["polymarket"] == Decimal("1.50")
+    # settled_pnl_store.save envelope must unwrap — otherwise every venue reads $0.
+    wrapped = {"written_at": "2026-11-02T18:00:00-05:00", "n": 5, "orders": store}
+    got2 = check.settled_pnl_by_venue(wrapped)
+    assert got2["polymarket"] == Decimal("1.50")
+    assert got2["kalshi"] == Decimal("-0.30")
 
 
 def test_all_platform_attribution_gap_and_require_dumps():
@@ -73,7 +78,7 @@ def test_all_platform_attribution_gap_and_require_dumps():
     assert set(report["missing_dumps"]) == {"polymarket", "gemini", "novig"}
 
 
-def test_kalshi_stack_still_fails_all_platform_gate():
+def test_kalshi_historical_stack_warns_open_stack_fails():
     pack = {
         "settlements": {
             "settlements": [
@@ -102,6 +107,7 @@ def test_kalshi_stack_still_fails_all_platform_gate():
             ]
         },
         "fills": {"fills": []},
+        "positions": {"body": {"market_positions": []}},
     }
     kitchen = {
         "kalshi": Decimal("-1.01"),
@@ -110,15 +116,36 @@ def test_kalshi_stack_still_fails_all_platform_gate():
         "novig": Decimal("-0.08"),
     }
     settled = dict(kitchen)
-    report = check.analyze(
+    # Historical only (no open positions) → warn, do not fail the gate alone.
+    hist = check.analyze(
         kitchen_by_venue=kitchen,
         settled_by_venue=settled,
         kalshi_pack=pack,
-        kitchen_kalshi_window_pnl=Decimal("-0.10"),
+        venue_packs={"kalshi": pack},
         tolerance=Decimal("0.50"),
     )
-    assert report["ok"] is False
-    assert report["same_direction_stacks"]
+    assert hist["historical_same_direction_stacks"]
+    assert hist["open_same_direction_stacks"] == []
+    assert hist["ok"] is True
+    # Same stack still on the open book → FAIL.
+    open_pack = dict(pack)
+    open_pack["positions"] = {
+        "body": {
+            "market_positions": [
+                {"ticker": GIM, "position_fp": "1.00"},
+                {"ticker": PEN, "position_fp": "-1.00"},
+            ]
+        }
+    }
+    live = check.analyze(
+        kitchen_by_venue=kitchen,
+        settled_by_venue=settled,
+        kalshi_pack=open_pack,
+        venue_packs={"kalshi": open_pack},
+        tolerance=Decimal("0.50"),
+    )
+    assert live["open_same_direction_stacks"]
+    assert live["ok"] is False
 
 
 def test_ok_when_all_match():
@@ -135,11 +162,17 @@ def test_ok_when_all_match():
     assert report["missing_dumps"] == []
 
 
-def test_polymarket_same_direction_stack_fails_kitchen_gate():
-    """Recon must fail CI/kitchen when a non-Kalshi dump holds Yes-A + No-B twins."""
+def test_polymarket_open_same_direction_stack_fails_kitchen_gate():
+    """Open Poly twin Yes-A + No-B must fail; fill-history-only warns."""
     poly_a = "aec-atp-gimpen-2026-11-01-gim"
     poly_b = "aec-atp-gimpen-2026-11-01-pen"
-    packs = {
+    kitchen = {
+        "kalshi": Decimal("0"),
+        "polymarket": Decimal("0"),
+        "gemini": Decimal("0"),
+        "novig": Decimal("0"),
+    }
+    hist_packs = {
         "polymarket": {
             "fills": {
                 "fills": [
@@ -149,28 +182,42 @@ def test_polymarket_same_direction_stack_fails_kitchen_gate():
             }
         }
     }
-    kitchen = {
-        "kalshi": Decimal("0"),
-        "polymarket": Decimal("0"),
-        "gemini": Decimal("0"),
-        "novig": Decimal("0"),
-    }
-    report = check.analyze(
+    hist = check.analyze(
         kitchen_by_venue=kitchen,
         settled_by_venue=dict(kitchen),
-        venue_packs=packs,
+        venue_packs=hist_packs,
         present_dumps={"polymarket"},
         tolerance=Decimal("0.50"),
     )
-    assert report["ok"] is False
-    assert report["same_direction_stacks"]
+    assert hist["same_direction_stacks"]
+    assert hist["ok"] is True
+    open_packs = {
+        "polymarket": {
+            "fills": hist_packs["polymarket"]["fills"],
+            "positions": {
+                "positions": {
+                    poly_a: {"netPositionDecimal": "1"},
+                    poly_b: {"netPositionDecimal": "1"},
+                }
+            },
+        }
+    }
+    live = check.analyze(
+        kitchen_by_venue=kitchen,
+        settled_by_venue=dict(kitchen),
+        venue_packs=open_packs,
+        present_dumps={"polymarket"},
+        tolerance=Decimal("0.50"),
+    )
+    assert live["open_same_direction_stacks"]
+    assert live["ok"] is False
 
 
 if __name__ == "__main__":
     test_parse_kitchen_by_venue()
     test_settled_pnl_by_venue()
     test_all_platform_attribution_gap_and_require_dumps()
-    test_kalshi_stack_still_fails_all_platform_gate()
+    test_kalshi_historical_stack_warns_open_stack_fails()
     test_ok_when_all_match()
-    test_polymarket_same_direction_stack_fails_kitchen_gate()
+    test_polymarket_open_same_direction_stack_fails_kitchen_gate()
     print("test_pm_venue_kitchen_check ok")
