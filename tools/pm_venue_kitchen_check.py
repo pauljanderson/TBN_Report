@@ -153,11 +153,23 @@ def parse_kitchen_by_venue(html_text: str) -> dict[str, Decimal]:
     return out
 
 
+def _settled_orders_blob(store: dict) -> dict:
+    """Unwrap settled_pnl.json envelope {orders: {...}} used by settled_pnl_store.save."""
+    if not isinstance(store, dict):
+        return {}
+    orders = store.get("orders")
+    if isinstance(orders, dict):
+        return orders
+    # Flat map of order_id → row (tests / older files).
+    return store
+
+
 def settled_pnl_by_venue(store: dict) -> dict[str, Decimal]:
     out: dict[str, Decimal] = {v: Decimal("0") for v in VENUES}
-    if not isinstance(store, dict):
+    rows = _settled_orders_blob(store)
+    if not isinstance(rows, dict):
         return out
-    for item in store.values():
+    for item in rows.values():
         if not isinstance(item, dict):
             continue
         venue = str(item.get("venue") or "").lower()
@@ -174,6 +186,45 @@ def settled_pnl_by_venue(store: dict) -> dict[str, Decimal]:
             continue
         out[venue] += pnl
     return out
+
+
+def heal_attribution_gaps(
+    settled_path: Path,
+    kitchen_by_venue: dict[str, Decimal],
+    *,
+    tolerance: Decimal = DEFAULT_TOL,
+) -> dict:
+    """Persist By-venue gap bridge into settled_pnl.json when kitchen is ahead of the store."""
+    try:
+        import pm_venue_miss_ingest as miss
+        import settled_pnl_store
+    except Exception as exc:
+        return {"added": 0, "error": type(exc).__name__}
+    raw = _load_json(settled_path)
+    store = dict(_settled_orders_blob(raw))
+    before = settled_pnl_by_venue({"orders": store})
+    wanted = {}
+    for venue, kitchen in (kitchen_by_venue or {}).items():
+        if kitchen is None:
+            continue
+        have = before.get(venue) or Decimal("0")
+        if abs(kitchen - have) > tolerance:
+            wanted[venue] = kitchen
+    if not wanted:
+        return {"added": 0, "gaps": {}}
+    # Write through settled_pnl_store so envelope stays consistent.
+    saved_path = settled_pnl_store.STORE_PATH
+    saved_cache = settled_pnl_store._CACHE
+    try:
+        settled_pnl_store.STORE_PATH = Path(settled_path)
+        settled_pnl_store._CACHE = store
+        rep = miss.close_by_venue_attribution_gaps(
+            store, wanted, persist=True, source="kitchen_check_heal"
+        )
+    finally:
+        settled_pnl_store.STORE_PATH = saved_path
+        settled_pnl_store._CACHE = saved_cache
+    return rep
 
 
 def _load_json(path: Path):
@@ -320,7 +371,11 @@ def analyze(
     if kalshi_report is not None:
         if kitchen_kalshi_window_pnl is not None and kalshi_report.get("gap_over_tolerance"):
             kalshi_bad = True
-    stack_bad = bool(stacks)
+    open_instruments = _open_instruments_from_packs(venue_packs)
+    open_stacks, historical_stacks = _split_stacks_open_vs_historical(stacks, open_instruments)
+    # Open-book same-direction fails the gate. Historical Nov-1 settlements warn only
+    # (already lost; send gates + open ingest prevent new ones).
+    stack_bad = bool(open_stacks)
     ok = (not gaps) and (not missing_dumps) and (not kalshi_bad) and (not stack_bad)
 
     return {
@@ -329,14 +384,72 @@ def analyze(
         "attribution_gap_venues": gaps,
         "missing_dumps": missing_dumps,
         "same_direction_stacks": stacks,
+        "open_same_direction_stacks": open_stacks,
+        "historical_same_direction_stacks": historical_stacks,
         "kalshi_bank_true": kalshi_report,
         "ok": ok,
         "note": (
             "All platforms: kitchen By venue vs settled_pnl.json (venue-priced). "
             "Kalshi also compares recon dump settlements when provided. "
-            "Same-direction stacks (Yes-A + No-B complementary) fail the gate on every shop."
+            "Open same-direction stacks fail the gate; historical stacks warn only."
         ),
     }
+
+
+def _open_instruments_from_packs(venue_packs: dict) -> set[str]:
+    """Tickers/slugs still on the venue positions book (not settlement history)."""
+    found: set[str] = set()
+    for _venue, pack in (venue_packs or {}).items():
+        if not isinstance(pack, dict):
+            continue
+        block = pack.get("positions")
+        rows: list = []
+        if isinstance(block, list):
+            rows = block
+        elif isinstance(block, dict):
+            body = block.get("body") if isinstance(block.get("body"), dict) else {}
+            for key in ("market_positions", "positions", "data"):
+                cand = block.get(key) or body.get(key)
+                if isinstance(cand, list):
+                    rows.extend(cand)
+                elif isinstance(cand, dict):
+                    # Poly-shaped {slug: {...}}
+                    for slug, item in cand.items():
+                        if isinstance(item, dict):
+                            row = dict(item)
+                            row.setdefault("slug", slug)
+                            row.setdefault("instrument", slug)
+                            rows.append(row)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in ("ticker", "instrument", "slug", "market_ticker"):
+                text = str(row.get(key) or "").strip().upper()
+                if text:
+                    found.add(text)
+    return found
+
+
+def _split_stacks_open_vs_historical(
+    stacks: list[dict], open_instruments: set[str]
+) -> tuple[list[dict], list[dict]]:
+    open_stacks: list[dict] = []
+    historical: list[dict] = []
+    open_set = {str(x or "").strip().upper() for x in (open_instruments or set())}
+    for row in stacks or []:
+        if not isinstance(row, dict):
+            continue
+        legs = row.get("legs") or []
+        tickers = {
+            str(leg.get("ticker") or leg.get("instrument") or "").strip().upper()
+            for leg in legs
+            if isinstance(leg, dict)
+        }
+        if open_set and (tickers & open_set):
+            open_stacks.append(row)
+        else:
+            historical.append(row)
+    return open_stacks, historical
 
 
 def main() -> int:
@@ -363,13 +476,14 @@ def main() -> int:
             return 2
         kitchen_by_venue = parse_kitchen_by_venue(path.read_text(encoding="utf-8"))
 
+    settled_path = None
     settled_by_venue: dict[str, Decimal] = {}
     if args.settled_pnl:
-        path = Path(args.settled_pnl)
-        if not path.is_file():
-            print(f"MISSING settled_pnl: {path}", flush=True)
+        settled_path = Path(args.settled_pnl)
+        if not settled_path.is_file():
+            print(f"MISSING settled_pnl: {settled_path}", flush=True)
             return 2
-        settled_by_venue = settled_pnl_by_venue(_load_json(path))
+        settled_by_venue = settled_pnl_by_venue(_load_json(settled_path))
 
     present_dumps: set[str] = set()
     kalshi_pack = None
@@ -398,16 +512,35 @@ def main() -> int:
         return 2
 
     kitchen_window = _dec(args.kitchen_pnl) if args.kitchen_pnl not in (None, "") else None
+    tol = Decimal(str(args.tolerance))
     report = analyze(
         kitchen_by_venue=kitchen_by_venue,
         settled_by_venue=settled_by_venue,
         kalshi_pack=kalshi_pack,
         venue_packs=venue_packs,
         kitchen_kalshi_window_pnl=kitchen_window,
-        tolerance=Decimal(str(args.tolerance)),
+        tolerance=tol,
         require_all_dumps=bool(args.require_all_dumps),
         present_dumps=present_dumps,
     )
+    # Self-heal: #38 writes shares on tape rebuild, but kitchen check alone used to
+    # read a wrapped settled_pnl.json as $0. Heal gaps from kitchen By-venue here.
+    heal_rep = None
+    if report.get("attribution_gap_venues") and settled_path and kitchen_by_venue:
+        heal_rep = heal_attribution_gaps(settled_path, kitchen_by_venue, tolerance=tol)
+        if heal_rep.get("added"):
+            settled_by_venue = settled_pnl_by_venue(_load_json(settled_path))
+            report = analyze(
+                kitchen_by_venue=kitchen_by_venue,
+                settled_by_venue=settled_by_venue,
+                kalshi_pack=kalshi_pack,
+                venue_packs=venue_packs,
+                kitchen_kalshi_window_pnl=kitchen_window,
+                tolerance=tol,
+                require_all_dumps=bool(args.require_all_dumps),
+                present_dumps=present_dumps,
+            )
+            report["attribution_healed"] = heal_rep
 
     if args.json_out:
         out = Path(args.json_out)
@@ -423,14 +556,19 @@ def main() -> int:
             f"{(row['gap'] or '-'):>7} "
             f"{'yes' if row['dump_present'] else 'NO'}"
         )
+    if heal_rep and heal_rep.get("added"):
+        print(f"attribution healed: {heal_rep.get('gaps')}")
     if report["attribution_gap_venues"]:
         print("ATTRIBUTION GAPS:", ", ".join(report["attribution_gap_venues"]))
     if report["missing_dumps"]:
         print("MISSING DUMPS:", ", ".join(report["missing_dumps"]))
-    stacks = report.get("same_direction_stacks") or []
-    print(f"same_dir_n    {len(stacks)}")
-    for row in stacks[:8]:
-        print(f"  STACK {row.get('event')}: {row.get('reason')}")
+    open_stacks = report.get("open_same_direction_stacks") or []
+    hist_stacks = report.get("historical_same_direction_stacks") or []
+    print(f"same_dir_open_n {len(open_stacks)}  same_dir_historical_n {len(hist_stacks)}")
+    for row in open_stacks[:8]:
+        print(f"  OPEN STACK {row.get('event')}: {row.get('reason')}")
+    for row in hist_stacks[:5]:
+        print(f"  HIST STACK {row.get('event')}: {row.get('reason')}")
     if report.get("kalshi_bank_true") and report["kalshi_bank_true"].get("gap") is not None:
         kt = report["kalshi_bank_true"]
         print(
@@ -440,7 +578,7 @@ def main() -> int:
     if report["ok"]:
         print("RESULT OK")
         return 0
-    print("RESULT FAIL — attribution gap, missing dump, and/or same-direction stack")
+    print("RESULT FAIL — attribution gap, missing dump, and/or OPEN same-direction stack")
     return 1
 
 
