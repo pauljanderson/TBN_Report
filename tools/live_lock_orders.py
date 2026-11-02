@@ -246,24 +246,75 @@ def lock_open_line(open_n: int | None = None) -> str:
     return f"{n} / {cap}"
 
 
-def open_lock_keys(
+def lock_game_id(bet_key: str, game: str = "") -> str:
+    """Stable game id for unique-open counting (title when known, else bet_key)."""
+    title = " ".join(str(game or "").lower().split())
+    if title:
+        return title
+    return str(bet_key or "")
+
+
+def _unique_lock_keys(keys: list[str], games: dict[str, str] | None = None) -> list[str]:
+    """First bet_key per unique game."""
+    seen: set[str] = set()
+    out: list[str] = []
+    games = games or {}
+    for key in keys:
+        gid = lock_game_id(key, games.get(key, ""))
+        if not gid or gid in seen:
+            continue
+        seen.add(gid)
+        out.append(key)
+    return out
+
+
+_LOCK_VENUE_SNAPSHOT = None
+
+
+def _lock_venue_snapshot(snapshot=None):
+    """Cached venue positions book. Tests inject _LOCK_VENUE_SNAPSHOT. No live GET."""
+    if snapshot is not None:
+        return snapshot
+    injected = _LOCK_VENUE_SNAPSHOT
+    if injected is not None:
+        return injected
+    try:
+        import open_count_sync
+
+        return open_count_sync._read_cache()
+    except Exception:
+        return None
+
+
+def _lock_watch_rows(watches: list[dict] | None, include_watches: bool) -> list[dict]:
+    if not include_watches:
+        return []
+    try:
+        items = watches if watches is not None else open_second_leg_gtc_watches()
+    except Exception:
+        items = []
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("bet_key") or "")
+        if not key or key.startswith("tennis-b"):
+            continue
+        out.append(item)
+    return out
+
+
+def _house_tape_open_lock_keys(
     rows: list[dict] | None = None,
     *,
-    snapshot=None,
-    overlay: bool | None = None,
     include_watches: bool = True,
-    **_kwargs,
+    watches: list[dict] | None = None,
 ) -> list[str]:
-    """Unique bet_keys occupying a max_open slot (house tape).
-
-    GTC merge dropped the full venue-overlay kitchen; this keeps the send cap
-    honest from orders.jsonl + open second-leg GTC watches. snapshot/overlay
-    accepted for open_count_sync callers and ignored here.
-    """
-    del snapshot, overlay
+    """House tape thought only — not the send cap. Settled leftovers stay 'open' here."""
     tape = rows if rows is not None else _read_orders()
     state: dict[str, str] = {}
     order: list[str] = []
+    games: dict[str, str] = {}
     for row in tape:
         if not isinstance(row, dict):
             continue
@@ -273,6 +324,9 @@ def open_lock_keys(
         if key not in state:
             state[key] = "clear"
             order.append(key)
+        game = str(row.get("game") or "")
+        if game:
+            games[key] = game
         event = row.get("event")
         if event in ("filled", "one_leg"):
             state[key] = "position"
@@ -285,15 +339,149 @@ def open_lock_keys(
         elif event in ("both_unfilled", "preflight_skip", "skip") and state[key] == "working":
             state[key] = "clear"
     out = [key for key in order if state.get(key) in ("position", "working", "sent")]
-    if include_watches:
-        try:
-            for row in open_second_leg_gtc_watches():
-                key = str(row.get("bet_key") or "")
-                if key and key not in out:
-                    out.append(key)
-        except Exception:
-            pass
-    return out
+    for row in _lock_watch_rows(watches, include_watches):
+        key = str(row.get("bet_key") or "")
+        if key and key not in out:
+            out.append(key)
+            games.setdefault(key, str(row.get("game") or ""))
+    return _unique_lock_keys(out, games)
+
+
+def _lock_tag_instruments(tape: list[dict], watch_rows: list[dict]) -> dict[tuple[str, str], dict]:
+    """(venue, instrument) -> lock/leftover bet_key. Claims and empty HTTP do not tag."""
+    tags: dict[tuple[str, str], dict] = {}
+    games: dict[str, str] = {}
+
+    def add(venue, ident, key, game) -> None:
+        shop = str(venue or "").lower()
+        ticker = str(ident or "").strip()
+        bet = str(key or "")
+        if not shop or not ticker or not bet or bet.startswith("tennis-b"):
+            return
+        tags[(shop, ticker)] = {"bet_key": bet, "game": str(game or games.get(bet) or "")}
+
+    def drop(venue, ident) -> None:
+        shop = str(venue or "").lower()
+        ticker = str(ident or "").strip()
+        if shop and ticker:
+            tags.pop((shop, ticker), None)
+
+    for row in tape:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("bet_key") or "")
+        if not key or key.startswith("tennis-b"):
+            continue
+        game = str(row.get("game") or "")
+        if game:
+            games[key] = game
+        sid = str(row.get("system") or "")
+        if sid in {
+            "tennis_crossover",
+            "cfb_favorite",
+            "spread_t0",
+            "tennis_t0_dog",
+            "tennis_t0_spread",
+            "soccer_t0_total",
+        }:
+            continue
+        event = row.get("event")
+        venue = row.get("venue")
+        ident = row.get("instrument")
+        shop = str(venue or "").lower()
+        confirm = _dec(row.get("confirm_qty"))
+        confirm_n = abs(confirm) if confirm is not None else Decimal("0")
+        if event in ("filled", "one_leg"):
+            if confirm is not None and confirm_n <= 0:
+                continue
+            add(venue, ident, key, game or games.get(key, ""))
+        elif event == "sent" and row.get("confirm_known") and (
+            (shop == "polymarket" and confirm_n > 0) or confirm_n >= 1
+        ):
+            add(venue, ident, key, game or games.get(key, ""))
+        elif event == "flatten_filled":
+            drop(venue, ident)
+    for item in watch_rows:
+        key = str(item.get("bet_key") or "")
+        game = str(item.get("game") or games.get(key) or "")
+        add(item.get("filled_venue"), item.get("filled_instrument"), key, game)
+        add(item.get("second_venue"), item.get("second_instrument"), key, game)
+    return tags
+
+
+def _venue_open_lock_keys(tape: list[dict], watch_rows: list[dict], snapshot: dict) -> list[str]:
+    """Unique games with venue-confirmed qty still unsettled on a true lock or leftover."""
+    try:
+        import open_count_sync as ocs
+    except Exception:
+        ocs = None
+    tags = _lock_tag_instruments(tape, watch_rows)
+    held: list[str] = []
+    games: dict[str, str] = {}
+    for (shop, ident), info in tags.items():
+        key = str(info.get("bet_key") or "")
+        game = str(info.get("game") or "")
+        if ocs is not None:
+            closed, _why = ocs.market_info_is_final(
+                ocs.market_status_of(snapshot, shop, ident), venue=shop
+            )
+            if closed:
+                continue
+            qty = ocs.venue_qty(snapshot, shop, ident)
+            if qty is None:
+                continue
+            if not ocs._counts_as_held(shop, qty):
+                continue
+        else:
+            blob = {}
+            if shop == "kalshi":
+                blob = (snapshot.get("kalshi_by_ticker") or {}).get(ident) or {}
+            elif shop == "polymarket":
+                blob = (snapshot.get("poly_by_slug") or {}).get(ident) or {}
+            qty = _dec((blob or {}).get("qty")) or Decimal("0")
+            if qty <= 0:
+                continue
+            if shop != "polymarket" and qty < 1:
+                continue
+        games[key] = game
+        held.append(key)
+    return _unique_lock_keys(held, games)
+
+
+def open_lock_keys(
+    rows: list[dict] | None = None,
+    *,
+    snapshot=None,
+    overlay: bool | None = True,
+    include_watches: bool = True,
+    watches: list[dict] | None = None,
+    **_kwargs,
+) -> list[str]:
+    """Unique games occupying a max_open slot.
+
+    Default (overlay=True): venue-confirmed qty still unsettled on a true lock
+    or leftover — same Positions overlay as Open now A. Settled / empty books
+    do not count. overlay=False is the house tape thought (diagnostics / tests).
+    """
+    tape = rows if rows is not None else _read_orders()
+    watch_rows = _lock_watch_rows(watches, include_watches)
+    house = _house_tape_open_lock_keys(
+        tape, include_watches=include_watches, watches=watch_rows
+    )
+    use_overlay = True if overlay is None else bool(overlay)
+    if not use_overlay:
+        return house
+    snap = _lock_venue_snapshot(snapshot)
+    book_ok = bool(isinstance(snap, dict) and (snap.get("kalshi_ok") or snap.get("poly_ok")))
+    if not book_ok:
+        games = {}
+        for row in tape:
+            if isinstance(row, dict) and row.get("bet_key"):
+                games[str(row.get("bet_key"))] = str(row.get("game") or "")
+        for item in watch_rows:
+            games[str(item.get("bet_key") or "")] = str(item.get("game") or "")
+        return _unique_lock_keys(house, games)
+    return _venue_open_lock_keys(tape, watch_rows, snap)
 
 
 def lock_slots_full(open_keys: list[str] | None = None) -> bool:
