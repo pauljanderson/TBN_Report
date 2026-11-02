@@ -557,6 +557,46 @@ def test_e_poly_short_yes_player_and_leftover_type():
     assert "Leftover-watch" in html
 
 
+def test_stats_for_roi_and_table_headers():
+    filled = _cluster(
+        n_fill_legs=1,
+        fill_legs=[_leg(cash=Decimal("0.50"), fee=Decimal("0.01"))],
+        legs=[_leg(cash=Decimal("0.50"), fee=Decimal("0.01"))],
+        venue_paid=True,
+        market_final=True,
+        settled_legs=1,
+        realized=Decimal("0.49"),
+        wins=1,
+    )
+    rows = d.flatten_trades([filled])
+    stats = d.stats_for(rows, [filled], [])
+    assert stats["invested"] == Decimal("0.51")
+    assert stats["roi"] == Decimal("0.49") / Decimal("0.51") * Decimal(100)
+    assert stats["by"]["B"]["invested"] == Decimal("0.51")
+    assert stats["by"]["B"]["roi"] == stats["roi"]
+    table = d.by_system_today_table(stats)
+    assert "ROI %" in table
+    assert "+96.1%" in table
+    assert table.index("With-fee P&amp;L") < table.index("ROI %")
+    kpi = d.kpi_strip(stats)
+    assert ">ROI<" in kpi
+    assert "+96.1%" in kpi
+    revived = d._revive_stats({
+        "pnl": "0.49",
+        "invested": "0.51",
+        "by": {"B": {"sent": 1, "filled": 1, "missed": 0, "open": 0, "settled": 1, "pnl": "0.49", "invested": "0.51"}},
+        "pnl_by": {"B": "0.49"},
+        "invested_by": {"B": "0.51"},
+    })
+    assert revived["invested"] == Decimal("0.51")
+    assert revived["roi"] == Decimal("0.49") / Decimal("0.51") * Decimal(100)
+    assert revived["by"]["B"]["roi"] == revived["roi"]
+    empty = d.stats_for([], [], [])
+    assert empty["invested"] == Decimal("0")
+    assert empty["roi"] is None
+    assert d.by_system_today_table(empty).count("—") >= 1
+
+
 def main() -> None:
     test_fill_vs_miss_vs_lost_not_mixed()
     test_html_has_svg_sortable_no_ask_plain()
@@ -569,6 +609,7 @@ def main() -> None:
     test_open_counts_follow_overlay_not_stale_cluster_flags()
     test_opposite_poly_t0_keeps_own_wire_and_stays_open()
     test_e_poly_short_yes_player_and_leftover_type()
+    test_stats_for_roi_and_table_headers()
     html = d.write_html(d.build_payload([], [], systems=[{"letter": "B", "on": "on", "pid": "2", "alive": True}]))
     assert ">Type<" in html
     print("test_write_dashboard ok")

@@ -1,9 +1,12 @@
 """Classifier tests for the live-orders performance page. No network. No secrets."""
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import live_lock_orders
 import write_orders_performance as w
+
+ET = ZoneInfo("America/New_York")
 
 
 def test_fill_requires_qty_at_least_one():
@@ -1239,6 +1242,57 @@ def test_result_labels():
     assert w.result_label(posted=True, n_fill_legs=1, flattened=True, complementary=False, flatten_filled=False) == "flatten miss"
 
 
+def test_fill_cost_roi_helpers():
+    leg = {"cash": Decimal("0.40"), "qty": Decimal("2"), "fee": Decimal("0.03")}
+    assert w.fill_cost_with_fees(leg) == Decimal("0.83")
+    assert w.invested_from_clusters([{"fill_legs": [leg, {"cash": "0.10", "qty": "1", "fee": "0"}]}]) == Decimal("0.93")
+    assert w.roi_pct(Decimal("0.186"), Decimal("0.93")) == Decimal("20")
+    assert w.roi_pct(Decimal("1"), Decimal("0")) is None
+    assert w.fmt_roi(Decimal("12.34")) == "+12.3%"
+    assert w.fmt_roi(Decimal("-5.14")) == "−5.1%"
+    assert w.fmt_roi(Decimal("0")) == "0.0%"
+    assert w.fmt_roi(None) == "—"
+
+
+def test_window_metrics_roi_and_headers():
+    leg = {
+        "cash": Decimal("0.40"),
+        "qty": Decimal("1"),
+        "fee": Decimal("0.02"),
+        "sent_at": datetime(2026, 10, 27, 8, 1, tzinfo=ET),
+    }
+    cluster = {
+        "n_fill_legs": 1,
+        "fill_legs": [leg],
+        "realized": Decimal("0.58"),
+        "fees": Decimal("0.02"),
+        "open_cost": Decimal("0"),
+        "wins": 1,
+        "losses": 0,
+        "system_letter": "B",
+        "system_name": "Tennis crossover",
+        "start": datetime(2026, 10, 27, 8, 0, tzinfo=ET),
+        "venue_paid": True,
+        "market_final": True,
+    }
+    metrics = w.window_metrics([cluster])
+    assert metrics["invested"] == Decimal("0.42")
+    assert metrics["roi"] == Decimal("0.58") / Decimal("0.42") * Decimal(100)
+    row = w.metrics_row("B Tennis crossover", "inception → now", "x", metrics)
+    assert row[8].startswith("$")  # Net P&L with fees
+    assert row[9] == "+138.1%"  # ROI immediately after
+    empty = w.window_metrics([])
+    assert empty["invested"] == Decimal("0")
+    assert empty["roi"] is None
+    assert w.fmt_roi(empty["roi"]) == "—"
+    html = w.by_system_html([cluster], [])
+    assert "ROI %" in html
+    assert "ROI % → now" in html
+    assert "Until next: ROI %" in html
+    assert "with-fee P&amp;L / fill cost with fees" in html
+    assert "+138.1%" in html
+
+
 def main() -> None:
     test_fill_requires_qty_at_least_one()
     test_kalshi_201_fill_count_zero_is_not_a_fill()
@@ -1280,6 +1334,8 @@ def main() -> None:
     test_t0_node_matches_player_not_shared_slug()
     test_b_t0_poly_yes_no_stays_open_until_market_final()
     test_eagles_poly_yes_is_a_lock_gap_football_not_tennis_b()
+    test_fill_cost_roi_helpers()
+    test_window_metrics_roi_and_headers()
     print("test_write_orders_performance ok")
 
 

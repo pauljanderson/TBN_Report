@@ -5132,6 +5132,55 @@ def ann_ror_cells(metrics: dict) -> tuple[str, str, str, str]:
     )
 
 
+def fill_cost_with_fees(leg: dict) -> Decimal:
+    """All-in fill cost: cash*qty + fee. Same convention as open_cost / slot_cash."""
+    cash = Decimal(str(leg.get("cash") or 0))
+    qty = Decimal(str(leg.get("qty") or 0))
+    fee = Decimal(str(leg.get("fee") or 0))
+    return (cash * qty) + fee
+
+
+def invested_from_clusters(clusters: list[dict]) -> Decimal:
+    """Sum fill cost with fees across fill legs of the given clusters."""
+    total = Decimal("0")
+    for cluster in clusters or []:
+        for leg in cluster.get("fill_legs") or []:
+            try:
+                total += fill_cost_with_fees(leg)
+            except Exception:
+                continue
+    return total
+
+
+def roi_pct(realized, invested) -> Decimal | None:
+    """With-fee P&L / fill cost with fees * 100. None when invested is zero."""
+    try:
+        inv = Decimal(str(invested if invested is not None else 0))
+    except Exception:
+        return None
+    if inv == 0:
+        return None
+    try:
+        return Decimal(str(realized if realized is not None else 0)) / inv * Decimal(100)
+    except Exception:
+        return None
+
+
+def fmt_roi(value) -> str:
+    """Kitchen ROI display: +12.3% / −5.1% / — when no invested."""
+    if value is None:
+        return "—"
+    try:
+        number = Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return str(value)
+    if number > 0:
+        return f"+{format(number, 'f')}%"
+    if number < 0:
+        return f"−{format(abs(number), 'f')}%"
+    return f"{format(number, 'f')}%"
+
+
 def window_metrics(clusters: list[dict], *, start: datetime | None = None, end: datetime | None = None) -> dict:
     picked = [c for c in filled_trade_clusters(clusters) if in_window(c, start, end)]
     realized = sum((Decimal(str(c.get("realized") or 0)) for c in picked), Decimal("0"))
@@ -5157,12 +5206,11 @@ def window_metrics(clusters: list[dict], *, start: datetime | None = None, end: 
     for c in picked:
         for leg in c.get("fill_legs") or []:
             try:
-                cash = Decimal(str(leg.get("cash") or 0)) * Decimal(str(leg.get("qty") or 0))
-                fee = Decimal(str(leg.get("fee") or 0))
-                costs.append(cash + fee)
+                costs.append(fill_cost_with_fees(leg))
             except Exception:
                 continue
-    slot_cash = (sum(costs) / Decimal(len(costs))) if costs else Decimal("1")
+    invested = sum(costs, Decimal("0"))
+    slot_cash = (invested / Decimal(len(costs))) if costs else Decimal("1")
     # Same-day: we do not have a reliable hold-day series on this tape.
     avg_days = Decimal("0")
     return {
@@ -5171,6 +5219,8 @@ def window_metrics(clusters: list[dict], *, start: datetime | None = None, end: 
         "realized": realized,
         "fees": fees,
         "open_cost": open_cost,
+        "invested": invested,
+        "roi": roi_pct(realized, invested),
         "wins": wins,
         "losses": losses,
         "wr": wr,
@@ -5213,6 +5263,7 @@ def metrics_row(label: str, window_label: str, from_et: str, metrics: dict) -> l
         metrics["losses"],
         fmt_pct(metrics["wr"]),
         format_money(metrics["realized"]),
+        fmt_roi(metrics.get("roi")),
         format_money(metrics["mean"]) if metrics["mean"] is not None else "n/a",
         money4_dollar(metrics["open_cost"]),
         money4_dollar(metrics["fees"]),
@@ -5512,6 +5563,7 @@ def by_system_html(clusters: list[dict], open_rows: list[dict]) -> str:
         ("Losses", "num"),
         ("Win %", "num"),
         ("Net P&L with fees $", "num"),
+        ("ROI %", "num"),
         ("Mean $", "num"),
         ("Open at risk $", "num"),
         ("Fees $", "num"),
@@ -5574,10 +5626,12 @@ def by_system_html(clusters: list[dict], open_rows: list[dict]) -> str:
         ("Source", "text"),
         ("N from here → now", "num"),
         ("Net P&L with fees $ → now", "num"),
+        ("ROI % → now", "num"),
         ("Win % → now", "num"),
         ("Mean $ → now", "num"),
         ("Until next: N", "num"),
         ("Until next: P&L with fees $", "num"),
+        ("Until next: ROI %", "num"),
         ("Until next: WR", "num"),
         ("Until next: mean $", "num"),
     ]
@@ -5595,10 +5649,12 @@ def by_system_html(clusters: list[dict], open_rows: list[dict]) -> str:
             event.get("source") or "",
             forward["n"],
             format_money(forward["realized"]),
+            fmt_roi(forward.get("roi")),
             fmt_pct(forward["wr"]),
             format_money(forward["mean"]) if forward["mean"] is not None else "n/a",
             interval["n"],
             format_money(interval["realized"]),
+            fmt_roi(interval.get("roi")),
             fmt_pct(interval["wr"]),
             format_money(interval["mean"]) if interval["mean"] is not None else "n/a",
         ])
@@ -5675,6 +5731,7 @@ def by_system_html(clusters: list[dict], open_rows: list[dict]) -> str:
     return f"""
 <h2>Performance by system</h2>
 <p class="note">Kitchen book. Primary P&amp;L is <strong>with fees</strong>.
+<strong>ROI %</strong> = with-fee P&amp;L / fill cost with fees.
 Each system has two windows: inception (first confirmed fill, or C/D could-trade at the 15:02 ET 24 Oct CLI stamp)
 and since the last sourced freeze / code change / bug fix that affected that system.
 {_ann} Click column headers to sort.</p>
