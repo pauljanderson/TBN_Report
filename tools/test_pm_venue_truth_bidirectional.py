@@ -148,6 +148,42 @@ def test_miss_ingest_adds_unbooked_settlement():
     assert again["added"] == 0
 
 
+def test_poly_cluster_share_lands_in_settled_pnl():
+    """Kitchen By-venue Poly share must book into settled_pnl when settle_result missing."""
+    store: dict = {}
+    clusters = [
+        {
+            "game": "Poly Test",
+            "realized": Decimal("1.20"),
+            "settled_legs": 1,
+            "fill_legs": [
+                {
+                    "order_id": "poly-oid-1",
+                    "venue": "polymarket",
+                    "instrument": "aec-test-slug",
+                    "side": "yes",
+                    "qty": "1",
+                    "cash": "0.40",
+                    "fee": "0.01",
+                    "ticket_status": "win",
+                    "ticket_pnl": "0.59",
+                }
+            ],
+        }
+    ]
+    rep = miss.ingest_scored_fill_legs(store, clusters, persist=False)
+    assert rep["added"] == 1
+    assert store["poly-oid-1"]["venue"] == "polymarket"
+    assert Decimal(store["poly-oid-1"]["pnl"]) == Decimal("0.59")
+    # Gap bridge closes residual vs kitchen By-venue share target.
+    gap = miss.close_by_venue_attribution_gaps(
+        store, {"polymarket": Decimal("1.20")}, persist=False
+    )
+    assert gap["added"] == 1
+    total = sum(Decimal(str(v["pnl"])) for v in store.values() if v.get("venue") == "polymarket")
+    assert total == Decimal("1.20")
+
+
 def test_public_helpers_exist_for_page_rebuild():
     assert callable(live_lock_orders.public_venue_note)
     assert callable(live_lock_orders._scrub_public_text)
@@ -163,5 +199,6 @@ if __name__ == "__main__":
     test_with_venue_confirm_attaches_overlay()
     test_score_cluster_same_direction_not_lock_realized()
     test_miss_ingest_adds_unbooked_settlement()
+    test_poly_cluster_share_lands_in_settled_pnl()
     test_public_helpers_exist_for_page_rebuild()
     print("test_pm_venue_truth_bidirectional ok")
