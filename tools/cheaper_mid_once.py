@@ -330,8 +330,18 @@ def send_ioc(built: dict) -> tuple[int, str]:
     """Venue order call. Does not read or write ORDERS_ENABLED."""
     import gemini_private
     import kalshi_private
+    import kalshi_same_direction as ksd
     import live_lock_orders
 
+    # Same class gate as live_lock_orders._send: No-A already open blocks Yes-B.
+    try:
+        bad, why = ksd.open_book_blocks_same_direction(
+            [built], live_lock_orders._open_book_legs_for_same_direction()
+        )
+        if bad:
+            return 0, why
+    except Exception:
+        pass
     recorded: dict = {}
     venue = built["venue"]
     body = built["body"]

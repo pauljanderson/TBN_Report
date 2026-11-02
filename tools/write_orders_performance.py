@@ -2169,8 +2169,19 @@ def public_http_line(sent: dict, io_row: dict | None) -> str:
 def fill_cash_fee(sent: dict, io_row: dict | None) -> tuple[Decimal | None, Decimal, Decimal]:
     payload = (io_row or {}).get("response") if io_row else None
     qty = live_lock_orders.filled_contracts(payload) if payload is not None else Decimal("0")
+    # Bare house fill_qty without order_io is NOT trusted (ghost claims).
+    # Venue-confirm on the sent row IS trusted when confirm_known.
     if not qty_is_fill(qty):
-        return None, Decimal("0"), qty
+        confirm_qty = ddec(sent.get("confirm_qty")) if isinstance(sent, dict) else None
+        if (
+            isinstance(sent, dict)
+            and sent.get("confirm_known")
+            and confirm_qty is not None
+            and qty_is_fill(confirm_qty)
+        ):
+            qty = confirm_qty
+        else:
+            return None, Decimal("0"), qty
     req = (io_row or {}).get("request") if isinstance((io_row or {}).get("request"), dict) else {}
     quote = sent.get("quote_price") or (io_row or {}).get("quote_price") if io_row else sent.get("quote_price")
     if isinstance((io_row or {}).get("quote"), dict) and not quote:
@@ -2190,7 +2201,7 @@ def fill_cash_fee(sent: dict, io_row: dict | None) -> tuple[Decimal | None, Deci
         spec["intent"] = str(req.get("intent") or "")
         if not spec["fee_coefficient"]:
             spec["fee_coefficient"] = req.get("feeRateBps") or req.get("fee_coefficient")
-    cash = live_lock_orders._actual_fill_cash(spec, payload)
+    cash = live_lock_orders._actual_fill_cash(spec, payload) if payload is not None else None
     if cash is None:
         cash = ddec(sent.get("house_cash") or sent.get("limit_price"))
     poly = {}
