@@ -2419,6 +2419,74 @@ def complementary_legs(legs: list[dict]) -> bool:
     return False
 
 
+def promote_orphan_venue_filled(orders: list[dict]) -> list[dict]:
+    """Turn legacy event=filled venue_open_miss rows into claim+sent pairs.
+
+    cluster_lock_attempts ignores filled rows with no preceding claim — that is
+    why dashboard showed 0 trades after open-miss ingest wrote orphans.
+    """
+    out: list[dict] = []
+    seen_keys: set[str] = set()
+    for row in orders:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("bet_key") or "")
+        if key:
+            seen_keys.add(key)
+    for row in orders:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        event = str(row.get("event") or "")
+        source = str(row.get("source") or "")
+        key = str(row.get("bet_key") or "")
+        is_orphan = (
+            event == "filled"
+            and (
+                source.startswith("venue_open_miss")
+                or source.startswith("venue_fill_miss")
+                or key.startswith("venue-open|")
+                or key.startswith("venue-open\t")
+            )
+        )
+        if not is_orphan:
+            out.append(row)
+            continue
+        try:
+            import venue_open_miss_ingest as vomi
+
+            qty = vomi._qty_of(row) or ddec(row.get("confirm_qty") or row.get("qty")) or Decimal("0")
+            if qty <= 0:
+                out.append(row)
+                continue
+            side = str(row.get("outcome") or row.get("side") or "yes")
+            inst = str(row.get("instrument") or row.get("ticker") or "")
+            shop = str(row.get("venue") or "")
+            kind = "fill" if "fill" in source else "open"
+            pair = vomi.claim_sent_pair(
+                venue=shop,
+                instrument=inst,
+                side=side,
+                qty=qty,
+                game=str(row.get("game") or inst),
+                when=str(row.get("at") or row.get("sent_at") or ""),
+                source=source or "venue_open_miss_ingest",
+                kind=kind,
+                order_id=str(row.get("order_id") or ""),
+                note=str(row.get("note") or ""),
+            )
+            new_key = str(pair[0].get("bet_key") or "")
+            if new_key and new_key in seen_keys:
+                # Already have a proper claim for this open — drop the orphan.
+                continue
+            if new_key:
+                seen_keys.add(new_key)
+            out.extend(pair)
+        except Exception:
+            out.append(row)
+    return out
+
+
 def cluster_lock_attempts(orders: list[dict]) -> list[dict]:
     clusters: list[dict] = []
     current: dict | None = None
@@ -2435,7 +2503,12 @@ def cluster_lock_attempts(orders: list[dict]) -> list[dict]:
         event = str(row.get("event") or "")
         if event == "claim":
             flush()
-            current = {"claim": row, "events": [], "kind": "lock"}
+            kind = "lock"
+            key = str(row.get("bet_key") or "")
+            source = str(row.get("source") or "")
+            if key.startswith("venue-open") or key.startswith("venue-fill") or source.startswith("venue_"):
+                kind = "venue_sync"
+            current = {"claim": row, "events": [], "kind": kind}
             continue
         if current is None:
             continue
@@ -6269,8 +6342,32 @@ code {{ font-size: 13px; }}
 
 
 def main() -> int:
+    import os
+
+    # Bidirectional sync: venue opens + today fills → orders.jsonl before clustering.
+    if not os.environ.get("SKIP_VENUE_SYNC_INGEST"):
+        try:
+            import venue_open_miss_ingest as vomi
+
+            sync = vomi.ingest_from_venue_pulls(
+                persist=True, live=False, include_fills=True, rebuild=False
+            )
+            added = int(sync.get("added") or 0)
+            if added:
+                print(
+                    f"venue sync ingest added={added} "
+                    f"kalshi_open={sync.get('kalshi_open_n')} poly_open={sync.get('poly_open_n')} "
+                    f"kalshi_fills_added={(sync.get('kalshi_fills') or {}).get('added')} "
+                    f"poly_fills_added={(sync.get('polymarket_fills') or {}).get('added')}",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"venue sync ingest skipped: {type(exc).__name__}: {exc}", flush=True)
+
     print("loading tape", flush=True)
     orders = _load_jsonl(ORDERS)
+    # Promote legacy orphan venue_open filled rows into claim+sent so they cluster.
+    orders = promote_orphan_venue_filled(orders)
     io_all = _load_jsonl(RAW / "order_io.jsonl")
     by_id, io_list = io_indexes(io_all)
     watch = load_json(B_WATCH) or {}
