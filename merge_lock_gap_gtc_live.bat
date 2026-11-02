@@ -30,7 +30,8 @@ cd /d "%~dp0"
 
 set "FAIL=0"
 set "LOCK_PY=tools\live_lock_orders.py"
-set "STAMP_RAW=drive\paul_experiments\prediction_market_arb_exhaustive_20261017\raw"
+rem orders_enabled() reads LOCAL raw only (not Drive). Writing under drive/ is a no-op for sends.
+set "STAMP_RAW=local\paul_experiments\prediction_market_arb_exhaustive_20261017\raw"
 set "STAMP_ON=%STAMP_RAW%\orders_enabled.on"
 set "STAMP_OFF=%STAMP_RAW%\orders_enabled.off"
 set "BACKUP_DIR=tools\_live_lock_backup"

@@ -43,16 +43,26 @@ import venue_pace
 
 ROOT = Path(__file__).resolve().parents[1]
 try:
-    from prediction_paths import DRIVE_STAMP as STAMP, RAW_DIR as RAW
+    from prediction_paths import DRIVE_STAMP as STAMP, ORDERS_STOP, RAW_DIR as RAW
 except Exception:  # pragma: no cover - bare clone without prediction_paths
     STAMP = ROOT / "drive" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017"
-    RAW = STAMP / "raw"
+    RAW = ROOT / "local" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017" / "raw"
+    ORDERS_STOP = RAW / "orders_stopped.json"
 ORDERS = RAW / "orders.jsonl"
 ORDER_LOCK = RAW / "orders.lock"
 ONE_LEG_WATCH = RAW / "one_leg_gtc_watch.jsonl"
 LAST_SKIP = RAW / "lock_last_skip.json"
 ORDERS_ENABLED_STAMP_ON = RAW / "orders_enabled.on"
 ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
+_DIRECTIONAL_SYSTEMS = frozenset(
+    {
+        "cfb_favorite",
+        "spread_t0",
+        "tennis_t0_dog",
+        "tennis_t0_spread",
+        "soccer_t0_total",
+    }
+)
 ONE = Decimal("1")
 CENT = Decimal("0.01")
 NET_MAX = Decimal("0.95")
@@ -232,6 +242,107 @@ def lock_system_on() -> bool:
         return bool(prediction_systems.get_system("lock").on)
     except Exception:
         return True
+
+
+def set_lock_system_on(on: bool) -> bool:
+    """Flip systems.json lock.on without spawning. Returns True when the file changed."""
+    try:
+        import prediction_systems
+
+        cfg = prediction_systems.get_system("lock")
+        if bool(cfg.on) == bool(on):
+            return False
+        prediction_systems.apply_updates({"lock": {"on": bool(on)}}, spawn=False)
+        return True
+    except Exception:
+        return False
+
+
+def clear_one_leg_new_pair_latch() -> bool:
+    """Paul turned A on (or leftover completed). Drop the leftover latch file."""
+    global ORDERS_ENABLED
+    removed = False
+    try:
+        if ORDERS_STOP.exists():
+            ORDERS_STOP.unlink()
+            removed = True
+    except OSError:
+        return False
+    ORDERS_ENABLED = True
+    return removed
+
+
+def stop_orders(reason: str, filled: dict | None = None, missed: dict | None = None) -> None:
+    """Turn Lock gap (A) off after a one-leg miss. B/C/D/E stay on."""
+    global ORDERS_ENABLED
+    del filled, missed
+    ORDERS_ENABLED = False
+    set_lock_system_on(False)
+    ORDERS_STOP.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if ORDERS_STOP.exists():
+            return
+    except OSError:
+        return
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    row = {
+        "stopped": True,
+        "reason": reason,
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(timespec="seconds"),
+        "scope": "lock",
+        "letter": "A",
+    }
+    ORDERS_STOP.write_text(json.dumps(row), encoding="utf-8")
+
+
+def _send_blocked(spec: dict) -> str:
+    """Empty when this lock post may leave. B/C/D/E/F/G are not gated by lock.on."""
+    if spec.get("_strategy_b"):
+        return ""
+    if str(spec.get("_system") or "") in _DIRECTIONAL_SYSTEMS:
+        return ""
+    if spec.get("_watch_recovery"):
+        return ""
+    if not lock_system_on():
+        return "lock gap is off"
+    if not orders_enabled():
+        return "placing orders is off"
+    return ""
+
+
+def watch_is_active(row: dict | None = None) -> bool:
+    """True when a second-leg GTC / leftover watch is still open."""
+    if row is None:
+        return any(watch_is_active(item) for item in load_all_watches())
+    if not isinstance(row, dict):
+        return False
+    if isinstance(row.get("watches"), list) and not row.get("bet_key"):
+        return any(watch_is_active(item) for item in row["watches"] if isinstance(item, dict))
+    if not row.get("bet_key") and not row.get("filled_venue"):
+        return False
+    if row.get("stopped"):
+        return False
+    event = str(row.get("event") or "")
+    if event in {
+        "second_leg_gtc_filled",
+        "second_leg_gtc_cancelled",
+        "one_leg_exit_cheap",
+        "one_leg_be_complete",
+        "one_leg_hold_to_settle",
+        "second_leg_gtc_resolve_cancel",
+    }:
+        return False
+    return True
+
+
+def load_all_watches() -> list[dict]:
+    """Open second-leg GTC watches (GTC adopt). Used by Strategy B lock-hold skip."""
+    try:
+        return list(open_second_leg_gtc_watches())
+    except Exception:
+        return []
 
 
 def lock_open_denial(open_n: int | None = None) -> str:

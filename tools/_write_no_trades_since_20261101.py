@@ -88,8 +88,13 @@ cleared the cap. Same class bug as <a href="lock_ghost_open_cap_20261025.html">l
 <ul>
 <li>Last fills: E ~03:01 ET Nov 1; B ~01:43 ET Nov 1; then A at 08:20; nothing after.</li>
 <li>Nov 2 Today scoreboard: all systems 0 sent / 0 filled.</li>
-<li>F and G last_action update this morning (alive). B last_action frozen ~25h; E ~31h — treat as hung/stale watches; reload B and E on the kitchen PC after pulling this fix.</li>
-<li>C is intentionally off. D last_action still Oct 24 — also stale; reload if you want D live.</li>
+<li><strong>B crash loop:</strong> after the GTC merge, <code>lock_bot_holds_game</code> still called
+<code>live_lock_orders.ORDERS_STOP.exists()</code> / <code>load_all_watches</code>, which were deleted.
+Every <code>try_t0</code> raised <code>AttributeError</code>; the outer loop logged it and kept the PID up,
+so last_action froze (~Nov 1 09:22) while F/G kept ticking.</li>
+<li>E last_action Nov 1 03:01 — reload E after pull. C intentionally off. D last_action Oct 24 — reload if wanted.</li>
+<li>Also fixed: <code>merge_lock_gap_gtc_live.bat</code> wrote <code>orders_enabled.on</code> under <code>drive/.../raw</code>
+while <code>orders_enabled()</code> only reads <code>local/.../raw</code>.</li>
 </ul>
 </div>
 
