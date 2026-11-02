@@ -37,9 +37,10 @@ uses TIME_IN_FORCE_GOOD_TILL_CANCEL, not FOK.
 
 Own state: raw/strategy_b_watch.json. Does not read or write orders_stopped.json.
 Does not call resume_orders_after_lock. May send Novig when novig_live.orders_live()
-(same 1-contract IOC as Kalshi/Gemini/Polymarket, then GET /v3/portfolio/fills
-confirm). Does not shut down the Yes+No lock bot. Rechecks the book immediately
-before every send.
+(same 1-contract IOC as Kalshi/Polymarket, then GET /v3/portfolio/fills
+confirm). Gemini is quote-only while gemini_private.orders_live() is False
+(GEMINI_ORDERS_ENABLED / systems.json gemini_orders). Does not shut down the
+Yes+No lock bot. Rechecks the book immediately before every send.
 """
 from __future__ import annotations
 
@@ -1121,6 +1122,11 @@ def _sendable_venue(venue: str) -> bool:
         return False
     if v == "novig":
         return bool(novig_live.orders_live())
+    if v == "gemini":
+        import gemini_private
+
+        # Quote-only soft-disable (GEMINI_ORDERS_ENABLED / systems.json gemini_orders).
+        return bool(gemini_private.orders_live())
     return True
 
 

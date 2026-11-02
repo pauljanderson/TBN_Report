@@ -100,7 +100,7 @@ def plan_send(
         return {"action": "skip", "reason": why, "best": None}
     if int(open_n) >= int(max_open):
         return {"action": "skip", "reason": "max_open", "best": None}
-    best = systems.pick_cheapest_spread_yes(rows)
+    best = systems.pick_cheapest_spread_yes(rows, for_send=True)
     if best is None:
         return {"action": "skip", "reason": "no spread Yes in [0.20, 0.50)", "best": None}
     ask = systems._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))

@@ -47,6 +47,58 @@ def test_best_venue_and_favorite():
     assert ps.pick_favorite_primary({"LSU": Decimal("0.50"), "Auburn": Decimal("0.50")}) is None
 
 
+def test_gemini_quote_only_compare_vs_send():
+    """Gemini stays in compare; for_send=True never picks Gemini while soft-disabled."""
+    import gemini_private
+
+    quotes = [
+        {"venue": "gemini", "side": "LSU", "yes": Decimal("0.61"), "team": "LSU"},
+        {"venue": "kalshi", "side": "LSU", "yes": Decimal("0.68"), "team": "LSU"},
+        {"venue": "polymarket", "side": "LSU", "yes": Decimal("0.70"), "team": "LSU"},
+        {"venue": "gemini", "side": "Auburn", "yes": Decimal("0.40"), "team": "Auburn"},
+        {"venue": "kalshi", "side": "Auburn", "yes": Decimal("0.33"), "team": "Auburn"},
+    ]
+    spreads = [
+        {"venue": "gemini", "side": "LSU -3.5", "yes": Decimal("0.22"), "kind": "spread", "number": "3.5"},
+        {"venue": "kalshi", "side": "LSU -3.5", "yes": Decimal("0.28"), "kind": "spread", "number": "3.5"},
+        {"venue": "polymarket", "side": "LSU -7.5", "yes": Decimal("0.31"), "kind": "spread", "number": "7.5"},
+    ]
+    totals = [
+        {"venue": "gemini", "side": "Over 2.5", "yes": Decimal("0.21"), "kind": "total", "number": "2.5"},
+        {"venue": "kalshi", "side": "Over 2.5", "yes": Decimal("0.29"), "kind": "total", "number": "2.5"},
+        {"venue": "polymarket", "side": "Over 2.5", "yes": Decimal("0.33"), "kind": "total", "number": "2.5"},
+    ]
+    saved = gemini_private.GEMINI_ORDERS_ENABLED
+    gemini_private.GEMINI_ORDERS_ENABLED = False
+    try:
+        assert gemini_private.orders_live() is False
+        assert ps.venue_sendable("gemini") is False
+        assert ps.venue_sendable("kalshi") is True
+        # Compare / truth still sees Gemini as cheapest.
+        compare = ps.best_venue_yes(quotes, "LSU", for_send=False)
+        assert compare is not None and compare["venue"] == "gemini"
+        assert ps.pick_cheapest_spread_yes(spreads, for_send=False)["venue"] == "gemini"
+        assert ps.pick_cheapest_total_yes(totals, for_send=False)["venue"] == "gemini"
+        # Favorite truth still uses Gemini quotes across venues.
+        teams = {"LSU": [Decimal("0.61"), Decimal("0.68")], "Auburn": [Decimal("0.40"), Decimal("0.33")]}
+        assert ps.resolve_favorite_across_venues(teams) == "LSU"
+        # Send pick falls back to non-Gemini; never requires a Gemini POST.
+        send = ps.best_venue_yes(quotes, "LSU", for_send=True)
+        assert send is not None and send["venue"] == "kalshi"
+        assert ps.pick_cheapest_spread_yes(spreads, for_send=True)["venue"] == "kalshi"
+        assert ps.pick_cheapest_total_yes(totals, for_send=True)["venue"] == "kalshi"
+        only_gemini = [{"venue": "gemini", "side": "LSU", "yes": Decimal("0.61")}]
+        assert ps.best_venue_yes(only_gemini, "LSU", for_send=True) is None
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+    gemini_private.GEMINI_ORDERS_ENABLED = True
+    try:
+        assert ps.venue_sendable("gemini") is True
+        assert ps.best_venue_yes(quotes, "LSU", for_send=True)["venue"] == "gemini"
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+
+
 def test_venues_disagree_median_rule():
     teams = {
         "A": [Decimal("0.55"), Decimal("0.40")],
@@ -552,6 +604,7 @@ if __name__ == "__main__":
     test_fav_band_gates()
     test_contracts_for_stake()
     test_best_venue_and_favorite()
+    test_gemini_quote_only_compare_vs_send()
     test_venues_disagree_median_rule()
     test_spread_line_closest_to_50()
     test_cli_parse_and_persist()

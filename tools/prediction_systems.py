@@ -39,6 +39,11 @@ SPREAD_F_HI = Decimal("0.50")
 TOTAL_G_LO = Decimal("0.20")
 TOTAL_G_HI = Decimal("0.50")
 VENUE_RANK = ("kalshi", "gemini", "polymarket", "novig")
+# Send allowlist follows venue module flags (Gemini GEMINI_ORDERS_ENABLED /
+# systems.json "gemini_orders"; Novig NOVIG_ORDERS_ENABLED). Quotes stay in
+# VENUE_RANK for compare / favorite truth. for_send=True pickers skip soft-disabled
+# venues so C/D/E/F/G never POST there. Flip gemini_orders in systems.json to
+# re-enable Gemini sends without hunting every bot.
 
 SYSTEM_IDS = (
     "lock",
@@ -344,8 +349,33 @@ def resolve_favorite_across_venues(team_asks: dict[str, list]) -> str | None:
     return meds[0][2]
 
 
-def best_venue_yes(quotes: list[dict], team: str) -> dict | None:
-    """Cheapest Yes ask for this team. Kalshi > Gemini > Poly > Novig on ties."""
+def venue_sendable(venue: str) -> bool:
+    """True when this venue may be chosen as a live send leg.
+
+    Gemini / Novig follow their module orders_live() flags (quote-only when
+    False). Kalshi and Polymarket stay sendable. Unknown venues are not.
+    """
+    v = str(venue or "").strip().lower()
+    if v not in VENUE_RANK:
+        return False
+    if v == "gemini":
+        import gemini_private
+
+        return bool(gemini_private.orders_live())
+    if v == "novig":
+        import novig_live
+
+        return bool(novig_live.orders_live())
+    return True
+
+
+def best_venue_yes(quotes: list[dict], team: str, *, for_send: bool = False) -> dict | None:
+    """Cheapest Yes ask for this team. Kalshi > Gemini > Poly > Novig on ties.
+
+    for_send=True skips soft-disabled send venues (Gemini quote-only, Novig
+    orders off). Compare / favorite truth keep for_send=False so Gemini quotes
+    still shape price discovery.
+    """
     want = _norm_side(team)
     ranked = []
     for row in quotes or []:
@@ -355,6 +385,8 @@ def best_venue_yes(quotes: list[dict], team: str) -> dict | None:
         if px is None:
             continue
         venue = str(row.get("venue") or "").lower()
+        if for_send and not venue_sendable(venue):
+            continue
         rank = VENUE_RANK.index(venue) if venue in VENUE_RANK else 9
         ranked.append((px, rank, venue, row))
     if not ranked:
@@ -363,11 +395,12 @@ def best_venue_yes(quotes: list[dict], team: str) -> dict | None:
     return ranked[0][3]
 
 
-def pick_cheapest_spread_yes(quotes: list[dict], *, lo=None, hi=None) -> dict | None:
+def pick_cheapest_spread_yes(quotes: list[dict], *, lo=None, hi=None, for_send: bool = False) -> dict | None:
     """Cheapest spread Yes in [lo, hi). Skip moneyline and Points Total.
 
     Venue rank Kalshi > Gemini > Poly > Novig on price ties. F freeze is
     lo=0.20, hi=0.50. Does not require a unique dog or pair <= 1.05.
+    for_send=True skips soft-disabled send venues.
     """
     low = _dec(lo, SPREAD_F_LO) or SPREAD_F_LO
     high = _dec(hi, SPREAD_F_HI) or SPREAD_F_HI
@@ -380,6 +413,8 @@ def pick_cheapest_spread_yes(quotes: list[dict], *, lo=None, hi=None) -> dict | 
         if px is None or px < low or px >= high:
             continue
         venue = str(row.get("venue") or "").lower()
+        if for_send and not venue_sendable(venue):
+            continue
         rank = VENUE_RANK.index(venue) if venue in VENUE_RANK else 9
         ranked.append((px, rank, venue, str(row.get("number") or ""), row))
     if not ranked:
@@ -388,12 +423,13 @@ def pick_cheapest_spread_yes(quotes: list[dict], *, lo=None, hi=None) -> dict | 
     return ranked[0][4]
 
 
-def pick_cheapest_total_yes(quotes: list[dict], *, lo=None, hi=None) -> dict | None:
+def pick_cheapest_total_yes(quotes: list[dict], *, lo=None, hi=None, for_send: bool = False) -> dict | None:
     """Cheapest Points Total Yes in [lo, hi). Skip moneyline and spread.
 
     Venue rank Kalshi > Gemini > Poly > Novig on price ties. G freeze is
     lo=0.20, hi=0.50. Skip Novig when fee is unknown. Does not pick across
     A–F trading systems — venues on this game+line+side only.
+    for_send=True skips soft-disabled send venues.
     """
     low = _dec(lo, TOTAL_G_LO) or TOTAL_G_LO
     high = _dec(hi, TOTAL_G_HI) or TOTAL_G_HI
@@ -408,6 +444,8 @@ def pick_cheapest_total_yes(quotes: list[dict], *, lo=None, hi=None) -> dict | N
         if px is None or px < low or px >= high:
             continue
         venue = str(row.get("venue") or "").lower()
+        if for_send and not venue_sendable(venue):
+            continue
         rank = VENUE_RANK.index(venue) if venue in VENUE_RANK else 9
         ranked.append((px, rank, venue, str(row.get("number") or ""), row))
     if not ranked:

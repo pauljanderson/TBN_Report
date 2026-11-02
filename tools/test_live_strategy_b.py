@@ -2930,6 +2930,53 @@ def test_cheapest_legs_poly_dog_kalshi_fav_beats_both_novig():
         novig_live.orders_live = saved_live
 
 
+def test_b_gemini_quote_only_not_send_venue():
+    """Soft-disable: Gemini quotes stay in books; rank/pick never send Gemini."""
+    import gemini_private
+
+    gemini = {
+        "venue": "gemini",
+        "title": "Alice vs Bob",
+        "players": [
+            {
+                "player": "Alice",
+                "pay": Decimal("0.40"),
+                "venue": "gemini",
+                "instrument": "G-ALICE",
+            },
+            {
+                "player": "Bob",
+                "pay": Decimal("0.42"),
+                "venue": "gemini",
+                "instrument": "G-BOB",
+            },
+        ],
+    }
+    kalshi = {
+        "venue": "kalshi",
+        "title": "Alice vs Bob",
+        "players": [
+            {"player": "Alice", "pay": Decimal("0.44"), "venue": "kalshi", "instrument": "K-ALICE"},
+            {"player": "Bob", "pay": Decimal("0.45"), "venue": "kalshi", "instrument": "K-BOB"},
+        ],
+    }
+    saved = gemini_private.GEMINI_ORDERS_ENABLED
+    gemini_private.GEMINI_ORDERS_ENABLED = False
+    try:
+        assert live_strategy_b._sendable_venue("gemini") is False
+        assert live_strategy_b._sendable_venue("kalshi") is True
+        ranked = live_strategy_b.rank_cheapest_legs([gemini, kalshi])
+        assert ranked is not None
+        assert all(row.get("venue") == "kalshi" for row in ranked["players"])
+        only = live_strategy_b.rank_cheapest_legs([gemini])
+        assert only is None
+        picked = live_strategy_b.pick_cheapest_legs([gemini, kalshi])
+        assert picked is not None
+        assert all(row.get("venue") != "gemini" for row in picked["players"])
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+
+
 def test_t0_grace_thirty_minutes_holds_c_and_d():
     assert live_strategy_b.T0_GRACE_SEC == 1800
     assert live_strategy_b.t0_grace_minutes() == 30
@@ -3152,6 +3199,7 @@ if __name__ == "__main__":
     test_watch_cadence_is_continuous_tick()
     test_strategy_b_has_no_job_deadline()
     test_b_can_select_novig_as_yes_venue()
+    test_b_gemini_quote_only_not_send_venue()
     test_b_still_one_contract_and_two_match_cap()
     test_b_novig_send_uses_venue_confirm()
     test_b_novig_low_balance_named_deny()

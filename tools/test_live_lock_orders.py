@@ -28,13 +28,15 @@ def _pair(**extra):
         "side": "Tennessee",
         "number": "3.5",
         "yes_venue": "kalshi",
-        "no_venue": "gemini",
+        "no_venue": "polymarket",
         "yes_price": "0.40",
         "no_price": "0.53",
         "yes_size": "2",
         "no_size": "2",
         "kalshi_ticker": "KX-TEST",
         "gemini_symbol": "GEMI-TEST",
+        "polymarket_slug": "poly-test",
+        "polymarket_fee": "0.02",
         "no_flipped_yes_bid": False,
     }
     row.update(extra)
@@ -66,18 +68,57 @@ def test_tennessee_13_5_is_blocked():
 
 
 def test_flipped_gemini_no_is_blocked():
-    ok, _reason = live_lock_orders.qualifies(Scan(), _pair(no_flipped_yes_bid=True), "Some Game", {})
+    ok, _reason = live_lock_orders.qualifies(
+        Scan(),
+        _pair(no_venue="gemini", no_flipped_yes_bid=True, polymarket_fee=None),
+        "Some Game",
+        {},
+    )
     assert not ok
+
+
+def test_gemini_quote_only_skips_lock_send_leg():
+    """Soft-disable: Gemini quote-only pairs do not qualify; non-Gemini still can."""
+    import os
+
+    saved = gemini_private.GEMINI_ORDERS_ENABLED
+    saved_env = os.environ.get("LOCK_ORDERS_ENABLED")
+    gemini_private.GEMINI_ORDERS_ENABLED = False
+    os.environ["LOCK_ORDERS_ENABLED"] = "1"
+    try:
+        gemini_leg = _pair(
+            no_venue="gemini",
+            polymarket_fee=None,
+            gemini_symbol="GEMI-TEST",
+        )
+        ok, reason = live_lock_orders.qualifies(Scan(), gemini_leg, "Some Game", {})
+        assert not ok
+        assert "gemini orders off" in reason
+        ok2, reason2 = live_lock_orders.qualifies(Scan(), _pair(), "Some Game", {})
+        assert ok2, reason2
+        status, payload, note = live_lock_orders._send(
+            {"venue": "gemini", "body": {"symbol": "GEMI-TEST", "side": "bid"}}
+        )
+        assert status == 0
+        assert payload is None
+        assert "gemini orders off" in note
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+        if saved_env is None:
+            os.environ.pop("LOCK_ORDERS_ENABLED", None)
+        else:
+            os.environ["LOCK_ORDERS_ENABLED"] = saved_env
 
 
 def test_missing_moves_send_kalshi_first():
     order = live_lock_orders.ordered_outcomes(_pair(), [])
     assert order == ["yes", "no"]
+    gemini_pair = _pair(no_venue="gemini", polymarket_fee=None)
     fresh = [
         {"venue": "Gemini", "pay": "no", "market_type": "spread", "number": "3.5", "move": "0.20"},
         {"venue": "Kalshi", "pay": "yes", "market_type": "spread", "number": "3.5", "move": "-0.04"},
     ]
-    assert live_lock_orders.ordered_outcomes(_pair(), fresh) == ["no", "yes"]
+    assert live_lock_orders.ordered_outcomes(gemini_pair, fresh) == ["no", "yes"]
 
 
 def test_kalshi_no_is_a_yes_ask_at_one_minus_price():
@@ -368,6 +409,24 @@ def test_spot_order_path_is_refused():
     raise AssertionError("spot order path should be refused")
 
 
+def test_gemini_private_call_refuses_order_when_quote_only():
+    saved = gemini_private.GEMINI_ORDERS_ENABLED
+    gemini_private.GEMINI_ORDERS_ENABLED = False
+    try:
+        record = {}
+        status, body = gemini_private.private_call(
+            "/v1/prediction-markets/order",
+            {"symbol": "GEMI-TEST", "side": "bid"},
+            "POST",
+            record=record,
+        )
+        assert status == 0
+        assert "gemini orders off" in body
+        assert record.get("request", {}).get("skipped")
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+
+
 if __name__ == "__main__":
     from pathlib import Path
     import tempfile
@@ -377,6 +436,7 @@ if __name__ == "__main__":
     test_size_cap_needs_one_whole_contract()
     test_tennessee_13_5_is_blocked()
     test_flipped_gemini_no_is_blocked()
+    test_gemini_quote_only_skips_lock_send_leg()
     test_missing_moves_send_kalshi_first()
     test_kalshi_no_is_a_yes_ask_at_one_minus_price()
     test_polymarket_short_price_does_not_pay_more()
@@ -396,4 +456,5 @@ if __name__ == "__main__":
         test_tick_sends_cheap_exit_when_orders_on(tick_dir)
     test_exit_specs_build_for_kalshi_and_gemini()
     test_spot_order_path_is_refused()
+    test_gemini_private_call_refuses_order_when_quote_only()
     print("ok")

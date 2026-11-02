@@ -245,7 +245,7 @@ def plan_send(
     fee_ok = [row for row in in_band if systems.total_quote_fee_ok(row)]
     if not fee_ok:
         return {"action": "skip", "reason": "novig fee unknown", "best": None}
-    best = systems.pick_cheapest_total_yes(rows)
+    best = systems.pick_cheapest_total_yes(rows, for_send=True)
     if best is None:
         return {"action": "skip", "reason": "no Points Total Yes in [0.20, 0.50)", "best": None}
     ask = systems._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))

@@ -430,6 +430,12 @@ def qualifies(scan, cand: dict, title: str, game: dict) -> tuple[bool, str]:
         return False, why_sd
     if scan.gemini_no_rejection(cand):
         return False, "Gemini No is not a buyable offer"
+    # Soft-disable: never require a Gemini POST when quote-only. Skip the pair
+    # so lock construction falls through to non-Gemini candidates (no phantom gap).
+    yes_venue = str(cand.get("yes_venue") or "").lower()
+    no_venue = str(cand.get("no_venue") or "").lower()
+    if "gemini" in (yes_venue, no_venue) and not gemini_private.orders_live():
+        return False, "gemini orders off (quote only)"
     for field in ("kalshi_status", "gemini_status"):
         if str(cand.get(field) or "").lower() in CLOSED:
             return False, "contract is closed"
@@ -1492,6 +1498,8 @@ def _send(spec: dict) -> tuple[int, dict | None, str]:
     if not orders_enabled():
         return 0, None, "placing orders is off"
     venue = str(spec.get("venue") or "").lower()
+    if venue == "gemini" and not gemini_private.orders_live():
+        return 0, None, "gemini orders off (quote only)"
     if venue == "kalshi":
         status, body = kalshi_private.signed_call("POST", "/trade-api/v2/portfolio/events/orders", spec["body"])
     elif venue == "gemini":

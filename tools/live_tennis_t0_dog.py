@@ -131,7 +131,7 @@ def plan_send(
     if not rows:
         for name, px in (side_asks or {}).items():
             rows.append({"venue": "kalshi", "side": name, "yes": px, "ask": px, "team": name})
-    best = systems.best_venue_yes(rows, dog)
+    best = systems.best_venue_yes(rows, dog, for_send=True)
     if best is None:
         return {"action": "skip", "reason": "no venue Yes", "dog": dog}
     ask = systems._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))
