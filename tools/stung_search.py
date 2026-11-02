@@ -13,6 +13,7 @@ import argparse
 import json
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -49,13 +50,25 @@ def event_state(event: dict) -> str:
 
 
 def search_stung(query: str) -> list[dict]:
-    url = "https://api.stungevents.com/search?q=" + urllib.parse.quote(query)
+    sys.path.insert(0, str(REPO_TOOLS))
+    from sync_spotify_upcoming_shows import (  # noqa: WPS433
+        STUNG,
+        STUNG_GONE_MESSAGE,
+        StungApiGoneError,
+    )
+
+    url = f"{STUNG}/search?q=" + urllib.parse.quote(query)
     req = urllib.request.Request(
         url,
         headers={"Accept": "application/json", "User-Agent": "tbn-stung-search/1.1"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (410, 404):
+            raise StungApiGoneError(STUNG_GONE_MESSAGE) from exc
+        raise
     return list(data.get("events") or [])
 
 
@@ -171,10 +184,17 @@ def main() -> int:
         file=sys.stderr,
     )
 
+    sys.path.insert(0, str(REPO_TOOLS))
+    from sync_spotify_upcoming_shows import StungApiGoneError  # noqa: WPS433
+
     any_hits = False
     for band in bands:
         try:
             events = search_stung(band)
+        except StungApiGoneError as exc:
+            # Fail fast on permanent API retirement (avoid one line per band).
+            print(str(exc), file=sys.stderr)
+            return 2
         except Exception as exc:  # noqa: BLE001
             print(f"{band}: error: {exc}")
             continue
