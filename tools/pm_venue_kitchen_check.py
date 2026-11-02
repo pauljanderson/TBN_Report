@@ -164,7 +164,10 @@ def settled_pnl_by_venue(store: dict) -> dict[str, Decimal]:
         if venue not in out:
             continue
         status = str(item.get("status") or "").lower()
-        if status not in {"win", "lose", "void", "settled"} and item.get("pnl") in (None, ""):
+        if status not in {"win", "lose", "void", "settled", "flatten"} and item.get("pnl") in (
+            None,
+            "",
+        ):
             continue
         pnl = _dec(item.get("pnl"))
         if pnl is None:

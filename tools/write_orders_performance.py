@@ -1931,13 +1931,18 @@ def persist_settled_pnl(clusters: list[dict], settlements: list[dict], *, source
                     px_ok = _poly_px_result(leg) in FINAL_RESULTS
                     if status == "void":
                         result = "void"
-                    elif poly and not px_ok:
-                        result = ""
                     elif status == "win" and side in {"yes", "no"}:
+                        # Ticket already priced (stamp_ticket_pnl). Prefer that over
+                        # requiring settlementPx — Poly often has kitchen dollars
+                        # before binary px is on the leg.
                         result = side
                     elif status == "lose" and side in {"yes", "no"}:
                         result = "no" if side == "yes" else "yes"
+                    elif poly and not px_ok:
+                        # No ticket stamp and no binary px → do not invent.
+                        result = ""
                 if result not in FINAL_RESULTS:
+                    # Last resort: ticket_pnl already stamped → share/miss ingest books it.
                     continue
                 settled_pnl_store.upsert_leg(
                     leg,
@@ -1946,6 +1951,17 @@ def persist_settled_pnl(clusters: list[dict], settlements: list[dict], *, source
                     store=blob,
                     game=game,
                 )
+                # Preserve kitchen ticket_pnl when upsert recomputed a different fee path.
+                key = str(leg.get("order_id") or "")
+                ticket_pnl = ddec(leg.get("ticket_pnl"))
+                if (
+                    key
+                    and ticket_pnl is not None
+                    and isinstance(blob.get(key), dict)
+                    and blob[key].get("pnl") in (None, "")
+                ):
+                    blob[key]["pnl"] = format(ticket_pnl, "f")
+                    blob[key]["status"] = str(leg.get("ticket_status") or blob[key].get("status") or "")
                 inst = str(leg.get("instrument") or "")
                 venue = str(leg.get("venue") or "").lower()
                 px = leg.get("settlementPx")
@@ -1964,8 +1980,62 @@ def persist_settled_pnl(clusters: list[dict], settlements: list[dict], *, source
                         "game": game or prev.get("game") or "",
                         "source": source,
                     }
+    # Poly/Gemini/Novig (and any Kalshi miss): book kitchen ticket_pnl / By-venue
+    # equal shares when settle_result never arrived but the cluster is settled.
+    stats = {}
+    try:
+        stats = venue_stats(clusters)
+    except Exception:
+        stats = {}
+    try:
+        import pm_venue_miss_ingest as miss
+
+        share_rep = miss.ingest_scored_fill_legs(
+            blob, clusters, persist=False, source=f"{source}_share"
+        )
+        if share_rep.get("added"):
+            print(
+                f"settled_pnl share/ticket backfill added={share_rep.get('added')} "
+                f"by_venue={share_rep.get('by_venue_added')}",
+                flush=True,
+            )
+        wanted = {
+            venue: Decimal(str((slot or {}).get("realized") or 0))
+            for venue, slot in stats.items()
+        }
+        gap_rep = miss.close_by_venue_attribution_gaps(
+            blob, wanted, persist=False, source=f"{source}_gap"
+        )
+        if gap_rep.get("added"):
+            print(
+                f"settled_pnl by-venue gap bridge added={gap_rep.get('added')} "
+                f"gaps={gap_rep.get('gaps')}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"settled_pnl share backfill {type(exc).__name__}", flush=True)
     settled_pnl_store.save(blob)
     print(f"settled_pnl.json n={len(blob)} {SETTLED_PNL}", flush=True)
+    try:
+        by_venue = {
+            venue: format(Decimal(str((slot or {}).get("realized") or 0)), "f")
+            for venue, slot in sorted(stats.items())
+        }
+        (RAW / "settled_pnl_by_venue.json").write_text(
+            json.dumps(
+                {
+                    "written_at": datetime.now(ET).isoformat(timespec="seconds"),
+                    "source": source,
+                    "by_venue": by_venue,
+                    "settled_pnl_n": len(blob),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 
 def match_bucket(cluster: dict) -> str:
