@@ -1931,13 +1931,18 @@ def persist_settled_pnl(clusters: list[dict], settlements: list[dict], *, source
                     px_ok = _poly_px_result(leg) in FINAL_RESULTS
                     if status == "void":
                         result = "void"
-                    elif poly and not px_ok:
-                        result = ""
                     elif status == "win" and side in {"yes", "no"}:
+                        # Ticket already priced (stamp_ticket_pnl). Prefer that over
+                        # requiring settlementPx — Poly often has kitchen dollars
+                        # before binary px is on the leg.
                         result = side
                     elif status == "lose" and side in {"yes", "no"}:
                         result = "no" if side == "yes" else "yes"
+                    elif poly and not px_ok:
+                        # No ticket stamp and no binary px → do not invent.
+                        result = ""
                 if result not in FINAL_RESULTS:
+                    # Last resort: ticket_pnl already stamped → share/miss ingest books it.
                     continue
                 settled_pnl_store.upsert_leg(
                     leg,
@@ -1946,6 +1951,17 @@ def persist_settled_pnl(clusters: list[dict], settlements: list[dict], *, source
                     store=blob,
                     game=game,
                 )
+                # Preserve kitchen ticket_pnl when upsert recomputed a different fee path.
+                key = str(leg.get("order_id") or "")
+                ticket_pnl = ddec(leg.get("ticket_pnl"))
+                if (
+                    key
+                    and ticket_pnl is not None
+                    and isinstance(blob.get(key), dict)
+                    and blob[key].get("pnl") in (None, "")
+                ):
+                    blob[key]["pnl"] = format(ticket_pnl, "f")
+                    blob[key]["status"] = str(leg.get("ticket_status") or blob[key].get("status") or "")
                 inst = str(leg.get("instrument") or "")
                 venue = str(leg.get("venue") or "").lower()
                 px = leg.get("settlementPx")
