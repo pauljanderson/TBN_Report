@@ -682,7 +682,7 @@ def dog_line_snapshot(rows: list[dict]) -> dict | None:
     dog, why = choose_dog(rows)
     if not dog:
         return None
-    best = systems.best_venue_yes(rows, dog)
+    best = systems.best_venue_yes(rows, dog, for_send=True)
     if best is None:
         return None
     px = live_lock_orders._dec(best.get("yes"))
@@ -704,7 +704,7 @@ def dog_line_snapshot(rows: list[dict]) -> dict | None:
 
 def cheapest_spread_snapshot(rows: list[dict]) -> dict | None:
     """F: cheapest tennis spread Yes in [0.20, 0.50). Not moneyline. Not D closest-to-50."""
-    best = systems.pick_cheapest_spread_yes(rows)
+    best = systems.pick_cheapest_spread_yes(rows, for_send=True)
     if best is None:
         return None
     px = live_lock_orders._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))
@@ -726,7 +726,7 @@ def cheapest_spread_snapshot(rows: list[dict]) -> dict | None:
 
 def cheapest_total_snapshot(rows: list[dict]) -> dict | None:
     """G: cheapest soccer Points Total Yes in [0.20, 0.50). Not moneyline. Not spread."""
-    best = systems.pick_cheapest_total_yes(rows)
+    best = systems.pick_cheapest_total_yes(rows, for_send=True)
     if best is None:
         return None
     px = live_lock_orders._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))
@@ -764,7 +764,7 @@ def line_snapshot(rows: list[dict]) -> dict | None:
     fav, why = choose_favorite(rows)
     if not fav:
         return None
-    best = systems.best_venue_yes(rows, fav)
+    best = systems.best_venue_yes(rows, fav, for_send=True)
     if best is None:
         return None
     px = live_lock_orders._dec(best.get("yes"))

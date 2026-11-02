@@ -3,6 +3,12 @@
 Balance reads stay the default command. Prediction-market orders go through
 private_call and are used only by tools/live_lock_orders.py. Spot order paths
 stay refused. Secrets stay in secrets/ and are not printed.
+
+Gemini soft-disable (quote-only / no-send): keep collecting Gemini books for
+price discovery, but refuse new prediction-market POSTs until Paul flips the
+flag. Same spirit as Novig NOVIG_ORDERS_ENABLED. Re-enable without a code hunt:
+set GEMINI_ORDERS_ENABLED = True here, or set top-level "gemini_orders": true
+in local systems.json (systems.json wins when present).
 """
 from __future__ import annotations
 
@@ -20,6 +26,10 @@ from pathlib import Path
 BALANCES_PATH = "/v1/balances"
 BALANCES_URL = "https://api.gemini.com/v1/balances"
 PUBLIC_URL = "https://api.gemini.com/v1/symbols"
+# Soft-disable send. False = quote-only (default). True only when Gemini again
+# wins real after-fee opportunities. systems.json "gemini_orders" overrides.
+GEMINI_ORDERS_ENABLED = False
+ORDER_PLACE_PATH = "/v1/prediction-markets/order"
 # Seconds added to local time so the nonce matches Gemini's Date header.
 _CLOCK_OFFSET_SEC: float | None = None
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +50,34 @@ def _refuse_orders(path: str) -> None:
     if path != BALANCES_PATH or any(marker.replace("_", "") in lowered for marker in _ORDER_MARKERS):
         print("Refusing order path. This tool only reads balances.")
         raise SystemExit(2)
+
+
+def _systems_json_orders_override() -> bool | None:
+    """Optional top-level systems.json gemini_orders. None = use module flag."""
+    try:
+        from prediction_paths import RAW_DIR
+
+        path = RAW_DIR / "systems.json"
+        if not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or "gemini_orders" not in data:
+        return None
+    return bool(data.get("gemini_orders"))
+
+
+def orders_live() -> bool:
+    """True when Gemini may be selected as a send venue / POST new orders.
+
+    Quote collection, compare, and price discovery ignore this. Cancel and
+    history reads stay allowed so open leftovers can still be cleaned up.
+    """
+    override = _systems_json_orders_override()
+    if override is not None:
+        return override
+    return bool(GEMINI_ORDERS_ENABLED)
 
 
 def _load_secret(path: Path) -> str:
@@ -137,10 +175,16 @@ def private_call(
 
     Spot /v1/order paths are refused. `record`, when passed, receives the JSON
     object that is base64-encoded. That object has no API key and no signature.
+    New prediction-market order POSTs refuse when orders_live() is False.
     """
     allowed = path == BALANCES_PATH or path.startswith("/v1/prediction-markets/")
     if not allowed or any(marker.replace("_", "") in path.lower().replace("_", "") for marker in _ORDER_MARKERS):
         raise ValueError("refusing a non prediction-market order path")
+    if path.rstrip("/") == ORDER_PLACE_PATH and str(http_method or "").upper() == "POST":
+        if not orders_live():
+            if record is not None:
+                record["request"] = {"request": path, "skipped": "gemini orders off (quote only)"}
+            return 0, '{"result":"error","reason":"gemini orders off (quote only)"}'
     api_key = _load_secret(KEY_FILE)
     api_secret = _load_secret(SECRET_FILE)
     nonce = next_nonce()

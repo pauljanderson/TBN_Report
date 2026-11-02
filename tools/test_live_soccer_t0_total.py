@@ -238,6 +238,25 @@ def test_tie_venue_rank_kalshi_first():
     assert plan["venue"] == "kalshi"
 
 
+def test_gemini_cheapest_falls_back_when_quote_only():
+    import gemini_private
+
+    quotes = [
+        _total("Over 2.5", "0.21", venue="gemini", number="2.5"),
+        _total("Over 2.5", "0.29", venue="kalshi", number="2.5"),
+        _total("Under 2.5", "0.72", venue="kalshi", number="2.5"),
+    ]
+    saved = gemini_private.GEMINI_ORDERS_ENABLED
+    gemini_private.GEMINI_ORDERS_ENABLED = False
+    try:
+        plan = g.plan_send(quotes=quotes, title="Arsenal vs Chelsea", sport="soccer")
+        assert plan["action"] == "send", plan
+        assert plan["venue"] == "kalshi"
+        assert plan["ask"] == Decimal("0.29")
+    finally:
+        gemini_private.GEMINI_ORDERS_ENABLED = saved
+
+
 if __name__ == "__main__":
     test_band_20_included_50_excluded()
     test_cheapest_of_four_venues_same_line_side()
@@ -249,4 +268,5 @@ if __name__ == "__main__":
     test_novig_fee_unknown_skipped()
     test_leftover_watch_does_not_hedge_g()
     test_tie_venue_rank_kalshi_first()
+    test_gemini_cheapest_falls_back_when_quote_only()
     print("ok")
