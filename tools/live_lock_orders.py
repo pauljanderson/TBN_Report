@@ -49,9 +49,71 @@ except Exception:  # pragma: no cover - bare clone without prediction_paths
     RAW = ROOT / "local" / "paul_experiments" / "prediction_market_arb_exhaustive_20261017" / "raw"
     ORDERS_STOP = RAW / "orders_stopped.json"
 ORDERS = RAW / "orders.jsonl"
+ORDER_IO = RAW / "order_io.jsonl"
 ORDER_LOCK = RAW / "orders.lock"
 ONE_LEG_WATCH = RAW / "one_leg_gtc_watch.jsonl"
 LAST_SKIP = RAW / "lock_last_skip.json"
+IO_CAP = 100_000
+_MARKET_SIZE_FETCH_ENABLED = True
+MARKET_SIZE_KEYS = (
+    "ask_size",
+    "volume_fp",
+    "volume_24h_fp",
+    "open_interest_fp",
+    "volume",
+    "volume24h",
+    "volume24hr",
+    "liquidity",
+    "openInterest",
+    "open_interest",
+)
+QUOTE_KEYS = (
+    "quote_source",
+    "quote_price",
+    "quote_seen_at",
+    "sent_at",
+    "lag_seconds",
+    "trigger_venue",
+    "trigger_side",
+    "trigger_price",
+    "trigger_seen_at",
+    "trigger_source",
+    "quote_size",
+)
+_KEEP_RESPONSE = {
+    "message",
+    "reason",
+    "error",
+    "status",
+    "code",
+    "result",
+    "details",
+    "orderid",
+    "hashorderid",
+    "clientorderid",
+    "globalorderid",
+    "filledquantity",
+    "remainingquantity",
+    "quantity",
+    "price",
+    "avgexecutionprice",
+    "averagefillprice",
+    "averagefeepaid",
+    "feecost",
+    "takerfees",
+    "takerfeedollars",
+    "fees",
+    "fee",
+    "cancelreason",
+    "rejectionreason",
+    "outcome",
+    "side",
+    "timeinforce",
+    "symbol",
+    "venue_confirm",
+    "fill_count",
+    "order",
+}
 ORDERS_ENABLED_STAMP_ON = RAW / "orders_enabled.on"
 ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
 _DIRECTIONAL_SYSTEMS = frozenset(
@@ -70,6 +132,8 @@ _DEFAULT_NET_MAX = Decimal("0.95")
 SIZE = Decimal("1")
 KALSHI_TICK = Decimal("0.0001")
 POLY_TICK = Decimal("0.001")
+POLY_TIF_FOK = "TIME_IN_FORCE_FILL_OR_KILL"
+POLY_TIF_GTC = "TIME_IN_FORCE_GOOD_TILL_CANCEL"
 # Second-leg GTC wait, then cheap-exit / BE-complete / hold (Paul 2026-10-31).
 ONE_LEG_GTC_WAIT_SEC = 180
 CHEAP_EXIT_MAX = Decimal("0.25")
@@ -80,6 +144,7 @@ MARKET_BUY_CEILING = Decimal("0.99")
 MAX_OPEN_LOCKS = 3
 CLOSED = {"closed", "settled", "determined", "finalized", "inactive"}
 _capability: dict[str, tuple[float, bool, str]] = {}
+
 
 # Module flag (default False). Prefer orders_enabled() which also honors env + stamps.
 # Tests and local overrides may assign ORDERS_ENABLED = True.
@@ -178,11 +243,429 @@ def orders_enabled() -> bool:
     return bool(ORDERS_ENABLED)
 
 
+def venue_tick(venue: str) -> Decimal:
+    shop = str(venue or "").lower()
+    if shop == "kalshi":
+        return KALSHI_TICK
+    if shop == "polymarket":
+        return POLY_TICK
+    return CENT
+
+
+def snap_pay(venue: str, price: Decimal) -> Decimal | None:
+    """Snap a cash pay to the venue tick. None when price is unusable."""
+    pay = _dec(price)
+    if pay is None or pay <= 0 or pay >= 1:
+        return None
+    tick = venue_tick(venue)
+    return pay.quantize(tick, rounding=ROUND_HALF_UP)
+
+
+def contract_cost(pay: Decimal | None, qty: Decimal | None = None) -> Decimal:
+    px = _dec(pay) or Decimal("0")
+    size = _dec(qty) if qty is not None else SIZE
+    if size is None or size <= 0:
+        size = SIZE
+    return (px * size).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def _carry_quote_fields(src: dict | None, dest: dict | None) -> dict | None:
+    if not isinstance(dest, dict):
+        return dest
+    if not isinstance(src, dict):
+        return dest
+    for key in ("quote_size", "quote_seen_at", "book_ask", "book_bid"):
+        if src.get(key) not in (None, "") and dest.get(key) in (None, ""):
+            dest[key] = src.get(key)
+    return dest
+
+
+def _attach_quote_size(spec: dict | None, size, overwrite: bool = False) -> None:
+    if not isinstance(spec, dict):
+        return
+    if not overwrite and spec.get("quote_size") not in (None, ""):
+        return
+    qty = _dec(size)
+    if qty is not None and qty > 0:
+        spec["quote_size"] = format(qty, "f")
+
+
+def record_research_row(row: dict) -> None:
+    """Append a Strategy B / research tape row onto orders.jsonl (dashboard source)."""
+    if not isinstance(row, dict):
+        return
+    out = dict(row)
+    out.setdefault("event", str(row.get("event") or "research"))
+    out.setdefault("at", _iso_now())
+    try:
+        _append(out)
+    except Exception:
+        pass
+
+
+def outcome_fill_qty(outcome: dict | None) -> Decimal:
+    if not isinstance(outcome, dict):
+        return Decimal("0")
+    for key in ("fill_qty", "filled_qty", "qty", "size", "fill_count"):
+        qty = _dec(outcome.get(key))
+        if qty is not None and qty > 0:
+            return qty
+    payload = outcome.get("payload")
+    if payload is not None:
+        return filled_contracts(payload)
+    return filled_contracts(outcome)
+
+
+def leg_filled_at_least_one(outcome: dict | None) -> bool:
+    """True when this leg filled at least one contract. A miss is false.
+
+    Qty >= 1 is the only yes. HTTP 201, status cancelled, fill_count 0, or a
+    weak filled flag without contracts is not a fill.
+    """
+    if not outcome:
+        return False
+    return outcome_fill_qty(outcome) >= ONE
+
+
+def exactly_one_leg_filled(first_out: dict | None, second_out: dict | None) -> bool:
+    """True when one venue filled >=1 and the other filled none."""
+    return leg_filled_at_least_one(first_out) != leg_filled_at_least_one(second_out)
+
+
+def poly_size_lt_qty_skip(spec: dict | None, *, rest: bool = True) -> str:
+    """Polymarket needs takeable size ≥ order qty for FOK/IOC. Empty = ok."""
+    del rest
+    if not isinstance(spec, dict):
+        return ""
+    if str(spec.get("venue") or "").lower() != "polymarket":
+        return ""
+    need = _dec(spec.get("size")) or SIZE
+    saw = _takeable_size(spec)
+    if saw is None:
+        return ""
+    if saw + Decimal("0.0000001") < need:
+        return f"poly_size_lt_qty_skip need≥{format(need, 'f')} saw={format(saw, 'f')}"
+    return ""
+
+
+def _funds_block(built: dict) -> str:
+    """Empty when cash check is skipped or ok. Non-empty deny string otherwise."""
+    if not isinstance(built, dict):
+        return ""
+    # GTC-adopt kitchen: do not invent balances here; send path still has venue rejects.
+    return ""
+
+
+def _balance_deny_reason(venue: str, cash: Decimal | None = None, cost: Decimal | None = None) -> str:
+    shop = str(venue or "").lower() or "venue"
+    if cash is None or cost is None:
+        return f"{shop} balance unknown"
+    return f"{shop} balance {format(cash, 'f')} < need {format(cost, 'f')}"
+
+
+def _balance_deny_from_probe(why: str, venue: str = "") -> str:
+    text = str(why or "").strip()
+    if text:
+        return text
+    return _balance_deny_reason(venue)
+
+
+def _balance_deny_from_funds(funds: str) -> str:
+    return str(funds or "").strip() or "balance deny"
+
+
+def _spec_at_price(spec: dict, pay: Decimal) -> dict | None:
+    """Rebuild an existing leg at a new cash pay (Strategy B send path)."""
+    if not isinstance(spec, dict):
+        return None
+    snapped = snap_pay(str(spec.get("venue") or ""), pay)
+    if snapped is None:
+        return None
+    intent = None
+    body = spec.get("body") if isinstance(spec.get("body"), dict) else {}
+    if str(spec.get("venue") or "").lower() == "polymarket":
+        intent = str(body.get("intent") or spec.get("intent") or "") or None
+    built = build_buy_leg_spec(
+        venue=str(spec.get("venue") or ""),
+        instrument=str(spec.get("instrument") or ""),
+        outcome=str(spec.get("outcome") or ""),
+        pay=snapped,
+        tif=str(spec.get("tif") or "ioc"),
+        intent=intent,
+    )
+    if built is None:
+        return None
+    _carry_quote_fields(spec, built)
+    return built
+
+
+def fetch_book_ask(spec: dict, *, pace: bool = True, priority: bool = False) -> tuple[Decimal | None, str]:
+    """Best-effort ask for a leg. Returns (price, note). No price → (None, why)."""
+    del pace, priority
+    if not isinstance(spec, dict):
+        return None, "no spec"
+    pay = _dec(spec.get("pay") or spec.get("book_ask") or spec.get("limit"))
+    if pay is None:
+        return None, "no ask"
+    snapped = snap_pay(str(spec.get("venue") or ""), pay)
+    if snapped is None:
+        return None, "ask unusable"
+    return snapped, "spec pay"
+
+
 def _iso_now() -> str:
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     return datetime.now(ZoneInfo("America/New_York")).isoformat(timespec="seconds")
+
+
+def _secret_blobs() -> tuple[str, ...]:
+    """File contents used only to strip secrets out of a stored line. Never printed."""
+    names = (
+        "gemini_api_key.txt",
+        "gemini_api_secret.txt",
+        "kalshi_key_id.txt",
+        "kalshi_private_key.pem",
+        "polymarket_api_key.txt",
+        "polymarket_api_secret.txt",
+        "novig_api_key.txt",
+        "novig_api_secret.txt",
+        "novig_key_id.txt",
+        "novig_private_key.pem",
+    )
+    found = []
+    for name in names:
+        path = ROOT / "secrets" / name
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if len(text) >= 8:
+            found.append(text)
+    return tuple(found)
+
+
+def _redact_secrets(text: str) -> str:
+    out = str(text or "")
+    for secret in _secret_blobs():
+        out = out.replace(secret, "[redacted]")
+    return out
+
+
+def _redact_obj(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(
+                word in lowered
+                for word in ("signature", "secret", "apikey", "api_key", "authorization", "password")
+            ):
+                cleaned[key] = "[redacted]"
+            else:
+                cleaned[key] = _redact_obj(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_redact_obj(item) for item in value]
+    if isinstance(value, str):
+        return _redact_secrets(value)
+    return value
+
+
+def _harvest_kept(value, found: dict) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower().replace("_", "") in _KEEP_RESPONSE or "filled" in str(key).lower():
+                found[str(key)] = _redact_obj(item)
+            _harvest_kept(item, found)
+    elif isinstance(value, list):
+        for item in value:
+            _harvest_kept(item, found)
+
+
+def _response_for_store(body: str):
+    text = _redact_secrets(body or "")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if len(text) <= IO_CAP and parsed is not None:
+        return _redact_obj(parsed)
+    if len(text) <= IO_CAP:
+        return text
+    kept: dict = {}
+    if parsed is not None:
+        _harvest_kept(parsed, kept)
+    return {"truncated": True, "head": text[:80_000], "kept": kept}
+
+
+def record_order_io(
+    venue: str,
+    kind: str,
+    request,
+    status: int,
+    body: str,
+    attempt: int | None = None,
+    quote: dict | None = None,
+) -> None:
+    """One JSON line per attempt. Secrets stripped. Dashboard fill_legs source."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    row = {
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(timespec="seconds"),
+        "venue": venue,
+        "kind": kind,
+        "request": _redact_obj(request),
+        "http_status": status,
+        "response": _response_for_store(body or ""),
+    }
+    if attempt is not None:
+        row["attempt"] = attempt
+    env = quote if isinstance(quote, dict) else None
+    if env:
+        public = {key: env[key] for key in QUOTE_KEYS if env.get(key) not in (None, "")}
+        if public:
+            row["quote"] = public
+            for key, value in public.items():
+                row.setdefault(key, value)
+        for key in ("instrument", "outcome", "limit", "pay"):
+            if env.get(key) not in (None, ""):
+                row.setdefault(key, env.get(key))
+    line = _redact_secrets(json.dumps(row, ensure_ascii=False, default=str))
+    ORDER_IO.parent.mkdir(parents=True, exist_ok=True)
+    with ORDER_IO.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+
+
+def _phone_order_placed(spec: dict) -> None:
+    """Optional phone notify hook. Tests replace this."""
+    del spec
+
+
+def _phone_watch_note(title: str, message: str) -> None:
+    """Detached ntfy. Fail-soft. Does not place an order."""
+    del title, message
+
+
+def _refresh_order_pages() -> None:
+    """Optional sync HTML rebuild hook. Prefer background maybe_after_order."""
+    return
+
+
+def _maybe_performance_after_order(payload, status=None) -> bool:
+    """Background rebuild of orders_performance / dashboard on confirmed fill."""
+    try:
+        import orders_performance_refresh
+
+        return bool(orders_performance_refresh.maybe_after_order(payload, status=status))
+    except Exception:
+        return False
+
+
+def _order_was_sent(outcome: dict | None) -> bool:
+    outcome = outcome or {}
+    if "posted" in outcome:
+        return bool(outcome.get("posted"))
+    return str(outcome.get("step") or "") in {
+        "websocket",
+        "book",
+        "midway",
+        "simultaneous",
+        "hard",
+        "easy",
+        "watch",
+        "flatten",
+    }
+
+
+def format_posted_leg_return(outcome: dict | None) -> str:
+    """One posted IOC: HTTP tape and venue-confirm qty. Empty if not posted."""
+    if not isinstance(outcome, dict):
+        return ""
+    status = int(outcome.get("status") or 0)
+    if not _order_was_sent(outcome) and status == 0:
+        return ""
+    spec = outcome.get("spec") if isinstance(outcome.get("spec"), dict) else {}
+    venue = str(spec.get("venue") or outcome.get("venue") or "")
+    payload = outcome.get("payload")
+    qty = outcome_fill_qty(outcome)
+    if qty == qty.to_integral_value():
+        qty_txt = format(qty.quantize(Decimal("1")), "f")
+    else:
+        qty_txt = format(qty, "f")
+    note = public_venue_note(payload, str(outcome.get("note") or ""))
+    flatten = str(outcome.get("step") or "") == "flatten" or bool(spec.get("_flatten"))
+    confirm = venue_confirm_of(payload)
+    tape_qty = None
+    if confirm is not None:
+        tape_qty = _dec(confirm.get("tape_qty"))
+    if tape_qty is None:
+        tape_qty = venue_fill_confirm.tape_filled_qty(payload)
+    if tape_qty == tape_qty.to_integral_value():
+        tape_txt = format(tape_qty.quantize(Decimal("1")), "f")
+    else:
+        tape_txt = format(tape_qty, "f")
+    head = f"{'flatten ' if flatten else ''}{venue or 'venue'} HTTP {status} fill {tape_txt}"
+    line = f"{head} {note}".strip() if note else head
+    if confirm is not None:
+        if confirm.get("known"):
+            confirm_bit = f"confirm {confirm.get('note') or ('qty ' + qty_txt)}"
+        else:
+            confirm_bit = f"confirm unknown {confirm.get('note') or ''}".strip()
+        line = f"{line}; {confirm_bit}".strip()
+        if confirm.get("mismatch"):
+            line = f"{line} (using confirm qty {qty_txt})"
+    return _scrub_public_text(line)
+
+
+def _one_ioc(
+    log,
+    key: str,
+    spec: dict,
+    pay: Decimal,
+    step: str,
+    send,
+    other_price: Decimal | None = None,
+    other_fee: Decimal | None = None,
+) -> dict:
+    """Send one IOC at pay. Thin GTC-adopt path — confirm lives inside send/_send."""
+    del other_price, other_fee
+    built = _spec_at_price(spec, pay)
+    blank = {
+        "filled": False,
+        "advance": False,
+        "payload": None,
+        "status": 0,
+        "note": "price not sendable",
+        "pay": spec.get("pay") if isinstance(spec, dict) else None,
+        "spec": spec,
+        "step": step,
+        "posted": False,
+        "fill_qty": "0",
+    }
+    if built is None:
+        return blank
+    _carry_quote_fields(spec, built)
+    if isinstance(spec, dict) and spec.get("_flatten"):
+        built["_flatten"] = True
+    status, payload, note = _post_same_limit(log, key, built, step, send, _dec(built.get("pay")), None, None)
+    filled = filled_contracts(payload) if payload is not None else Decimal("0")
+    if status not in (200, 201) and not venue_confirm_known(payload):
+        filled = Decimal("0")
+    return {
+        "filled": filled >= SIZE,
+        "advance": False,
+        "payload": payload,
+        "status": status,
+        "note": note,
+        "pay": built.get("pay"),
+        "spec": built,
+        "step": step,
+        "posted": status != 0,
+        "fill_qty": format(filled, "f"),
+    }
 
 
 def maybe_resume_one_leg_watch(log) -> str:
@@ -727,6 +1210,24 @@ def qualifies(scan, cand: dict, title: str, game: dict) -> tuple[bool, str]:
     bad, why_sd = ksd.candidate_is_same_direction_double(cand)
     if bad:
         return False, why_sd
+    # Block Yes-B when we already hold No-A on the complementary market (or reverse).
+    provisional: list[dict] = []
+    for outcome in ("yes", "no"):
+        spec = _leg_spec(cand, outcome)
+        if isinstance(spec, dict):
+            provisional.append(spec)
+    if len(provisional) == 2 and not _pair_legs_ok(provisional):
+        names = ",".join(str(leg.get("venue") or "") for leg in provisional)
+        return False, f"pair needs two distinct order venues ({names})"
+    if provisional:
+        bad_legs, why_legs = ksd.legs_are_same_direction_double(provisional)
+        if bad_legs:
+            return False, why_legs
+        bad_open, why_open = ksd.open_book_blocks_same_direction(
+            provisional, _open_book_legs_for_same_direction()
+        )
+        if bad_open:
+            return False, why_open
     if scan.gemini_no_rejection(cand):
         return False, "Gemini No is not a buyable offer"
     # Soft-disable: never require a Gemini POST when quote-only. Skip the pair
@@ -789,12 +1290,33 @@ def leg_moves(fresh: list[dict], cand: dict) -> tuple[Decimal | None, Decimal | 
 
 
 # --- thin-first (merged from tools/_merge_backup/live_lock_orders.py) ---
+_ORDER_VENUES = frozenset({"kalshi", "gemini", "polymarket", "novig"})
 VENUE_MISS_RANK = {
     "gemini": 3,
     "kalshi": 2,
     "polymarket": 1,
     "novig": 0,
 }
+
+
+def _pair_legs_ok(legs: list[dict]) -> bool:
+    """True when both legs are distinct order venues (Kalshi/Gemini/Polymarket/Novig-when-live).
+
+    Same-shop Yes+No is never a lock-bot send: on Kalshi it is how GIMPEN-class
+    same-direction doubles reach the wire (Yes-A + No-B on complementary markets).
+    Restored after the GTC second-leg merge dropped this gate.
+    """
+    if len(legs) != 2:
+        return False
+    venues = [str(leg.get("venue") or "").lower() for leg in legs]
+    if venues[0] == venues[1]:
+        return False
+    for venue in venues:
+        if venue not in _ORDER_VENUES:
+            return False
+        if venue == "novig" and not novig_live.orders_live():
+            return False
+    return True
 
 def _venue_miss_rank(spec: dict | None) -> int:
     """Higher = historically more one-leg misses. Frozen VENUE_MISS_RANK."""
@@ -1429,6 +1951,118 @@ def leg_fee(spec: dict, price: Decimal, payload=None) -> Decimal | None:
     return Decimal("0")
 
 
+def _leg_cash_price(spec: dict) -> Decimal | None:
+    """Pay-side cash of this spec. Kalshi No is house pay, not POST Yes-wire limit."""
+    spec = spec or {}
+    pay = _dec(spec.get("pay"))
+    if pay is not None and Decimal("0") < pay < ONE:
+        return pay
+    limit = _dec(spec.get("limit"))
+    venue = str(spec.get("venue") or "")
+    side = _book_side(spec) or str(spec.get("outcome") or "")
+    if venue == "kalshi" and side == "no" and limit is not None and Decimal("0") < limit < ONE:
+        return ONE - limit
+    if limit is not None and Decimal("0") < limit < ONE:
+        return limit
+    return None
+
+
+def _size_log_fields(spec: dict | None) -> dict:
+    if not isinstance(spec, dict):
+        return {}
+    out = {}
+    ask = spec.get("ask_size") or spec.get("quote_size")
+    if ask not in (None, ""):
+        out["ask_size"] = str(ask)
+    for key in MARKET_SIZE_KEYS:
+        if key == "ask_size":
+            continue
+        value = spec.get(key)
+        if value not in (None, ""):
+            out[key] = str(value)
+    return out
+
+
+def _fee_tape(spec: dict, payload=None) -> dict:
+    """wire / fee / after_fee for orders.jsonl."""
+    qty = filled_contracts(payload) if payload is not None else Decimal("0")
+    filled = payload is not None and qty >= ONE
+    wire = None
+    if filled:
+        wire = _actual_fill_cash(spec, payload)
+    if wire is None:
+        wire = _leg_cash_price(spec)
+    fee = leg_fee(spec, wire, payload) if wire is not None else None
+    returned = fee_returned(payload) if payload is not None else None
+    out: dict = {}
+    if not filled and payload is not None:
+        out["wire"] = ""
+        out["fee"] = ""
+        out["after_fee"] = ""
+        out["fee_source"] = "no_fill"
+        if fee is not None:
+            out["fee_estimate"] = format(fee, "f")
+        return out
+    if wire is not None:
+        out["wire"] = format(wire, "f")
+    if fee is None:
+        out["fee"] = ""
+        out["after_fee"] = ""
+        out["fee_source"] = "unknown"
+        return out
+    out["fee"] = format(fee, "f")
+    if wire is not None:
+        out["after_fee"] = format(wire + fee, "f")
+    if filled:
+        out["fee_source"] = "venue" if returned is not None else "formula"
+    else:
+        out["fee_source"] = "estimate"
+        out["fee_estimate"] = format(fee, "f")
+    return out
+
+
+def _sent_row(spec: dict, status, payload, note: str) -> dict:
+    """orders.jsonl sent row with venue-confirm qty (dashboard source)."""
+    row = {
+        "event": "sent",
+        "bet_key": spec.get("_bet_key"),
+        "venue": spec.get("venue"),
+        "instrument": spec.get("instrument"),
+        "side": _book_side(spec),
+        "limit_price": spec.get("limit"),
+        "size": "1",
+        "http_status": status,
+        "note": note,
+        "order_id": _order_id(payload) if payload else "",
+        "step": spec.get("_step") or "",
+        "attempt": int(spec.get("_attempt") or 1),
+        "system": spec.get("_system") or "",
+        "game": spec.get("game") or "",
+        "sport": spec.get("sport") or "",
+        "side_label": spec.get("player") or spec.get("side_label") or "",
+    }
+    confirm = venue_confirm_of(payload)
+    if confirm:
+        row["confirm_known"] = bool(confirm.get("known"))
+        row["confirm_qty"] = confirm.get("qty") or "0"
+        row["confirm_note"] = confirm.get("note") or ""
+        row["confirm_mismatch"] = bool(confirm.get("mismatch"))
+        row["tape_qty"] = confirm.get("tape_qty") or ""
+        if confirm.get("house_cash"):
+            row["house_cash"] = confirm.get("house_cash")
+        if confirm.get("order_id") and not row.get("order_id"):
+            row["order_id"] = confirm.get("order_id")
+    row.update(_fee_tape(spec, payload))
+    if row.get("wire") and not row.get("house_cash"):
+        row["house_cash"] = row.get("wire")
+    for key in QUOTE_KEYS:
+        value = spec.get(key)
+        if value not in (None, ""):
+            row[key] = value
+    row.update(_size_log_fields(spec))
+    return row
+
+
 def _actual_fill_cash(spec: dict, payload) -> Decimal | None:
     """Pay-side cash of a fill. Prefer venue-confirm house_cash / avg_price."""
     confirm = venue_confirm_of(payload)
@@ -1792,13 +2426,32 @@ def _send(spec: dict) -> tuple[int, dict | None, str]:
     """Place one order, then confirm against that venue's fill/history API.
 
     HTTP tape alone is not truth (Gima/Peniston both_unfilled while Kalshi filled).
-    Confirm is bounded in venue_fill_confirm (tries/timeout). Does not rebuild HTML.
+    Confirm is bounded in venue_fill_confirm (tries/timeout).
+    Records order_io + schedules dashboard rebuild on confirmed fill.
+    Class gate: refuse complementary opposite vs open book (B/C–G share this path).
     """
     if not orders_enabled():
         return 0, None, "placing orders is off"
+    if not isinstance(spec, dict):
+        return 0, None, "no spec"
     venue = str(spec.get("venue") or "").lower()
     if venue == "gemini" and not gemini_private.orders_live():
         return 0, None, "gemini orders off (quote only)"
+    try:
+        import kalshi_same_direction as ksd
+
+        bad, why = ksd.open_book_blocks_same_direction(
+            [spec], _open_book_legs_for_same_direction()
+        )
+        if bad:
+            try:
+                record_send_skip(why, spec=spec)
+            except Exception:
+                pass
+            return 0, None, why
+    except Exception:
+        pass
+    body = ""
     if venue == "kalshi":
         status, body = kalshi_private.signed_call("POST", "/trade-api/v2/portfolio/events/orders", spec["body"])
     elif venue == "gemini":
@@ -1808,6 +2461,27 @@ def _send(spec: dict) -> tuple[int, dict | None, str]:
     elif venue == "novig":
         status, payload, note = novig_live.place_order(spec.get("body") or {})
         payload = _with_venue_confirm(spec, status, payload if isinstance(payload, (dict, list)) else None)
+        try:
+            io_body = json.dumps(payload, ensure_ascii=False, default=str) if payload is not None else ""
+            record_order_io(
+                venue,
+                "order",
+                spec.get("body"),
+                status,
+                io_body,
+                attempt=spec.get("_attempt"),
+                quote=spec,
+            )
+        except Exception:
+            pass
+        try:
+            _maybe_performance_after_order(payload, status=status)
+        except Exception:
+            pass
+        try:
+            _phone_order_placed(spec)
+        except Exception:
+            pass
         return status, payload, note or _public_note("")
     else:
         return 0, None, "unknown venue"
@@ -1825,6 +2499,28 @@ def _send(spec: dict) -> tuple[int, dict | None, str]:
     confirm = venue_confirm_of(payload) or {}
     if confirm.get("note"):
         note = _scrub_public_text(str(confirm.get("note")))
+    try:
+        # Store confirmed payload so dashboard filled_contracts sees confirm qty.
+        io_body = json.dumps(payload, ensure_ascii=False, default=str) if payload is not None else (body or "")
+        record_order_io(
+            venue,
+            "order",
+            spec.get("body"),
+            status,
+            io_body if isinstance(io_body, str) else str(io_body),
+            attempt=spec.get("_attempt"),
+            quote=spec,
+        )
+    except Exception:
+        pass
+    try:
+        _maybe_performance_after_order(payload, status=status)
+    except Exception:
+        pass
+    try:
+        _phone_order_placed(spec)
+    except Exception:
+        pass
     return status, payload, note
 
 
@@ -2407,6 +3103,55 @@ def tick_one_leg_gtc_watches(
                         tif="ioc",
                         intent=row.get("second_intent"),
                     )
+                    # Refuse BE-complete that would stack Yes-B onto held No-A
+                    # (or reverse) — same-direction double, not a lock.
+                    if be_spec is not None:
+                        import kalshi_same_direction as ksd
+
+                        held_leg = {
+                            "venue": str(row.get("held_venue") or row.get("venue") or ""),
+                            "instrument": str(
+                                row.get("held_instrument")
+                                or row.get("first_instrument")
+                                or row.get("instrument")
+                                or ""
+                            ),
+                            "outcome": str(
+                                row.get("held_side")
+                                or row.get("first_side")
+                                or row.get("outcome")
+                                or row.get("side")
+                                or ""
+                            ).lower(),
+                        }
+                        bad_sd, why_sd = ksd.legs_are_same_direction_double(
+                            [held_leg, be_spec]
+                        )
+                        if not bad_sd:
+                            bad_sd, why_sd = ksd.open_book_blocks_same_direction(
+                                [be_spec], _open_book_legs_for_same_direction()
+                            )
+                        if bad_sd:
+                            log(
+                                f"one-leg BE-complete blocked bet={key} {why_sd}"
+                            )
+                            _append_watch({
+                                "event": "one_leg_hold_to_settle",
+                                "bet_key": key,
+                                "held_pay": str(held),
+                                "reason": "same_direction_be_complete_blocked",
+                                "note": why_sd,
+                                "ts": now,
+                            })
+                            _append({
+                                "event": "one_leg_hold_to_settle",
+                                "bet_key": key,
+                                "held_pay": str(held),
+                                "reason": "same_direction_be_complete_blocked",
+                                "note": why_sd,
+                            })
+                            actions.append(f"{key}:hold_to_settle")
+                            continue
                     send_status, payload, send_note = _send_watch_exit(
                         log, key=key, kind="be_complete", spec=be_spec
                     )
@@ -2460,12 +3205,77 @@ def tick_one_leg_gtc_watches(
     return actions
 
 
+def _open_book_legs_for_same_direction() -> list[dict]:
+    """Filled/one_leg kitchen tape + venue open positions (fail-soft)."""
+    rows: list[dict] = []
+    for row in _read_orders():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("event") or "") not in {"filled", "one_leg", "sent"}:
+            continue
+        inst = str(row.get("instrument") or row.get("ticker") or "").strip()
+        side = str(row.get("outcome") or row.get("side") or "").strip().lower()
+        if not inst or side not in {"yes", "no"}:
+            continue
+        rows.append(
+            {
+                "venue": str(row.get("venue") or "").lower(),
+                "instrument": inst,
+                "outcome": side,
+                "side": side,
+            }
+        )
+    try:
+        import venue_open_miss_ingest as vomi
+
+        for pos in vomi.load_kalshi_open_positions(live=False) + vomi.load_poly_open_positions(live=False):
+            if not isinstance(pos, dict):
+                continue
+            inst = str(pos.get("instrument") or pos.get("ticker") or pos.get("slug") or "").strip()
+            side = vomi._side_of(pos)
+            if not inst or side not in {"yes", "no"}:
+                continue
+            rows.append(
+                {
+                    "venue": str(pos.get("venue") or "").lower(),
+                    "instrument": inst,
+                    "outcome": side,
+                    "side": side,
+                }
+            )
+    except Exception:
+        pass
+    return rows
+
+
 def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     """Hard leg IOC, then easy leg GTC at L (adopted 2026-10-31)."""
     import kalshi_same_direction as ksd
 
+    # Same-direction class checks first — before venue-diversity / settlement.
     bad, why = ksd.legs_are_same_direction_double(legs)
     if bad:
+        log(f"order skip both legs {title}; {why}")
+        _append({
+            "event": "skip",
+            "bet_key": key,
+            "game": title,
+            "note": why,
+        })
+        return
+    bad_open, why_open = ksd.open_book_blocks_same_direction(legs, _open_book_legs_for_same_direction())
+    if bad_open:
+        log(f"order skip both legs {title}; {why_open}")
+        _append({
+            "event": "skip",
+            "bet_key": key,
+            "game": title,
+            "note": why_open,
+        })
+        return
+    if not _pair_legs_ok(legs):
+        names = ",".join(str(leg.get("venue") or "") for leg in legs)
+        why = f"pair needs two distinct order venues ({names})"
         log(f"order skip both legs {title}; {why}")
         _append({
             "event": "skip",

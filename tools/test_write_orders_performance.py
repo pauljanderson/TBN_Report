@@ -124,6 +124,23 @@ def test_fill_cash_ignores_sent_fill_qty_without_io():
     assert cash is None
 
 
+def test_fill_cash_trusts_venue_confirm_qty_without_io():
+    cash, fee, qty = w.fill_cash_fee(
+        {
+            "confirm_known": True,
+            "confirm_qty": "1",
+            "limit_price": "0.40",
+            "house_cash": "0.40",
+            "venue": "kalshi",
+            "side": "yes",
+        },
+        None,
+    )
+    assert w.qty_is_fill(qty) is True
+    assert qty == Decimal("1")
+    assert cash == Decimal("0.40")
+
+
 def test_ribecai_pnl_only_on_fill_cluster():
     held = {
         "game": "Ribecai vs Houkes",
@@ -1303,6 +1320,7 @@ def main() -> None:
     test_false_sent_without_http_is_not_a_trade()
     test_leftover_plain_english()
     test_fill_cash_ignores_sent_fill_qty_without_io()
+    test_fill_cash_trusts_venue_confirm_qty_without_io()
     test_venue_holds_leg()
     test_split_b_extras_does_not_keep_cross_on_t0_legs()
     test_stamp_ticket_pnl_win_xor_loss()

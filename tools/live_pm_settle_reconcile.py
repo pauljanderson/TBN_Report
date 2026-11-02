@@ -884,6 +884,7 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
     )
     # Venue → tape: bank settlements the kitchen never booked (both_unfilled ghosts).
     miss = {"added": 0, "skipped": 0, "same_direction_n": 0}
+    open_miss = {"added": 0, "skipped": 0, "same_direction_n": 0}
     if fetch:
         try:
             import pm_venue_miss_ingest
@@ -927,6 +928,22 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
                     )
         except Exception as exc:
             log(f"venue miss ingest {type(exc).__name__}")
+        # Venue open books → kitchen tape (dashboard source). Settlements alone
+        # never cover live Yes-A / No-B stacks still sitting on the exchange.
+        try:
+            import venue_open_miss_ingest as vomi
+
+            open_miss = vomi.ingest_from_venue_pulls(persist=persist, live=False)
+            report["venue_open_miss_ingest"] = open_miss
+            if open_miss.get("added"):
+                report["n_changed"] = int(report.get("n_changed") or 0) + int(open_miss.get("added") or 0)
+                log(
+                    f"venue→tape open ingest added={open_miss.get('added')} "
+                    f"skipped={open_miss.get('skipped')} same_dir={open_miss.get('same_direction_n')} "
+                    f"kalshi_open={open_miss.get('kalshi_open_n')} poly_open={open_miss.get('poly_open_n')}"
+                )
+        except Exception as exc:
+            log(f"venue open miss ingest {type(exc).__name__}")
     if persist and report.get("n_changed"):
         settled_pnl_store.save(store)
         try:
@@ -942,6 +959,7 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
         "kalshi": tickers,
         "n_changed": report.get("n_changed"),
         "changed": report.get("changed"),
+        "venue_open_miss_ingest": open_miss,
     }
     # Open + tape Kalshi legs: catch Yes-A/No-B doubles even when kitchen missed them.
     scan_rows: list[dict] = []
@@ -957,6 +975,14 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
     for row in store.values():
         if isinstance(row, dict) and str(row.get("venue") or "").lower() == "kalshi":
             scan_rows.append(row)
+    try:
+        import venue_open_miss_ingest as vomi
+
+        for pos in vomi.load_kalshi_open_positions(live=False):
+            if isinstance(pos, dict):
+                scan_rows.append(pos)
+    except Exception:
+        pass
     stacks = warn_same_direction_kalshi(scan_rows)
     report["same_direction_stacks"] = stacks
     state["same_direction_n"] = len(stacks)
@@ -965,7 +991,7 @@ def reconcile_once(*, persist: bool = True, fetch: bool = True) -> dict:
     log(
         f"reconcile idents={len(idents)} poly={len(slugs)} kalshi={len(tickers)} "
         f"scanned={report.get('n_scanned')} changed={report.get('n_changed')} "
-        f"same_direction={len(stacks)}"
+        f"same_direction={len(stacks)} open_ingest={open_miss.get('added')}"
     )
     return report
 

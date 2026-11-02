@@ -10,7 +10,8 @@ Sources (any combination):
 Fails when:
   - |kitchen By venue − settled_pnl by venue| > tolerance (any shop)
   - Kalshi dump settle P&L vs kitchen Kalshi gap > tolerance
-  - Same-direction Kalshi Yes-A + No-B stacks (GIMPEN class)
+  - Same-direction Yes-A + No-B stacks on ANY shop (GIMPEN class;
+    Kalshi -CODE and Polymarket/Gemini trailing-token twins)
   - --require-all-dumps and a shop dump section is missing
 
 Does not place, cancel, or sell. No secrets required when inputs are on disk.
@@ -187,11 +188,58 @@ def _pm_dump_sections(pack: dict) -> dict[str, dict]:
     return {}
 
 
+def _dump_fill_settle_rows(pack: dict, venue: str) -> list[dict]:
+    """Pull fill/settlement-like rows from one dump section; stamp venue when missing."""
+    if not isinstance(pack, dict):
+        return []
+    rows: list[dict] = []
+    for block_key in ("settlements", "fills", "positions", "orders", "activities"):
+        block = pack.get(block_key)
+        if isinstance(block, list):
+            cand = block
+        elif isinstance(block, dict):
+            cand = (
+                block.get(block_key)
+                or block.get("fills")
+                or block.get("settlements")
+                or block.get("positions")
+                or block.get("data")
+                or []
+            )
+            if isinstance(block.get("body"), dict):
+                body = block["body"]
+                for k in ("fills", "settlements", "positions", "data"):
+                    if isinstance(body.get(k), list):
+                        cand = list(cand) + body[k] if isinstance(cand, list) else body[k]
+        else:
+            cand = []
+        if not isinstance(cand, list):
+            continue
+        for row in cand:
+            if not isinstance(row, dict):
+                continue
+            out = dict(row)
+            if not out.get("venue"):
+                out["venue"] = venue
+            rows.append(out)
+    # Top-level list aliases some dumps use.
+    for key in ("fills", "settlements"):
+        if isinstance(pack.get(key), list):
+            for row in pack[key]:
+                if isinstance(row, dict):
+                    out = dict(row)
+                    if not out.get("venue"):
+                        out["venue"] = venue
+                    rows.append(out)
+    return rows
+
+
 def analyze(
     *,
     kitchen_by_venue: dict[str, Decimal] | None = None,
     settled_by_venue: dict[str, Decimal] | None = None,
     kalshi_pack: dict | None = None,
+    venue_packs: dict[str, dict] | None = None,
     kitchen_kalshi_window_pnl: Decimal | None = None,
     tolerance: Decimal = DEFAULT_TOL,
     require_all_dumps: bool = False,
@@ -200,8 +248,10 @@ def analyze(
     kitchen_by_venue = dict(kitchen_by_venue or {})
     settled_by_venue = dict(settled_by_venue or {})
     present_dumps = set(present_dumps or set())
+    venue_packs = dict(venue_packs or {})
     if kalshi_pack is not None:
         present_dumps.add("kalshi")
+        venue_packs.setdefault("kalshi", kalshi_pack)
 
     venue_rows = []
     gaps = []
@@ -229,33 +279,46 @@ def analyze(
     missing_dumps = [v for v in VENUES if v not in present_dumps] if require_all_dumps else []
 
     kalshi_report = None
-    stacks = []
+    stacks: list[dict] = []
+    scan_rows: list[dict] = []
+    for venue, pack in sorted(venue_packs.items()):
+        scan_rows.extend(_dump_fill_settle_rows(pack, venue))
+    if scan_rows:
+        stacks = ksd.find_same_direction_stacks(scan_rows)
+        # Unique by event + leg tickers.
+        seen = set()
+        unique = []
+        for row in stacks:
+            key = (
+                str(row.get("event") or ""),
+                tuple(
+                    (str(leg.get("ticker") or ""), str(leg.get("outcome") or ""))
+                    for leg in (row.get("legs") or [])
+                ),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        stacks = unique
+
     if kalshi_pack is not None:
         kalshi_report = kalshi_check.analyze(
             kalshi_pack,
             kitchen_pnl=kitchen_kalshi_window_pnl,
             tolerance=tolerance,
         )
-        stacks = list(kalshi_report.get("same_direction_stacks") or [])
+        # Prefer union: kalshi_check stacks + all-venue scan.
+        for row in kalshi_report.get("same_direction_stacks") or []:
+            if row not in stacks:
+                stacks.append(row)
 
-    ok = (
-        not gaps
-        and not missing_dumps
-        and not stacks
-        and (kalshi_report is None or kalshi_report.get("ok") or (
-            # When window kitchen pnl omitted, still fail on stacks; gap_over only if supplied.
-            not kalshi_report.get("same_direction_stacks")
-            and not kalshi_report.get("gap_over_tolerance")
-        ))
-    )
-    # Recompute ok clearly:
     kalshi_bad = False
     if kalshi_report is not None:
-        if kalshi_report.get("same_direction_stacks"):
-            kalshi_bad = True
         if kitchen_kalshi_window_pnl is not None and kalshi_report.get("gap_over_tolerance"):
             kalshi_bad = True
-    ok = (not gaps) and (not missing_dumps) and (not kalshi_bad)
+    stack_bad = bool(stacks)
+    ok = (not gaps) and (not missing_dumps) and (not kalshi_bad) and (not stack_bad)
 
     return {
         "venues": venue_rows,
@@ -268,7 +331,7 @@ def analyze(
         "note": (
             "All platforms: kitchen By venue vs settled_pnl.json (venue-priced). "
             "Kalshi also compares recon dump settlements when provided. "
-            "Same-direction stacks are Kalshi complementary Yes-A/No-B (not a lock)."
+            "Same-direction stacks (Yes-A + No-B complementary) fail the gate on every shop."
         ),
     }
 
@@ -307,6 +370,7 @@ def main() -> int:
 
     present_dumps: set[str] = set()
     kalshi_pack = None
+    venue_packs: dict[str, dict] = {}
     if args.pm_dump:
         path = Path(args.pm_dump)
         if not path.is_file():
@@ -314,6 +378,7 @@ def main() -> int:
             return 2
         sections = _pm_dump_sections(_load_json(path))
         present_dumps |= set(sections)
+        venue_packs.update(sections)
         if "kalshi" in sections:
             kalshi_pack = sections["kalshi"]
     if args.kalshi_dump:
@@ -323,8 +388,9 @@ def main() -> int:
             return 2
         kalshi_pack = _load_json(path)
         present_dumps.add("kalshi")
+        venue_packs["kalshi"] = kalshi_pack
 
-    if not kitchen_by_venue and not settled_by_venue and kalshi_pack is None:
+    if not kitchen_by_venue and not settled_by_venue and not venue_packs:
         print("Need --kitchen-html and/or --settled-pnl and/or a dump.", flush=True)
         return 2
 
@@ -333,6 +399,7 @@ def main() -> int:
         kitchen_by_venue=kitchen_by_venue,
         settled_by_venue=settled_by_venue,
         kalshi_pack=kalshi_pack,
+        venue_packs=venue_packs,
         kitchen_kalshi_window_pnl=kitchen_window,
         tolerance=Decimal(str(args.tolerance)),
         require_all_dumps=bool(args.require_all_dumps),

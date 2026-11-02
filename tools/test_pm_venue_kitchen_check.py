@@ -135,10 +135,42 @@ def test_ok_when_all_match():
     assert report["missing_dumps"] == []
 
 
+def test_polymarket_same_direction_stack_fails_kitchen_gate():
+    """Recon must fail CI/kitchen when a non-Kalshi dump holds Yes-A + No-B twins."""
+    poly_a = "aec-atp-gimpen-2026-11-01-gim"
+    poly_b = "aec-atp-gimpen-2026-11-01-pen"
+    packs = {
+        "polymarket": {
+            "fills": {
+                "fills": [
+                    {"ticker": poly_a, "outcome": "yes", "venue": "polymarket"},
+                    {"ticker": poly_b, "outcome": "no", "venue": "polymarket"},
+                ]
+            }
+        }
+    }
+    kitchen = {
+        "kalshi": Decimal("0"),
+        "polymarket": Decimal("0"),
+        "gemini": Decimal("0"),
+        "novig": Decimal("0"),
+    }
+    report = check.analyze(
+        kitchen_by_venue=kitchen,
+        settled_by_venue=dict(kitchen),
+        venue_packs=packs,
+        present_dumps={"polymarket"},
+        tolerance=Decimal("0.50"),
+    )
+    assert report["ok"] is False
+    assert report["same_direction_stacks"]
+
+
 if __name__ == "__main__":
     test_parse_kitchen_by_venue()
     test_settled_pnl_by_venue()
     test_all_platform_attribution_gap_and_require_dumps()
     test_kalshi_stack_still_fails_all_platform_gate()
     test_ok_when_all_match()
+    test_polymarket_same_direction_stack_fails_kitchen_gate()
     print("test_pm_venue_kitchen_check ok")

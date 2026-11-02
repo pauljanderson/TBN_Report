@@ -1,4 +1,4 @@
-"""Detect Kalshi same-direction doubles that look like locks but are not.
+"""Detect same-direction doubles that look like locks but are not.
 
 On Kalshi tennis/team moneylines, each player (or team) is its own market under
 one event ticker prefix:
@@ -8,6 +8,10 @@ one event ticker prefix:
 
 Yes on GIM + No on PEN both pay if Gima wins. That is a same-direction double,
 not a hedge / lock. GIMPEN 2026-11-01 lost both legs (−$0.85). TAGDAR won both.
+No-A + Yes-B is the same class (set of outcomes is still {yes, no}).
+
+The same pattern can appear on Polymarket/Gemini/Novig when two opponent
+instruments share an event prefix and a Yes+No pair is taken across them.
 
 A true lock is Yes + No of the *same* market ticker, or Yes on one venue and No
 on another venue for the same settlement.
@@ -92,43 +96,16 @@ def _instrument_of(leg: dict) -> str:
     ).strip()
 
 
-def is_same_direction_kalshi_double(leg_a: dict, leg_b: dict) -> bool:
-    """Yes on market A + No on complementary market B (or the reverse).
-
-    Dual-Yes on complementary markets (Strategy B) is intentional and returns False.
-    Yes+No on the *same* ticker is a true lock and returns False.
-    """
-    if not isinstance(leg_a, dict) or not isinstance(leg_b, dict):
-        return False
-    inst_a, inst_b = _instrument_of(leg_a), _instrument_of(leg_b)
-    if not complementary_kalshi_markets(inst_a, inst_b):
-        return False
-    out_a, out_b = _outcome_of(leg_a), _outcome_of(leg_b)
-    if {out_a, out_b} == {"yes", "no"}:
-        return True
-    return False
-
-
-def same_direction_reason(leg_a: dict, leg_b: dict) -> str:
-    if not is_same_direction_kalshi_double(leg_a, leg_b):
-        return ""
-    a, b = _instrument_of(leg_a), _instrument_of(leg_b)
-    return (
-        "same-direction Kalshi double (not a lock): "
-        f"{_outcome_of(leg_a)} {a} + {_outcome_of(leg_b)} {b} "
-        "pay on the same winner"
-    )
-
-
 def candidate_kalshi_tickers(cand: dict) -> tuple[str, str]:
-    """Best-effort Yes/No Kalshi instruments from a lock candidate row."""
+    """Best-effort Yes/No instruments from a lock candidate row (any shop)."""
     row = cand if isinstance(cand, dict) else {}
-    single = str(row.get("kalshi_ticker") or "").strip()
+    single = str(row.get("kalshi_ticker") or row.get("ticker") or "").strip()
     yes = str(
         row.get("kalshi_yes_ticker")
         or row.get("yes_kalshi_ticker")
         or row.get("yes_ticker")
         or row.get("yes_ident")
+        or row.get("yes_instrument")
         or ""
     ).strip()
     no = str(
@@ -136,24 +113,90 @@ def candidate_kalshi_tickers(cand: dict) -> tuple[str, str]:
         or row.get("no_kalshi_ticker")
         or row.get("no_ticker")
         or row.get("no_ident")
+        or row.get("no_instrument")
         or ""
     ).strip()
     yes_venue = str(row.get("yes_venue") or "").lower()
     no_venue = str(row.get("no_venue") or "").lower()
+    # When both legs claim Kalshi but only one shared ticker was filled in,
+    # do not invent a second market — that would false-positive a true lock.
     if yes_venue == "kalshi" and not yes:
         yes = single
     if no_venue == "kalshi" and not no:
         no = single
+    # Cross-venue / poly: still surface explicit per-side instruments.
+    if not yes:
+        yes = str(row.get("yes_symbol") or row.get("yes_slug") or "").strip()
+    if not no:
+        no = str(row.get("no_symbol") or row.get("no_slug") or "").strip()
     return yes, no
 
 
+def complementary_instruments(left: str, right: str) -> bool:
+    """True when two instruments are opponent markets of one event.
+
+    Kalshi trailing -CODE form is the primary detector. Also treats two
+    distinct Polymarket/Gemini ids that share a long common prefix and differ
+    only in a short trailing player token as complementary.
+    """
+    if complementary_kalshi_markets(left, right):
+        return True
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if not a or not b or a.lower() == b.lower():
+        return False
+    # slug-or-symbol: foo-bar-GIM vs foo-bar-PEN / foo_bar_gim vs foo_bar_pen
+    for sep in ("-", "_"):
+        if sep not in a or sep not in b:
+            continue
+        a_parts, b_parts = a.split(sep), b.split(sep)
+        if len(a_parts) < 2 or len(b_parts) < 2:
+            continue
+        if a_parts[:-1] == b_parts[:-1] and a_parts[-1].lower() != b_parts[-1].lower():
+            # Require short trailing codes (player/team tokens), not full names.
+            if 2 <= len(a_parts[-1]) <= 12 and 2 <= len(b_parts[-1]) <= 12:
+                return True
+    return False
+
+
+def is_same_direction_double(leg_a: dict, leg_b: dict) -> bool:
+    """Yes on market A + No on complementary market B (any venue)."""
+    if not isinstance(leg_a, dict) or not isinstance(leg_b, dict):
+        return False
+    inst_a, inst_b = _instrument_of(leg_a), _instrument_of(leg_b)
+    if not complementary_instruments(inst_a, inst_b):
+        return False
+    out_a, out_b = _outcome_of(leg_a), _outcome_of(leg_b)
+    return {out_a, out_b} == {"yes", "no"}
+
+
+def is_same_direction_kalshi_double(leg_a: dict, leg_b: dict) -> bool:
+    """Back-compat alias — now venue-agnostic complementary Yes+No."""
+    return is_same_direction_double(leg_a, leg_b)
+
+
+def same_direction_reason(leg_a: dict, leg_b: dict) -> str:
+    if not is_same_direction_double(leg_a, leg_b):
+        return ""
+    a, b = _instrument_of(leg_a), _instrument_of(leg_b)
+    va = str(leg_a.get("venue") or "").lower() or "venue"
+    vb = str(leg_b.get("venue") or "").lower() or "venue"
+    return (
+        "same-direction double (not a lock): "
+        f"{_outcome_of(leg_a)} {va}:{a} + {_outcome_of(leg_b)} {vb}:{b} "
+        "pay on the same winner"
+    )
+
+
 def candidate_is_same_direction_double(cand: dict) -> tuple[bool, str]:
-    """Send-time gate for a Yes/No candidate that secretly points at two Kalshi markets."""
+    """Send-time gate for a Yes/No candidate that secretly points at two opponent markets."""
     yes_t, no_t = candidate_kalshi_tickers(cand)
     if not yes_t or not no_t:
         return False, ""
-    yes_leg = {"instrument": yes_t, "outcome": "yes", "venue": "kalshi"}
-    no_leg = {"instrument": no_t, "outcome": "no", "venue": "kalshi"}
+    yes_venue = str((cand or {}).get("yes_venue") or "kalshi").lower()
+    no_venue = str((cand or {}).get("no_venue") or "kalshi").lower()
+    yes_leg = {"instrument": yes_t, "outcome": "yes", "venue": yes_venue}
+    no_leg = {"instrument": no_t, "outcome": "no", "venue": no_venue}
     why = same_direction_reason(yes_leg, no_leg)
     return bool(why), why
 
@@ -170,48 +213,114 @@ def legs_are_same_direction_double(legs: Iterable[dict]) -> tuple[bool, str]:
     return False, ""
 
 
+def open_book_blocks_same_direction(
+    new_legs: Iterable[dict],
+    open_rows: Iterable[dict],
+) -> tuple[bool, str]:
+    """Send-time gate vs already-open tape/venue book.
+
+    Blocks Yes on player B when we already hold No on complementary player A
+    (and the reverse). Dual-Yes (Strategy B) is not blocked.
+    """
+    legs = [leg for leg in new_legs if isinstance(leg, dict)]
+    opens = [row for row in open_rows if isinstance(row, dict)]
+    if not legs or not opens:
+        return False, ""
+    for leg in legs:
+        for row in opens:
+            why = same_direction_reason(leg, row)
+            if why:
+                return True, f"open-book {why}"
+    return False, ""
+
+
+def _resolved_outcome(row: dict) -> str:
+    """Prefer explicit yes/no; else infer from position / yes_count / no_count."""
+    outcome = _outcome_of(row)
+    if outcome in {"yes", "no"}:
+        return outcome
+    pos = _dec(row.get("position_fp") or row.get("position") or row.get("qty"))
+    if pos is not None:
+        if pos > 0:
+            return "yes"
+        if pos < 0:
+            return "no"
+    yes_n = _dec(row.get("yes_count_fp"))
+    no_n = _dec(row.get("no_count_fp"))
+    if yes_n is not None and yes_n > 0:
+        return "yes"
+    if no_n is not None and no_n > 0:
+        return "no"
+    return ""
+
+
+def _event_key_for_stack(inst: str) -> str:
+    """Group key for recon stacks. Kalshi event prefix, else slug/symbol stem."""
+    text = str(inst or "").strip()
+    if not text:
+        return ""
+    kalshi = kalshi_event_prefix(text)
+    if kalshi:
+        return kalshi
+    upper = text.upper()
+    for sep in ("-", "_"):
+        if sep in upper:
+            parts = upper.split(sep)
+            if len(parts) >= 2 and 2 <= len(parts[-1]) <= 12:
+                return sep.join(parts[:-1])
+    return ""
+
+
 def find_same_direction_stacks(rows: Iterable[dict]) -> list[dict]:
-    """Group fill/position/settlement rows by event prefix; flag Yes+No complementary stacks."""
+    """Group fill/position/settlement rows by event; flag Yes+No complementary stacks.
+
+    Works for Kalshi -CODE tickers and for Polymarket/Gemini ids that share a
+    trailing-token event stem (via complementary_instruments).
+    """
     by_event: dict[str, list[dict]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         inst = _instrument_of(row)
-        event = kalshi_event_prefix(inst)
+        event = _event_key_for_stack(inst)
         if not event:
             continue
         by_event.setdefault(event, []).append(row)
     found: list[dict] = []
     for event, group in sorted(by_event.items()):
-        # Collapse to one row per ticker with a representative outcome.
         by_ticker: dict[str, dict] = {}
         for row in group:
-            inst = _instrument_of(row).upper()
-            # Prefer an explicit yes/no outcome; position sign can imply side.
-            outcome = _outcome_of(row)
-            if outcome not in {"yes", "no"}:
-                pos = _dec(row.get("position_fp") or row.get("position") or row.get("qty"))
-                if pos is not None:
-                    outcome = "yes" if pos > 0 else "no" if pos < 0 else ""
-                yes_n = _dec(row.get("yes_count_fp"))
-                no_n = _dec(row.get("no_count_fp"))
-                if yes_n is not None and yes_n > 0:
-                    outcome = "yes"
-                elif no_n is not None and no_n > 0:
-                    outcome = "no"
+            inst = _instrument_of(row)
+            if not inst:
+                continue
+            outcome = _resolved_outcome(row)
             if outcome not in {"yes", "no"}:
                 continue
-            by_ticker[inst] = {"instrument": inst, "outcome": outcome, "venue": "kalshi", "raw": row}
+            venue = str(row.get("venue") or "").lower() or "unknown"
+            by_ticker[inst.upper()] = {
+                "instrument": inst,
+                "outcome": outcome,
+                "venue": venue,
+                "raw": row,
+            }
         tickers = list(by_ticker.values())
         for i, left in enumerate(tickers):
             for right in tickers[i + 1 :]:
-                if is_same_direction_kalshi_double(left, right):
+                if is_same_direction_double(left, right):
                     found.append(
                         {
                             "event": event,
                             "legs": [
-                                {"ticker": left["instrument"], "outcome": left["outcome"]},
-                                {"ticker": right["instrument"], "outcome": right["outcome"]},
+                                {
+                                    "ticker": left["instrument"],
+                                    "outcome": left["outcome"],
+                                    "venue": left["venue"],
+                                },
+                                {
+                                    "ticker": right["instrument"],
+                                    "outcome": right["outcome"],
+                                    "venue": right["venue"],
+                                },
                             ],
                             "reason": same_direction_reason(left, right),
                         }

@@ -414,11 +414,20 @@ def _kalshi_snapshot(force: bool = False) -> dict:
         qty = _qty(item.get("position_fp") or item.get("position"))
         if not ticker or qty < 1:
             continue
+        signed = _dec(item.get("position_fp") or item.get("position"))
+        # Positive position_fp is Yes. Negative is No. Never default No→Yes.
+        if signed is not None and signed < 0:
+            side = "no"
+        else:
+            side = "yes"
         row = {
             "venue": "kalshi",
             "ticker": ticker,
+            "instrument": ticker,
             "title": ticker,
-            "side": "yes" if _dec(item.get("position_fp")) not in (None, Decimal("0")) and (_dec(item.get("position_fp")) or 0) > 0 else "yes",
+            "side": side,
+            "outcome": side,
+            "position_fp": item.get("position_fp") or item.get("position"),
             "qty": format(qty, "f"),
         }
         rows.append(row)
