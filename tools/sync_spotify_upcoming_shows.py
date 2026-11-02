@@ -18,6 +18,17 @@ or when stored dates are all past.
 
 State file tracks artists, show dates, and track URIs for later setlist.fm work.
 
+StungEvents REST status (2026-11):
+  https://api.stungevents.com/search is permanently gone (HTTP 410). The site
+  rebranded to Svents (svents.com) and did not carry over /search. Live fetches
+  fail fast after the first 410. Until a new source is wired (e.g. Ticketmaster
+  Discovery, or MCP search_events at mcp.stungevents.com), use:
+    --cache-only      playlist/state from stung_cache.json (no HTTP)
+    --apply-playlist  push state.json → Spotify only
+  Cached results live under drive/spotify_upcoming_shows/stung_cache.json.
+  Favorite artists come from drive/spotify_library_cache/library.json when
+  using --continue-cached.
+
 Examples:
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --dry-run
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120
@@ -34,10 +45,6 @@ Examples:
 
   # Fill playlist from StungEvents results already on disk (no new Stung calls):
   python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --cache-only
-
-StungEvents free tier is ~1000 requests/day. Results are cached under
-drive/spotify_upcoming_shows/stung_cache.json. Favorite artists come from
-drive/spotify_library_cache/library.json when using --continue-cached.
 """
 
 from __future__ import annotations
@@ -72,12 +79,25 @@ from sync_spotify_year_playlists import (  # noqa: E402
 DEFAULT_STATE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "state.json"
 DEFAULT_STUNG_CACHE_PATH = REPO_ROOT / "drive" / "spotify_upcoming_shows" / "stung_cache.json"
 PLAYLIST_NAME = "upcoming shows"
+# Legacy REST host — /search returns HTTP 410 (StungEvents → Svents; path not carried over).
 STUNG = "https://api.stungevents.com"
+STUNG_GONE_MESSAGE = (
+    "StungEvents REST search is permanently gone (HTTP 410 from "
+    f"{STUNG}/search). StungEvents rebranded to Svents (https://svents.com); "
+    "the old /search API was not carried over.\n"
+    "Alternatives:\n"
+    "  --cache-only      rebuild from drive/.../stung_cache.json (no new HTTP)\n"
+    "  --apply-playlist  push state.json → Spotify with no Stung calls\n"
+    "  Manual / Ticketmaster Discovery API later (not wired yet)\n"
+    "  MCP search_events at https://mcp.stungevents.com (different protocol; not integrated)"
+)
 TRACKS_PER_ARTIST = 10
-# Unauthenticated StungEvents cap is 1,000/day; leave headroom for retries.
+# Legacy free-tier pacing knobs (unused once the API returns 410).
 DEFAULT_STUNG_DAILY_BUDGET = 900
 DEFAULT_STUNG_DELAY_SEC = 0.75
 DEFAULT_STUNG_CACHE_HOURS = 24
+# Soft nudge: --days 1200 is usually a typo for 120.
+DAYS_SOFT_WARN_THRESHOLD = 365
 
 
 @dataclass
@@ -400,8 +420,16 @@ class StungRateLimitError(RuntimeError):
     """Raised when the daily StungEvents request budget is exhausted."""
 
 
+class StungApiGoneError(RuntimeError):
+    """Raised once when the StungEvents REST search endpoint is permanently gone (HTTP 410/404)."""
+
+
 class StungClient:
-    """StungEvents search with disk cache, pacing, and 429 backoff."""
+    """StungEvents search with disk cache, pacing, and 429 backoff.
+
+    Network search fails fast on HTTP 410/404 (API retired). Cache-only /
+    apply-playlist paths still work from local state.
+    """
 
     def __init__(
         self,
@@ -534,6 +562,10 @@ class StungClient:
                 return events
             except urllib.error.HTTPError as exc:
                 self._last_call = time.monotonic()
+                # 410 Gone (and 404) = REST /search retired; do not retry every artist.
+                if exc.code in (410, 404):
+                    self.network_calls += 1
+                    raise StungApiGoneError(STUNG_GONE_MESSAGE) from exc
                 if exc.code == 429 and attempts <= 6:
                     retry_after = exc.headers.get("Retry-After") if exc.headers else None
                     try:
@@ -1464,10 +1496,15 @@ def sync(
         f"(followed={len(followed)}, liked>={min_liked}={len(liked)}, "
         f"year-playlists={len(from_playlists)})"
     )
-    if len(artists) > stung_daily_budget:
+    if days > DAYS_SOFT_WARN_THRESHOLD:
+        print(
+            f"Note: --days {days} is > {DAYS_SOFT_WARN_THRESHOLD}. "
+            "If you meant ~4 months, use --days 120 (typo 1200 is common)."
+        )
+    if len(artists) > stung_daily_budget and not cache_only:
         print(
             f"Note: {len(artists)} artists > StungEvents daily budget {stung_daily_budget}. "
-            "Cache + re-runs will cover the rest; or register for a StungEvents API key (10k/day)."
+            "Cache + re-runs will cover the rest (REST /search is currently gone — see --cache-only)."
         )
     print(f"Searching StungEvents in {sorted(states)} for next {days} day(s) …")
     print(
@@ -1507,6 +1544,7 @@ def sync(
     skipped_uncached = 0
     deferred_playlist = 0
     budget_hit = False
+    api_gone = False
     try:
         for index, artist in enumerate(ordered, start=1):
             try:
@@ -1516,6 +1554,10 @@ def sync(
                     skipped_uncached += 1
                     continue
                 shows = shows_from_events(events, days, states, artist_name=artist.name)
+            except StungApiGoneError as exc:
+                print(f"\n{exc}")
+                api_gone = True
+                break
             except StungRateLimitError as exc:
                 print(f"\n{exc}")
                 budget_hit = True
@@ -1774,6 +1816,14 @@ def sync(
         f"artists currently tracked: {len(state.get('artists') or {})}; "
         f"playlist pending: {pending_left}"
     )
+    if api_gone:
+        print(
+            "Stopped live StungEvents fetches after first 410/404 (API retired).\n"
+            "Existing state/cache were still reconciled above when Spotify was available.\n"
+            "Until a new event source is wired, prefer:\n"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --cache-only\n"
+            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --apply-playlist"
+        )
     if budget_hit:
         print(
             "Partial run OK — StungEvents daily budget hit; progress is on disk.\n"
@@ -1788,8 +1838,8 @@ def sync(
         )
     if cache_only:
         print(
-            "Cache-only done. To fetch remaining uncached artists later:\n"
-            "  python tools/sync_spotify_upcoming_shows.py --states MA,RI --days 120 --continue-cached"
+            "Cache-only done. Fresh StungEvents HTTP search is unavailable (API 410); "
+            "use --apply-playlist to push state, or wait for a Ticketmaster/MCP integration."
         )
     if dry_run:
         print("Dry run complete — no playlist changes.")
@@ -1799,7 +1849,8 @@ def sync(
             print(f"Open: https://open.spotify.com/playlist/{state.get('playlist_id')}")
         print(f"State file: {state_path}")
         print(f"Stung cache: {stung_cache_path}")
-    return 0
+    # Non-zero when REST search is gone so daily runs surface the outage clearly.
+    return 2 if api_gone else 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

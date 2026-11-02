@@ -347,23 +347,30 @@ def fetch_artist_year_albums(
     include_groups = "album,single" if include_singles else "album"
     albums: dict[str, CandidateAlbum] = {}
     offset = 0
+    # Spotify capped Get Artist's Albums max limit at 10 (Feb 2026); 20/50 → 400 Invalid limit.
+    page_limit = 10
     while True:
         page = spotify_call(
             sp.artist_albums,
             artist.artist_id,
             include_groups=include_groups,
             country=market,
-            limit=50,
+            limit=page_limit,
             offset=offset,
             budget=budget,
         )
         items = page.get("items") or []
         if not items:
             break
+        # Results are newest-first; once every item on a page is older than --year, stop.
+        page_years: list[int] = []
         for album in items:
             if not album or not album.get("id"):
                 continue
-            if release_year(album.get("release_date")) != year:
+            yr = release_year(album.get("release_date"))
+            if yr is not None:
+                page_years.append(yr)
+            if yr != year:
                 continue
             album_id = album["id"]
             if album_id in albums:
@@ -382,6 +389,8 @@ def fetch_artist_year_albums(
             )
         offset += len(items)
         if page.get("next") is None:
+            break
+        if page_years and max(page_years) < year:
             break
         time.sleep(sleep_s)
 
