@@ -130,6 +130,68 @@ def test_kalshi_fills_from_payload():
     assert rows[0]["instrument"] == GIM
 
 
+def test_poly_activities_from_dump_payload():
+    """dump_pm_recon stores Poly activities under body — must become fill rows."""
+    rows = vomi._poly_fills_from_payload(
+        {
+            "http_status": 200,
+            "ok": True,
+            "body": {
+                "activities": [
+                    {
+                        "type": "ACTIVITY_TYPE_TRADE",
+                        "trade": {
+                            "marketSlug": "aec-atp-gimpen-2026-11-01-gim",
+                            "qtyDecimal": "1.00",
+                            "price": {"value": "0.41"},
+                            "createTime": "2026-11-01T14:30:00Z",
+                            "intent": "ORDER_INTENT_BUY_LONG",
+                            "aggressor": {"id": "poly-oid-1"},
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    assert len(rows) == 1
+    assert rows[0]["instrument"] == "aec-atp-gimpen-2026-11-01-gim"
+    assert rows[0]["order_id"] == "poly-oid-1"
+    assert rows[0]["side"] == "yes"
+
+
+def test_fill_ingest_since_uses_last_tape_not_midnight_today():
+    """Regression: midnight-today window left Nov-1 afternoon venue fills off the dashboard."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    ET = ZoneInfo("America/New_York")
+    tape = [
+        {
+            "event": "sent",
+            "venue": "kalshi",
+            "instrument": GIM,
+            "side": "yes",
+            "confirm_known": True,
+            "confirm_qty": "1",
+            "sent_at": "2026-11-01T08:20:24-05:00",
+        }
+    ]
+    since = vomi.fill_ingest_since(tape)
+    assert since == datetime(2026, 11, 1, 8, 20, 25, tzinfo=ET)
+    fills = [
+        {
+            "ticker": PEN,
+            "side": "yes",
+            "count_fp": "1.00",
+            "created_time": "2026-11-01T14:30:00-05:00",
+            "order_id": "fill-after-last",
+        }
+    ]
+    rep = vomi.ingest_recent_fills(fills, venue="kalshi", tape=tape, persist=False, since=since)
+    assert rep["added"] == 1
+    assert any(row.get("event") == "sent" for row in rep["written"])
+
+
 def test_complementary_instruments_poly_slugs():
     assert ksd.complementary_instruments("match-foo-GIM", "match-foo-PEN")
     assert not ksd.complementary_instruments("match-foo-GIM", "match-foo-GIM")
@@ -142,5 +204,7 @@ if __name__ == "__main__":
     test_open_book_blocks_yes_b_when_no_a_held()
     test_kalshi_rows_from_payload_sign()
     test_kalshi_fills_from_payload()
+    test_poly_activities_from_dump_payload()
+    test_fill_ingest_since_uses_last_tape_not_midnight_today()
     test_complementary_instruments_poly_slugs()
     print("test_venue_open_miss_ingest ok")
