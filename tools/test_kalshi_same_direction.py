@@ -208,6 +208,56 @@ def test_settle_reconcile_warns_gimpen_class():
     assert "GIMPEN" in found[0]["event"]
 
 
+def test_open_book_blocks_no_a_yes_b():
+    open_rows = [{"instrument": GIM, "outcome": "no", "venue": "kalshi"}]
+    new_legs = [{"instrument": PEN, "outcome": "yes", "venue": "kalshi"}]
+    bad, why = ksd.open_book_blocks_same_direction(new_legs, open_rows)
+    assert bad is True
+    assert "same-direction" in why
+
+
+def test_send_pair_skips_open_book_same_direction():
+    """_send_pair must not POST when open book already holds the complementary opposite."""
+    skipped: list[dict] = []
+    saved_append = live_lock_orders._append
+    saved_open = live_lock_orders._open_book_legs_for_same_direction
+    try:
+        live_lock_orders._append = skipped.append
+        live_lock_orders._open_book_legs_for_same_direction = lambda: [
+            {"instrument": GIM, "outcome": "no", "venue": "kalshi", "side": "no"}
+        ]
+        # Dual-Yes pair: legs_are_same_direction is false; open No-GIM + Yes-PEN must still skip.
+        live_lock_orders._send_pair(
+            lambda *_a, **_k: None,
+            "bet-test",
+            "Gima vs Peniston",
+            [
+                {
+                    "venue": "kalshi",
+                    "instrument": PEN,
+                    "outcome": "yes",
+                    "pay": "0.41",
+                    "tif": "ioc",
+                    "body": {},
+                },
+                {
+                    "venue": "kalshi",
+                    "instrument": GIM,
+                    "outcome": "yes",
+                    "pay": "0.40",
+                    "tif": "gtc",
+                    "body": {},
+                },
+            ],
+        )
+    finally:
+        live_lock_orders._append = saved_append
+        live_lock_orders._open_book_legs_for_same_direction = saved_open
+    assert skipped
+    assert skipped[0].get("event") == "skip"
+    assert "same-direction" in str(skipped[0].get("note") or "")
+
+
 if __name__ == "__main__":
     test_event_prefix_and_complementary()
     test_yes_a_no_b_is_same_direction_double()
@@ -219,4 +269,6 @@ if __name__ == "__main__":
     test_venue_kitchen_check_flags_gap_and_stack()
     test_same_settlement_candidate_restored()
     test_settle_reconcile_warns_gimpen_class()
+    test_open_book_blocks_no_a_yes_b()
+    test_send_pair_skips_open_book_same_direction()
     print("test_kalshi_same_direction ok")

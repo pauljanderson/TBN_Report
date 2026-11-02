@@ -70,6 +70,8 @@ _DEFAULT_NET_MAX = Decimal("0.95")
 SIZE = Decimal("1")
 KALSHI_TICK = Decimal("0.0001")
 POLY_TICK = Decimal("0.001")
+POLY_TIF_FOK = "TIME_IN_FORCE_FILL_OR_KILL"
+POLY_TIF_GTC = "TIME_IN_FORCE_GOOD_TILL_CANCEL"
 # Second-leg GTC wait, then cheap-exit / BE-complete / hold (Paul 2026-10-31).
 ONE_LEG_GTC_WAIT_SEC = 180
 CHEAP_EXIT_MAX = Decimal("0.25")
@@ -80,6 +82,7 @@ MARKET_BUY_CEILING = Decimal("0.99")
 MAX_OPEN_LOCKS = 3
 CLOSED = {"closed", "settled", "determined", "finalized", "inactive"}
 _capability: dict[str, tuple[float, bool, str]] = {}
+
 
 # Module flag (default False). Prefer orders_enabled() which also honors env + stamps.
 # Tests and local overrides may assign ORDERS_ENABLED = True.
@@ -176,6 +179,157 @@ def orders_enabled() -> bool:
     if ORDERS_ENABLED_STAMP_ON.exists():
         return True
     return bool(ORDERS_ENABLED)
+
+
+def venue_tick(venue: str) -> Decimal:
+    shop = str(venue or "").lower()
+    if shop == "kalshi":
+        return KALSHI_TICK
+    if shop == "polymarket":
+        return POLY_TICK
+    return CENT
+
+
+def snap_pay(venue: str, price: Decimal) -> Decimal | None:
+    """Snap a cash pay to the venue tick. None when price is unusable."""
+    pay = _dec(price)
+    if pay is None or pay <= 0 or pay >= 1:
+        return None
+    tick = venue_tick(venue)
+    return pay.quantize(tick, rounding=ROUND_HALF_UP)
+
+
+def contract_cost(pay: Decimal | None, qty: Decimal | None = None) -> Decimal:
+    px = _dec(pay) or Decimal("0")
+    size = _dec(qty) if qty is not None else SIZE
+    if size is None or size <= 0:
+        size = SIZE
+    return (px * size).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def _carry_quote_fields(src: dict | None, dest: dict | None) -> dict | None:
+    if not isinstance(dest, dict):
+        return dest
+    if not isinstance(src, dict):
+        return dest
+    for key in ("quote_size", "quote_seen_at", "book_ask", "book_bid"):
+        if src.get(key) not in (None, "") and dest.get(key) in (None, ""):
+            dest[key] = src.get(key)
+    return dest
+
+
+def _attach_quote_size(spec: dict | None, size, overwrite: bool = False) -> None:
+    if not isinstance(spec, dict):
+        return
+    if not overwrite and spec.get("quote_size") not in (None, ""):
+        return
+    qty = _dec(size)
+    if qty is not None and qty > 0:
+        spec["quote_size"] = format(qty, "f")
+
+
+def record_research_row(row: dict) -> None:
+    """Append a Strategy B / research tape row onto orders.jsonl (dashboard source)."""
+    if not isinstance(row, dict):
+        return
+    out = dict(row)
+    out.setdefault("event", str(row.get("event") or "research"))
+    out.setdefault("at", _iso_now())
+    try:
+        _append(out)
+    except Exception:
+        pass
+
+
+def outcome_fill_qty(outcome: dict | None) -> Decimal:
+    if not isinstance(outcome, dict):
+        return Decimal("0")
+    for key in ("fill_qty", "filled_qty", "qty", "size", "fill_count"):
+        qty = _dec(outcome.get(key))
+        if qty is not None and qty > 0:
+            return qty
+    return filled_contracts(outcome)
+
+
+def poly_size_lt_qty_skip(spec: dict | None, *, rest: bool = True) -> str:
+    """Polymarket needs takeable size ≥ order qty for FOK/IOC. Empty = ok."""
+    del rest
+    if not isinstance(spec, dict):
+        return ""
+    if str(spec.get("venue") or "").lower() != "polymarket":
+        return ""
+    need = _dec(spec.get("size")) or SIZE
+    saw = _takeable_size(spec)
+    if saw is None:
+        return ""
+    if saw + Decimal("0.0000001") < need:
+        return f"poly_size_lt_qty_skip need≥{format(need, 'f')} saw={format(saw, 'f')}"
+    return ""
+
+
+def _funds_block(built: dict) -> str:
+    """Empty when cash check is skipped or ok. Non-empty deny string otherwise."""
+    if not isinstance(built, dict):
+        return ""
+    # GTC-adopt kitchen: do not invent balances here; send path still has venue rejects.
+    return ""
+
+
+def _balance_deny_reason(venue: str, cash: Decimal | None = None, cost: Decimal | None = None) -> str:
+    shop = str(venue or "").lower() or "venue"
+    if cash is None or cost is None:
+        return f"{shop} balance unknown"
+    return f"{shop} balance {format(cash, 'f')} < need {format(cost, 'f')}"
+
+
+def _balance_deny_from_probe(why: str, venue: str = "") -> str:
+    text = str(why or "").strip()
+    if text:
+        return text
+    return _balance_deny_reason(venue)
+
+
+def _balance_deny_from_funds(funds: str) -> str:
+    return str(funds or "").strip() or "balance deny"
+
+
+def _spec_at_price(spec: dict, pay: Decimal) -> dict | None:
+    """Rebuild an existing leg at a new cash pay (Strategy B send path)."""
+    if not isinstance(spec, dict):
+        return None
+    snapped = snap_pay(str(spec.get("venue") or ""), pay)
+    if snapped is None:
+        return None
+    intent = None
+    body = spec.get("body") if isinstance(spec.get("body"), dict) else {}
+    if str(spec.get("venue") or "").lower() == "polymarket":
+        intent = str(body.get("intent") or spec.get("intent") or "") or None
+    built = build_buy_leg_spec(
+        venue=str(spec.get("venue") or ""),
+        instrument=str(spec.get("instrument") or ""),
+        outcome=str(spec.get("outcome") or ""),
+        pay=snapped,
+        tif=str(spec.get("tif") or "ioc"),
+        intent=intent,
+    )
+    if built is None:
+        return None
+    _carry_quote_fields(spec, built)
+    return built
+
+
+def fetch_book_ask(spec: dict, *, pace: bool = True, priority: bool = False) -> tuple[Decimal | None, str]:
+    """Best-effort ask for a leg. Returns (price, note). No price → (None, why)."""
+    del pace, priority
+    if not isinstance(spec, dict):
+        return None, "no spec"
+    pay = _dec(spec.get("pay") or spec.get("book_ask") or spec.get("limit"))
+    if pay is None:
+        return None, "no ask"
+    snapped = snap_pay(str(spec.get("venue") or ""), pay)
+    if snapped is None:
+        return None, "ask unusable"
+    return snapped, "spec pay"
 
 
 def _iso_now() -> str:
@@ -727,6 +881,18 @@ def qualifies(scan, cand: dict, title: str, game: dict) -> tuple[bool, str]:
     bad, why_sd = ksd.candidate_is_same_direction_double(cand)
     if bad:
         return False, why_sd
+    # Block Yes-B when we already hold No-A on the complementary market (or reverse).
+    provisional: list[dict] = []
+    for outcome in ("yes", "no"):
+        spec = _leg_spec(cand, outcome)
+        if isinstance(spec, dict):
+            provisional.append(spec)
+    if provisional:
+        bad_open, why_open = ksd.open_book_blocks_same_direction(
+            provisional, _open_book_legs_for_same_direction()
+        )
+        if bad_open:
+            return False, why_open
     if scan.gemini_no_rejection(cand):
         return False, "Gemini No is not a buyable offer"
     # Soft-disable: never require a Gemini POST when quote-only. Skip the pair
@@ -2460,6 +2626,49 @@ def tick_one_leg_gtc_watches(
     return actions
 
 
+def _open_book_legs_for_same_direction() -> list[dict]:
+    """Filled/one_leg kitchen tape + venue open positions (fail-soft)."""
+    rows: list[dict] = []
+    for row in _read_orders():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("event") or "") not in {"filled", "one_leg", "sent"}:
+            continue
+        inst = str(row.get("instrument") or row.get("ticker") or "").strip()
+        side = str(row.get("outcome") or row.get("side") or "").strip().lower()
+        if not inst or side not in {"yes", "no"}:
+            continue
+        rows.append(
+            {
+                "venue": str(row.get("venue") or "").lower(),
+                "instrument": inst,
+                "outcome": side,
+                "side": side,
+            }
+        )
+    try:
+        import venue_open_miss_ingest as vomi
+
+        for pos in vomi.load_kalshi_open_positions(live=False) + vomi.load_poly_open_positions(live=False):
+            if not isinstance(pos, dict):
+                continue
+            inst = str(pos.get("instrument") or pos.get("ticker") or pos.get("slug") or "").strip()
+            side = vomi._side_of(pos)
+            if not inst or side not in {"yes", "no"}:
+                continue
+            rows.append(
+                {
+                    "venue": str(pos.get("venue") or "").lower(),
+                    "instrument": inst,
+                    "outcome": side,
+                    "side": side,
+                }
+            )
+    except Exception:
+        pass
+    return rows
+
+
 def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     """Hard leg IOC, then easy leg GTC at L (adopted 2026-10-31)."""
     import kalshi_same_direction as ksd
@@ -2472,6 +2681,16 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
             "bet_key": key,
             "game": title,
             "note": why,
+        })
+        return
+    bad_open, why_open = ksd.open_book_blocks_same_direction(legs, _open_book_legs_for_same_direction())
+    if bad_open:
+        log(f"order skip both legs {title}; {why_open}")
+        _append({
+            "event": "skip",
+            "bet_key": key,
+            "game": title,
+            "note": why_open,
         })
         return
     ok_settle, why_settle = same_settlement_legs(*legs)
