@@ -277,6 +277,20 @@ def main() -> int:
     if not pack.get("venues_present"):
         print("WARNING: no venue secrets/dumps available.", flush=True)
         return 1
+    # Bidirectional sync: dump → kitchen tape → dashboard (claim+sent, not orphan filled).
+    try:
+        import venue_open_miss_ingest as vomi
+
+        sync = vomi.ingest_from_venue_pulls(
+            persist=True, live=False, include_fills=True, rebuild=True
+        )
+        print(
+            f"venue sync ingest added={sync.get('added')} "
+            f"skipped={sync.get('skipped')} rebuild={sync.get('rebuild')}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"venue sync ingest skipped: {type(exc).__name__}: {exc}", flush=True)
     return 0
 
 
