@@ -52,7 +52,22 @@ def _parse_when(value) -> datetime | None:
                     n = n / 1000.0
                 stamp = datetime.fromtimestamp(n, tz=ET)
             else:
-                stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                # Poly activities use 9-digit fractional seconds; fromisoformat
+                # on 3.10 only accepts microseconds (6 digits).
+                text = text.replace("Z", "+00:00")
+                if "." in text:
+                    head, rest = text.split(".", 1)
+                    digits = ""
+                    tz = ""
+                    for i, ch in enumerate(rest):
+                        if ch.isdigit():
+                            digits += ch
+                        else:
+                            tz = rest[i:]
+                            break
+                    digits = (digits + "000000")[:6]
+                    text = f"{head}.{digits}{tz}"
+                stamp = datetime.fromisoformat(text)
         except Exception:
             return None
     if stamp.tzinfo is None:
@@ -701,15 +716,53 @@ def _poly_rows_from_payload(payload: dict | None) -> list[dict]:
     return rows
 
 
+def _poly_nested_order_id(node) -> str:
+    if not isinstance(node, dict):
+        return ""
+    if node.get("id") not in (None, ""):
+        return str(node.get("id"))
+    order = node.get("order")
+    if isinstance(order, dict) and order.get("id") not in (None, ""):
+        return str(order.get("id"))
+    return ""
+
+
+def _poly_trade_order_id(item: dict, trade: dict) -> str:
+    """Prefer our aggressor/passive order id (same rules as venue_fill_confirm)."""
+    if trade.get("isAggressor") is False:
+        oid = _poly_nested_order_id(trade.get("passive")) or _poly_nested_order_id(
+            trade.get("passiveExecution")
+        )
+        if oid:
+            return oid
+    oid = _poly_nested_order_id(trade.get("aggressor")) or _poly_nested_order_id(
+        trade.get("aggressorExecution")
+    )
+    if oid:
+        return oid
+    return str(trade.get("order_id") or trade.get("id") or item.get("id") or "")
+
+
 def _poly_side_from_trade(trade: dict) -> str:
+    for node_key in ("aggressorExecution", "aggressor", "passiveExecution", "passive"):
+        node = trade.get(node_key)
+        order = node.get("order") if isinstance(node, dict) else None
+        if isinstance(order, dict):
+            intent = str(order.get("intent") or order.get("side") or "").upper()
+            if "SHORT" in intent or intent in {"ASK", "SELL", "ORDER_SIDE_SELL", "NO"}:
+                return "no"
+            if "LONG" in intent or intent in {"BID", "BUY", "ORDER_SIDE_BUY", "YES"}:
+                return "yes"
+            side = str(order.get("side") or "").upper()
+            if side in {"ORDER_SIDE_SELL", "SELL", "ASK"}:
+                return "no"
+            if side in {"ORDER_SIDE_BUY", "BUY", "BID"}:
+                return "yes"
     intent = str(trade.get("intent") or trade.get("side") or "").upper()
     if "SHORT" in intent or intent in {"ASK", "SELL", "NO"}:
         return "no"
     if "LONG" in intent or intent in {"BID", "BUY", "YES"}:
         return "yes"
-    if trade.get("isAggressor") is False:
-        # Maker on a buy-short still books No — prefer explicit outcome fields.
-        pass
     outcome = str(trade.get("outcome") or trade.get("side") or "").lower()
     if outcome in {"yes", "no"}:
         return outcome
@@ -749,32 +802,52 @@ def _poly_fills_from_payload(payload: dict | None) -> list[dict]:
             qty = trade.get("qtyDecimal")
             if qty in (None, ""):
                 qty = trade.get("qty") or trade.get("size") or trade.get("amount")
-            aggressor = trade.get("aggressor") if isinstance(trade.get("aggressor"), dict) else {}
-            oid = (
-                aggressor.get("id")
-                or trade.get("order_id")
-                or trade.get("id")
-                or item.get("id")
-                or ""
-            )
+            if qty in (None, "", 0, "0"):
+                for node_key in ("aggressorExecution", "passiveExecution"):
+                    node = trade.get(node_key)
+                    order = node.get("order") if isinstance(node, dict) else None
+                    if isinstance(order, dict) and order.get("cumQuantity") not in (None, ""):
+                        qty = order.get("cumQuantity")
+                        break
+            oid = _poly_trade_order_id(item, trade)
             px = trade.get("price")
             if isinstance(px, dict):
                 px = px.get("value") or px.get("price")
+            if px in (None, ""):
+                for node_key in ("aggressorExecution", "aggressor"):
+                    node = trade.get(node_key)
+                    order = node.get("order") if isinstance(node, dict) else None
+                    if isinstance(order, dict):
+                        opx = order.get("price")
+                        if isinstance(opx, dict):
+                            px = opx.get("value") or opx.get("price")
+                        elif opx not in (None, ""):
+                            px = opx
+                        if px not in (None, ""):
+                            break
+            meta = {}
+            for node_key in ("aggressorExecution", "aggressor", "passiveExecution", "passive"):
+                node = trade.get(node_key)
+                order = node.get("order") if isinstance(node, dict) else None
+                if isinstance(order, dict) and isinstance(order.get("marketMetadata"), dict):
+                    meta = order.get("marketMetadata") or {}
+                    break
+            side = _poly_side_from_trade(trade)
             rows.append(
                 {
                     "venue": "polymarket",
                     "slug": slug,
                     "instrument": slug,
                     "qty": qty,
-                    "side": _poly_side_from_trade(trade),
-                    "outcome": _poly_side_from_trade(trade),
+                    "side": side,
+                    "outcome": side,
                     "created_time": trade.get("createTime")
                     or trade.get("updateTime")
                     or item.get("createTime")
                     or item.get("timestamp"),
                     "order_id": str(oid or ""),
                     "price": px,
-                    "title": trade.get("title") or slug,
+                    "title": meta.get("title") or trade.get("title") or slug,
                 }
             )
         if rows:
@@ -814,6 +887,135 @@ def _poly_fills_from_payload(payload: dict | None) -> list[dict]:
             }
         )
     return rows
+
+
+def fetch_live_poly_activities(*, pages: int = 6, limit: int = 100) -> list[dict]:
+    """Signed activities TRADE pages. Empty on failure. Does not place orders."""
+    import json
+    import time
+
+    try:
+        import polymarket_us_live as poly
+    except Exception:
+        return []
+    rows: list[dict] = []
+    cursor = ""
+    for _ in range(max(1, int(pages))):
+        query = {
+            "limit": str(limit),
+            "types": "ACTIVITY_TYPE_TRADE",
+            "sortOrder": "SORT_ORDER_DESCENDING",
+        }
+        if cursor:
+            query["cursor"] = cursor
+        try:
+            status, text = poly.get_activities(query, timeout=30)
+        except Exception:
+            break
+        if status != 200:
+            break
+        try:
+            data = json.loads(text) if text else {}
+        except Exception:
+            break
+        if not isinstance(data, dict):
+            break
+        batch = data.get("activities") if isinstance(data.get("activities"), list) else []
+        rows.extend(item for item in batch if isinstance(item, dict))
+        cursor = str(data.get("nextCursor") or "")
+        if bool(data.get("eof")) or not cursor or not batch:
+            break
+        time.sleep(0.15)
+    return rows
+
+
+def patch_tape_poly_confirms(
+    fills: list[dict],
+    *,
+    tape: list[dict] | None = None,
+    persist: bool = True,
+) -> dict:
+    """Upgrade confirm_qty=0 polymarket sent rows when activities show a real fill.
+
+    Lock A posts HTTP 200, then venue_fill_confirm often records
+    'polymarket activities GET empty' before the fill lands. The UI shows the
+    bet; the kitchen kept qty 0 forever.
+    """
+    import json
+
+    rows = list(tape) if tape is not None else _read_orders()
+    by_oid: dict[str, list[dict]] = {}
+    for fill in fills or []:
+        if not isinstance(fill, dict):
+            continue
+        oid = str(fill.get("order_id") or "").strip()
+        if not oid:
+            continue
+        by_oid.setdefault(oid, []).append(fill)
+    patched = 0
+    qty_total = Decimal("0")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("event") or "") != "sent":
+            continue
+        if str(row.get("venue") or "").lower() != "polymarket":
+            continue
+        oid = str(row.get("order_id") or "").strip()
+        if not oid or oid not in by_oid:
+            continue
+        have = _dec(row.get("confirm_qty")) or Decimal("0")
+        got = Decimal("0")
+        stamp = None
+        px = None
+        for fill in by_oid[oid]:
+            q = _qty_of(fill)
+            if q > 0:
+                got += q
+            when = _parse_when(fill.get("created_time"))
+            if when is not None and (stamp is None or when.isoformat() < str(stamp)):
+                stamp = when.isoformat(timespec="seconds")
+            if fill.get("price") not in (None, "") and px is None:
+                px = fill.get("price")
+        if got <= 0:
+            continue
+        need_qty = not (have > 0 and have >= got)
+        need_stamp = bool(stamp) and not (row.get("sent_at") or row.get("at"))
+        # Repair earlier patches that got qty but no sent_at (ns timestamp parse).
+        if (
+            stamp
+            and str(row.get("note") or "").startswith("polymarket activities reconcile")
+            and not row.get("sent_at")
+        ):
+            need_stamp = True
+        if not need_qty and not need_stamp:
+            continue
+        if need_qty:
+            row["confirm_known"] = True
+            row["confirm_qty"] = format(got, "f")
+            row["qty"] = format(got, "f")
+            row["note"] = f"polymarket activities reconcile qty {format(got, 'f')}"
+            qty_total += got
+        if need_stamp and stamp:
+            row["sent_at"] = stamp
+            row["at"] = stamp
+        if px not in (None, "") and not row.get("house_cash"):
+            row["house_cash"] = str(px)
+            row["limit_price"] = row.get("limit_price") or str(px)
+        patched += 1
+    if persist and patched:
+        ensure_dirs()
+        tmp = ORDERS.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        tmp.replace(ORDERS)
+    return {
+        "patched": patched,
+        "qty_total": format(qty_total, "f"),
+        "activity_order_ids": len(by_oid),
+        "persisted": bool(persist and patched),
+    }
 
 
 def ingest_order_io_misses(
@@ -1037,13 +1239,18 @@ def load_kalshi_recent_fills() -> list[dict]:
     return []
 
 
-def load_poly_recent_fills() -> list[dict]:
+def load_poly_recent_fills(*, live: bool = False) -> list[dict]:
     import json
 
     ensure_dirs()
+    if live:
+        acts = fetch_live_poly_activities()
+        if acts:
+            return _poly_fills_from_payload({"body": {"activities": acts}})
     for path in (
         RAW / "pm_recon_dump" / "pm_recon_dump_latest.json",
         RAW / "polymarket_fills_pull.json",
+        RAW / "polymarket_activities_pull.json",
     ):
         if not path.is_file():
             continue
@@ -1060,6 +1267,27 @@ def load_poly_recent_fills() -> list[dict]:
             rows = _poly_fills_from_payload(blob)
         if rows:
             return rows
+    # Dump often 429s; fall back to a live pull when on-disk activities are empty.
+    acts = fetch_live_poly_activities()
+    if acts:
+        try:
+            path = RAW / "polymarket_activities_pull.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "pulled_at": _iso_now(),
+                        "n": len(acts),
+                        "body": {"activities": acts},
+                    },
+                    indent=2,
+                    default=str,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return _poly_fills_from_payload({"body": {"activities": acts}})
     return []
 
 
@@ -1088,9 +1316,14 @@ def ingest_from_venue_pulls(
     io_rep = {"added": 0, "skipped": 0, "since": since.isoformat(timespec="seconds")}
     kalshi_fill_rows: list[dict] = []
     poly_fill_rows: list[dict] = []
+    poly_patch = {"patched": 0}
     if include_fills:
         kalshi_fill_rows = load_kalshi_recent_fills()
-        poly_fill_rows = load_poly_recent_fills()
+        # Prefer live Poly activities: dump often 429s while the UI still shows fills.
+        poly_fill_rows = load_poly_recent_fills(live=True)
+        poly_patch = patch_tape_poly_confirms(poly_fill_rows, tape=tape, persist=persist)
+        if poly_patch.get("patched") and persist:
+            tape = _read_orders()
         k_fill = ingest_recent_fills(
             kalshi_fill_rows, venue="kalshi", tape=tape, persist=persist, since=since
         )
@@ -1142,5 +1375,6 @@ def ingest_from_venue_pulls(
         "poly_open_n": len(poly),
         "kalshi_fill_n": len(kalshi_fill_rows),
         "poly_fill_n": len(poly_fill_rows),
+        "poly_confirm_patch": poly_patch,
         "rebuild": rebuild_rep,
     }

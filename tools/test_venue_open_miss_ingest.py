@@ -160,6 +160,64 @@ def test_poly_activities_from_dump_payload():
     assert rows[0]["side"] == "yes"
 
 
+def test_parse_when_poly_nanoseconds():
+    stamp = vomi._parse_when("2026-11-02T23:17:38.971207022Z")
+    assert stamp is not None
+    assert stamp.year == 2026 and stamp.month == 11 and stamp.day == 2
+
+
+def test_patch_tape_poly_confirms_upgrades_empty_activities_note():
+    """HTTP 200 + activities-empty confirm must upgrade when activities later show qty."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = Path(tmp)
+        orders = raw / "orders.jsonl"
+        oid = "DFXGKR5012VX"
+        orders.write_text(
+            json.dumps(
+                {
+                    "event": "sent",
+                    "venue": "polymarket",
+                    "instrument": "aec-atp-zdekol-elmmoe-2026-11-02",
+                    "side": "yes",
+                    "order_id": oid,
+                    "confirm_known": True,
+                    "confirm_qty": "0",
+                    "http_status": 200,
+                    "note": "polymarket activities GET empty",
+                    "bet_key": "tennis\tkolmol\t2026-11-02\tmoneyline\tcode:KOL",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        old_raw, old_orders = vomi.RAW, vomi.ORDERS
+        try:
+            vomi.RAW = raw
+            vomi.ORDERS = orders
+            fills = [
+                {
+                    "venue": "polymarket",
+                    "instrument": "aec-atp-zdekol-elmmoe-2026-11-02",
+                    "order_id": oid,
+                    "qty": "1.00",
+                    "side": "no",
+                    "created_time": "2026-11-02T23:17:38.971207022Z",
+                    "price": "0.30",
+                }
+            ]
+            rep = vomi.patch_tape_poly_confirms(fills, persist=True)
+            assert rep["patched"] == 1
+            row = json.loads(orders.read_text(encoding="utf-8").splitlines()[0])
+            assert row["confirm_qty"] == "1.00"
+            assert row.get("sent_at")
+            assert "reconcile" in str(row.get("note") or "")
+        finally:
+            vomi.RAW = old_raw
+            vomi.ORDERS = old_orders
+
+
 def test_backfill_missing_sent_at_from_order_io():
     """Filled sends with blank sent_at must pick up order_io timestamps."""
     import tempfile
@@ -272,6 +330,8 @@ if __name__ == "__main__":
     test_kalshi_rows_from_payload_sign()
     test_kalshi_fills_from_payload()
     test_poly_activities_from_dump_payload()
+    test_parse_when_poly_nanoseconds()
+    test_patch_tape_poly_confirms_upgrades_empty_activities_note()
     test_backfill_missing_sent_at_from_order_io()
     test_fill_ingest_since_uses_last_tape_not_midnight_today()
     test_complementary_instruments_poly_slugs()
