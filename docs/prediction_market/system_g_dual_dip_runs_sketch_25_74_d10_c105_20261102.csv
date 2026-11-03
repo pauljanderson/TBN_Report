@@ -1,0 +1,81 @@
+book,band,lo,hi,door,dip,match,venue,wire_c,all_in,fav,dog,t0_fav,t0_dog,dip_fav,dip_dog,fav_won,dog_won,fav_hit,dog_hit,fav_fill,dog_fill,path,one_class,cost,pnl,both_only_pnl,lock_profit
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Humbert vs Moutet,Polymarket,1.01,1.03,Ugo Humbert,Corentin Moutet,0.71,0.3,0.51,0.16,False,True,True,True,0.61,0.2,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Miyoshi vs Jong,Polymarket,1.01,1.05,Kenta Miyoshi,Sander Jong,0.59,0.42,0.52,0.35,False,True,True,True,0.49,0.32,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Donald vs Sanchez Jover,Polymarket,1.01,1.05,Matthew William Donald,Carlos Sanchez Jover,0.53,0.48,0.3,0.4,True,False,True,True,0.43,0.38,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Tirante vs Diaz Acosta,Polymarket,1.01,1.03,Thiago Agustin Tirante,Facundo Acosta,0.73,0.28,0.66,0.13,False,True,True,True,0.63,0.18,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Young vs Chan,Polymarket,1.01,1.05,Duncan Chan,Gavin Young,0.6,0.41,0.52,0.22,False,True,True,True,0.5,0.31,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Marti Pujolras vs Basile,Polymarket,1.01,1.05,Pierluigi Basile,Alex Marti Pujolras,0.56,0.45,0.49,0.07,False,True,True,False,0.46,,one_fav,fav_lost,0.48,-0.48,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Fenty vs Bigun,Polymarket,1.01,1.05,Andrew Fenty,Kaylan Bigun,0.6,0.41,0.49,0.24,False,True,True,True,0.5,0.31,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Navone vs Cerundolo,Polymarket,1.01,1.05,Mariano Navone,Juan Manuel Cerundolo,0.6,0.41,0.36,0.34,True,False,True,True,0.5,0.31,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sonego vs Kouame,Polymarket,1.01,1.05,Lorenzo Sonego,Moise Kouame,0.6,0.41,0.53,0.07,False,True,True,False,0.5,,one_fav,fav_lost,0.52,-0.52,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Kolar vs Bondioli,Polymarket,1.01,1.05,Zdenek Kolar,Federico Bondioli,0.59,0.42,0.48,0.28,False,True,True,True,0.49,0.32,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Rodenas vs Hassan,Polymarket,1.01,1.05,Benjamin Hassan,Pedro Rodenas,0.65,0.36,0.04,0.26,True,False,False,True,,0.26,one_dog,dog_lost,0.27,-0.27,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Struff vs Giron,Polymarket,1.01,1.05,Jan-Lennard Struff,Marcos Giron,0.6,0.41,0.16,0.31,True,False,True,True,0.5,0.31,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Forti vs Forejtek,Polymarket,1.01,1.05,Jonas Forejtek,Francesco Forti,0.6,0.41,0.53,0.07,False,True,True,False,0.5,,one_fav,fav_lost,0.52,-0.52,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Mannarino vs Vukic,Polymarket,1.01,1.05,Adrian Mannarino,Aleksandar Vukic,0.61,0.4,0.09,0.33,True,False,False,True,,0.3,one_dog,dog_lost,0.31,-0.31,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Gill vs Misolic,Polymarket,1.01,1.05,Filip Misolic,Felix Gill,0.51,0.5,0.14,0.43,True,False,True,True,0.41,0.4,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Johnson vs Arutiunian,Polymarket,1.01,1.05,Spencer Johnson,Erik Arutiunian,0.67,0.34,0.4,0.27,False,True,True,True,0.57,0.24,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Mitsui vs Zahraj,Polymarket,1.01,1.05,Shunsuke Mitsui,Patrick Zahraj,0.68,0.33,0.58,0.08,False,True,True,False,0.58,,one_fav,fav_lost,0.6,-0.6,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Jarry vs Barrios Vera,Novig,1.015,1.035,T. Barrios Vera,N. Jarry,0.65,0.365,0.585,0.17,False,True,True,True,0.55,0.265,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Atmane vs Hijikata,Polymarket,1.01,1.05,Rinky Hijikata,Terence Atmane,0.53,0.48,0.46,0.19,False,True,True,True,0.43,0.38,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Faria vs Balshaw,Polymarket,1.01,1.05,Jaime Faria,Felix Balshaw,0.61,0.4,0.53,0.11,False,True,True,True,0.51,0.3,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Altmaier vs Droguet,Polymarket,1.01,1.05,Titouan Droguet,Daniel Altmaier,0.66,0.35,0.18,0.28,False,True,True,True,0.56,0.25,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Perez Contri vs Sakellaridis,Polymarket,1.01,1.03,Sergi Perez Contri,Dimitris Sakellaridis,0.71,0.3,0.22,0.23,False,True,True,True,0.61,0.2,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Smith vs Purcell,Polymarket,1.01,1.05,Max Purcell,Keegan Smith,0.67,0.34,0.6,0.03,False,True,True,False,0.57,,one_fav,fav_lost,0.59,-0.59,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Miyoshi vs Jong,Novig,1.02,1.04,K. Miyoshi,S. Jong,0.56,0.46,0.485,0.39,False,True,True,True,0.46,0.36,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Pedrico Kravtsov vs Ostapenkov,Polymarket,1.01,1.05,Daniil Ostapenkov,Albert Pedrico Kravtsov,0.57,0.44,0.5,0.2,False,True,True,True,0.47,0.34,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Kecmanovic vs Duckworth,Polymarket,1.01,1.05,Miomir Kecmanovic,James Duckworth,0.62,0.39,0.55,0.06,False,True,True,False,0.52,,one_fav,fav_lost,0.54,-0.54,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Hernandez vs Ribero,Polymarket,1.01,1.05,Alex Hernandez,Franco Ribero,0.62,0.39,0.55,0.07,False,True,True,False,0.52,,one_fav,fav_lost,0.54,-0.54,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Arnaldi vs Musetti,Polymarket,1.01,1.05,Lorenzo Musetti,Matteo Arnaldi,0.67,0.34,0.04,0.26,True,False,False,True,,0.24,one_dog,dog_lost,0.25,-0.25,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Samrej vs Noguchi,Novig,1.02,1.04,R. Noguchi,K. Samrej,0.685,0.335,0.62,0.245,False,True,True,True,0.585,0.235,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Damas vs Pieri,Polymarket,1.01,1.05,Miguel Damas,Samuele Pieri,0.52,0.49,0.44,0.06,False,True,True,False,0.42,,one_fav,fav_lost,0.44,-0.44,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Seyboth Wild vs Dellien,Polymarket,1.01,1.05,Thiago Seyboth Wild,Hugo Dellien,0.59,0.42,0.22,0.3,True,False,True,True,0.49,0.32,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Woestendick vs Artnak,Polymarket,1.01,1.05,Bor Artnak,Cooper Woestendick,0.52,0.49,0.28,0.4,True,False,True,True,0.42,0.39,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Cecchinato vs Gaubas,Polymarket,1.01,1.05,Vilius Gaubas,Marco Cecchinato,0.66,0.35,0.58,0.01,False,True,True,False,0.56,,one_fav,fav_lost,0.58,-0.58,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Donald vs Sanchez Jover,Novig,1.005,1.025,M. Donald,C. Sanchez Jover,0.52,0.485,0.295,0.4,True,False,True,True,0.42,0.385,both,,0.825,0.175,0.175,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Misolic vs Siniakov,Polymarket,1.02,1.04,Filip Misolic,Daniel Siniakov,0.73,0.29,0.19,0.22,True,False,True,True,0.63,0.19,both,,0.85,0.15,0.15,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Young vs Chan,Novig,1.015,1.035,D. Chan,G. Young,0.62,0.395,0.545,0.21,False,True,True,True,0.52,0.295,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Fearnley vs Gaston,Polymarket,1.01,1.05,Jacob Fearnley,Hugo Gaston,0.66,0.35,0.14,0.28,True,False,True,True,0.56,0.25,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sheehy vs McHugh,Polymarket,1.01,1.03,Aidan McHugh,Joshua Sheehy,0.72,0.29,0.03,0.21,True,False,False,True,,0.19,one_dog,dog_lost,0.2,-0.2,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sachko vs Gojo,Polymarket,1.01,1.05,Borna Gojo,Vitaliy Sachko,0.58,0.43,0.04,0.36,True,False,False,True,,0.33,one_dog,dog_lost,0.35,-0.35,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Rybakov vs Artnak,Polymarket,1.01,1.05,Alex Rybakov,Bor Artnak,0.66,0.35,0.04,0.28,True,False,False,True,,0.25,one_dog,dog_lost,0.26,-0.26,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Cina vs Munar,Polymarket,1.02,1.05,Jaume Munar,Federico Cina,0.7,0.32,0.0,0.25,True,False,False,True,,0.22,one_dog,dog_lost,0.23,-0.23,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Casanova vs Bueno,Novig,1.005,1.025,G. Bueno,H. Casanova,0.53,0.475,0.29,0.39,True,False,True,True,0.43,0.375,both,,0.825,0.175,0.175,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Marti Pujolras vs Basile,Novig,1.01,1.03,P. Basile,A. Marti Pujolras,0.55,0.46,0.48,0.08,False,True,True,False,0.45,,one_fav,fav_lost,0.46,-0.46,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Herbert vs Baez,Novig,1.01,1.03,P. Herbert,S. Baez,0.575,0.435,0.06,0.375,True,False,False,True,,0.335,one_dog,dog_lost,0.345,-0.345,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Rehberg vs Rottgering,Novig,1.01,1.03,M. Rottgering,M. Rehberg,0.555,0.455,0.005,0.39,True,False,False,True,,0.355,one_dog,dog_lost,0.365,-0.365,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Nagal vs Sanchez Quilez,Polymarket,1.01,1.05,Alejo Sanchez Quilez,Sumit Nagal,0.51,0.5,0.44,0.08,False,True,True,False,0.41,,one_fav,fav_lost,0.43,-0.43,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Bigun vs Zahraj,Novig,1.01,1.03,K. Bigun,P. Zahraj,0.57,0.44,0.095,0.38,True,False,False,True,,0.34,one_dog,dog_lost,0.35,-0.35,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Alcala Gurri vs Andrade,Polymarket,1.01,1.03,Max Alcala Gurri,Andres Andrade,0.74,0.27,0.05,0.2,True,False,False,True,,0.17,one_dog,dog_lost,0.18,-0.18,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Galan vs Varillas,Novig,1.005,1.025,J. Varillas,D. Galan,0.505,0.5,0.0,0.415,True,False,False,True,,0.4,one_dog,dog_lost,0.41,-0.41,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Kolar vs Bondioli,Novig,1.015,1.035,Z. Kolar,F. Bondioli,0.595,0.42,0.46,0.265,False,True,True,True,0.495,0.32,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Forti vs Forejtek,Novig,1.015,1.035,J. Forejtek,F. Forti,0.595,0.42,0.535,0.055,False,True,True,False,0.495,,one_fav,fav_lost,0.505,-0.505,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Boyer vs Moller,Novig,1.015,1.035,E. Moller,T. Boyer,0.525,0.49,0.12,0.415,True,False,True,True,0.425,0.39,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Gill vs Misolic,Novig,1.025,1.045,F. Gill,F. Misolic,0.525,0.5,0.455,0.075,False,True,True,False,0.425,,one_fav,fav_lost,0.435,-0.435,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Hernandez vs Ribero,Novig,1.01,1.03,A. Hernandez,F. Ribero,0.62,0.39,0.555,0.065,False,True,True,False,0.52,,one_fav,fav_lost,0.53,-0.53,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Monteiro vs Moro Canas,Polymarket,1.02,1.04,Thiago Monteiro,Alejandro Moro Canas,0.71,0.31,0.08,0.23,True,False,False,True,,0.21,one_dog,dog_lost,0.22,-0.22,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Arutiunian vs McHugh,Novig,1.015,1.035,A. McHugh,E. Arutiunian,0.515,0.5,0.445,0.065,False,True,True,False,0.415,,one_fav,fav_lost,0.425,-0.425,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Taberner vs Ritschard,Polymarket,1.01,1.05,Alexander Ritschard,Carlos Taberner,0.62,0.39,0.04,0.31,True,False,False,True,,0.29,one_dog,dog_lost,0.3,-0.3,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Smith vs Purcell,Novig,1.03,1.05,M. Purcell,K. Smith,0.675,0.355,0.505,0.035,False,True,True,False,0.575,,one_fav,fav_lost,0.585,-0.585,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Rodenas vs Hassan,Novig,1.005,1.025,B. Hassan,P. Rodenas,0.63,0.375,0.02,0.27,True,False,False,True,,0.275,one_dog,dog_lost,0.285,-0.285,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Herbert vs Mrva,Novig,1.01,1.03,P. Herbert,M. Mrva,0.605,0.405,0.33,0.335,True,False,True,True,0.505,0.305,both,,0.83,0.17,0.17,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Del Pino vs Gomez,Polymarket,1.01,1.05,Juan Sebastian Gomez,Mateo Del Pino,0.62,0.39,0.0,0.32,True,False,False,True,,0.29,one_dog,dog_lost,0.3,-0.3,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Rybakov vs Artnak,Novig,1.015,1.035,A. Rybakov,B. Artnak,0.655,0.36,0.035,0.3,True,False,False,True,,0.26,one_dog,dog_lost,0.27,-0.27,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Cecchinato vs Gaubas,Novig,1.02,1.04,V. Gaubas,M. Cecchinato,0.635,0.385,0.575,0.02,False,True,True,False,0.535,,one_fav,fav_lost,0.545,-0.545,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sakamoto vs Khachanov,Novig,1.01,1.03,K. Khachanov,R. Sakamoto,0.7,0.31,0.02,0.245,True,False,False,True,,0.21,one_dog,dog_lost,0.22,-0.22,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sakamoto vs Khachanov,Polymarket,1.01,1.03,Karen Khachanov,Rei Sakamoto,0.7,0.31,0.04,0.24,True,False,False,True,,0.21,one_dog,dog_lost,0.22,-0.22,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sakellaridis vs Clarke,Polymarket,1.01,1.03,Dimitris Sakellaridis,Jay Clarke,0.74,0.27,0.03,0.19,True,False,False,True,,0.17,one_dog,dog_lost,0.18,-0.18,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Felix Balshaw @ Corentin Moutet Round of 16,Polymarket,1.01,1.05,Felix Balshaw,Corentin Moutet,0.54,0.47,0.46,0.01,False,True,True,False,0.44,,one_fav,fav_lost,0.46,-0.46,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Bonzi vs Norrie,Polymarket,1.01,1.05,Cameron Norrie,Benjamin Bonzi,0.56,0.45,0.49,0.0,False,True,True,False,0.46,,one_fav,fav_lost,0.48,-0.48,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Fery vs Gojo,Novig,1.005,1.025,B. Gojo,A. Fery,0.605,0.4,0.17,0.305,True,False,True,True,0.505,0.3,both,,0.825,0.175,0.175,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Van Assche vs Tabur,Novig,1.01,1.03,L. Van Assche,C. Tabur,0.615,0.395,0.175,0.065,True,False,True,False,0.515,,one_fav,fav_won,0.525,0.475,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Taberner vs Krutykh,Novig,1.01,1.03,C. Taberner,O. Krutykh,0.655,0.355,0.0,0.2,True,False,False,True,,0.255,one_dog,dog_lost,0.265,-0.265,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Basavareddy vs Collignon,Polymarket,1.01,1.05,Nishesh Basavareddy,Raphael Collignon,0.55,0.46,0.06,0.04,False,True,False,False,,,none,,0.0,0.0,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Almazan Valiente vs Marti Pujolras,Novig,1.015,1.035,A. Marti Pujolras,I. Almazan Valiente,0.585,0.43,0.275,0.31,True,False,True,True,0.485,0.33,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Cina vs Munar,Novig,1.015,1.035,J. Munar,F. Cina,0.71,0.305,0.0,0.225,True,False,False,True,,0.205,one_dog,dog_lost,0.215,-0.215,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Trotter vs Young,Polymarket,1.01,1.03,James Kent Trotter,Gavin Young,0.71,0.3,0.62,0.1,False,True,True,True,0.61,0.2,both,,0.84,0.16,0.16,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Perez Contri vs Sakellaridis,Novig,1.015,1.035,S. Perez Contri,D. Sakellaridis,0.675,0.34,0.0,0.255,False,True,False,True,,0.24,one_dog,dog_won,0.25,0.75,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Nagal vs Sanchez Quilez,Novig,1.01,1.03,A. Sanchez Quilez,S. Nagal,0.52,0.49,0.44,0.07,False,True,True,False,0.42,,one_fav,fav_lost,0.43,-0.43,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Magadan vs Salazar Martinez,Novig,1.015,1.035,A. Magadan,D. Salazar Martinez,0.6,0.415,0.27,0.165,False,True,True,True,0.5,0.315,both,,0.835,0.165,0.165,True
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Sachko vs Gojo,Novig,1.01,1.03,B. Gojo,V. Sachko,0.56,0.45,0.005,0.33,True,False,False,True,,0.35,one_dog,dog_lost,0.36,-0.36,0.0,False
+A_dense_live_tape,25-74,0.25,0.74,1.05,0.1,Taberner vs Ritschard,Novig,1.02,1.04,A. Ritschard,C. Taberner,0.62,0.4,0.015,0.325,True,False,False,True,,0.3,one_dog,dog_lost,0.31,-0.31,0.0,False
