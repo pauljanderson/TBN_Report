@@ -13,6 +13,7 @@ Fees = documented taker on the fill price (Kalshi / Gemini / Polymarket).
 """
 from __future__ import annotations
 
+import csv
 import html as html_mod
 import json
 import re
@@ -38,12 +39,20 @@ KALSHI_SIDES = (
 )
 OUT_DIR = ROOT / "docs" / "prediction_market"
 PAGE = OUT_DIR / "system_g_dual_dip_paper_20261102.html"
+DETAIL_PAGE = OUT_DIR / "system_g_dual_dip_runs_20261102.html"
 JSON_OUT = OUT_DIR / "system_g_dual_dip_paper_20261102.json"
+CSV_OUT = OUT_DIR / "system_g_dual_dip_runs_20261102.csv"
 STAMP_PAGE = STAMP / "system_g_dual_dip_paper_20261102.html"
+STAMP_DETAIL = STAMP / "system_g_dual_dip_runs_20261102.html"
 STAMP_JSON = STAMP / "system_g_dual_dip_paper_20261102.json"
+STAMP_CSV = STAMP / "system_g_dual_dip_runs_20261102.csv"
 FILE_URL = (
     "file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/"
     "prediction_market_arb_exhaustive_20261017/system_g_dual_dip_paper_20261102.html"
+)
+DETAIL_FILE_URL = (
+    "file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/"
+    "prediction_market_arb_exhaustive_20261017/system_g_dual_dip_runs_20261102.html"
 )
 
 BANDS = (
@@ -353,14 +362,55 @@ def summarize(sims: list[dict]) -> dict:
     }
 
 
-def run_grid(pairs: list[dict]) -> list[dict]:
+def detail_row(book_name: str, band_name: str, lo: float, hi: float, door: float, dip: float, pair: dict, sim: dict) -> dict:
+    fav, dog = pair["fav"], pair["dog"]
+    return {
+        "book": book_name,
+        "band": band_name,
+        "lo": lo,
+        "hi": hi,
+        "door": door,
+        "dip": dip,
+        "match": pair.get("match") or "",
+        "venue": pair.get("venue") or "",
+        "wire_c": pair.get("wire_c"),
+        "all_in": pair.get("all_in"),
+        "fav": fav.get("name"),
+        "dog": dog.get("name"),
+        "t0_fav": fav.get("t0"),
+        "t0_dog": dog.get("t0"),
+        "dip_fav": fav.get("dip"),
+        "dip_dog": dog.get("dip"),
+        "fav_won": fav.get("won"),
+        "dog_won": dog.get("won"),
+        "fav_hit": sim.get("fav_hit"),
+        "dog_hit": sim.get("dog_hit"),
+        "fav_fill": sim.get("fav_fill"),
+        "dog_fill": sim.get("dog_fill"),
+        "path": sim.get("path"),
+        "one_class": sim.get("one_class"),
+        "cost": sim.get("cost"),
+        "pnl": sim.get("pnl"),
+        "both_only_pnl": sim.get("pnl") if sim.get("path") == "both" else 0.0,
+        "lock_profit": sim.get("lock_profit"),
+    }
+
+
+def run_grid(pairs: list[dict], book_name: str) -> tuple[list[dict], list[dict]]:
     grid = []
+    details: list[dict] = []
     for band_name, lo, hi in BANDS:
         banded = [p for p in pairs if in_band(p, lo, hi)]
         for door in DOORS:
             door_pairs = [p for p in banded if float(p["all_in"]) <= door + 1e-12]
             for dip in DIPS:
-                sims = [simulate(p, dip) for p in door_pairs]
+                sims = []
+                for pair in door_pairs:
+                    sim = simulate(pair, dip)
+                    sims.append(sim)
+                    details.append(
+                        detail_row(book_name, band_name, lo, hi, door, dip, pair, sim)
+                    )
                 grid.append({
                     "band": band_name,
                     "lo": lo,
@@ -371,7 +421,7 @@ def run_grid(pairs: list[dict]) -> list[dict]:
                     "n_door": len(door_pairs),
                     **summarize(sims),
                 })
-    return grid
+    return grid, details
 
 
 def fmt_money(x) -> str:
@@ -573,8 +623,214 @@ Percents are of door-qualified matches. <em>Both-only</em> = pretend one-leg
 never entered (upper bound if you can require both fills).</p>
 </div>
 {''.join(sections)}
-<p class="muted">Local file: <a href="{esc(FILE_URL)}">{esc(FILE_URL)}</a></p>
+<p class="note">Per-match runs (every band × door × dip):
+<a href="system_g_dual_dip_runs_20261102.html">system_g_dual_dip_runs_20261102.html</a>
+· <a href="system_g_dual_dip_runs_20261102.csv">CSV</a>
+· <a href="https://docs.google.com/spreadsheets/d/12MM3mix29etK2i2E3NEHn8LAWKXPs9iEr0O_cL2DqVA/edit">Sheet — sketch 25–74 / 10¢ / C1.05</a>
+· <a href="https://docs.google.com/spreadsheets/d/165vZ-6EjkVbeb0beqlPF0nAk0VV7d9hXOamGT5-YfZg/edit">Sheet — dense door 1.05 all bands×dips</a>
+· <a href="{esc(DETAIL_FILE_URL)}">{esc(DETAIL_FILE_URL)}</a></p>
+<p class="muted">Summary file: <a href="{esc(FILE_URL)}">{esc(FILE_URL)}</a></p>
 {report_page_extras.SORTABLE_TABLE_SCRIPT}
+</body>
+</html>
+"""
+
+
+def write_csv(details: list[dict], path: Path) -> None:
+    if not details:
+        return
+    fields = list(details[0].keys())
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        for row in details:
+            w.writerow(row)
+
+
+def detail_html(details: list[dict], written_at: str) -> str:
+    """Browsable per-match runs. Default filter = sketch cell on dense tape."""
+    # Keep page usable: embed all rows as JSON, render filtered table in JS.
+    slim = []
+    for d in details:
+        slim.append({
+            "book": d["book"],
+            "band": d["band"],
+            "door": d["door"],
+            "dip": d["dip"],
+            "match": d["match"],
+            "venue": d["venue"],
+            "all_in": d["all_in"],
+            "fav": d["fav"],
+            "dog": d["dog"],
+            "t0_fav": d["t0_fav"],
+            "t0_dog": d["t0_dog"],
+            "dip_fav": d["dip_fav"],
+            "dip_dog": d["dip_dog"],
+            "fav_won": d["fav_won"],
+            "dog_won": d["dog_won"],
+            "fav_hit": d["fav_hit"],
+            "dog_hit": d["dog_hit"],
+            "fav_fill": d["fav_fill"],
+            "dog_fill": d["dog_fill"],
+            "path": d["path"],
+            "one_class": d["one_class"],
+            "cost": d["cost"],
+            "pnl": d["pnl"],
+            "both_only_pnl": d["both_only_pnl"],
+        })
+    payload = json.dumps(slim, separators=(",", ":"))
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>System G — per-match runs (2 Nov 2026)</title>
+<style>
+body {{ font-family: Georgia, 'Times New Roman', serif; margin: 1.25rem; color: #1a1a1a; background: #f7f4ef; }}
+h1,h2 {{ font-family: 'Segoe UI', system-ui, sans-serif; }}
+.muted {{ color: #555; }}
+.controls {{ display:flex; flex-wrap:wrap; gap:0.6rem; align-items:end; margin:0.8rem 0 1rem; }}
+.controls label {{ font-size:0.85rem; display:flex; flex-direction:column; gap:0.2rem; }}
+.controls select, .controls button {{ font-size:0.95rem; padding:0.35rem 0.5rem; }}
+.card {{ background:#fff; border:1px solid #d8d0c2; border-radius:6px; padding:0.75rem 1rem; max-width:56rem; }}
+table {{ border-collapse:collapse; width:100%; background:#fff; font-size:0.8rem; }}
+th, td {{ border:1px solid #ccc; padding:0.28rem 0.4rem; }}
+th {{ background:#ebe4d8; position:sticky; top:0; }}
+td.num {{ text-align:right; font-variant-numeric: tabular-nums; }}
+.swipe {{ overflow:auto; max-height:calc(100vh - 14rem); }}
+.pos {{ color:#1b5e20; }}
+.neg {{ color:#8a1f1f; }}
+.stats {{ margin:0.5rem 0 0.8rem; }}
+</style>
+</head>
+<body>
+<h1>System G — every match run</h1>
+<p class="muted">Written {esc(written_at)}. One row = one match under one band × door × dip.
+Optimistic fill at T0−D + documented taker fee. Research only.</p>
+<div class="card">
+<p>Default view is the sketch cell: dense tape, band 25–74, door 1.05, dip 10¢.
+Change filters to inspect any other combo. Full dump also in
+<a href="system_g_dual_dip_runs_20261102.csv">system_g_dual_dip_runs_20261102.csv</a>.
+Sheets:
+<a href="https://docs.google.com/spreadsheets/d/12MM3mix29etK2i2E3NEHn8LAWKXPs9iEr0O_cL2DqVA/edit">sketch cell (80 matches)</a>
+·
+<a href="https://docs.google.com/spreadsheets/d/165vZ-6EjkVbeb0beqlPF0nAk0VV7d9hXOamGT5-YfZg/edit">dense door 1.05 (1080 rows)</a>.</p>
+</div>
+<div class="controls">
+  <label>Book
+    <select id="book">
+      <option value="A_dense_live_tape">A_dense_live_tape</option>
+      <option value="B_kalshi_yes_ask">B_kalshi_yes_ask</option>
+      <option value="ALL">ALL</option>
+    </select>
+  </label>
+  <label>Band
+    <select id="band">
+      <option>20-79</option>
+      <option selected>25-74</option>
+      <option>30-69</option>
+      <option>40-59</option>
+      <option>ALL</option>
+    </select>
+  </label>
+  <label>Door
+    <select id="door">
+      <option selected>1.05</option>
+      <option>1.1</option>
+      <option>1.15</option>
+      <option>ALL</option>
+    </select>
+  </label>
+  <label>Dip
+    <select id="dip">
+      <option value="0.05">5¢</option>
+      <option value="0.1" selected>10¢</option>
+      <option value="0.15">15¢</option>
+      <option value="0.2">20¢</option>
+      <option value="ALL">ALL</option>
+    </select>
+  </label>
+  <label>Path
+    <select id="path">
+      <option value="ALL" selected>ALL</option>
+      <option value="both">both</option>
+      <option value="one_fav">one_fav</option>
+      <option value="one_dog">one_dog</option>
+      <option value="none">none</option>
+    </select>
+  </label>
+  <button type="button" id="apply">Show runs</button>
+</div>
+<div class="stats muted" id="stats"></div>
+<div class="swipe">
+<table>
+<thead><tr>
+<th>Match</th><th>Venue</th><th>All-in</th>
+<th>Fav</th><th>T0 fav</th><th>Dip fav</th><th>Fill fav</th><th>Fav won?</th>
+<th>Dog</th><th>T0 dog</th><th>Dip dog</th><th>Fill dog</th><th>Dog won?</th>
+<th>Path</th><th>One class</th><th>Cost</th><th>P&amp;L</th><th>Both-only P&amp;L</th>
+</tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+<script>
+const ROWS = {payload};
+function money(x) {{
+  if (x === null || x === undefined) return "—";
+  const n = Number(x);
+  const s = (n < 0 ? "-" : "") + "$" + Math.abs(n).toFixed(4);
+  return s;
+}}
+function px(x) {{
+  if (x === null || x === undefined) return "—";
+  return (100 * Number(x)).toFixed(1) + "¢";
+}}
+function yn(x) {{
+  if (x === true) return "yes";
+  if (x === false) return "no";
+  return "—";
+}}
+function apply() {{
+  const book = document.getElementById("book").value;
+  const band = document.getElementById("band").value;
+  const door = document.getElementById("door").value;
+  const dip = document.getElementById("dip").value;
+  const path = document.getElementById("path").value;
+  const out = ROWS.filter(r => {{
+    if (book !== "ALL" && r.book !== book) return false;
+    if (band !== "ALL" && r.band !== band) return false;
+    if (door !== "ALL" && Math.abs(Number(r.door) - Number(door)) > 1e-9) return false;
+    if (dip !== "ALL" && Math.abs(Number(r.dip) - Number(dip)) > 1e-9) return false;
+    if (path !== "ALL" && r.path !== path) return false;
+    return true;
+  }});
+  const tb = document.getElementById("tbody");
+  tb.innerHTML = "";
+  let sum = 0, bothOnly = 0;
+  for (const r of out) {{
+    sum += Number(r.pnl || 0);
+    bothOnly += Number(r.both_only_pnl || 0);
+    const tr = document.createElement("tr");
+    const pnlCls = Number(r.pnl) > 0 ? "pos" : (Number(r.pnl) < 0 ? "neg" : "");
+    const boCls = Number(r.both_only_pnl) > 0 ? "pos" : (Number(r.both_only_pnl) < 0 ? "neg" : "");
+    tr.innerHTML = `
+      <td>${{r.match}}</td><td>${{r.venue}}</td><td class="num">${{Number(r.all_in).toFixed(3)}}</td>
+      <td>${{r.fav}}</td><td class="num">${{px(r.t0_fav)}}</td><td class="num">${{px(r.dip_fav)}}</td>
+      <td class="num">${{r.fav_fill == null ? "—" : px(r.fav_fill)}}</td><td>${{yn(r.fav_won)}}</td>
+      <td>${{r.dog}}</td><td class="num">${{px(r.t0_dog)}}</td><td class="num">${{px(r.dip_dog)}}</td>
+      <td class="num">${{r.dog_fill == null ? "—" : px(r.dog_fill)}}</td><td>${{yn(r.dog_won)}}</td>
+      <td>${{r.path}}</td><td>${{r.one_class || "—"}}</td>
+      <td class="num">${{money(r.cost)}}</td>
+      <td class="num ${{pnlCls}}">${{money(r.pnl)}}</td>
+      <td class="num ${{boCls}}">${{money(r.both_only_pnl)}}</td>`;
+    tb.appendChild(tr);
+  }}
+  document.getElementById("stats").textContent =
+    `Showing ${{out.length}} runs · as-stated total ${{money(sum)}} · both-only total ${{money(bothOnly)}}`;
+}}
+document.getElementById("apply").addEventListener("click", apply);
+apply();
+</script>
 </body>
 </html>
 """
@@ -609,40 +865,55 @@ def main() -> None:
     print(f"dense pairs {len(dense)}; kalshi pairs {len(kalshi)}", flush=True)
 
     books = {}
+    all_details: list[dict] = []
     if dense:
-        g = run_grid(dense)
+        g, details = run_grid(dense, "A_dense_live_tape")
+        all_details.extend(details)
         books["A_dense_live_tape"] = {
             "n_pairs": len(dense),
             "grid": g,
             "one_leg_note": one_leg_blurb(g),
+            "n_detail_rows": len(details),
         }
     if kalshi:
-        g = run_grid(kalshi)
+        g, details = run_grid(kalshi, "B_kalshi_yes_ask")
+        all_details.extend(details)
         books["B_kalshi_yes_ask"] = {
             "n_pairs": len(kalshi),
             "grid": g,
             "one_leg_note": one_leg_blurb(g),
+            "n_detail_rows": len(details),
         }
 
+    written_at = datetime.now(ET).strftime("%Y-%m-%d %H:%M %Z")
     payload = {
-        "written_at_et": datetime.now(ET).strftime("%Y-%m-%d %H:%M %Z"),
+        "written_at_et": written_at,
         "asked": ASKED,
         "assumption": (
             "Optimistic fill at T0−D; documented taker fee on fill; no queue; "
             "no partial size. Sit-out PnL=0. Both-fill always receives $1."
         ),
         "books": books,
+        "detail_csv": str(CSV_OUT.name),
+        "detail_html": str(DETAIL_PAGE.name),
+        "n_detail_rows": len(all_details),
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     JSON_OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     PAGE.write_text(html_report(payload), encoding="utf-8")
+    write_csv(all_details, CSV_OUT)
+    DETAIL_PAGE.write_text(detail_html(all_details, written_at), encoding="utf-8")
     try:
         STAMP.mkdir(parents=True, exist_ok=True)
         STAMP_JSON.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         STAMP_PAGE.write_text(html_report(payload), encoding="utf-8")
+        write_csv(all_details, STAMP_CSV)
+        STAMP_DETAIL.write_text(detail_html(all_details, written_at), encoding="utf-8")
     except OSError:
         pass
     print(f"wrote {PAGE}", flush=True)
+    print(f"wrote {DETAIL_PAGE}", flush=True)
+    print(f"wrote {CSV_OUT} rows={len(all_details)}", flush=True)
     print(f"wrote {JSON_OUT}", flush=True)
     for name, book in books.items():
         print(name, book.get("one_leg_note"), flush=True)

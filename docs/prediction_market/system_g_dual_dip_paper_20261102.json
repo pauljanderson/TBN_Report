@@ -1,5 +1,5 @@
 {
-  "written_at_et": "2026-11-02 22:11 EST",
+  "written_at_et": "2026-11-02 22:28 EST",
   "asked": "Paper System G: both Yes in band at T0; buy each on first \u2264 T0\u2212D; when both filled hold Yes+Yes. Also: when only one side fills, is it usually the underdog who loses, the favorite who loses, or a one-leg winner? Grid bands 20\u201379 / 25\u201374 / 30\u201369 / 40\u201359 \u00d7 dips 5/10/15/20\u00a2 \u00d7 T0 all-in doors 1.05 / 1.10 / 1.15. Want entry+fees profitable.",
   "assumption": "Optimistic fill at T0\u2212D; documented taker fee on fill; no queue; no partial size. Sit-out PnL=0. Both-fill always receives $1.",
   "books": {
@@ -4711,7 +4711,8 @@
           "mean_both_cost": 0.6365
         }
       ],
-      "one_leg_note": "Sketch cell 25\u201374 / \u221210\u00a2 / all-in\u22641.05 (N=80): both 41.2%, one 57.5%, none 1.2%. Only-dog-lost 30.0% (-6.665), only-fav-lost 25.0%, only-dog-won 1.2%, only-fav-won 1.2%. As-stated total -10.26 (avg -0.1283). Both-only total 5.275 (avg 0.0659)."
+      "one_leg_note": "Sketch cell 25\u201374 / \u221210\u00a2 / all-in\u22641.05 (N=80): both 41.2%, one 57.5%, none 1.2%. Only-dog-lost 30.0% (-6.665), only-fav-lost 25.0%, only-dog-won 1.2%, only-fav-won 1.2%. As-stated total -10.26 (avg -0.1283). Both-only total 5.275 (avg 0.0659).",
+      "n_detail_rows": 3544
     },
     "B_kalshi_yes_ask": {
       "n_pairs": 98,
@@ -9421,7 +9422,11 @@
           "mean_both_cost": 0.6496
         }
       ],
-      "one_leg_note": "Sketch cell 25\u201374 / \u221210\u00a2 / all-in\u22641.05 (N=39): both 35.9%, one 48.7%, none 15.4%. Only-dog-lost 25.6% (-3.2157), only-fav-lost 20.5%, only-dog-won 0.0%, only-fav-won 2.6%. As-stated total -4.6256 (avg -0.1186). Both-only total 2.2266 (avg 0.0571)."
+      "one_leg_note": "Sketch cell 25\u201374 / \u221210\u00a2 / all-in\u22641.05 (N=39): both 35.9%, one 48.7%, none 15.4%. Only-dog-lost 25.6% (-3.2157), only-fav-lost 20.5%, only-dog-won 0.0%, only-fav-won 2.6%. As-stated total -4.6256 (avg -0.1186). Both-only total 2.2266 (avg 0.0571).",
+      "n_detail_rows": 2012
     }
-  }
+  },
+  "detail_csv": "system_g_dual_dip_runs_20261102.csv",
+  "detail_html": "system_g_dual_dip_runs_20261102.html",
+  "n_detail_rows": 5556
 }
