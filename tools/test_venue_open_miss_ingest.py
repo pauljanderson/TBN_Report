@@ -1,6 +1,7 @@
 """Venue open positions → kitchen tape. No network. No secrets."""
 from __future__ import annotations
 
+import json
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -159,6 +160,72 @@ def test_poly_activities_from_dump_payload():
     assert rows[0]["side"] == "yes"
 
 
+def test_backfill_missing_sent_at_from_order_io():
+    """Filled sends with blank sent_at must pick up order_io timestamps."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = Path(tmp)
+        orders = raw / "orders.jsonl"
+        io = raw / "order_io.jsonl"
+        oid = "01a19e6f-0f68-7706-99fe-33da788b6836"
+        orders.write_text(
+            json.dumps(
+                {
+                    "event": "sent",
+                    "venue": "kalshi",
+                    "instrument": "KXATPCHALLENGERMATCH-26NOV02KENBAR-BAR",
+                    "bet_key": "tennis\tkenbar\t2026-11-02\tmoneyline\tcode:BAR",
+                    "order_id": oid,
+                    "confirm_known": True,
+                    "confirm_qty": "1.00",
+                    "http_status": 201,
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "event": "claim",
+                    "bet_key": "tennis\tkenbar\t2026-11-02\tmoneyline\tcode:BAR",
+                    "game": "Ken vs Bar",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        io.write_text(
+            json.dumps(
+                {
+                    "kind": "order",
+                    "venue": "kalshi",
+                    "timestamp": "2026-11-02T17:44:03-05:00",
+                    "response": {"order_id": oid, "fill_count": "1.00"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        old_raw, old_orders = vomi.RAW, vomi.ORDERS
+        try:
+            vomi.RAW = raw
+            vomi.ORDERS = orders
+            rep = vomi.backfill_missing_sent_at(persist=True)
+            assert rep["stamped"] >= 1
+            assert rep["filled_stamped"] >= 1
+            rows = [
+                json.loads(line)
+                for line in orders.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            sent = next(r for r in rows if r.get("event") == "sent")
+            claim = next(r for r in rows if r.get("event") == "claim")
+            assert sent.get("sent_at") == "2026-11-02T17:44:03-05:00"
+            assert claim.get("compared_at") == "2026-11-02T17:44:03-05:00"
+        finally:
+            vomi.RAW = old_raw
+            vomi.ORDERS = old_orders
+
+
 def test_fill_ingest_since_uses_last_tape_not_midnight_today():
     """Regression: midnight-today window left Nov-1 afternoon venue fills off the dashboard."""
     from datetime import datetime
@@ -205,6 +272,7 @@ if __name__ == "__main__":
     test_kalshi_rows_from_payload_sign()
     test_kalshi_fills_from_payload()
     test_poly_activities_from_dump_payload()
+    test_backfill_missing_sent_at_from_order_io()
     test_fill_ingest_since_uses_last_tape_not_midnight_today()
     test_complementary_instruments_poly_slugs()
     print("test_venue_open_miss_ingest ok")

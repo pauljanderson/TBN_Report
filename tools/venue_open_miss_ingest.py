@@ -444,6 +444,124 @@ def _schedule_rebuild() -> None:
         pass
 
 
+def _order_io_timestamps_by_id() -> dict[str, str]:
+    """order_id → order_io timestamp (ET iso)."""
+    path = RAW / "order_io.jsonl"
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    try:
+        import json
+
+        import live_lock_orders
+    except Exception:
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "order") not in {"order", ""}:
+            continue
+        stamp = str(item.get("timestamp") or item.get("at") or item.get("sent_at") or "").strip()
+        if not stamp:
+            continue
+        try:
+            oid = str(live_lock_orders._order_id(item.get("response")) or "").strip()
+        except Exception:
+            oid = ""
+        if not oid:
+            continue
+        # Prefer earliest stamp for an id (first POST time).
+        prev = out.get(oid)
+        if prev is None or stamp < prev:
+            out[oid] = stamp
+    return out
+
+
+def backfill_missing_sent_at(*, persist: bool = True) -> dict:
+    """Stamp blank sent_at/at on kitchen rows from order_io by order_id.
+
+    Live Lock A wrote confirm_qty>=1 sends with no timestamp. Dashboard
+    'Trades today' / inception sort keys off sent_at, so those fills were
+    invisible and the page looked stuck at 2026-11-01 08:20 ET.
+    """
+    import json
+
+    rows = _read_orders()
+    by_oid = _order_io_timestamps_by_id()
+    stamped = 0
+    filled_stamped = 0
+    claim_stamped = 0
+    # First pass: stamp sent/filled by order_id.
+    key_stamp: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        event = str(row.get("event") or "")
+        if event not in {"sent", "filled", "one_leg", "flatten_filled", "both_unfilled"}:
+            continue
+        if row.get("sent_at") or row.get("at") or row.get("compared_at"):
+            # Still record for claim backfill.
+            stamp = str(row.get("sent_at") or row.get("at") or row.get("compared_at") or "")
+            key = str(row.get("bet_key") or "")
+            if key and stamp:
+                key_stamp.setdefault(key, stamp)
+            continue
+        oid = str(row.get("order_id") or "").strip()
+        stamp = by_oid.get(oid) if oid else None
+        if not stamp:
+            continue
+        row["sent_at"] = stamp
+        row["at"] = stamp
+        stamped += 1
+        qty = _qty_of(row)
+        if qty > 0 or (row.get("confirm_known") and _dec(row.get("confirm_qty")) and _dec(row.get("confirm_qty")) > 0):
+            filled_stamped += 1
+        key = str(row.get("bet_key") or "")
+        if key:
+            key_stamp.setdefault(key, stamp)
+    # Second pass: stamp claim rows from a sibling sent stamp.
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("event") or "") != "claim":
+            continue
+        if row.get("compared_at") or row.get("at") or row.get("sent_at"):
+            continue
+        key = str(row.get("bet_key") or "")
+        stamp = key_stamp.get(key)
+        if not stamp:
+            continue
+        row["compared_at"] = stamp
+        row["at"] = stamp
+        claim_stamped += 1
+        stamped += 1
+    if persist and stamped:
+        ensure_dirs()
+        tmp = ORDERS.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        tmp.replace(ORDERS)
+    return {
+        "stamped": stamped,
+        "filled_stamped": filled_stamped,
+        "claim_stamped": claim_stamped,
+        "order_io_ids": len(by_oid),
+        "persisted": bool(persist and stamped),
+    }
+
+
 def rebuild_dashboard_now(*, reason: str = "venue_sync") -> dict:
     """Synchronous kitchen + dashboard rewrite so Paul sees trades without waiting."""
     import os
@@ -953,6 +1071,7 @@ def ingest_from_venue_pulls(
     rebuild: bool = False,
 ) -> dict:
     """Venue opens + fills after last kitchen fill + order_io orphans → tape → dashboard."""
+    stamp_rep = backfill_missing_sent_at(persist=persist)
     kalshi = load_kalshi_open_positions(live=live)
     poly = load_poly_open_positions(live=live)
     tape = _read_orders()
@@ -1013,6 +1132,7 @@ def ingest_from_venue_pulls(
         "same_direction_n": same_n,
         "since": since.isoformat(timespec="seconds"),
         "tape_last_fill_at": tape_last.isoformat(timespec="seconds") if tape_last else None,
+        "sent_at_backfill": stamp_rep,
         "kalshi": {k: v for k, v in k_rep.items() if k != "written"},
         "polymarket": {k: v for k, v in p_rep.items() if k != "written"},
         "kalshi_fills": {k: v for k, v in k_fill.items() if k != "written"},
