@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Drop from T0 — findings &amp; system recommendations (2 Nov 2026)</title>
+<style>
+body { font-family: Georgia, 'Times New Roman', serif; margin: 1.5rem; color: #1a1a1a;
+  background: linear-gradient(#f7f4ef, #efe8dc); min-height: 100vh; }
+h1,h2,h3 { font-family: 'Segoe UI', system-ui, sans-serif; }
+.muted { color: #555; }
+.note { max-width: 54rem; line-height: 1.45; }
+.card { background: #fff; border: 1px solid #d8d0c2; border-radius: 6px;
+  padding: 0.9rem 1.1rem; margin: 0.8rem 0; max-width: 54rem; }
+.rec { border-left: 4px solid #2f6f4e; }
+.hold { border-left: 4px solid #8a6d3b; }
+.skip { border-left: 4px solid #8a3b3b; }
+table { border-collapse: collapse; width: 100%; background: #fff; font-size: 0.88rem; }
+th, td { border: 1px solid #ccc; padding: 0.35rem 0.45rem; text-align: left; }
+th { background: #ebe4d8; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.kpi { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0 1rem; }
+.kpi div { background: #fff; border: 1px solid #d8d0c2; border-radius: 6px;
+  padding: 0.65rem 0.9rem; min-width: 8.5rem; }
+.kpi strong { display: block; font-size: 1.35rem; font-family: 'Segoe UI', system-ui, sans-serif; }
+.swipe { overflow-x: auto; }
+code { background: #f0ebe3; padding: 0.05rem 0.3rem; border-radius: 3px; }
+a { color: #1f4d7a; }
+</style>
+
+th.sortable-th { pointer-events: auto; touch-action: manipulation; cursor: pointer; }
+.sort-ind { display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }
+th.sort-asc .sort-ind::after { content:"\25B2"; color:#4c1d95; }
+th.sort-desc .sort-ind::after { content:"\25BC"; color:#4c1d95; }
+
+/* report-table-responsive */
+.table-wrap, .scroll, .wrap {
+  overflow: auto;
+  max-height: calc(100vh - 8rem);
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.swipe-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
+table.sortable {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.sortable th,
+table.sortable td {
+  border: 1px solid #d8dee9;
+  padding: 6px 8px;
+}
+table.sortable thead th,
+table.sortable > thead > tr > th.sortable-th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 2;
+}
+table.sortable th[data-sort="num"] { text-align: right; }
+table.sortable > tbody > tr > td:first-child,
+table.sortable > tbody > tr > th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.06);
+}
+table.sortable > thead > tr > th:first-child,
+table.sortable > thead > tr > th.sortable-th:first-child {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  background: #f8fafc;
+}
+table.sortable tr.total-row > td:first-child,
+table.sortable tr.total-row > th:first-child,
+table.sortable tr.table-total > td:first-child,
+table.sortable tr.table-total > th:first-child {
+  z-index: 2;
+  background: #f8fafc;
+}
+table.sortable tbody tr:hover td,
+table.sortable tbody tr:hover th {
+  background: #f1f5f9;
+}
+@media (max-width: 800px) {
+  .table-wrap table.sortable,
+  .scroll table.sortable,
+  .wrap table.sortable {
+    width: max-content;
+    min-width: 100%;
+  }
+  .table-wrap th, .table-wrap td,
+  .scroll th, .scroll td,
+  .wrap th, .wrap td {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+}
+
+</head>
+<body>
+<h1>Drop from starting price (T0) — findings &amp; what to try next</h1>
+<p class="muted">Written 2026-11-02 20:44 EST. Source rebuild 2026-11-02 19:39 EST.
+Research only. Not gold. Not DailyRun. Did not retune live A–E.</p>
+
+<div class="note">
+<p><strong>Question:</strong> If we buy gaps by waiting for each side to cheapen from
+its opening price — like Kolar 29%→18% and Moeller 79%→63%, buy at −10pp each —
+what can we get away with on average, by percentile, and by starting-price decile?</p>
+</div>
+
+<div class="kpi">
+  <div><strong>22.0¢</strong>Tennis median max dip</div>
+  <div><strong>24.7¢</strong>Tennis mean max dip</div>
+  <div><strong>46.2%</strong>Both sides ≥10¢</div>
+  <div><strong>30.8¢</strong>Near-50 median dip</div>
+  <div><strong>12.0¢</strong>Lopsided median dip</div>
+</div>
+
+<h2>Verdict in one paragraph</h2>
+<div class="note card">
+<p>On tennis, players <em>do</em> routinely cheapen after T0 — median max dip
+<strong>22.0¢</strong>, mean
+<strong>24.7¢</strong> (dense live tape, N=238 sides).
+Your coin-flip hypothesis is correct: 40–59¢ openers median-dip about
+<strong>30.8¢</strong>, while 0–19 / 80–99 openers only
+about <strong>12.0¢</strong>. A simultaneous −10¢ buy on
+<em>both</em> sides appears in about
+<strong>46.2%</strong> of matches;
+optimistic cost ~0.82 before fees (~18¢ theoretical lock). That is a real research
+candidate — not a free lunch, and not something to underwrite on 90/10 matches.</p>
+</div>
+
+<h2>Recommendations — new systems to try</h2>
+
+<div class="card rec">
+<h3>1. TRY (paper / research first): Tennis dual-dip gap — System “G”</h3>
+<p><strong>Rule sketch:</strong> At T0 on tennis moneyline, require both Yes asks in
+<strong>25–75¢</strong> (skip lopsided). Independently rest / watch for each side’s
+first print ≤ T0 − <strong>10¢</strong>. When <em>both</em> have filled (or been
+marked filled on the research tape), you own Yes+Yes with target cost ≤ ~0.90
+after ~2¢ fees. Hold to settlement (or flatten if all-in blows out — define later).</p>
+<p><strong>Why:</strong> Dense tape both-hit ≥10¢ =
+46.2% of 119 pairs;
+mean optimistic edge ~18.2¢
+before fees. Near-50 is where the dips live.</p>
+<p><strong>Gate before live:</strong> Replay with realistic fill model (touch ask +
+documented taker fee, no exact T0−T fills). Require IS/OOS split on a larger Kalshi
+in-play book. Do <strong>not</strong> wire beside B until that page is green.</p>
+<p><strong>Variant to A/B:</strong> T=8¢ and T=12¢; band 30–70 vs 25–75; require
+T0 all-in ≤ 1.05 (live B door) vs no door.</p>
+</div>
+
+<div class="card rec">
+<h3>2. TRY (research): Independent one-side dip add — not a lock</h3>
+<p><strong>Rule sketch:</strong> Same T0 band filter. Buy <em>one</em> extra Yes the
+first time <em>that</em> player dips 10¢ / 15¢ from T0 — without waiting for the
+other side. This is a directional add, not a gap lock.</p>
+<p><strong>Why:</strong> Single-side ≥10¢ hit rate on dense tennis is
+72.7% — much higher than both-side.
+Useful as a “buy the dump” sleeve, but PnL depends on whether the dumper recovers
+or dies. Dense dip-extra pages already exist; this would be a band-restricted
+rerun, not a new kitchen.</p>
+<p><strong>Gate:</strong> Must show with-fee EV by decile and by favorite vs dog
+before any live stake.</p>
+</div>
+
+<div class="card rec">
+<h3>3. TRY (research): CFB Points Total dip / gain sleeve</h3>
+<p><strong>Why:</strong> On this Kalshi pull, CFB totals had the jumpiest team-sport
+tape (median dip ~17.5¢, ≥10¢ hit ~73%, N=40). That is small-N but loud enough to
+justify a dedicated hist path study (buy T0 total Yes in 40–60, sell +G or ride).</p>
+<p><strong>Gate:</strong> Expand N well past 40; separate Over vs Under; do not mix
+with CFB moneyline or spread.</p>
+</div>
+
+<div class="card hold">
+<h3>4. HOLD live A–E as-is from this page</h3>
+<ul>
+<li><strong>B</strong> (tennis crossover + fav dip D=0.25): this study is about
+pre-cross dual dips from T0, not the post-cross fav GTC. Do not change D from here.</li>
+<li><strong>C / D / E</strong> T0 band holds from the 30 Oct decile recs still stand.
+This page does not reopen those freezes.</li>
+</ul>
+</div>
+
+<div class="card skip">
+<h3>5. SKIP / do not build</h3>
+<ul>
+<li><strong>90/10 dual-dip locks.</strong> Lopsided openers barely both-dip.
+Dense far-decile median dip only 12.0¢; Kalshi far median
+1.5¢.</li>
+<li><strong>NFL spread dip factory.</strong> Kalshi NFL spread median max dip 0¢ in
+this sample; sticky.</li>
+<li><strong>Assuming Kolar/Moeller −10¢ both is typical every match.</strong>
+Today Moeller only dipped ~7.5¢ from listed T0 on Poly last-trade.</li>
+</ul>
+</div>
+
+<h2>Kolar vs Moeller (today)</h2>
+<div class="note card">
+<p>Polymarket listed start 2026-11-02 5:55 PM America/New_York. CLOB last-trade (not Yes-ask). Matches Paul&#x27;s window: Kolar ~29–30¢ into the match, Moeller high-70s with a mid-60s print around 6:16 PM ET. A simultaneous −10¢ buy on both is not guaranteed — Moeller&#x27;s max dip from the listed T0 was only ~7–8¢ on this last-trade tape.</p>
+<ul>
+<li><strong>Zdenek Kolar</strong>: T0 30.0¢, min after T0 0.1¢, max dip 29.9¢</li><li><strong>Elmer Moeller</strong>: T0 70.0¢, min after T0 62.5¢, max dip 7.5¢</li>
+</ul>
+</div>
+
+<h2>Tennis — max dip by T0 decile (dense live tape)</h2>
+<p class="muted">Max dip = T0 Yes − minimum in-play Yes after kickoff. Hit% = share of
+sides whose max dip cleared that threshold.</p>
+<div class="swipe">
+<table class="sortable">
+<thead><tr>
+<th>T0 decile</th><th class="num">N</th><th class="num">Mean</th><th class="num">Median</th>
+<th class="num">p25</th><th class="num">p75</th><th class="num">p90</th>
+<th class="num">≥5¢</th><th class="num">≥10¢</th><th class="num">≥15¢</th>
+<th class="num">≥20¢</th><th class="num">≥25¢</th>
+</tr></thead>
+<tbody>
+<tr><td>10-19</td><td class='num'>4</td><td class='num'>8.0¢</td><td class='num'>8.2¢</td><td class='num'>6.9¢</td><td class='num'>9.4¢</td><td class='num'>10.9¢</td><td class='num'>75.0%</td><td class='num'>25.0%</td><td class='num'>0.0%</td><td class='num'>0.0%</td><td class='num'>0.0%</td></tr><tr><td>20-29</td><td class='num'>28</td><td class='num'>15.0¢</td><td class='num'>15.0¢</td><td class='num'>13.4¢</td><td class='num'>19.2¢</td><td class='num'>21.0¢</td><td class='num'>92.9%</td><td class='num'>85.7%</td><td class='num'>53.6%</td><td class='num'>25.0%</td><td class='num'>0.0%</td></tr><tr><td>30-39</td><td class='num'>35</td><td class='num'>19.2¢</td><td class='num'>23.0¢</td><td class='num'>9.0¢</td><td class='num'>26.5¢</td><td class='num'>28.0¢</td><td class='num'>88.6%</td><td class='num'>74.3%</td><td class='num'>71.4%</td><td class='num'>62.9%</td><td class='num'>37.1%</td></tr><tr><td>40-49</td><td class='num'>46</td><td class='num'>25.2¢</td><td class='num'>30.8¢</td><td class='num'>12.0¢</td><td class='num'>36.0¢</td><td class='num'>39.5¢</td><td class='num'>93.5%</td><td class='num'>78.3%</td><td class='num'>73.9%</td><td class='num'>65.2%</td><td class='num'>58.7%</td></tr><tr><td>50-59</td><td class='num'>42</td><td class='num'>29.4¢</td><td class='num'>35.8¢</td><td class='num'>8.4¢</td><td class='num'>46.0¢</td><td class='num'>49.0¢</td><td class='num'>85.7%</td><td class='num'>71.4%</td><td class='num'>64.3%</td><td class='num'>64.3%</td><td class='num'>61.9%</td></tr><tr><td>60-69</td><td class='num'>42</td><td class='num'>32.2¢</td><td class='num'>34.0¢</td><td class='num'>6.8¢</td><td class='num'>54.1¢</td><td class='num'>58.0¢</td><td class='num'>76.2%</td><td class='num'>71.4%</td><td class='num'>69.0%</td><td class='num'>59.5%</td><td class='num'>59.5%</td></tr><tr><td>70-79</td><td class='num'>30</td><td class='num'>28.1¢</td><td class='num'>19.5¢</td><td class='num'>5.2¢</td><td class='num'>49.2¢</td><td class='num'>66.5¢</td><td class='num'>76.7%</td><td class='num'>63.3%</td><td class='num'>60.0%</td><td class='num'>50.0%</td><td class='num'>40.0%</td></tr><tr><td>80-89</td><td class='num'>11</td><td class='num'>14.4¢</td><td class='num'>14.0¢</td><td class='num'>8.8¢</td><td class='num'>21.8¢</td><td class='num'>26.5¢</td><td class='num'>81.8%</td><td class='num'>63.6%</td><td class='num'>36.4%</td><td class='num'>27.3%</td><td class='num'>27.3%</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Both-sides gap (dense tennis pairs, N=119)</h2>
+<p class="muted">Optimistic: if both max-dips clear T, assume fills at exactly T0−T.
+Ignores queue, ask/trade gap, and fees.</p>
+<div class="swipe">
+<table class="sortable">
+<thead><tr>
+<th>Both sides dip</th><th class="num">Hit % of matches</th><th class="num">N both-hit</th>
+<th class="num">Mean cost</th><th class="num">Median cost</th><th class="num">Mean edge vs $1</th>
+</tr></thead>
+<tbody>
+<tr><td>≥5¢</td><td class='num'>70.6%</td><td class='num'>84</td><td class='num'>91.6¢</td><td class='num'>91.0¢</td><td class='num'>8.4¢</td></tr><tr><td>≥10¢</td><td class='num'>46.2%</td><td class='num'>55</td><td class='num'>81.8¢</td><td class='num'>81.0¢</td><td class='num'>18.2¢</td></tr><tr><td>≥15¢</td><td class='num'>34.5%</td><td class='num'>41</td><td class='num'>71.9¢</td><td class='num'>71.0¢</td><td class='num'>28.1¢</td></tr><tr><td>≥20¢</td><td class='num'>21.0%</td><td class='num'>25</td><td class='num'>62.2¢</td><td class='num'>61.0¢</td><td class='num'>37.8¢</td></tr><tr><td>≥25¢</td><td class='num'>12.6%</td><td class='num'>15</td><td class='num'>52.3¢</td><td class='num'>51.0¢</td><td class='num'>47.7¢</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Favorite / dog / near-50 overlay (dense tennis)</h2>
+<ul>
+<li>Favorites: N=119, mean 29.3¢, median 28.0¢</li>
+<li>Dogs: N=119, mean 20.1¢, median 20.0¢</li>
+<li>Near coin-flip (40–59): N=88, median 30.8¢</li>
+<li>Lopsided (0–19 or 80–99): N=15, median 12.0¢</li>
+<li>Kalshi all-sports check: near-50 median 22.0¢ vs
+lopsided 1.5¢</li>
+</ul>
+
+<h2>Sport / bet type snapshot</h2>
+<div class="swipe">
+<table class="sortable">
+<thead><tr>
+<th>Market</th><th>Book</th><th class="num">N</th><th class="num">Mean dip</th>
+<th class="num">Median</th><th class="num">Hit ≥10¢</th><th class="num">Hit ≥15¢</th>
+</tr></thead>
+<tbody>
+<tr><td>Tennis ML</td><td>Dense live</td><td class='num'>238</td><td class='num'>24.7¢</td><td class='num'>22.0¢</td><td class='num'>72.7%</td><td class='num'>63.9%</td></tr><tr><td>Tennis ML</td><td>Kalshi ask</td><td class='num'>240</td><td class='num'>17.0¢</td><td class='num'>7.0¢</td><td class='num'>43.8%</td><td class='num'>37.9%</td></tr><tr><td>Tennis ML</td><td>Poly trade</td><td class='num'>60</td><td class='num'>26.7¢</td><td class='num'>24.2¢</td><td class='num'>71.7%</td><td class='num'>65.0%</td></tr><tr><td>NFL ML</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>13.0¢</td><td class='num'>4.5¢</td><td class='num'>30.0%</td><td class='num'>30.0%</td></tr><tr><td>NFL spread</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>5.4¢</td><td class='num'>0.0¢</td><td class='num'>12.5%</td><td class='num'>12.5%</td></tr><tr><td>NFL total</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>6.2¢</td><td class='num'>3.0¢</td><td class='num'>25.0%</td><td class='num'>12.5%</td></tr><tr><td>CFB ML</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>9.5¢</td><td class='num'>1.0¢</td><td class='num'>27.5%</td><td class='num'>25.0%</td></tr><tr><td>CFB spread</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>13.7¢</td><td class='num'>7.5¢</td><td class='num'>45.0%</td><td class='num'>35.0%</td></tr><tr><td>CFB total</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>21.6¢</td><td class='num'>17.5¢</td><td class='num'>72.5%</td><td class='num'>55.0%</td></tr><tr><td>MLB ML</td><td>Kalshi ask</td><td class='num'>40</td><td class='num'>11.9¢</td><td class='num'>6.0¢</td><td class='num'>35.0%</td><td class='num'>27.5%</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>How this was measured</h2>
+<div class="note">
+<ul>
+<li><strong>Book A</strong> — dense multi-venue tennis live tape (Oct 21), already
+T0-labeled with max dip per side.</li>
+<li><strong>Book B</strong> — Kalshi 1-minute Yes-ask candles from occurrence clock
+to close; skip bad clocks (occurrence ≥ close); require ≥5 post-T0 bars.</li>
+<li><strong>Book C</strong> — Polymarket CLOB last-trade (not ask).</li>
+<li>Full machine table:
+<code>docs/prediction_market/drop_from_t0_by_decile_20261102.html</code></li>
+<li>Rebuild:
+<code>python -u tools/pm_drop_from_t0_decile_20261102.py --per-series 40 --poly</code>
+then
+<code>python -u tools/_write_drop_from_t0_recs_20261102.py</code></li>
+</ul>
+<p class="muted">Optimistic both-side fills at exactly T0−T ignore queue position, ask/trade gap, and fees. Kalshi skips markets whose occurrence clock is at/after close. Book A is tennis-only dense live tape (Oct 21). Book C is Polymarket last-trade, not Yes-ask. Local price_memory is not on this cloud VM.</p>
+</div>
+
+<p class="muted">Local file URL on Paul’s PC: <a href="file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/prediction_market_arb_exhaustive_20261017/drop_from_t0_recs_20261102.html">file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/prediction_market_arb_exhaustive_20261017/drop_from_t0_recs_20261102.html</a></p>
+
+<script>
+(function () {
+
+  function ensureTableWraps() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var parent = table.parentElement;
+      if (!parent || !parent.classList) return;
+      var cls = parent.classList;
+      if (cls.contains("table-wrap") || cls.contains("scroll") || cls.contains("wrap")) return;
+      var div = document.createElement("div");
+      div.className = "table-wrap";
+      parent.insertBefore(div, table);
+      div.appendChild(table);
+    });
+  }
+  function alignNumericColumns() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var headRow = table.tHead && table.tHead.rows[0];
+      if (!headRow || !table.tBodies[0]) return;
+      var idx = [];
+      for (var i = 0; i < headRow.cells.length; i++) {
+        if (headRow.cells[i].getAttribute("data-sort") === "num") idx.push(i);
+      }
+      if (!idx.length) return;
+      Array.prototype.forEach.call(table.tBodies[0].rows, function (tr) {
+        idx.forEach(function (i) {
+          if (tr.cells[i]) tr.cells[i].style.textAlign = "right";
+        });
+      });
+    });
+  }
+  function bootTables() {
+    ensureTableWraps();
+    alignNumericColumns();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootTables);
+  } else {
+    bootTables();
+  }
+
+  var MONTHS = {
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12
+  };
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "month") {
+      var key = s.toLowerCase().split(/\s/)[0];
+      return MONTHS[key] || 0;
+    }
+    if (type === "date") {
+      var iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      // Compact YYYYMMDD (VZ TRIGGER_DATE, RS/BRT DATE, RSI ASOF_DATE, etc.)
+      var ymd = s.match(/^(\d{8})$/);
+      if (ymd) return parseInt(ymd[1], 10);
+      var mdy = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) {
+      return r.classList.contains("total-row") || r.classList.contains("table-total");
+    });
+    var movable = rows.filter(function (r) {
+      return !r.classList.contains("total-row") && !r.classList.contains("table-total");
+    });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+    var wrap = table.closest(".table-wrap, .scroll, .wrap");
+    if (wrap) wrap.scrollTop = 0;
+  }
+  function headerCol(th) {
+    if (typeof th.cellIndex === "number" && th.cellIndex >= 0) return th.cellIndex;
+    var tr = th.parentElement;
+    if (!tr) return 0;
+    return Array.prototype.indexOf.call(tr.children, th);
+  }
+  var lastAt = 0;
+  var lastTh = null;
+  function onActivate(th) {
+    var table = th.closest("table.sortable");
+    if (!table) return;
+    var now = Date.now();
+    if (lastTh === th && now - lastAt < 400) return;
+    lastTh = th;
+    lastAt = now;
+    var col = headerCol(th);
+    var type = th.getAttribute("data-sort") || "text";
+    var dir = th.getAttribute("data-dir") === "asc" ? -1 : 1;
+    table.querySelectorAll("th.sortable-th").forEach(function (h) {
+      h.setAttribute("data-dir", "");
+      h.classList.remove("sort-asc", "sort-desc");
+      h.setAttribute("aria-sort", "none");
+    });
+    th.setAttribute("data-dir", dir === 1 ? "asc" : "desc");
+    th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+    th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+    sortTable(table, col, type, dir);
+  }
+  function headerFromEvent(e) {
+    var t = e.target;
+    if (t && t.closest) {
+      var direct = t.closest("th.sortable-th");
+      if (direct) return direct;
+    }
+    if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
+    var best = null;
+    var bestZ = -Infinity;
+    var bestArea = Infinity;
+    var list = document.querySelectorAll("table.sortable th.sortable-th");
+    for (var i = 0; i < list.length; i++) {
+      var th = list[i];
+      var r = th.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+      var z = parseInt(window.getComputedStyle(th).zIndex, 10);
+      if (!isFinite(z)) z = 0;
+      var area = r.width * r.height;
+      if (!best || z > bestZ || (z === bestZ && area < bestArea)) {
+        best = th;
+        bestZ = z;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+  document.addEventListener("click", function (e) {
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("pointerup", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var th = headerFromEvent(e);
+    if (!th) return;
+    e.preventDefault();
+    onActivate(th);
+  });
+})();
+</script>
+
+</body>
+</html>
