@@ -585,11 +585,13 @@ def main() -> int:
     if heal_rep and heal_rep.get("added"):
         print(f"attribution healed: {heal_rep.get('gaps')}")
     if sync_rep is not None:
+        bf = sync_rep.get("sent_at_backfill") or {}
         print(
             f"venue_sync added={sync_rep.get('added')} "
             f"since={sync_rep.get('since')} tape_last={sync_rep.get('tape_last_fill_at')} "
             f"kalshi_fill_n={sync_rep.get('kalshi_fill_n')} poly_fill_n={sync_rep.get('poly_fill_n')} "
             f"order_io_added={(sync_rep.get('order_io_fills') or {}).get('added')} "
+            f"sent_at_backfill={bf.get('stamped', 0)} "
             f"rebuild={bool((sync_rep.get('rebuild') or {}).get('orders_performance') or (sync_rep.get('rebuild') or {}).get('dashboard'))}"
         )
         if sync_rep.get("error"):

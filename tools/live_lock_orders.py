@@ -2023,6 +2023,7 @@ def _fee_tape(spec: dict, payload=None) -> dict:
 
 def _sent_row(spec: dict, status, payload, note: str) -> dict:
     """orders.jsonl sent row with venue-confirm qty (dashboard source)."""
+    stamp = str(spec.get("sent_at") or spec.get("quote_seen_at") or "") or _iso_now()
     row = {
         "event": "sent",
         "bet_key": spec.get("_bet_key"),
@@ -2040,6 +2041,9 @@ def _sent_row(spec: dict, status, payload, note: str) -> dict:
         "game": spec.get("game") or "",
         "sport": spec.get("sport") or "",
         "side_label": spec.get("player") or spec.get("side_label") or "",
+        # Dashboard "Trades today" keys off sent_at. Missing stamp → invisible fills.
+        "sent_at": stamp,
+        "at": stamp,
     }
     confirm = venue_confirm_of(payload)
     if confirm:
@@ -2219,8 +2223,28 @@ def _read_orders() -> list[dict]:
     return rows
 
 
+def _stamp_tape_row(row: dict) -> dict:
+    """Ensure claim/sent/filled rows carry an ET timestamp the dashboard can sort on."""
+    if not isinstance(row, dict):
+        return row
+    event = str(row.get("event") or "")
+    if event not in {"claim", "sent", "filled", "one_leg", "flatten_filled", "both_unfilled"}:
+        return row
+    if row.get("sent_at") or row.get("at") or row.get("compared_at"):
+        return row
+    stamp = _iso_now()
+    if event == "claim":
+        row.setdefault("compared_at", stamp)
+        row.setdefault("at", stamp)
+    else:
+        row.setdefault("sent_at", stamp)
+        row.setdefault("at", stamp)
+    return row
+
+
 def _append_unlocked(row: dict) -> None:
     ORDERS.parent.mkdir(parents=True, exist_ok=True)
+    row = _stamp_tape_row(row)
     with ORDERS.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
@@ -3310,6 +3334,7 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     status, payload, note = _send(first)
     first_payload = payload
     _log_sent(log, first, status)
+    stamp = _iso_now()
     sent_row = {
         "event": "sent",
         "bet_key": key,
@@ -3322,6 +3347,8 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
         "http_status": status,
         "note": note,
         "order_id": _order_id(payload),
+        "sent_at": stamp,
+        "at": stamp,
     }
     sent_row.update(_sent_confirm_fields(payload))
     _append(sent_row)
@@ -3357,6 +3384,7 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
     })
     status2, payload2, note2 = _send(second)
     _log_sent(log, second, status2)
+    stamp2 = _iso_now()
     sent2 = {
         "event": "sent",
         "bet_key": key,
@@ -3369,6 +3397,8 @@ def _send_pair(log, key: str, title: str, legs: list[dict]) -> None:
         "http_status": status2,
         "note": note2,
         "order_id": _order_id(payload2),
+        "sent_at": stamp2,
+        "at": stamp2,
     }
     sent2.update(_sent_confirm_fields(payload2))
     _append(sent2)
