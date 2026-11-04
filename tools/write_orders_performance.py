@@ -1137,22 +1137,37 @@ def _named_poly_outcome(leg: dict) -> str:
 
 
 def _same_named_yes_no(leg: dict, cluster: dict | None) -> bool:
-    """True No: Yes and No on one named outcome (lock), not two-player T0."""
+    """True No: Yes and No on one named outcome (lock), not two-player T0.
+
+    Cross-venue A locks (Kalshi Yes Garland + Poly No Garland) must count —
+    same-instrument-only missed Teichmann and labeled Poly No as Yes Garland.
+    """
     this = _named_poly_outcome(leg)
     inst = str(leg.get("instrument") or "")
+    this_venue = str(leg.get("venue") or "").lower()
     this_short = _poly_is_short(leg)
-    this_yes = (not this_short) and str(leg.get("side") or "").lower() == "yes"
+    this_book = str(leg.get("side") or "").lower()
+    this_yes = (not this_short) and this_book == "yes"
+    this_no = this_book == "no" or this_short
     for other in _cluster_name_legs(cluster):
         if other is leg:
             continue
-        if inst and str(other.get("instrument") or "") != inst:
+        other_inst = str(other.get("instrument") or "")
+        other_venue = str(other.get("venue") or "").lower()
+        same_inst = bool(inst) and other_inst == inst
+        cross_venue = bool(this_venue and other_venue and this_venue != other_venue)
+        if not same_inst and not cross_venue:
             continue
-        other_who = _named_poly_outcome(other)
+        other_who = _named_poly_outcome(other) or _real_player_name(
+            other.get("player") or other.get("outcome_name")
+        )
         if not this or not other_who or not same_player(this, other_who):
             continue
         o_short = _poly_is_short(other)
-        o_yes = (not o_short) and str(other.get("side") or "").lower() == "yes"
-        if (this_short and o_yes) or (this_yes and o_short):
+        o_book = str(other.get("side") or "").lower()
+        o_yes = (not o_short) and o_book == "yes"
+        o_no = o_book == "no" or o_short
+        if (this_short and o_yes) or (this_yes and o_short) or (this_no and o_yes) or (this_yes and o_no):
             return True
     return False
 
@@ -1934,6 +1949,165 @@ def apply_paul_history(clusters: list[dict], io_list: list[dict]) -> None:
         cluster["hold_class"] = hold_class_of(cluster)
 
 
+def is_cross_venue_lock_pair(cluster: dict) -> bool:
+    """True complementary cross-venue A lock with after-fee all-in ≤ $1.
+
+    Drive 2026-11-04 failure: Imamura/Teichmann Yes+No locks were labeled
+    "both filled lock" then restrict_realized re-summed inconsistent venue
+    ticker settles into both-leg wins (~+$1.01 each → today +$2.04). Pair net
+    is 1 − all-in (~+$0.01). Do not require cluster['complementary'] alone —
+    score_cluster may clear it; re-check legs.
+    """
+    if not isinstance(cluster, dict):
+        return False
+    if cluster.get("same_direction_double") or cluster.get("lock_all_in_mistake"):
+        return False
+    if cluster.get("b_t0_both"):
+        return False
+    fill_legs = [
+        leg
+        for leg in (cluster.get("fill_legs") or [])
+        if isinstance(leg, dict) and qty_is_house_fill(leg.get("qty"))
+    ]
+    if len(fill_legs) < 2:
+        return False
+    venues = {str(leg.get("venue") or "").lower() for leg in fill_legs}
+    if len(venues) < 2:
+        return False
+    is_comp = bool(cluster.get("complementary")) or complementary_legs(fill_legs)
+    if not is_comp:
+        return False
+    intent_ok = cluster.get("intent") in {
+        INTENT_FULL_LOCK,
+        INTENT_INCOMPLETE_LOCK,
+        None,
+        "",
+    } or str(cluster.get("system_letter") or "") == "A"
+    if not intent_ok and not complementary_legs(fill_legs):
+        return False
+    all_in = fill_legs_after_fee_all_in(fill_legs)
+    if all_in is not None and all_in > Decimal("1"):
+        return False
+    return True
+
+
+def _authoritative_lock_result(fill_legs: list[dict], settlements: list[dict]) -> str:
+    """One yes/no for a complementary same-player lock. Prefer Kalshi ticker."""
+    ordered = sorted(
+        fill_legs,
+        key=lambda leg: 0 if str(leg.get("venue") or "").lower() == "kalshi" else 1,
+    )
+    for leg in ordered:
+        result = ticker_result(settlements, str(leg.get("instrument") or ""))
+        if result in {"yes", "no"}:
+            return result
+        px = _poly_px_result(leg)
+        if px in {"yes", "no"}:
+            return px
+    return ""
+
+
+def stamp_cross_venue_lock_pair_net(
+    cluster: dict, settlements: list[dict] | None = None
+) -> bool:
+    """Force pair-net realized + one win / one loss on complementary cross-venue locks.
+
+    Inconsistent Poly vs Kalshi ticker results previously stamped BOTH legs as
+    wins (Imamura +$0.48/+0.53, Teichmann +$0.67/+0.34) while the lock only
+    pays ~+$0.01. Re-stamp from 1 − all-in with one authoritative result.
+    """
+    if not is_cross_venue_lock_pair(cluster):
+        return False
+    fill_legs = [
+        leg
+        for leg in (cluster.get("fill_legs") or [])
+        if isinstance(leg, dict) and qty_is_house_fill(leg.get("qty"))
+    ]
+    pair = lock_realized(fill_legs)
+    auth = _authoritative_lock_result(fill_legs, settlements or [])
+    forced: list[dict] = []
+    if auth in {"yes", "no"}:
+        for leg in fill_legs:
+            inst = str(leg.get("instrument") or "").strip()
+            if not inst:
+                continue
+            forced.append(
+                {
+                    "ticker": inst,
+                    "result": auth,
+                    "venue": str(leg.get("venue") or ""),
+                    "settlementPx": "1.0000" if auth == "yes" else "0.0000",
+                }
+            )
+    wins = 0
+    losses = 0
+    stamped = []
+    for leg in fill_legs:
+        status, pnl = ticket_settled_pnl(leg, forced or (settlements or []), str(cluster.get("winner") or ""))
+        if status not in {"win", "lose"} or pnl is None:
+            # Fall back: allocate pair across Yes win / No lose using auth or Yes wins.
+            book = str(leg.get("side") or "").lower()
+            qty = ddec(leg.get("qty")) or Decimal("1")
+            cash = ddec(leg.get("cash")) or Decimal("0")
+            fee = ddec(leg.get("fee")) if leg.get("fee") not in (None, "") else Decimal("0")
+            cost = (cash * qty) + (fee or Decimal("0"))
+            use = auth if auth in {"yes", "no"} else "yes"
+            won = (book == "yes" and use == "yes") or (book == "no" and use == "no")
+            status = "win" if won else "lose"
+            pnl = (qty - cost) if won else (Decimal("0") - cost)
+        leg["ticket_status"] = status
+        leg["ticket_pnl"] = format(pnl, "f")
+        leg["settle_result"] = auth or leg.get("settle_result") or ""
+        stamped.append(pnl)
+        if status == "win":
+            wins += 1
+        else:
+            losses += 1
+    if len(stamped) >= 2:
+        # Keep kitchen dollars on the pair net (float dust from fee paths).
+        drift = pair - sum(stamped, Decimal("0"))
+        if abs(drift) > Decimal("0.0001"):
+            for leg in fill_legs:
+                if str(leg.get("ticket_status") or "") == "win":
+                    adj = (ddec(leg.get("ticket_pnl")) or Decimal("0")) + drift
+                    leg["ticket_pnl"] = format(adj, "f")
+                    break
+    cluster["complementary"] = True
+    cluster["same_direction_double"] = False
+    cluster["lock_all_in_mistake"] = False
+    cluster["realized"] = pair
+    cluster["status_unknown"] = False
+    cluster["wins"] = 1 if pair >= 0 else 0
+    cluster["losses"] = 0 if pair >= 0 else 1
+    if wins + losses >= 2 and wins != 1:
+        # Authoritative settle still both-won (should not) — force complementary books.
+        yes_legs = [leg for leg in fill_legs if str(leg.get("side") or "").lower() == "yes"]
+        no_legs = [leg for leg in fill_legs if str(leg.get("side") or "").lower() == "no"]
+        if yes_legs and no_legs:
+            use = auth if auth in {"yes", "no"} else "yes"
+            for leg in fill_legs:
+                book = str(leg.get("side") or "").lower()
+                qty = ddec(leg.get("qty")) or Decimal("1")
+                cash = ddec(leg.get("cash")) or Decimal("0")
+                fee = ddec(leg.get("fee")) if leg.get("fee") not in (None, "") else Decimal("0")
+                cost = (cash * qty) + (fee or Decimal("0"))
+                won = (book == "yes" and use == "yes") or (book == "no" and use == "no")
+                leg["ticket_status"] = "win" if won else "lose"
+                leg["ticket_pnl"] = format((qty - cost) if won else (Decimal("0") - cost), "f")
+    cluster["settled_legs"] = len(fill_legs)
+    cluster["venue_paid"] = True
+    cluster["market_final"] = True
+    cluster["hold_class"] = HOLD_SETTLED
+    notes = list(cluster.get("notes") or [])
+    note = "realized from closed complementary cross-venue lock (pair net, not sum of leg wins)"
+    if note not in notes:
+        notes.append(note)
+    cluster["notes"] = notes
+    if not cluster.get("result") or "both filled" in str(cluster.get("result") or "").lower():
+        cluster["result"] = "both filled lock"
+    return True
+
+
 def restrict_realized(clusters: list[dict], settlements: list[dict]) -> None:
     """Realized $ only from venue settlement, Paul history, or a closed Yes+No flatten."""
     for cluster in clusters:
@@ -1941,7 +2115,18 @@ def restrict_realized(clusters: list[dict], settlements: list[dict]) -> None:
             cluster["realized"] = Decimal("0")
             cluster["hold_class"] = HOLD_VOID
             continue
+        # Gibson paul_settled is already pair-net. Other paul_settled rows keep history.
+        # Cross-venue A locks must still be forced to pair net even when a note set
+        # paul_settled without repairing dollars (Imamura/Teichmann class).
         if cluster.get("paul_settled") or cluster.get("gemini_settled") or cluster.get("flatten_filled"):
+            if (
+                not cluster.get("flatten_filled")
+                and is_cross_venue_lock_pair(cluster)
+                and not blob_has(
+                    cluster_blob(cluster), "gibson", "oliynykova", "giboli", "talgib", "oleoli"
+                )
+            ):
+                stamp_cross_venue_lock_pair_net(cluster, settlements)
             cluster["hold_class"] = hold_class_of(cluster)
             continue
         if cluster.get("postponed") and not cluster.get("venue_paid"):
@@ -1963,27 +2148,16 @@ def restrict_realized(clusters: list[dict], settlements: list[dict]) -> None:
             len(tickers) == 1 and "yes" in sides and "no" in sides and len(fill_legs) >= 2
         )
         # Cross-venue A lock (Kalshi Yes + Poly No, etc.). Do NOT re-sum per-leg
-        # ticket wins — that is the Drive +$2.40 failure (both legs "settled win").
-        cross_venue_lock = (
-            bool(cluster.get("complementary"))
-            and not cluster.get("same_direction_double")
-            and not cluster.get("lock_all_in_mistake")
-            and len(fill_legs) >= 2
-            and all(qty_is_house_fill(leg.get("qty")) for leg in fill_legs)
-            and (
-                cluster.get("intent") in {INTENT_FULL_LOCK, INTENT_INCOMPLETE_LOCK}
-                or complementary_legs(fill_legs)
-            )
-        )
-        if cross_venue_lock:
-            all_in = fill_legs_after_fee_all_in(fill_legs)
-            if all_in is not None and all_in > Decimal("1"):
-                cross_venue_lock = False
+        # ticket wins — that is the Drive +$2.40 / +$2.04 failure (both legs "settled win").
+        cross_venue_lock = is_cross_venue_lock_pair(cluster)
         # B T0 on Polymarket is Yes + No on one slug (both players' Yes). That
         # lock's dollars are knowable, but the game is not settled until the
         # market is final. Do not stamp "settled" while it is still live.
         b_t0_open = bool(cluster.get("b_t0_both")) and not cluster.get("market_final") and not cluster.get("flatten_filled")
         if (same_ticker_lock or cross_venue_lock) and not b_t0_open:
+            if cross_venue_lock:
+                stamp_cross_venue_lock_pair_net(cluster, settlements)
+                continue
             pnl = lock_realized(fill_legs)
             cluster["realized"] = pnl
             cluster["status_unknown"] = False
@@ -1993,11 +2167,7 @@ def restrict_realized(clusters: list[dict], settlements: list[dict]) -> None:
             cluster["venue_paid"] = True
             cluster["market_final"] = True
             cluster["hold_class"] = HOLD_SETTLED
-            why = (
-                "closed Yes+No on the same ticker (lock, no winner needed)"
-                if same_ticker_lock
-                else "closed complementary cross-venue lock (pair net, not sum of leg wins)"
-            )
+            why = "closed Yes+No on the same ticker (lock, no winner needed)"
             cluster["notes"] = list(cluster.get("notes") or []) + [f"realized from {why}"]
             continue
         if same_ticker_lock and b_t0_open:
@@ -2120,6 +2290,10 @@ def stamp_ticket_pnl(clusters: list[dict], settlements: list[dict]) -> None:
         if cluster.get("paul_settled") and blob_has(
             cluster_blob(cluster), "gibson", "oliynykova", "giboli", "talgib", "oleoli"
         ):
+            continue
+        # Complementary cross-venue A locks: never leave both legs as independent
+        # venue wins (Imamura/Teichmann +$1.01 class). Pair net first.
+        if not voided and not postponed and stamp_cross_venue_lock_pair_net(cluster, settlements):
             continue
         seen: set[int] = set()
         for bucket in ("fill_legs", "legs"):

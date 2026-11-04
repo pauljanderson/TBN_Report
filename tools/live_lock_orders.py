@@ -172,6 +172,31 @@ def effective_net_max() -> Decimal:
     return current
 
 
+def effective_lock_size() -> Decimal:
+    """Whole contracts per lock leg from systems.json lock.size (else SIZE=1).
+
+    --lock-size / --a-size writes systems.json; pollers reread each tick (no
+    restart). --lock-stake is the cash cap (stake_usd) used with size via
+    contracts_for_stake on other systems; Lock posts whole contracts up to
+    this size. --lock-max is max open games/pairs, not contracts.
+    """
+    try:
+        import prediction_systems
+
+        cfg = prediction_systems.get_system("lock")
+        n = int(getattr(cfg, "size", 1) or 1)
+        if n >= 1:
+            return Decimal(n)
+    except Exception:
+        pass
+    return Decimal(str(SIZE))
+
+
+def lock_order_size_str() -> str:
+    """Size field for venue order specs (whole contracts)."""
+    return format(effective_lock_size(), "f")
+
+
 def send_line() -> str:
     """User-facing send cap from systems.json lock.net_max, else NET_MAX."""
     return format(effective_net_max(), "f")
@@ -1492,11 +1517,12 @@ def kalshi_order_body(ticker: str, outcome: str, pay: Decimal, client_order_id: 
         side = "ask"
     else:
         raise ValueError("outcome")
+    qty = effective_lock_size()
     return {
         "ticker": ticker,
         "client_order_id": client_order_id,
         "side": side,
-        "count": "1.00",
+        "count": format(qty.quantize(Decimal("0.01")), "f"),
         "price": format(price, "f"),
         "time_in_force": _kalshi_tif(tif),
         "self_trade_prevention_type": "taker_at_cross",
@@ -1510,7 +1536,7 @@ def gemini_order_payload(symbol: str, outcome: str, pay: Decimal, tif: str = "io
         "symbol": symbol,
         "orderType": "limit",
         "side": "buy",
-        "quantity": "1",
+        "quantity": lock_order_size_str(),
         "price": format(price, "f"),
         "outcome": outcome,
         "timeInForce": _gemini_tif(tif),
@@ -1529,11 +1555,12 @@ def polymarket_api_price(intent: str, pay: Decimal) -> Decimal:
 def polymarket_order_body(slug: str, intent: str, api_price: Decimal, tif: str = "ioc") -> dict:
     # GTC must rest on the book — sync execution would treat a partial like IOC.
     sync = tif != "gtc"
+    qty = int(effective_lock_size())
     return {
         "marketSlug": slug,
         "type": "ORDER_TYPE_LIMIT",
         "price": {"value": format(api_price, "f"), "currency": "USD"},
-        "quantity": 1,
+        "quantity": max(1, qty),
         "tif": _polymarket_tif(tif),
         "intent": intent,
         "participateDontInitiate": False,
@@ -1583,6 +1610,7 @@ def build_buy_leg_spec(
     outcome = str(outcome or "").lower()
     if pay is None or pay <= 0 or pay >= 1:
         return None
+    size_txt = lock_order_size_str()
     if venue == "kalshi":
         if not instrument:
             return None
@@ -1593,6 +1621,7 @@ def build_buy_leg_spec(
             "outcome": outcome,
             "pay": format(pay, "f"),
             "limit": body["price"],
+            "size": size_txt,
             "tif": tif,
             "body": body,
         }
@@ -1606,6 +1635,7 @@ def build_buy_leg_spec(
             "outcome": outcome,
             "pay": format(pay, "f"),
             "limit": payload["price"],
+            "size": size_txt,
             "tif": tif,
             "body": payload,
         }
@@ -1625,6 +1655,7 @@ def build_buy_leg_spec(
             "outcome": outcome,
             "pay": format(pay, "f"),
             "limit": body["price"]["value"],
+            "size": size_txt,
             "tif": tif,
             "body": body,
         }
@@ -2030,6 +2061,7 @@ def _fee_tape(spec: dict, payload=None) -> dict:
 def _sent_row(spec: dict, status, payload, note: str) -> dict:
     """orders.jsonl sent row with venue-confirm qty (dashboard source)."""
     stamp = str(spec.get("sent_at") or spec.get("quote_seen_at") or "") or _iso_now()
+    size_txt = str(spec.get("size") or "") or lock_order_size_str()
     row = {
         "event": "sent",
         "bet_key": spec.get("_bet_key"),
@@ -2037,7 +2069,7 @@ def _sent_row(spec: dict, status, payload, note: str) -> dict:
         "instrument": spec.get("instrument"),
         "side": _book_side(spec),
         "limit_price": spec.get("limit"),
-        "size": "1",
+        "size": size_txt,
         "http_status": status,
         "note": note,
         "order_id": _order_id(payload) if payload else "",

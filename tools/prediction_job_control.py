@@ -823,6 +823,8 @@ def _systems_html(snap: dict) -> str:
         f"Set with <code>python tools/prediction_job_control.py systems --lock-net-max {html.escape(line)}</code> "
         "(alias <code>--lock-gap</code>). "
         "<code>--lock on --lock-max 3 --lock-stake 1</code> does not change the send cap. "
+        "<code>--lock-size N</code> sets contracts per leg; <code>--lock-stake</code> is cash "
+        "cap (stake_usd); <code>--lock-max</code> is max open games/pairs (not contracts). "
         "Lock pollers reread systems.json each tick (like D max); no restart. "
         "A one-leg lock fill turns <strong>A off only</strong> "
         "(<code>lock.on=false</code>); B–E stay on. "

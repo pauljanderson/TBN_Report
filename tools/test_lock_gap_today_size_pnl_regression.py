@@ -343,6 +343,7 @@ def test_three_lock_today_pnl_not_2_40_after_gibson_repair():
 
     total = sum((Decimal(str(c.get("realized") or 0)) for c in scored), Decimal("0"))
     assert abs(total - Decimal("2.40")) > Decimal("0.50")
+    assert abs(total - Decimal("2.04")) > Decimal("0.50")
     assert total < Decimal("1.00")
     gibson = next(c for c in scored if "gibson" in str(c.get("game") or "").lower())
     assert abs(Decimal(str(gibson.get("realized") or 0)) - Decimal("0.01")) <= Decimal("0.02")
@@ -352,6 +353,132 @@ def test_three_lock_today_pnl_not_2_40_after_gibson_repair():
     assert all((r.get("size_at_touch") or "unknown") not in {"", "—"} for r in rows)
 
 
+def test_imamura_teichmann_inconsistent_settles_pair_net_not_both_wins():
+    """Live Drive failure after Gibson-only repair: today still +$2.04.
+
+    OP detail had kalshi/polymarket no/yes and yes/no, result 'both filled lock',
+    but realized from venue ticker settlement summed BOTH legs as wins (~+$1.01
+    each). Pair net must win.
+    """
+    from copy import deepcopy
+
+    ima = [
+        {
+            "venue": "kalshi",
+            "instrument": "KXATPCHALLENGERMATCH-26NOV01IMALEO-LEO",
+            "side": "no",
+            "player": "Mitsuki Wei Kang Leong",
+            "qty": "1",
+            "cash": "0.4500",
+            "fee": "0.0174",
+            "order_id": "ik",
+            "http": 201,
+            "posted": True,
+        },
+        {
+            "venue": "polymarket",
+            "instrument": "aec-imamura-leong",
+            "side": "yes",
+            "player": "Mitsuki Wei Kang Leong",
+            "qty": "1",
+            "cash": "0.5200",
+            "fee": "0",
+            "order_id": "ip",
+            "http": 200,
+            "posted": True,
+        },
+    ]
+    tei = [
+        {
+            "venue": "kalshi",
+            "instrument": "KXWTAMATCH-26NOV03TEIGAR-GAR",
+            "side": "yes",
+            "player": "Joanna Garland",
+            "qty": "1",
+            "cash": "0.6400",
+            "fee": "0.0162",
+            "order_id": "tk",
+            "http": 201,
+            "posted": True,
+        },
+        {
+            "venue": "polymarket",
+            "instrument": "aec-teichmann-garland",
+            "side": "no",
+            "player": "Joanna Garland",
+            "qty": "1",
+            "cash": "0.3300",
+            "fee": "0",
+            "order_id": "tp",
+            "http": 200,
+            "posted": True,
+        },
+    ]
+    # Inconsistent cross-venue results that previously both-won each lock.
+    sett = [
+        {"ticker": ima[0]["instrument"], "result": "no", "venue": "kalshi"},
+        {
+            "ticker": ima[1]["instrument"],
+            "result": "yes",
+            "settlementPx": "1.0000",
+            "venue": "polymarket",
+        },
+        {"ticker": tei[0]["instrument"], "result": "yes", "venue": "kalshi"},
+        {
+            "ticker": tei[1]["instrument"],
+            "result": "no",
+            "settlementPx": "0.0000",
+            "venue": "polymarket",
+        },
+    ]
+
+    def _cluster(game, legs):
+        return {
+            "game": game,
+            "sport": "tennis",
+            "system_letter": "A",
+            "system_name": "Lock gap",
+            "intent": w.INTENT_FULL_LOCK,
+            "complementary": w.complementary_legs(legs),
+            "fill_legs": deepcopy(legs),
+            "legs": deepcopy(legs),
+            "n_fill_legs": 2,
+            "notes": [],
+            "watch": {},
+            "result": "both filled lock",
+        }
+
+    clusters = [
+        _cluster("Imamura vs Leong", ima),
+        _cluster("Teichmann vs Garland", tei),
+    ]
+    scored = [w.score_cluster(c, sett) for c in clusters]
+    w.restrict_realized(scored, sett)
+    w.stamp_ticket_pnl(scored, sett)
+    total = sum((Decimal(str(c.get("realized") or 0)) for c in scored), Decimal("0"))
+    assert total < Decimal("0.10")
+    assert abs(total - Decimal("2.04")) > Decimal("1.00")
+    for cluster in scored:
+        assert abs(Decimal(str(cluster.get("realized") or 0))) <= Decimal("0.05")
+        statuses = {
+            str(leg.get("ticket_status") or "")
+            for leg in (cluster.get("fill_legs") or [])
+            if w.qty_is_fill(leg.get("qty"))
+        }
+        assert statuses == {"win", "lose"}, statuses
+        note_blob = " ".join(cluster.get("notes") or [])
+        assert "pair net" in note_blob
+    # Poly No Garland on a complementary lock must not kitchen-label as Yes Garland.
+    tei_c = next(c for c in scored if "teichmann" in str(c.get("game") or "").lower())
+    poly = next(
+        leg
+        for leg in tei_c["fill_legs"]
+        if str(leg.get("venue") or "").lower() == "polymarket"
+    )
+    label = w.kitchen_side_label(poly, tei_c)
+    assert label.lower().startswith("no "), label
+
+
 if __name__ == "__main__":
     test_complementary_uses_outcome_name_when_player_empty()
     test_empty_activities_gibson_yes_wire_repairs_to_0_16()
@@ -359,4 +486,5 @@ if __name__ == "__main__":
     test_repair_gibson_forces_pair_plus_0_01_not_2_40_class()
     test_dashboard_a_today_row_shows_unknown_not_silent_omit()
     test_three_lock_today_pnl_not_2_40_after_gibson_repair()
+    test_imamura_teichmann_inconsistent_settles_pair_net_not_both_wins()
     print("test_lock_gap_today_size_pnl_regression ok")

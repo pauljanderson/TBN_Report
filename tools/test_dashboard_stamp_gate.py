@@ -187,6 +187,22 @@ def test_drive_fixed_stamp_passes_gate():
     assert abs(report["gibson_pair_pnl"] - Decimal("0.01")) <= Decimal("0.02")
 
 
+def test_drive_2_04_after_gibson_still_fails_gate():
+    """Gibson repaired to +$0.01 but Imamura/Teichmann both-wins → today +$2.04."""
+    from decimal import Decimal
+
+    html = DRIVE_FAIL_HTML.replace("+$2.40", "+$2.04").replace("0.8400", "0.1600").replace("—", "unknown")
+    # Drop stale Gibson 0.84 needle; keep three-lock both-wins leg dollars.
+    html = html.replace("Yes Oleksandra Oliynykova", "Yes Oleksandra Oliynykova")
+    path = Path("/tmp/dashboard_stamp_gate_drive_2_04.html")
+    path.write_text(html, encoding="utf-8")
+    report = gate.check(dashboard_html=path, require_stamp=True)
+    assert report["ok"] is False, report
+    blob = " ".join(report["failures"])
+    assert "2.04" in blob or "both-wins" in blob or "leg P&L" in blob
+    assert report["today_a_pnl"] == Decimal("2.04") or report["three_lock_leg_pnl"] is not None
+
+
 def test_check_writer_only_ok_when_no_stamp(tmp_path: Path | None = None):
     missing = Path("/tmp/dashboard_stamp_gate_missing_dashboard.html")
     if missing.exists():
@@ -237,6 +253,7 @@ if __name__ == "__main__":
     test_stale_gibson_poly_wire_detected()
     test_drive_failure_mode_fails_gate()
     test_drive_fixed_stamp_passes_gate()
+    test_drive_2_04_after_gibson_still_fails_gate()
     test_check_writer_only_ok_when_no_stamp()
     test_check_require_stamp_fails_when_missing()
     test_check_stale_stamp_fails()
