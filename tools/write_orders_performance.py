@@ -422,6 +422,50 @@ def after_fee_text(leg: dict) -> str:
     return money4(cash + fee)
 
 
+def fill_legs_after_fee_all_in(legs: list[dict]) -> Decimal | None:
+    """Sum of (cash×qty + fee) on filled legs. None when any filled leg lacks cash/fee."""
+    total = Decimal("0")
+    any_fill = False
+    for leg in legs or []:
+        if not qty_is_fill(leg.get("qty")):
+            continue
+        any_fill = True
+        cash = ddec(leg.get("cash"))
+        fee = ddec(leg.get("fee")) if leg.get("fee") not in (None, "") else None
+        qty = ddec(leg.get("qty")) or Decimal("0")
+        if cash is None or fee is None:
+            return None
+        total += (cash * qty) + fee
+    return total if any_fill else None
+
+
+def flag_lock_all_in_over_one(cluster: dict) -> bool:
+    """True locks never show after-fee all-in > $1 unless mistake / same-direction.
+
+    Gibson false C≈1.67 (Poly Yes-wire 0.84 + Kalshi No 0.83) must not book as a lock.
+    """
+    if not isinstance(cluster, dict):
+        return False
+    if cluster.get("same_direction_double") or cluster.get("lock_all_in_mistake"):
+        return bool(cluster.get("lock_all_in_mistake"))
+    if not cluster.get("complementary"):
+        return False
+    all_in = fill_legs_after_fee_all_in(cluster.get("fill_legs") or [])
+    if all_in is None or all_in <= Decimal("1"):
+        return False
+    cluster["lock_all_in_mistake"] = True
+    cluster["complementary"] = False
+    if cluster.get("intent") == INTENT_FULL_LOCK:
+        cluster["intent"] = INTENT_INCOMPLETE_LOCK
+    notes = list(cluster.get("notes") or [])
+    notes.append(
+        f"after-fee all-in {money4(all_in)} > $1 — not a lock unless same-direction/mistake "
+        f"(Gibson class: Poly Yes-wire booked as cost). Flagged; do not treat as C≤1 lock."
+    )
+    cluster["notes"] = notes
+    return True
+
+
 def money4_dollar(value) -> str:
     """After-fee / fill-cost dollars at >=4 decimals."""
     text = money4(value)
@@ -1645,6 +1689,17 @@ def apply_paul_history(clusters: list[dict], io_list: list[dict]) -> None:
                 if not cluster.get("flatten_filled"):
                     cluster["kalshi_related_unknown"] = True
             _ = gemini_legs
+        elif blob_has(blob, "gibson", "oliynykova", "giboli", "talgib", "oleoli"):
+            # Corrected lock (+$0.01), NOT a 1.67 buy mistake. Poly SELL/BUY_SHORT
+            # Yes-wire 0.84 is No/buy cost 0.16 (=1−0.84); Kalshi No @ 0.82+fee≈0.8304.
+            notes.append(
+                "Corrected Gibson/Oliynykova lock (+$0.01), not a 1.67 mistake. "
+                "Poly BUY_SHORT ORDER_SIDE_SELL avgPx 0.84 is Yes-wire; house cost 0.16 "
+                "(=1−0.84, position avgPx/cost). Kalshi No OLI @ 0.82 fee 0.0104 → after-fee "
+                "0.8304 win +$0.17; Poly cost 0.16 loss −$0.16; pair net +$0.01 (all-in ≈0.99). "
+                "Earlier assistant wrongly called this a 1.67 buy mistake — reporting bug only "
+                "(long-side API sell price booked as cost)."
+            )
         elif blob_has(blob, "urso", "poborilova", "ursaur", "pobane"):
             notes.append(
                 "Paul: 0.08 and 0.12 are dollars paid on the 0.10 and 0.15 Yes Urso tickets "
@@ -2285,10 +2340,34 @@ def fill_cash_fee(sent: dict, io_row: dict | None) -> tuple[Decimal | None, Deci
         poly_cash = ddec(poly.get("cash"))
         if poly_cash is not None:
             cash = poly_cash
+    elif str(sent.get("venue") or "") == "polymarket":
+        # No order_io payload (empty activities GET) but sent still has SHORT + Yes-wire.
+        # Gibson class: wire/house_cash stamped 0.84 must become cost 0.16.
+        intent = str(spec.get("intent") or sent.get("io_intent") or sent.get("intent") or "")
+        try:
+            import venue_fill_confirm as _vfc
+
+            repaired = _vfc.poly_house_cash(
+                avg=cash or sent.get("wire") or sent.get("limit_price"),
+                spread=sent.get("commission_spread_px"),
+                quote=quote,
+                pay=quote or sent.get("pay"),
+                api_limit=sent.get("limit_price"),
+                intent=intent,
+                order_side=str(sent.get("order_side") or ""),
+                outcome_side=str(sent.get("outcome_side") or sent.get("side") or ""),
+            )
+            if repaired is not None:
+                cash = repaired
+        except Exception:
+            pass
     if sent.get("after_fee") not in (None, "") and ddec(sent.get("wire")) is not None:
         stored = ddec(sent.get("house_cash") or sent.get("wire"))
         if poly.get("cash"):
             cash = ddec(poly.get("cash")) or stored or cash
+        elif str(sent.get("venue") or "") == "polymarket" and cash is not None:
+            # Prefer repaired SHORT debit over stamped Yes-wire.
+            pass
         else:
             cash = stored or cash
         fee = ddec(sent.get("fee"))
@@ -3975,6 +4054,12 @@ def score_cluster(
         cluster["same_direction_note"] = same_why
         if cluster.get("intent") == INTENT_FULL_LOCK:
             cluster["intent"] = INTENT_INCOMPLETE_LOCK
+    elif complementary:
+        # Display/post-send: never book a "lock" whose after-fee all-in sums > $1
+        # unless already flagged same-direction / mistake (Gibson false 1.67 class).
+        cluster["complementary"] = True
+        if flag_lock_all_in_over_one(cluster):
+            complementary = False
     watch = cluster.get("watch") or {}
     market_index = market_index or {}
     market_rows = [_leg_market_row(leg, settlements, market_index) for leg in fill_legs]
