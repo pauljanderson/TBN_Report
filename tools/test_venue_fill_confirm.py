@@ -648,6 +648,14 @@ def test_poly_house_cash_picks_closest_to_quote_not_nickel():
         api_limit="0.26",
         intent="ORDER_INTENT_BUY_SHORT",
     ) == Decimal("0.2600")
+    # Gibson/Oliynykova: SELL Yes-wire 0.84 echoed as spread → cost 0.16, not 0.84.
+    assert venue_fill_confirm.poly_house_cash(
+        avg="0.8400",
+        spread="0.8400",
+        intent="ORDER_INTENT_BUY_SHORT",
+        order_side="ORDER_SIDE_SELL",
+        outcome_side="OUTCOME_SIDE_NO",
+    ) == Decimal("0.1600")
 
 
 if __name__ == "__main__":

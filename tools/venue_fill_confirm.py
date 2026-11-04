@@ -81,6 +81,8 @@ def poly_house_cash(
     pay=None,
     api_limit=None,
     intent: str = "",
+    order_side: str = "",
+    outcome_side: str = "",
 ) -> Decimal | None:
     """What Polymarket charged on this fill. Per-order venue fields, not 1−p.
 
@@ -91,13 +93,24 @@ def poly_house_cash(
     because they sit within a nickel (Pohle/Kostina). Never swap every SHORT
     onto spread. Kitchen Yes-ask quotes (Kuhar 0.74 vs posted debit 0.26) are
     not a hint — use the posted limit / venue debit.
+
+    Gibson/Oliynykova class (2026-11-03): BUY_SHORT + ORDER_SIDE_SELL at avgPx
+    0.84 with commissionSpreadPx also 0.84 (Yes-wire echoed, not debit). Position
+    cost/avgPx is 0.16 (=1−0.84). Without a house quote, invert the Yes-wire —
+    do not book wire/after-fee 0.84 or P&L −0.84 (false C≈1.67 with Kalshi No).
     """
     avg_px = money_px(avg)
     spread_px = money_px(spread)
     quote_px = money_px(quote)
     pay_px = money_px(pay)
     api_px = money_px(api_limit)
-    short = "SHORT" in str(intent or "").upper()
+    intent_u = str(intent or "").upper()
+    short = "SHORT" in intent_u
+    outcome_u = str(outcome_side or "").upper()
+    outcome_no = outcome_u in {"OUTCOME_SIDE_NO", "NO"} or str(outcome_side or "").lower() == "no"
+    sell_yes = "SELL" in str(order_side or "").upper()
+    # Sell Yes / OUTCOME_SIDE_NO is the No debit even when intent text is missing.
+    short = short or outcome_no or (sell_yes and "LONG" not in intent_u)
 
     def _ok(px) -> bool:
         return px is not None and Decimal("0") < px < ONE
@@ -147,6 +160,18 @@ def poly_house_cash(
     if short and _ok(spread_px):
         if avg_px is None or _near_px(spread_px, ONE - avg_px):
             return spread_px
+    # Yes-wire only: spread missing, or spread equals avg (Gibson: both 0.84).
+    # SELL Yes / OUTCOME_SIDE_NO / echoed Yes-wire → house No debit is 1−avg.
+    if short and _ok(avg_px):
+        spread_is_yes_wire = spread_px is None or _near_px(spread_px, avg_px)
+        if spread_is_yes_wire and (
+            sell_yes
+            or outcome_no
+            or (spread_px is not None and _near_px(spread_px, avg_px))
+        ):
+            debit = ONE - avg_px
+            if _ok(debit):
+                return debit
     if _ok(avg_px):
         return avg_px
     if _ok(spread_px):
@@ -156,7 +181,15 @@ def poly_house_cash(
 
 def poly_prices_from_payload(payload) -> dict:
     """avgPx, commissionSpreadPx, fee, intent from a Polymarket order/execution body."""
-    found = {"avg": None, "spread": None, "fee": None, "intent": "", "side": ""}
+    found = {
+        "avg": None,
+        "spread": None,
+        "fee": None,
+        "intent": "",
+        "side": "",
+        "order_side": "",
+        "outcome_side": "",
+    }
     if not isinstance(payload, (dict, list)):
         return found
 
@@ -165,11 +198,21 @@ def poly_prices_from_payload(payload) -> dict:
             intent = str(node.get("intent") or "")
             if "SHORT" in intent or "LONG" in intent:
                 found["intent"] = intent
+                order_side = str(node.get("side") or "")
+                if order_side:
+                    found["order_side"] = order_side
+                outcome = str(node.get("outcomeSide") or "")
+                if outcome:
+                    found["outcome_side"] = outcome
             outcome = str(node.get("outcomeSide") or "")
             if outcome == "OUTCOME_SIDE_NO":
                 found["side"] = "no"
+                if not found["outcome_side"]:
+                    found["outcome_side"] = outcome
             elif outcome == "OUTCOME_SIDE_YES" and not found["side"]:
                 found["side"] = "yes"
+                if not found["outcome_side"]:
+                    found["outcome_side"] = outcome
             avg = money_px(node.get("avgPx") or node.get("lastPx"))
             if avg is not None and avg > 0:
                 found["avg"] = avg
@@ -455,6 +498,8 @@ def attach_house_cash(confirm: dict, venue: str, spec: dict | None, payload, pri
             pay=spec.get("pay") or spec.get("quote_price"),
             api_limit=api_limit,
             intent=intent,
+            order_side=str(prices.get("order_side") or ""),
+            outcome_side=str(prices.get("outcome_side") or prices.get("side") or ""),
         )
         if fee is None:
             fee = prices.get("fee")
