@@ -246,6 +246,81 @@ def test_check_fresh_stamp_passes():
     assert report["stamp_stale_gibson_wire"] is False
 
 
+def test_three_lock_names_in_full_book_only_do_not_force_today_a():
+    """Day rollover: names linger in Full book; Today A is other fills (−1.28).
+
+    Paul 2026-11-04 gate dump: gibson_pair_pnl=None, today_a=-1.28, Size/wire OK.
+    Must NOT fail the ~+$0.07 three-lock day expectation.
+    """
+    from decimal import Decimal
+
+    html = """
+<html><body>
+<th>Size @ price</th>
+<h2>Today</h2>
+<div data-window="today">
+<div class="kpi"><div class="kpi-label">With-fee P&amp;L</div><div class="kpi-value">-$1.28</div></div>
+<table>
+<tr><th>System</th><th>N sent</th><th>With-fee P&amp;L</th></tr>
+<tr><td>A Lock gap</td><td>2</td><td>-$1.28</td></tr>
+</table>
+</div>
+<h2>Trades today</h2>
+<table>
+<tr>
+<th>When ET</th><th>System</th><th>Type</th><th>Match</th><th>League</th>
+<th>Venue</th><th>Side</th><th>Wire</th><th>Size @ price</th><th>Fee</th>
+<th>After-fee</th><th>HTTP</th><th>Filled</th><th>Outcome</th>
+<th>Failure kind</th><th>P&amp;L if settled</th>
+</tr>
+<tr>
+<td>2026-11-04 12:00:00 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Some Other Match</td><td>ATP</td><td>kalshi</td>
+<td>Yes Other</td><td>0.5000</td><td>unknown</td>
+<td>0.0100</td><td>0.5100</td><td>HTTP</td><td>yes</td><td>settled loss</td>
+<td>—</td><td>-$0.51</td></tr>
+</table>
+<h2>Full book (every posted send)</h2>
+<table>
+<tr><th>Match</th><th>Size @ price</th></tr>
+<tr><td>Gibson vs Oliynykova</td><td>unknown</td></tr>
+<tr><td>Imamura vs Leong</td><td>unknown</td></tr>
+<tr><td>Teichmann vs Garland</td><td>unknown</td></tr>
+</table>
+<p>Corrected Gibson/Oliynykova lock (+$0.01), not a 1.67 mistake.</p>
+</body></html>
+"""
+    path = Path("/tmp/dashboard_stamp_gate_day_rollover.html")
+    path.write_text(html, encoding="utf-8")
+    report = gate.check(dashboard_html=path, require_stamp=True)
+    assert report["today_a_pnl"] == Decimal("-1.28")
+    assert report["gibson_pair_pnl"] is None
+    assert report["three_lock_in_trades_today"] is False
+    assert report["ok"] is True, report["failures"]
+    assert gate.three_lock_games_present(html) is True
+
+
+def test_three_lock_in_trades_today_with_negative_a_still_fails():
+    """If the three locks are still in Trades today, Today A −1.28 must fail."""
+    from decimal import Decimal
+
+    # DRIVE_FAIL has all three locks in Trades today; repair Size/wire so only
+    # the Today A −1.28 three-lock expectation fires.
+    html = (
+        DRIVE_FAIL_HTML.replace("+$2.40", "-$1.28")
+        .replace("0.8400", "0.1600")
+        .replace("—", "unknown")
+    )
+    path = Path("/tmp/dashboard_stamp_gate_losing_legs.html")
+    path.write_text(html, encoding="utf-8")
+    report = gate.check(dashboard_html=path, require_stamp=True)
+    assert report["today_a_pnl"] == Decimal("-1.28")
+    assert report["three_lock_in_trades_today"] is True
+    assert report["ok"] is False, report
+    blob = " ".join(report["failures"])
+    assert "Trades today" in blob and "-1.28" in blob
+
+
 if __name__ == "__main__":
     test_writer_trade_headers_include_size_at_price()
     test_stamp_missing_size_at_price_fails()
@@ -258,4 +333,6 @@ if __name__ == "__main__":
     test_check_require_stamp_fails_when_missing()
     test_check_stale_stamp_fails()
     test_check_fresh_stamp_passes()
+    test_three_lock_names_in_full_book_only_do_not_force_today_a()
+    test_three_lock_in_trades_today_with_negative_a_still_fails()
     print("test_dashboard_stamp_gate ok")

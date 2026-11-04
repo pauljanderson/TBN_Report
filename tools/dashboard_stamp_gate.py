@@ -13,6 +13,8 @@ Fails when:
   - stamp has Gibson/Oliynykova Poly Yes-wire 0.8400 (pre-invert booking)
   - today with-fee P&L for the six Gibson/Imamura/Teichmann legs is the
     false +$2.40 both-wins total, or Gibson pair is not ~+$0.01
+  - three locks appear in Trades today AND Today A is a large miss vs ~+$0.07
+    (names only in Full book / prior-day history must NOT force Today A)
 
 Does not place, cancel, or sell. No secrets. No network.
 
@@ -255,6 +257,11 @@ def three_lock_leg_pnl_sum(html: str) -> Decimal | None:
 
 
 def three_lock_games_present(html: str) -> bool:
+    """True when all three lock match names appear anywhere in the stamp.
+
+    Full book / inception history keeps these names after the lock day ends.
+    Prefer three_lock_games_in_trades_today for Today-A expectations.
+    """
     low = (html or "").lower()
     return (
         "gibson" in low
@@ -262,6 +269,19 @@ def three_lock_games_present(html: str) -> bool:
         and "imamura" in low
         and "teichmann" in low
     )
+
+
+def three_lock_games_in_trades_today(html: str) -> bool:
+    """True when Gibson + Imamura + Teichmann appear in the Trades today table.
+
+    Day-rollover: after 2026-11-03 the three locks stay in Full book HTML but
+    drop out of Trades today. Today A then reflects other A fills and must not
+    be forced to ~+$0.07 just because history still mentions those names.
+    """
+    chunk = _section_after_heading(html, "Trades today")
+    if not chunk:
+        return False
+    return three_lock_games_present(chunk)
 
 
 def _is_false_both_wins_today(pnl: Decimal | None) -> bool:
@@ -364,16 +384,22 @@ def check(*, dashboard_html: Path | None = None, require_stamp: bool = False) ->
                 f"Gibson trades-today pair P&L sum is {gibson_pair}; "
                 f"expected ~+0.01 (Poly −0.16 + Kalshi +0.17), not Yes-wire both-wins"
             )
-    if three_lock_games_present(html) and today_a is not None:
+    # Scope the ~+$0.07 expectation to Trades today, not Full-book history.
+    # Paul 2026-11-04: gibson_pair_pnl=None + today_a=-1.28 with names only in
+    # Full book → false FAIL after day rollover.
+    locks_today = three_lock_games_in_trades_today(html)
+    report["three_lock_in_trades_today"] = locks_today
+    if locks_today and today_a is not None:
         if abs(today_a - EXPECTED_THREE_LOCK_PNL) > THREE_LOCK_TOL:
-            # Only fail when clearly the false $2.40/$2.04 class or large miss after Gibson present.
+            # Only fail when clearly the false $2.40/$2.04 class or large miss
+            # while the three locks are actually today's book.
             if today_a >= Decimal("1.00") or today_a <= Decimal("-0.50"):
                 report["ok"] = False
                 report["failures"].append(
-                    f"Today A P&L {today_a} with Gibson/Imamura/Teichmann present; "
+                    f"Today A P&L {today_a} with Gibson/Imamura/Teichmann in Trades today; "
                     f"expected ~+{EXPECTED_THREE_LOCK_PNL} (±{THREE_LOCK_TOL}) for three locks"
                 )
-    if three_lock_games_present(html) and three_leg is not None:
+    if locks_today and three_leg is not None:
         if three_leg >= THREE_LOCK_LEG_SUM_MAX:
             report["ok"] = False
             report["failures"].append(
