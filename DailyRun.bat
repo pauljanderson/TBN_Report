@@ -3,7 +3,9 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem --- Project root (batch always cds here; Task Scheduler "Start in" is optional) ---
-cd /d "C:\Users\songg\Downloads\stockresearch"
+rem Prefer this bat's folder so the repo can live at C:\Users\songg\code\TBN
+rem (or anywhere else) without editing this line. Absolute stockresearch path removed 2026-11.
+cd /d "%~dp0"
 
 rem --- Each run_*.bat owns its default symbol list (standalone). Override before calling, e.g.:
 rem     set BRT_SYMBOLS=AAPL,MSFT

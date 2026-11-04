@@ -19,13 +19,21 @@ Move from laptop to desktop with **git for code** and **Google Drive for run out
 
 ## Recommended install path
 
-Many scripts hardcode:
+Preferred layout (three repos under `code\`):
 
 ```
-C:\Users\songg\Downloads\stockresearch
+C:\Users\songg\code\TBN
+C:\Users\songg\code\PredictionsMarkets
+C:\Users\songg\code\Spotify
 ```
 
-**Easiest migration:** use the same path on the new PC. Otherwise search/replace that string after clone (see Path audit below).
+If you are still on the old single folder `C:\Users\songg\Downloads\stockresearch`, run the split kit:
+
+```
+repo_split\RUN_ALL.bat
+```
+
+See `repo_split\README.md`. `DailyRun.bat` now uses `cd /d "%~dp0"`, so TBN can live anywhere.
 
 ## New PC — automated setup
 

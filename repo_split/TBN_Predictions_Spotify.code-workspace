@@ -1,0 +1,13 @@
+{
+  "folders": [
+    { "name": "TBN", "path": "C:/Users/songg/code/TBN" },
+    { "name": "PredictionsMarkets", "path": "C:/Users/songg/code/PredictionsMarkets" },
+    { "name": "Spotify", "path": "C:/Users/songg/code/Spotify" }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true
+    }
+  }
+}
