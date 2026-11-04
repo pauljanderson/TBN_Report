@@ -495,6 +495,96 @@ def qty_is_house_fill(qty) -> bool:
         return False
 
 
+# Book depth at the price we paid (size-at-touch). Prefer ask/quote size over
+# market-wide volume — Paul wants "how much was sitting at the wire we got."
+_TOUCH_SIZE_KEYS = (
+    ("ask_size", "ask_size"),
+    ("quote_size", "quote_size"),
+    ("yes_ask_size", "yes_ask_size"),
+    ("no_ask_size", "no_ask_size"),
+    ("yes_size", "yes_size"),
+    ("no_size", "no_size"),
+)
+_MARKET_VOL_KEYS = (
+    ("volume_fp", "volume_fp"),
+    ("volume_24h_fp", "volume_24h_fp"),
+    ("liquidity", "liquidity"),
+    ("volume", "volume"),
+    ("volume24h", "volume24h"),
+    ("volume24hr", "volume24hr"),
+    ("open_interest_fp", "open_interest_fp"),
+    ("open_interest", "open_interest"),
+    ("openInterest", "openInterest"),
+)
+
+
+def _size_field(blob: dict | None, key: str):
+    if not isinstance(blob, dict):
+        return None
+    value = blob.get(key)
+    if value in (None, ""):
+        return None
+    number = ddec(value)
+    if number is None:
+        text = str(value).strip()
+        return text or None
+    if number < 0:
+        return None
+    return number
+
+
+def size_at_touch_of(sent_or_leg: dict | None, io_row: dict | None = None) -> tuple[str, str]:
+    """Contracts available at the fill/quote price, plus a short source tag.
+
+    Priority: tape ask_size / quote_size → order_io quote → side-sized fields →
+    market volume/liquidity (labeled mkt, not touch). Empty → ("", "").
+    """
+    sent = sent_or_leg if isinstance(sent_or_leg, dict) else {}
+    io_row = io_row if isinstance(io_row, dict) else {}
+    quote = io_row.get("quote") if isinstance(io_row.get("quote"), dict) else {}
+    req = io_row.get("request") if isinstance(io_row.get("request"), dict) else {}
+    blobs = (sent, io_row, quote, req)
+
+    side = str(sent.get("side") or "").lower()
+    side_keys: list[tuple[str, str]] = []
+    if side in {"yes", "y", "buy", "bid"}:
+        side_keys = [("yes_ask_size", "yes_ask_size"), ("yes_size", "yes_size"), ("ask_size", "ask_size")]
+    elif side in {"no", "n", "sell", "ask"}:
+        side_keys = [("no_ask_size", "no_ask_size"), ("no_size", "no_size"), ("ask_size", "ask_size")]
+
+    for key, source in list(side_keys) + list(_TOUCH_SIZE_KEYS):
+        for blob in blobs:
+            number = _size_field(blob, key)
+            if number is None:
+                continue
+            return money4(number) if not isinstance(number, str) else number, source
+
+    for key, source in _MARKET_VOL_KEYS:
+        for blob in blobs:
+            number = _size_field(blob, key)
+            if number is None:
+                continue
+            text = money4(number) if not isinstance(number, str) else number
+            return text, f"{source} (mkt, not touch)"
+    return "", ""
+
+
+def size_at_touch_cell(sent_or_leg: dict | None, io_row: dict | None = None) -> str:
+    """Display cell: size, or size + source when only market-wide volume exists."""
+    leg = sent_or_leg if isinstance(sent_or_leg, dict) else {}
+    cached = leg.get("size_at_touch")
+    cached_src = str(leg.get("size_at_touch_source") or "")
+    if cached not in (None, ""):
+        value, source = str(cached), cached_src
+    else:
+        value, source = size_at_touch_of(sent_or_leg, io_row)
+    if not value:
+        return "—"
+    if source.endswith("(mkt, not touch)"):
+        return f"{value} {source}"
+    return value
+
+
 def flatten_marks_house_one(filled_qty, flatten_qty=None) -> bool:
     """True when a sub-1 venue fill would be flattened or booked as house 1."""
     try:
@@ -3752,6 +3842,7 @@ def enrich_cluster(cluster: dict, by_id: dict, io_list: list[dict]) -> dict:
                 book = "no"
             elif req_side in {"bid", "buy", "yes"}:
                 book = "yes"
+        touch_size, touch_src = size_at_touch_of({**sent, "side": book}, io_row)
         legs.append({
             "venue": str(sent.get("venue") or ""),
             "instrument": str(sent.get("instrument") or ""),
@@ -3772,8 +3863,10 @@ def enrich_cluster(cluster: dict, by_id: dict, io_list: list[dict]) -> dict:
             "note": str(sent.get("note") or ""),
             "quote_source": sent.get("quote_source") or "",
             "quote_price": sent.get("quote_price") or "",
-            "quote_size": sent.get("quote_size") or sent.get("ask_size") or "",
-            "ask_size": sent.get("ask_size") or sent.get("quote_size") or "",
+            "quote_size": sent.get("quote_size") or sent.get("ask_size") or (io_row or {}).get("quote_size") or "",
+            "ask_size": sent.get("ask_size") or sent.get("quote_size") or (io_row or {}).get("ask_size") or "",
+            "size_at_touch": touch_size,
+            "size_at_touch_source": touch_src,
             "trigger": " ".join(
                 part for part in (
                     str(sent.get("trigger_venue") or claim.get("trigger_venue") or ""),
@@ -4832,6 +4925,7 @@ def ledger_row(cluster: dict) -> list:
     limits = " / ".join(money4(leg.get("limit") or leg.get("cash")) for leg in (cluster.get("legs") or fill_legs)[:6])
     qtys = " / ".join(money4(leg.get("qty")) for leg in fill_legs[:6]) if fill_legs else "0"
     prices = " / ".join(money4(leg.get("cash")) for leg in fill_legs[:6])
+    sizes = " / ".join(size_at_touch_cell(leg) for leg in fill_legs[:6]) if fill_legs else "—"
     fees = " / ".join(fee_cell_text(leg) for leg in fill_legs[:6])
     afters = " / ".join(after_fee_text(leg) for leg in fill_legs[:6])
     http = " | ".join(str(leg.get("http_line") or "") for leg in (cluster.get("legs") or [])[:6])
@@ -4891,6 +4985,7 @@ def ledger_row(cluster: dict) -> list:
         limits,
         qtys,
         prices,
+        sizes,
         fees,
         afters,
         http,
@@ -4928,7 +5023,7 @@ def write_support(stamp_dir: Path, clusters: list[dict], summary: dict) -> None:
     headers = [
         "system", "role", "game", "sport", "league", "market", "side", "line", "intentional", "leftover",
         "venue_class", "full_system", "first_attempt_et", "attempts", "venues", "sides", "limits",
-        "fill_qty", "fill_prices", "fees", "after_fee", "http", "result", "pnl", "notes",
+        "fill_qty", "fill_prices", "size_at_price", "fees", "after_fee", "http", "result", "pnl", "notes",
     ]
     with (stamp_dir / "ledger.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -6164,6 +6259,7 @@ def write_html(
         ("Limits", "text"),
         ("Fill qty", "text"),
         ("Fill prices (wire)", "text"),
+        ("Size @ price", "text"),
         ("Fees", "text"),
         ("After-fee (all-in)", "text"),
         ("Venue HTTP", "text"),
@@ -6414,7 +6510,7 @@ code {{ font-size: 13px; }}
 )}
 
 <h2>Game-by-game ledger</h2>
-<p class="note">One row per trade/attempt cluster. Game is the sticky first column. League is from the catalog ticker or slug (ATP / WTA / Challenger / ITF / CFB / NFL) — not invented. Full system means both legs filled quantity at least 1 on a complementary pair. New Mexico State vs Sam Houston ghost claims are in the next table so attempt counts stay honest. Click headers to sort. Swipe sideways to see more columns.</p>
+<p class="note">One row per trade/attempt cluster. Game is the sticky first column. League is from the catalog ticker or slug (ATP / WTA / Challenger / ITF / CFB / NFL) — not invented. Full system means both legs filled quantity at least 1 on a complementary pair. <strong>Size @ price</strong> is book depth at the fill wire (tape <code>ask_size</code>/<code>quote_size</code>; else order_io; market volume only when labeled mkt). New Mexico State vs Sam Houston ghost claims are in the next table so attempt counts stay honest. Click headers to sort. Swipe sideways to see more columns.</p>
 {table(ledger_headers, [ledger_row(c) for c in posted])}
 
 <h2>Posted but both unfilled (IOC empty)</h2>
