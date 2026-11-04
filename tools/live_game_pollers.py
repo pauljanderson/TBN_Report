@@ -1671,6 +1671,20 @@ def supervise() -> None:
             live_keys = {row["key"] for row in live}
             reap_idle_pollers(leftover, live_keys, me)
             merged = ensure_tracked(merged, running_merged_pid(), spawn_merged, me)
+            try:
+                import prediction_systems as ps
+
+                # PID-up + frozen lock_sender_watch.json → kill before adopt/spawn.
+                if ps.is_on("lock") and ps.watch_is_stale("lock"):
+                    if lock_sender is not None:
+                        lock_sender.terminate()
+                        lock_sender = None
+                    for pid in _python_cmd_pids("live_lock_sender.py"):
+                        if pid and pid != me and pid_alive(pid):
+                            kill_pid(pid)
+                            log(f"reap stale lock-sender pid {pid}")
+            except Exception as exc:
+                log(f"stale lock check {type(exc).__name__}")
             lock_sender = ensure_tracked(lock_sender, running_lock_sender_pid(), spawn_lock_sender, me)
             extras = _python_cmd_pids("live_game_pollers.py --poll-all")
             for pid in extras:
@@ -1691,8 +1705,14 @@ def supervise() -> None:
                     log(
                         "live bots spawned/reloaded "
                         + ",".join(started)
-                        + " (no second tennis crossover; stale watch = reload)"
+                        + " (no second A/B; stale watch A–G = reload)"
                     )
+                # B–G reload path may also restart A; re-adopt the living sender.
+                if lock_sender is not None and lock_sender.poll() is not None:
+                    lock_sender = None
+                lock_sender = ensure_tracked(
+                    lock_sender, running_lock_sender_pid(), spawn_lock_sender, me
+                )
             except Exception as exc:
                 log(f"live bots spawn {type(exc).__name__}")
             try:
