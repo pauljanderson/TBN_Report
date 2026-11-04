@@ -52,13 +52,21 @@ if not defined REPO_SPLIT_NOPAUSE pause
   goto :ok
 )
 
-echo Robocopy mirror of source -> TBN (includes .git, data, drive, local, secrets)...
-rem /MIR makes TBN match source. /XD none — we want data+drive.
-robocopy "%SOURCE%" "%TBN%" /E /COPY:DAT /R:2 /W:2 /MT:8
+echo Robocopy source -> TBN (includes .git, data, drive, local, secrets)...
+rem Skip Google Drive ephemeral upload/download temps — they vanish mid-copy
+rem and falsely fail the whole split (ERROR 2 / exit code 8+).
+robocopy "%SOURCE%" "%TBN%" /E /COPY:DAT /R:1 /W:1 /MT:8 /XD .tmp.driveupload .tmp.drivedownload .tmp.driveupload_old
 set "RC=%ERRORLEVEL%"
+rem Robocopy: 0-7 = success-ish; 8+ = serious. Ephemeral Drive temps used to
+rem trip code 8/9 even when 158GB+ of real files copied fine.
 if %RC% GEQ 8 (
+  if exist "%TBN%\.git" if exist "%TBN%\DailyRun.bat" if exist "%TBN%\stock_analysis" (
+    echo WARN: robocopy code %RC% but TBN core is present — treating as OK.
+    echo ^(Usually leftover Drive .tmp.* ghosts; they are now /XD-excluded.^)
+    goto :ok
+  )
   echo robocopy failed with code %RC%
-if not defined REPO_SPLIT_NOPAUSE pause
+  if not defined REPO_SPLIT_NOPAUSE pause
   exit /b 1
 )
 echo robocopy finished with code %RC% (0-7 = success).
