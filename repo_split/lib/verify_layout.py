@@ -47,6 +47,8 @@ def main() -> int:
             "tools/live_lock_orders.py",
             "tools/write_dashboard.py",
             "tools/pm_venue_kitchen_check.py",
+            "tools/win_hidden.py",
+            "tools/ntfy_job_done.py",
             "run_prediction_start.bat",
             "run_pm_venue_kitchen_check.bat",
             "report_page_extras.py",
