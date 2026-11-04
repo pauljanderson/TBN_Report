@@ -143,9 +143,14 @@ def prune_from_tbn(tbn: Path, manifest_names: list[str]) -> int:
     deleted = 0
     for name in manifest_names:
         for rel in read_manifest(name):
-            # Never delete shared helpers TBN still needs from TBN prune of PM:
-            # report_page_extras stays in TBN; PM got a copy.
-            if rel in {"report_page_extras.py", "resolve_python.bat"}:
+            # Never delete shared helpers TBN still needs after PM extract.
+            # These are copied into PredictionsMarkets; TBN keeps its own copy.
+            # ntfy_job_done: used by hundreds of TBN WPBR/RL bats + PM live_lock.
+            if rel in {
+                "report_page_extras.py",
+                "resolve_python.bat",
+                "tools/ntfy_job_done.py",
+            }:
                 continue
             # TBN keeps its own git_pull after we rewrite it — do not delete via spotify.
             if name.startswith("spotify") and rel == "git_pull.bat":
@@ -218,12 +223,13 @@ def main() -> int:
                 _copy_file(src_env, dest / "secrets" / "spotify.env")
                 print("  copied secrets/spotify.env")
         if kind == "predictions":
-            # Prefer venue secrets; copy whole secrets/ then remove spotify.env from PM copy
+            # Prefer venue secrets; copy whole secrets/ then strip Spotify creds
             sec = dest / "secrets"
-            spot = sec / "spotify.env"
-            if spot.exists():
-                spot.unlink()
-                print("  removed secrets/spotify.env from PredictionsMarkets copy")
+            if sec.is_dir():
+                for spot in list(sec.glob("spotify*")) + list(sec.glob("*spotify*")):
+                    if spot.is_file():
+                        spot.unlink()
+                        print(f"  removed {spot.relative_to(dest)} from PredictionsMarkets copy")
 
     print("Done.")
     return 0 if missing == 0 else 1
