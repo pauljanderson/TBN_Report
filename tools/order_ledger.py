@@ -115,11 +115,13 @@ COL_COUNT = len(COLUMNS)
 SYSTEM_LABELS = {
     "lock": "A Lock gap",
     "tennis_crossover": "B Tennis crossover",
-    "cfb_favorite": "C CFB favorite",
+    "cfb_total_movers": "C CFB total movers",
+    "cfb_favorite": "C CFB total movers",  # legacy id
     "spread_t0": "D T0 spreads",
     "tennis_t0_dog": "E Tennis T0 dog",
     "tennis_t0_spread": "F Tennis spread",
     "soccer_t0_total": "G Soccer total",
+    "cfb_spread_movers": "H CFB spread movers",
 }
 SYSTEM_LABEL_SET = set(SYSTEM_LABELS.values())
 B_ALIASES = {"b", "strategy_b", "strategy-b", "tennis_crossover", "tennis-crossover"}
@@ -172,13 +174,18 @@ def _now() -> str:
 
 
 def _system_id(row: dict | None) -> str:
-    """lock / tennis_crossover / cfb_favorite / spread_t0 / tennis_t0_dog / tennis_t0_spread / soccer_t0_total."""
+    """lock / tennis_crossover / cfb_total_movers / spread_t0 / … / cfb_spread_movers."""
     row = row or {}
     key = str(row.get("bet_key") or "")
     step = str(row.get("step") or "")
     system = str(row.get("system") or row.get("_system") or "").strip().lower().replace(" ", "_")
-    if system in {"cfb_favorite", "c", "cfb-favorite"} or key.startswith("cfb-favorite") or step.startswith("c-"):
-        return "cfb_favorite"
+    if (
+        system in {"cfb_total_movers", "cfb_favorite", "c", "cfb-favorite", "cfb-total-movers"}
+        or key.startswith("cfb-favorite")
+        or key.startswith("cfb-total-movers")
+        or step.startswith("c-")
+    ):
+        return "cfb_total_movers"
     if system in {"spread_t0", "d", "spread-t0"} or key.startswith("spread-t0") or step.startswith("d-"):
         return "spread_t0"
     if system in {"tennis_t0_dog", "e", "tennis-t0-dog"} or key.startswith("tennis-t0-dog") or step.startswith("e-"):
@@ -187,6 +194,12 @@ def _system_id(row: dict | None) -> str:
         return "tennis_t0_spread"
     if system in {"soccer_t0_total", "g", "soccer-t0-total"} or key.startswith("soccer-t0-total") or step.startswith("g-"):
         return "soccer_t0_total"
+    if (
+        system in {"cfb_spread_movers", "h", "cfb-spread-movers"}
+        or key.startswith("cfb-spread-movers")
+        or step.startswith("h-")
+    ):
+        return "cfb_spread_movers"
     if system in B_ALIASES or key.startswith("tennis-b") or step.startswith("b-") or row.get("_strategy_b"):
         return "tennis_crossover"
     return "lock"
@@ -207,7 +220,15 @@ def _side_from_bet_key(key: str, system_id: str) -> str:
     parts = str(key or "").split("\t")
     if system_id == "tennis_crossover" and len(parts) >= 5:
         return parts[4]
-    if system_id in {"cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"} and len(parts) >= 3:
+    if system_id in {
+        "cfb_total_movers",
+        "cfb_favorite",
+        "cfb_spread_movers",
+        "spread_t0",
+        "tennis_t0_dog",
+        "tennis_t0_spread",
+        "soccer_t0_total",
+    } and len(parts) >= 3:
         return parts[2]
     return ""
 
@@ -216,19 +237,19 @@ def _market_from_attempt(context: dict, sent: dict, system_id: str) -> str:
     market_type = str(context.get("market_type") or "")
     side = str(context.get("side") or sent.get("side_label") or sent.get("player") or "")
     if not market_type:
-        if system_id in {"spread_t0", "tennis_t0_spread"}:
+        if system_id in {"spread_t0", "tennis_t0_spread", "cfb_spread_movers"}:
             market_type = "spread"
             parts = str(sent.get("bet_key") or context.get("bet_key") or "").split("\t")
             number = parts[3] if len(parts) >= 4 else str(context.get("number") or "")
             if number:
                 market_type = f"spread {number}"
-        elif system_id == "soccer_t0_total":
+        elif system_id in {"soccer_t0_total", "cfb_total_movers", "cfb_favorite"}:
             market_type = "total"
             parts = str(sent.get("bet_key") or context.get("bet_key") or "").split("\t")
             number = parts[3] if len(parts) >= 4 else str(context.get("number") or "")
             if number:
                 market_type = f"total {number}"
-        elif system_id in {"tennis_crossover", "cfb_favorite", "tennis_t0_dog"}:
+        elif system_id in {"tennis_crossover", "tennis_t0_dog"}:
             market_type = "moneyline"
         else:
             market_type = str(sent.get("market_type") or "")

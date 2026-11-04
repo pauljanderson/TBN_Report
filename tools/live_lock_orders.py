@@ -118,11 +118,13 @@ ORDERS_ENABLED_STAMP_ON = RAW / "orders_enabled.on"
 ORDERS_ENABLED_STAMP_OFF = RAW / "orders_enabled.off"
 _DIRECTIONAL_SYSTEMS = frozenset(
     {
-        "cfb_favorite",
+        "cfb_total_movers",
+        "cfb_favorite",  # legacy C id
         "spread_t0",
         "tennis_t0_dog",
         "tennis_t0_spread",
         "soccer_t0_total",
+        "cfb_spread_movers",
     }
 )
 ONE = Decimal("1")
@@ -806,7 +808,7 @@ def stop_orders(reason: str, filled: dict | None = None, missed: dict | None = N
 
 
 def _send_blocked(spec: dict) -> str:
-    """Empty when this lock post may leave. B/C/D/E/F/G are not gated by lock.on."""
+    """Empty when this lock post may leave. B/C/D/E/F/G/H are not gated by lock.on."""
     if spec.get("_strategy_b"):
         return ""
     if str(spec.get("_system") or "") in _DIRECTIONAL_SYSTEMS:
@@ -997,11 +999,13 @@ def _lock_tag_instruments(tape: list[dict], watch_rows: list[dict]) -> dict[tupl
         sid = str(row.get("system") or "")
         if sid in {
             "tennis_crossover",
+            "cfb_total_movers",
             "cfb_favorite",
             "spread_t0",
             "tennis_t0_dog",
             "tennis_t0_spread",
             "soccer_t0_total",
+            "cfb_spread_movers",
         }:
             continue
         event = row.get("event")

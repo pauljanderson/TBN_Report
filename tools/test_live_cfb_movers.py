@@ -144,6 +144,10 @@ def test_systems_letter_c_and_h():
     assert ps.ALIASES["c"] == "cfb_total_movers"
     assert ps.ALIASES["cfb_favorite"] == "cfb_total_movers"
     assert ps.ALIASES["h"] == "cfb_spread_movers"
+    assert "cfb_total_movers" in live_lock_orders._DIRECTIONAL_SYSTEMS
+    assert "cfb_spread_movers" in live_lock_orders._DIRECTIONAL_SYSTEMS
+    assert live_lock_orders._send_blocked({"_system": "cfb_total_movers"}) == ""
+    assert live_lock_orders._send_blocked({"_system": "cfb_spread_movers"}) == ""
 
 
 def test_limit_sell_gtc_kalshi_and_poly():
