@@ -1,0 +1,8017 @@
+{
+  "written_at_et": "2026-11-03 23:19 EST",
+  "asked": "Rerun drop-from-T0 findings with price-dependent dip thresholds: 5\u00a2 when the side\u2019s T0 Yes is in 20\u201349, 3\u00a2 when T0 Yes is in 50\u201389. How does gap-buy frequency and optimistic lock edge compare to the uniform-dip 2026-11-02 report (esp. both \u22655\u00a2 / \u226510\u00a2)?",
+  "plain": "Same max-dip definition as 2026-11-02 (T0 Yes \u2212 min Yes after T0). Band rule assigns each side its own required dip from that side\u2019s T0: D=5\u00a2 on [0.20, 0.49], D=3\u00a2 on [0.50, 0.89] (exactly 0.50 \u2192 3\u00a2). Sides with T0 < 0.20 or \u2265 0.90 are excluded from the band rule but remain in the uniform-dip decile tables. Both-sides band hit requires both legs eligible and each clearing its own D. Optimistic cost = T0a\u2212Da + T0b\u2212Db.",
+  "band_rule": {
+    "D_20_49": 0.05,
+    "D_50_89": 0.03,
+    "inclusive_20": true,
+    "inclusive_49": true,
+    "exactly_50": 0.03,
+    "inclusive_89": true,
+    "exclude_lt_20": true,
+    "exclude_ge_90": true
+  },
+  "limitation": "Optimistic both-side fills at exactly T0\u2212D ignore queue, ask/trade gap, and fees. Band edge is thinner than uniform \u221210\u00a2 (System G sketch) because D is only 3\u20135\u00a2. Same source books as 2026-11-02; default rebuild is report-only from cached Kalshi/Poly jsonl + dense Oct 21 HTML. Local price_memory is not on this cloud VM.",
+  "prior_uniform_20261102": {
+    "A_dense_tennis_live_tape": {
+      "n_pairs": 119,
+      "both_d05": 70.6,
+      "both_d10": 46.2,
+      "opt_d10": {
+        "n": 55,
+        "mean_cost": 0.8175,
+        "median_cost": 0.81,
+        "mean_edge_vs_1": 0.1825
+      },
+      "opt_d05": {
+        "n": 84,
+        "mean_cost": 0.916,
+        "median_cost": 0.91,
+        "mean_edge_vs_1": 0.084
+      },
+      "overall_median": 0.22
+    },
+    "B_kalshi_yes_ask": {
+      "n_pairs": 170,
+      "both_d05": 41.2,
+      "both_d10": 20.0,
+      "opt_d10": {
+        "n": 34,
+        "mean_cost": 0.8218,
+        "median_cost": 0.81,
+        "mean_edge_vs_1": 0.1782
+      },
+      "opt_d05": {
+        "n": 70,
+        "mean_cost": 0.9213,
+        "median_cost": 0.91,
+        "mean_edge_vs_1": 0.0787
+      },
+      "overall_median": 0.04
+    },
+    "C_poly_clob_last_trade": {
+      "n_pairs": 21,
+      "both_d05": 57.1,
+      "both_d10": 42.9,
+      "opt_d10": {
+        "n": 9,
+        "mean_cost": 0.8,
+        "median_cost": 0.8,
+        "mean_edge_vs_1": 0.2
+      },
+      "opt_d05": {
+        "n": 12,
+        "mean_cost": 0.9,
+        "median_cost": 0.9,
+        "mean_edge_vs_1": 0.1
+      },
+      "overall_median": 0.2425
+    }
+  },
+  "books": {
+    "A_dense_tennis_live_tape": {
+      "name": "A_dense_tennis_live_tape",
+      "n_sides": 238,
+      "n_pairs": 119,
+      "overall": {
+        "n": 238,
+        "mean": 0.2468,
+        "median": 0.22,
+        "stdev": 0.1807,
+        "percentiles": {
+          "p10": 0.0335,
+          "p25": 0.0813,
+          "p50": 0.22,
+          "p75": 0.3875,
+          "p90": 0.52,
+          "p95": 0.58
+        },
+        "hit_pct": {
+          "d05": 85.3,
+          "d10": 72.7,
+          "d15": 63.9,
+          "d20": 54.2,
+          "d25": 44.5
+        }
+      },
+      "pairs_summary": {
+        "n": 119,
+        "both_hit_pct": {
+          "d05": 70.6,
+          "d10": 46.2,
+          "d15": 34.5,
+          "d20": 21.0,
+          "d25": 12.6
+        },
+        "opt_cost_when_both": {
+          "d05": {
+            "n": 84,
+            "mean_cost": 0.916,
+            "median_cost": 0.91,
+            "mean_edge_vs_1": 0.084
+          },
+          "d10": {
+            "n": 55,
+            "mean_cost": 0.8175,
+            "median_cost": 0.81,
+            "mean_edge_vs_1": 0.1825
+          },
+          "d15": {
+            "n": 41,
+            "mean_cost": 0.7193,
+            "median_cost": 0.71,
+            "mean_edge_vs_1": 0.2807
+          },
+          "d20": {
+            "n": 25,
+            "mean_cost": 0.6216,
+            "median_cost": 0.61,
+            "mean_edge_vs_1": 0.3784
+          },
+          "d25": {
+            "n": 15,
+            "mean_cost": 0.5233,
+            "median_cost": 0.51,
+            "mean_edge_vs_1": 0.4767
+          }
+        }
+      },
+      "role_overlay": {
+        "favorite": {
+          "n": 119,
+          "mean": 0.2927,
+          "median": 0.28,
+          "stdev": 0.2179,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.075,
+            "p50": 0.28,
+            "p75": 0.49,
+            "p90": 0.58,
+            "p95": 0.6235
+          },
+          "hit_pct": {
+            "d05": 79.8,
+            "d10": 70.6,
+            "d15": 63.9,
+            "d20": 57.1,
+            "d25": 53.8
+          }
+        },
+        "dog": {
+          "n": 119,
+          "mean": 0.2009,
+          "median": 0.2,
+          "stdev": 0.1167,
+          "percentiles": {
+            "p10": 0.059,
+            "p25": 0.095,
+            "p50": 0.2,
+            "p75": 0.29,
+            "p90": 0.376,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 90.8,
+            "d10": 74.8,
+            "d15": 63.9,
+            "d20": 51.3,
+            "d25": 35.3
+          }
+        },
+        "near_50_deciles_40_59": {
+          "n": 88,
+          "mean": 0.2722,
+          "median": 0.3075,
+          "stdev": 0.1638,
+          "percentiles": {
+            "p10": 0.0505,
+            "p25": 0.0988,
+            "p50": 0.3075,
+            "p75": 0.4075,
+            "p90": 0.473,
+            "p95": 0.49
+          },
+          "hit_pct": {
+            "d05": 89.8,
+            "d10": 75.0,
+            "d15": 69.3,
+            "d20": 64.8,
+            "d25": 60.2
+          }
+        },
+        "far_deciles_0_19_or_80_99": {
+          "n": 15,
+          "mean": 0.127,
+          "median": 0.12,
+          "stdev": 0.0825,
+          "percentiles": {
+            "p10": 0.026,
+            "p25": 0.08,
+            "p50": 0.12,
+            "p75": 0.1625,
+            "p90": 0.259,
+            "p95": 0.2695
+          },
+          "hit_pct": {
+            "d05": 80.0,
+            "d10": 53.3,
+            "d15": 26.7,
+            "d20": 20.0,
+            "d25": 20.0
+          }
+        }
+      },
+      "slices": [
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 238,
+          "mean": 0.2468,
+          "median": 0.22,
+          "stdev": 0.1807,
+          "percentiles": {
+            "p10": 0.0335,
+            "p25": 0.0813,
+            "p50": 0.22,
+            "p75": 0.3875,
+            "p90": 0.52,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 85.3,
+            "d10": 72.7,
+            "d15": 63.9,
+            "d20": 54.2,
+            "d25": 44.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.08,
+          "median": 0.0825,
+          "stdev": 0.0302,
+          "percentiles": {
+            "p10": 0.0485,
+            "p25": 0.0688,
+            "p50": 0.0825,
+            "p75": 0.0938,
+            "p90": 0.1095,
+            "p95": 0.1147
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 28,
+          "mean": 0.1505,
+          "median": 0.15,
+          "stdev": 0.0516,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.1338,
+            "p50": 0.15,
+            "p75": 0.1925,
+            "p90": 0.21,
+            "p95": 0.2165
+          },
+          "hit_pct": {
+            "d05": 92.9,
+            "d10": 85.7,
+            "d15": 53.6,
+            "d20": 25.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 35,
+          "mean": 0.1916,
+          "median": 0.23,
+          "stdev": 0.095,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.09,
+            "p50": 0.23,
+            "p75": 0.265,
+            "p90": 0.28,
+            "p95": 0.303
+          },
+          "hit_pct": {
+            "d05": 88.6,
+            "d10": 74.3,
+            "d15": 71.4,
+            "d20": 62.9,
+            "d25": 37.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 46,
+          "mean": 0.2521,
+          "median": 0.3075,
+          "stdev": 0.1311,
+          "percentiles": {
+            "p10": 0.065,
+            "p25": 0.12,
+            "p50": 0.3075,
+            "p75": 0.36,
+            "p90": 0.395,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 93.5,
+            "d10": 78.3,
+            "d15": 73.9,
+            "d20": 65.2,
+            "d25": 58.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 42,
+          "mean": 0.2943,
+          "median": 0.3575,
+          "stdev": 0.1909,
+          "percentiles": {
+            "p10": 0.013,
+            "p25": 0.0837,
+            "p50": 0.3575,
+            "p75": 0.46,
+            "p90": 0.49,
+            "p95": 0.5095
+          },
+          "hit_pct": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 64.3,
+            "d20": 64.3,
+            "d25": 61.9
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 42,
+          "mean": 0.3219,
+          "median": 0.34,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0215,
+            "p25": 0.0675,
+            "p50": 0.34,
+            "p75": 0.5413,
+            "p90": 0.58,
+            "p95": 0.5847
+          },
+          "hit_pct": {
+            "d05": 76.2,
+            "d10": 71.4,
+            "d15": 69.0,
+            "d20": 59.5,
+            "d25": 59.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 30,
+          "mean": 0.2813,
+          "median": 0.195,
+          "stdev": 0.2498,
+          "percentiles": {
+            "p10": 0.029,
+            "p25": 0.0525,
+            "p50": 0.195,
+            "p75": 0.4925,
+            "p90": 0.6655,
+            "p95": 0.67
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 63.3,
+            "d15": 60.0,
+            "d20": 50.0,
+            "d25": 40.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 11,
+          "mean": 0.1441,
+          "median": 0.14,
+          "stdev": 0.0887,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.0875,
+            "p50": 0.14,
+            "p75": 0.2175,
+            "p90": 0.265,
+            "p95": 0.2725
+          },
+          "hit_pct": {
+            "d05": 81.8,
+            "d10": 63.6,
+            "d15": 36.4,
+            "d20": 27.3,
+            "d25": 27.3
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 238,
+          "mean": 0.2468,
+          "median": 0.22,
+          "stdev": 0.1807,
+          "percentiles": {
+            "p10": 0.0335,
+            "p25": 0.0813,
+            "p50": 0.22,
+            "p75": 0.3875,
+            "p90": 0.52,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 85.3,
+            "d10": 72.7,
+            "d15": 63.9,
+            "d20": 54.2,
+            "d25": 44.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.08,
+          "median": 0.0825,
+          "stdev": 0.0302,
+          "percentiles": {
+            "p10": 0.0485,
+            "p25": 0.0688,
+            "p50": 0.0825,
+            "p75": 0.0938,
+            "p90": 0.1095,
+            "p95": 0.1147
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 28,
+          "mean": 0.1505,
+          "median": 0.15,
+          "stdev": 0.0516,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.1338,
+            "p50": 0.15,
+            "p75": 0.1925,
+            "p90": 0.21,
+            "p95": 0.2165
+          },
+          "hit_pct": {
+            "d05": 92.9,
+            "d10": 85.7,
+            "d15": 53.6,
+            "d20": 25.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 35,
+          "mean": 0.1916,
+          "median": 0.23,
+          "stdev": 0.095,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.09,
+            "p50": 0.23,
+            "p75": 0.265,
+            "p90": 0.28,
+            "p95": 0.303
+          },
+          "hit_pct": {
+            "d05": 88.6,
+            "d10": 74.3,
+            "d15": 71.4,
+            "d20": 62.9,
+            "d25": 37.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 46,
+          "mean": 0.2521,
+          "median": 0.3075,
+          "stdev": 0.1311,
+          "percentiles": {
+            "p10": 0.065,
+            "p25": 0.12,
+            "p50": 0.3075,
+            "p75": 0.36,
+            "p90": 0.395,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 93.5,
+            "d10": 78.3,
+            "d15": 73.9,
+            "d20": 65.2,
+            "d25": 58.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 42,
+          "mean": 0.2943,
+          "median": 0.3575,
+          "stdev": 0.1909,
+          "percentiles": {
+            "p10": 0.013,
+            "p25": 0.0837,
+            "p50": 0.3575,
+            "p75": 0.46,
+            "p90": 0.49,
+            "p95": 0.5095
+          },
+          "hit_pct": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 64.3,
+            "d20": 64.3,
+            "d25": 61.9
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 42,
+          "mean": 0.3219,
+          "median": 0.34,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0215,
+            "p25": 0.0675,
+            "p50": 0.34,
+            "p75": 0.5413,
+            "p90": 0.58,
+            "p95": 0.5847
+          },
+          "hit_pct": {
+            "d05": 76.2,
+            "d10": 71.4,
+            "d15": 69.0,
+            "d20": 59.5,
+            "d25": 59.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 30,
+          "mean": 0.2813,
+          "median": 0.195,
+          "stdev": 0.2498,
+          "percentiles": {
+            "p10": 0.029,
+            "p25": 0.0525,
+            "p50": 0.195,
+            "p75": 0.4925,
+            "p90": 0.6655,
+            "p95": 0.67
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 63.3,
+            "d15": 60.0,
+            "d20": 50.0,
+            "d25": 40.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 11,
+          "mean": 0.1441,
+          "median": 0.14,
+          "stdev": 0.0887,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.0875,
+            "p50": 0.14,
+            "p75": 0.2175,
+            "p90": 0.265,
+            "p95": 0.2725
+          },
+          "hit_pct": {
+            "d05": 81.8,
+            "d10": 63.6,
+            "d15": 36.4,
+            "d20": 27.3,
+            "d25": 27.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 238,
+          "mean": 0.2468,
+          "median": 0.22,
+          "stdev": 0.1807,
+          "percentiles": {
+            "p10": 0.0335,
+            "p25": 0.0813,
+            "p50": 0.22,
+            "p75": 0.3875,
+            "p90": 0.52,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 85.3,
+            "d10": 72.7,
+            "d15": 63.9,
+            "d20": 54.2,
+            "d25": 44.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.08,
+          "median": 0.0825,
+          "stdev": 0.0302,
+          "percentiles": {
+            "p10": 0.0485,
+            "p25": 0.0688,
+            "p50": 0.0825,
+            "p75": 0.0938,
+            "p90": 0.1095,
+            "p95": 0.1147
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 28,
+          "mean": 0.1505,
+          "median": 0.15,
+          "stdev": 0.0516,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.1338,
+            "p50": 0.15,
+            "p75": 0.1925,
+            "p90": 0.21,
+            "p95": 0.2165
+          },
+          "hit_pct": {
+            "d05": 92.9,
+            "d10": 85.7,
+            "d15": 53.6,
+            "d20": 25.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 35,
+          "mean": 0.1916,
+          "median": 0.23,
+          "stdev": 0.095,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.09,
+            "p50": 0.23,
+            "p75": 0.265,
+            "p90": 0.28,
+            "p95": 0.303
+          },
+          "hit_pct": {
+            "d05": 88.6,
+            "d10": 74.3,
+            "d15": 71.4,
+            "d20": 62.9,
+            "d25": 37.1
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 46,
+          "mean": 0.2521,
+          "median": 0.3075,
+          "stdev": 0.1311,
+          "percentiles": {
+            "p10": 0.065,
+            "p25": 0.12,
+            "p50": 0.3075,
+            "p75": 0.36,
+            "p90": 0.395,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 93.5,
+            "d10": 78.3,
+            "d15": 73.9,
+            "d20": 65.2,
+            "d25": 58.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 42,
+          "mean": 0.2943,
+          "median": 0.3575,
+          "stdev": 0.1909,
+          "percentiles": {
+            "p10": 0.013,
+            "p25": 0.0837,
+            "p50": 0.3575,
+            "p75": 0.46,
+            "p90": 0.49,
+            "p95": 0.5095
+          },
+          "hit_pct": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 64.3,
+            "d20": 64.3,
+            "d25": 61.9
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 42,
+          "mean": 0.3219,
+          "median": 0.34,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0215,
+            "p25": 0.0675,
+            "p50": 0.34,
+            "p75": 0.5413,
+            "p90": 0.58,
+            "p95": 0.5847
+          },
+          "hit_pct": {
+            "d05": 76.2,
+            "d10": 71.4,
+            "d15": 69.0,
+            "d20": 59.5,
+            "d25": 59.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 30,
+          "mean": 0.2813,
+          "median": 0.195,
+          "stdev": 0.2498,
+          "percentiles": {
+            "p10": 0.029,
+            "p25": 0.0525,
+            "p50": 0.195,
+            "p75": 0.4925,
+            "p90": 0.6655,
+            "p95": 0.67
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 63.3,
+            "d15": 60.0,
+            "d20": 50.0,
+            "d25": 40.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 11,
+          "mean": 0.1441,
+          "median": 0.14,
+          "stdev": 0.0887,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.0875,
+            "p50": 0.14,
+            "p75": 0.2175,
+            "p90": 0.265,
+            "p95": 0.2725
+          },
+          "hit_pct": {
+            "d05": 81.8,
+            "d10": 63.6,
+            "d15": 36.4,
+            "d20": 27.3,
+            "d25": 27.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 238,
+          "mean": 0.2468,
+          "median": 0.22,
+          "stdev": 0.1807,
+          "percentiles": {
+            "p10": 0.0335,
+            "p25": 0.0813,
+            "p50": 0.22,
+            "p75": 0.3875,
+            "p90": 0.52,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 85.3,
+            "d10": 72.7,
+            "d15": 63.9,
+            "d20": 54.2,
+            "d25": 44.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.08,
+          "median": 0.0825,
+          "stdev": 0.0302,
+          "percentiles": {
+            "p10": 0.0485,
+            "p25": 0.0688,
+            "p50": 0.0825,
+            "p75": 0.0938,
+            "p90": 0.1095,
+            "p95": 0.1147
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 28,
+          "mean": 0.1505,
+          "median": 0.15,
+          "stdev": 0.0516,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.1338,
+            "p50": 0.15,
+            "p75": 0.1925,
+            "p90": 0.21,
+            "p95": 0.2165
+          },
+          "hit_pct": {
+            "d05": 92.9,
+            "d10": 85.7,
+            "d15": 53.6,
+            "d20": 25.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 35,
+          "mean": 0.1916,
+          "median": 0.23,
+          "stdev": 0.095,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.09,
+            "p50": 0.23,
+            "p75": 0.265,
+            "p90": 0.28,
+            "p95": 0.303
+          },
+          "hit_pct": {
+            "d05": 88.6,
+            "d10": 74.3,
+            "d15": 71.4,
+            "d20": 62.9,
+            "d25": 37.1
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 46,
+          "mean": 0.2521,
+          "median": 0.3075,
+          "stdev": 0.1311,
+          "percentiles": {
+            "p10": 0.065,
+            "p25": 0.12,
+            "p50": 0.3075,
+            "p75": 0.36,
+            "p90": 0.395,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 93.5,
+            "d10": 78.3,
+            "d15": 73.9,
+            "d20": 65.2,
+            "d25": 58.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 42,
+          "mean": 0.2943,
+          "median": 0.3575,
+          "stdev": 0.1909,
+          "percentiles": {
+            "p10": 0.013,
+            "p25": 0.0837,
+            "p50": 0.3575,
+            "p75": 0.46,
+            "p90": 0.49,
+            "p95": 0.5095
+          },
+          "hit_pct": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 64.3,
+            "d20": 64.3,
+            "d25": 61.9
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 42,
+          "mean": 0.3219,
+          "median": 0.34,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0215,
+            "p25": 0.0675,
+            "p50": 0.34,
+            "p75": 0.5413,
+            "p90": 0.58,
+            "p95": 0.5847
+          },
+          "hit_pct": {
+            "d05": 76.2,
+            "d10": 71.4,
+            "d15": 69.0,
+            "d20": 59.5,
+            "d25": 59.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 30,
+          "mean": 0.2813,
+          "median": 0.195,
+          "stdev": 0.2498,
+          "percentiles": {
+            "p10": 0.029,
+            "p25": 0.0525,
+            "p50": 0.195,
+            "p75": 0.4925,
+            "p90": 0.6655,
+            "p95": 0.67
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 63.3,
+            "d15": 60.0,
+            "d20": 50.0,
+            "d25": 40.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 11,
+          "mean": 0.1441,
+          "median": 0.14,
+          "stdev": 0.0887,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.0875,
+            "p50": 0.14,
+            "p75": 0.2175,
+            "p90": 0.265,
+            "p95": 0.2725
+          },
+          "hit_pct": {
+            "d05": 81.8,
+            "d10": 63.6,
+            "d15": 36.4,
+            "d20": 27.3,
+            "d25": 27.3
+          }
+        }
+      ],
+      "band_sides": {
+        "n_sides": 238,
+        "n_eligible": 233,
+        "eligible_pct": 97.9,
+        "n_band_hit": 209,
+        "band_hit_pct_of_eligible": 89.7,
+        "band_hit_pct_of_all": 87.8,
+        "by_band": {
+          "20-49_D05": {
+            "n": 108,
+            "required_dip": 0.05,
+            "hit_n": 99,
+            "hit_pct": 91.7,
+            "mean_max_dip": 0.2047,
+            "median_max_dip": 0.205
+          },
+          "50-89_D03": {
+            "n": 125,
+            "required_dip": 0.03,
+            "hit_n": 110,
+            "hit_pct": 88.0,
+            "mean_max_dip": 0.2872,
+            "median_max_dip": 0.275
+          }
+        },
+        "excluded_n": 5,
+        "excluded_note": "T0 < 0.20 or T0 \u2265 0.90"
+      },
+      "band_pairs": {
+        "n": 119,
+        "both_eligible_n": 114,
+        "both_eligible_pct": 95.8,
+        "band_both_hit_n": 90,
+        "band_both_hit_pct_of_all": 75.6,
+        "band_both_hit_pct_of_eligible": 78.9,
+        "uniform_both_hit": {
+          "d05": {
+            "hit_pct": 70.6,
+            "n": 84
+          },
+          "d10": {
+            "hit_pct": 46.2,
+            "n": 55
+          },
+          "d15": {
+            "hit_pct": 34.5,
+            "n": 41
+          },
+          "d20": {
+            "hit_pct": 21.0,
+            "n": 25
+          },
+          "d25": {
+            "hit_pct": 12.6,
+            "n": 15
+          }
+        },
+        "opt_cost_when_band_both": {
+          "n": 90,
+          "mean_cost": 0.9351,
+          "median_cost": 0.93,
+          "mean_edge_vs_1": 0.0649
+        }
+      },
+      "band_deciles": [
+        {
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.08,
+          "median": 0.0825,
+          "percentiles": {
+            "p10": 0.0485,
+            "p25": 0.0688,
+            "p50": 0.0825,
+            "p75": 0.0938,
+            "p90": 0.1095,
+            "p95": 0.1147
+          },
+          "hit_pct_uniform": {
+            "d05": 75.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        },
+        {
+          "decile": "20-29",
+          "n": 28,
+          "mean": 0.1505,
+          "median": 0.15,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.1338,
+            "p50": 0.15,
+            "p75": 0.1925,
+            "p90": 0.21,
+            "p95": 0.2165
+          },
+          "hit_pct_uniform": {
+            "d05": 92.9,
+            "d10": 85.7,
+            "d15": 53.6,
+            "d20": 25.0,
+            "d25": 0.0
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 28,
+          "band_hit_n": 26,
+          "band_hit_pct": 92.9
+        },
+        {
+          "decile": "30-39",
+          "n": 35,
+          "mean": 0.1916,
+          "median": 0.23,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.09,
+            "p50": 0.23,
+            "p75": 0.265,
+            "p90": 0.28,
+            "p95": 0.303
+          },
+          "hit_pct_uniform": {
+            "d05": 88.6,
+            "d10": 74.3,
+            "d15": 71.4,
+            "d20": 62.9,
+            "d25": 37.1
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 35,
+          "band_hit_n": 31,
+          "band_hit_pct": 88.6
+        },
+        {
+          "decile": "40-49",
+          "n": 46,
+          "mean": 0.2521,
+          "median": 0.3075,
+          "percentiles": {
+            "p10": 0.065,
+            "p25": 0.12,
+            "p50": 0.3075,
+            "p75": 0.36,
+            "p90": 0.395,
+            "p95": 0.4
+          },
+          "hit_pct_uniform": {
+            "d05": 93.5,
+            "d10": 78.3,
+            "d15": 73.9,
+            "d20": 65.2,
+            "d25": 58.7
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 45,
+          "band_hit_n": 42,
+          "band_hit_pct": 93.3
+        },
+        {
+          "decile": "50-59",
+          "n": 42,
+          "mean": 0.2943,
+          "median": 0.3575,
+          "percentiles": {
+            "p10": 0.013,
+            "p25": 0.0837,
+            "p50": 0.3575,
+            "p75": 0.46,
+            "p90": 0.49,
+            "p95": 0.5095
+          },
+          "hit_pct_uniform": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 64.3,
+            "d20": 64.3,
+            "d25": 61.9
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 42,
+          "band_hit_n": 37,
+          "band_hit_pct": 88.1
+        },
+        {
+          "decile": "60-69",
+          "n": 42,
+          "mean": 0.3219,
+          "median": 0.34,
+          "percentiles": {
+            "p10": 0.0215,
+            "p25": 0.0675,
+            "p50": 0.34,
+            "p75": 0.5413,
+            "p90": 0.58,
+            "p95": 0.5847
+          },
+          "hit_pct_uniform": {
+            "d05": 76.2,
+            "d10": 71.4,
+            "d15": 69.0,
+            "d20": 59.5,
+            "d25": 59.5
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 42,
+          "band_hit_n": 37,
+          "band_hit_pct": 88.1
+        },
+        {
+          "decile": "70-79",
+          "n": 30,
+          "mean": 0.2813,
+          "median": 0.195,
+          "percentiles": {
+            "p10": 0.029,
+            "p25": 0.0525,
+            "p50": 0.195,
+            "p75": 0.4925,
+            "p90": 0.6655,
+            "p95": 0.67
+          },
+          "hit_pct_uniform": {
+            "d05": 76.7,
+            "d10": 63.3,
+            "d15": 60.0,
+            "d20": 50.0,
+            "d25": 40.0
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 30,
+          "band_hit_n": 27,
+          "band_hit_pct": 90.0
+        },
+        {
+          "decile": "80-89",
+          "n": 11,
+          "mean": 0.1441,
+          "median": 0.14,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.0875,
+            "p50": 0.14,
+            "p75": 0.2175,
+            "p90": 0.265,
+            "p95": 0.2725
+          },
+          "hit_pct_uniform": {
+            "d05": 81.8,
+            "d10": 63.6,
+            "d15": 36.4,
+            "d20": 27.3,
+            "d25": 27.3
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 11,
+          "band_hit_n": 9,
+          "band_hit_pct": 81.8
+        }
+      ]
+    },
+    "B_kalshi_yes_ask": {
+      "name": "B_kalshi_yes_ask",
+      "n_sides": 570,
+      "n_pairs": 170,
+      "overall": {
+        "n": 570,
+        "mean": 0.1329,
+        "median": 0.04,
+        "stdev": 0.1912,
+        "percentiles": {
+          "p10": 0.0,
+          "p25": 0.0,
+          "p50": 0.04,
+          "p75": 0.19,
+          "p90": 0.43,
+          "p95": 0.55
+        },
+        "hit_pct": {
+          "d05": 49.3,
+          "d10": 37.2,
+          "d15": 30.7,
+          "d20": 24.4,
+          "d25": 20.0
+        }
+      },
+      "pairs_summary": {
+        "n": 170,
+        "both_hit_pct": {
+          "d05": 41.2,
+          "d10": 20.0,
+          "d15": 15.3,
+          "d20": 11.2,
+          "d25": 7.6
+        },
+        "opt_cost_when_both": {
+          "d05": {
+            "n": 70,
+            "mean_cost": 0.9213,
+            "median_cost": 0.91,
+            "mean_edge_vs_1": 0.0787
+          },
+          "d10": {
+            "n": 34,
+            "mean_cost": 0.8218,
+            "median_cost": 0.81,
+            "mean_edge_vs_1": 0.1782
+          },
+          "d15": {
+            "n": 26,
+            "mean_cost": 0.7258,
+            "median_cost": 0.71,
+            "mean_edge_vs_1": 0.2742
+          },
+          "d20": {
+            "n": 19,
+            "mean_cost": 0.6158,
+            "median_cost": 0.61,
+            "mean_edge_vs_1": 0.3842
+          },
+          "d25": {
+            "n": 13,
+            "mean_cost": 0.5138,
+            "median_cost": 0.51,
+            "mean_edge_vs_1": 0.4862
+          }
+        }
+      },
+      "role_overlay": {
+        "favorite": {
+          "n": 170,
+          "mean": 0.1824,
+          "median": 0.06,
+          "stdev": 0.254,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.06,
+            "p75": 0.2475,
+            "p90": 0.59,
+            "p95": 0.7055
+          },
+          "hit_pct": {
+            "d05": 52.4,
+            "d10": 39.4,
+            "d15": 34.7,
+            "d20": 29.4,
+            "d25": 25.3
+          }
+        },
+        "dog": {
+          "n": 170,
+          "mean": 0.1374,
+          "median": 0.06,
+          "stdev": 0.1493,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.2375,
+            "p90": 0.4,
+            "p95": 0.43
+          },
+          "hit_pct": {
+            "d05": 60.6,
+            "d10": 44.1,
+            "d15": 37.6,
+            "d20": 30.0,
+            "d25": 24.7
+          }
+        },
+        "near_50_deciles_40_59": {
+          "n": 98,
+          "mean": 0.241,
+          "median": 0.22,
+          "stdev": 0.2125,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.22,
+            "p75": 0.445,
+            "p90": 0.52,
+            "p95": 0.55
+          },
+          "hit_pct": {
+            "d05": 69.4,
+            "d10": 56.1,
+            "d15": 53.1,
+            "d20": 51.0,
+            "d25": 48.0
+          }
+        },
+        "far_deciles_0_19_or_80_99": {
+          "n": 310,
+          "mean": 0.0673,
+          "median": 0.015,
+          "stdev": 0.1485,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.015,
+            "p75": 0.08,
+            "p90": 0.15,
+            "p95": 0.19
+          },
+          "hit_pct": {
+            "d05": 35.5,
+            "d10": 21.3,
+            "d15": 11.6,
+            "d20": 4.8,
+            "d25": 4.2
+          }
+        }
+      },
+      "slices": [
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 570,
+          "mean": 0.1329,
+          "median": 0.04,
+          "stdev": 0.1912,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.04,
+            "p75": 0.19,
+            "p90": 0.43,
+            "p95": 0.55
+          },
+          "hit_pct": {
+            "d05": 49.3,
+            "d10": 37.2,
+            "d15": 30.7,
+            "d20": 24.4,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 182,
+          "mean": 0.0168,
+          "median": 0.0,
+          "stdev": 0.024,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.03,
+            "p90": 0.06,
+            "p95": 0.07
+          },
+          "hit_pct": {
+            "d05": 14.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 51,
+          "mean": 0.1108,
+          "median": 0.12,
+          "stdev": 0.0522,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.09,
+            "p50": 0.12,
+            "p75": 0.15,
+            "p90": 0.17,
+            "p95": 0.175
+          },
+          "hit_pct": {
+            "d05": 86.3,
+            "d10": 70.6,
+            "d15": 33.3,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 42,
+          "mean": 0.1419,
+          "median": 0.19,
+          "stdev": 0.1061,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.02,
+            "p50": 0.19,
+            "p75": 0.2275,
+            "p90": 0.259,
+            "p95": 0.2795
+          },
+          "hit_pct": {
+            "d05": 64.3,
+            "d10": 61.9,
+            "d15": 59.5,
+            "d20": 47.6,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 39,
+          "mean": 0.1631,
+          "median": 0.16,
+          "stdev": 0.1412,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.16,
+            "p75": 0.3,
+            "p90": 0.332,
+            "p95": 0.361
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 56.4,
+            "d15": 51.3,
+            "d20": 41.0,
+            "d25": 41.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 50,
+          "mean": 0.2534,
+          "median": 0.375,
+          "stdev": 0.1877,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.05,
+            "p50": 0.375,
+            "p75": 0.4175,
+            "p90": 0.451,
+            "p95": 0.4755
+          },
+          "hit_pct": {
+            "d05": 78.0,
+            "d10": 64.0,
+            "d15": 60.0,
+            "d20": 60.0,
+            "d25": 56.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 48,
+          "mean": 0.2281,
+          "median": 0.09,
+          "stdev": 0.2348,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0075,
+            "p50": 0.09,
+            "p75": 0.5125,
+            "p90": 0.55,
+            "p95": 0.5565
+          },
+          "hit_pct": {
+            "d05": 60.4,
+            "d10": 47.9,
+            "d15": 45.8,
+            "d20": 41.7,
+            "d25": 39.6
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 39,
+          "mean": 0.2308,
+          "median": 0.17,
+          "stdev": 0.2446,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.17,
+            "p75": 0.405,
+            "p90": 0.63,
+            "p95": 0.66
+          },
+          "hit_pct": {
+            "d05": 64.1,
+            "d10": 53.8,
+            "d15": 51.3,
+            "d20": 43.6,
+            "d25": 38.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 42,
+          "mean": 0.2369,
+          "median": 0.175,
+          "stdev": 0.2513,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.175,
+            "p75": 0.4725,
+            "p90": 0.57,
+            "p95": 0.738
+          },
+          "hit_pct": {
+            "d05": 59.5,
+            "d10": 52.4,
+            "d15": 52.4,
+            "d20": 50.0,
+            "d25": 38.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 29,
+          "mean": 0.161,
+          "median": 0.06,
+          "stdev": 0.2579,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.14,
+            "p90": 0.616,
+            "p95": 0.83
+          },
+          "hit_pct": {
+            "d05": 51.7,
+            "d10": 37.9,
+            "d15": 24.1,
+            "d20": 17.2,
+            "d25": 17.2
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 48,
+          "mean": 0.1562,
+          "median": 0.04,
+          "stdev": 0.2689,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.04,
+            "p75": 0.1275,
+            "p90": 0.542,
+            "p95": 0.9195
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 39.6,
+            "d15": 25.0,
+            "d20": 20.8,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 386,
+          "mean": 0.1462,
+          "median": 0.05,
+          "stdev": 0.203,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.05,
+            "p75": 0.22,
+            "p90": 0.475,
+            "p95": 0.57
+          },
+          "hit_pct": {
+            "d05": 51.6,
+            "d10": 38.3,
+            "d15": 33.2,
+            "d20": 26.9,
+            "d25": 22.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 68,
+          "mean": 0.0237,
+          "median": 0.02,
+          "stdev": 0.0244,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.02,
+            "p75": 0.04,
+            "p90": 0.06,
+            "p95": 0.07
+          },
+          "hit_pct": {
+            "d05": 19.1,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 28,
+          "mean": 0.1029,
+          "median": 0.125,
+          "stdev": 0.0608,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0575,
+            "p50": 0.125,
+            "p75": 0.15,
+            "p90": 0.17,
+            "p95": 0.17
+          },
+          "hit_pct": {
+            "d05": 78.6,
+            "d10": 60.7,
+            "d15": 35.7,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 33,
+          "mean": 0.1309,
+          "median": 0.19,
+          "stdev": 0.1122,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.19,
+            "p75": 0.23,
+            "p90": 0.258,
+            "p95": 0.274
+          },
+          "hit_pct": {
+            "d05": 57.6,
+            "d10": 54.5,
+            "d15": 54.5,
+            "d20": 45.5,
+            "d25": 18.2
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 33,
+          "mean": 0.1509,
+          "median": 0.12,
+          "stdev": 0.1439,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.12,
+            "p75": 0.3,
+            "p90": 0.33,
+            "p95": 0.364
+          },
+          "hit_pct": {
+            "d05": 60.6,
+            "d10": 51.5,
+            "d15": 45.5,
+            "d20": 39.4,
+            "d25": 39.4
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 42,
+          "mean": 0.2252,
+          "median": 0.24,
+          "stdev": 0.1892,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.02,
+            "p50": 0.24,
+            "p75": 0.41,
+            "p90": 0.448,
+            "p95": 0.4595
+          },
+          "hit_pct": {
+            "d05": 73.8,
+            "d10": 57.1,
+            "d15": 52.4,
+            "d20": 52.4,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 44,
+          "mean": 0.2,
+          "median": 0.07,
+          "stdev": 0.2248,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.07,
+            "p75": 0.495,
+            "p90": 0.537,
+            "p95": 0.55
+          },
+          "hit_pct": {
+            "d05": 56.8,
+            "d10": 43.2,
+            "d15": 40.9,
+            "d20": 36.4,
+            "d25": 34.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 34,
+          "mean": 0.2074,
+          "median": 0.075,
+          "stdev": 0.2465,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.075,
+            "p75": 0.3175,
+            "p90": 0.63,
+            "p95": 0.6405
+          },
+          "hit_pct": {
+            "d05": 58.8,
+            "d10": 47.1,
+            "d15": 44.1,
+            "d20": 35.3,
+            "d25": 29.4
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 32,
+          "mean": 0.1812,
+          "median": 0.035,
+          "stdev": 0.2394,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0075,
+            "p50": 0.035,
+            "p75": 0.375,
+            "p90": 0.563,
+            "p95": 0.6285
+          },
+          "hit_pct": {
+            "d05": 46.9,
+            "d10": 37.5,
+            "d15": 37.5,
+            "d20": 34.4,
+            "d25": 28.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 28,
+          "mean": 0.1614,
+          "median": 0.045,
+          "stdev": 0.2624,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.045,
+            "p75": 0.14,
+            "p90": 0.639,
+            "p95": 0.8325
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 35.7,
+            "d15": 21.4,
+            "d20": 17.9,
+            "d25": 17.9
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 44,
+          "mean": 0.1595,
+          "median": 0.02,
+          "stdev": 0.2806,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.02,
+            "p75": 0.16,
+            "p90": 0.638,
+            "p95": 0.9255
+          },
+          "hit_pct": {
+            "d05": 45.5,
+            "d10": 34.1,
+            "d15": 27.3,
+            "d20": 22.7,
+            "d25": 18.2
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "ALL",
+          "n": 99,
+          "mean": 0.0827,
+          "median": 0.0,
+          "stdev": 0.1511,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.095,
+            "p90": 0.392,
+            "p95": 0.472
+          },
+          "hit_pct": {
+            "d05": 31.3,
+            "d10": 25.3,
+            "d15": 20.2,
+            "d20": 13.1,
+            "d25": 11.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "0-9",
+          "n": 73,
+          "mean": 0.009,
+          "median": 0.0,
+          "stdev": 0.0176,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.03,
+            "p95": 0.05
+          },
+          "hit_pct": {
+            "d05": 6.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "10-19",
+          "n": 12,
+          "mean": 0.14,
+          "median": 0.145,
+          "stdev": 0.03,
+          "percentiles": {
+            "p10": 0.101,
+            "p25": 0.1175,
+            "p50": 0.145,
+            "p75": 0.1625,
+            "p90": 0.179,
+            "p95": 0.18
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 91.7,
+            "d15": 50.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "20-29",
+          "n": 3,
+          "mean": 0.2,
+          "median": 0.2,
+          "stdev": 0.0082,
+          "percentiles": {
+            "p10": 0.192,
+            "p25": 0.195,
+            "p50": 0.2,
+            "p75": 0.205,
+            "p90": 0.208,
+            "p95": 0.209
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 66.7,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "40-49",
+          "n": 5,
+          "mean": 0.424,
+          "median": 0.41,
+          "stdev": 0.0307,
+          "percentiles": {
+            "p10": 0.394,
+            "p25": 0.4,
+            "p50": 0.41,
+            "p75": 0.45,
+            "p90": 0.462,
+            "p95": 0.466
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "50-59",
+          "n": 3,
+          "mean": 0.5233,
+          "median": 0.52,
+          "stdev": 0.0287,
+          "percentiles": {
+            "p10": 0.496,
+            "p25": 0.505,
+            "p50": 0.52,
+            "p75": 0.54,
+            "p90": 0.552,
+            "p95": 0.556
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.47,
+          "median": 0.47,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.47,
+            "p25": 0.47,
+            "p50": 0.47,
+            "p75": 0.47,
+            "p90": 0.47,
+            "p95": 0.47
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "spread",
+          "decile": "70-79",
+          "n": 2,
+          "mean": 0.545,
+          "median": 0.545,
+          "stdev": 0.005,
+          "percentiles": {
+            "p10": 0.541,
+            "p25": 0.5425,
+            "p50": 0.545,
+            "p75": 0.5475,
+            "p90": 0.549,
+            "p95": 0.5495
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "ALL",
+          "n": 85,
+          "mean": 0.1309,
+          "median": 0.08,
+          "stdev": 0.1663,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.08,
+            "p75": 0.21,
+            "p90": 0.312,
+            "p95": 0.464
+          },
+          "hit_pct": {
+            "d05": 60.0,
+            "d10": 45.9,
+            "d15": 31.8,
+            "d20": 25.9,
+            "d25": 18.8
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "0-9",
+          "n": 41,
+          "mean": 0.019,
+          "median": 0.0,
+          "stdev": 0.0289,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.04,
+            "p90": 0.07,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 22.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "10-19",
+          "n": 11,
+          "mean": 0.0991,
+          "median": 0.1,
+          "stdev": 0.0323,
+          "percentiles": {
+            "p10": 0.06,
+            "p25": 0.09,
+            "p50": 0.1,
+            "p75": 0.105,
+            "p90": 0.13,
+            "p95": 0.15
+          },
+          "hit_pct": {
+            "d05": 90.9,
+            "d10": 72.7,
+            "d15": 9.1,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "20-29",
+          "n": 6,
+          "mean": 0.1733,
+          "median": 0.2,
+          "stdev": 0.0793,
+          "percentiles": {
+            "p10": 0.075,
+            "p25": 0.1375,
+            "p50": 0.2,
+            "p75": 0.21,
+            "p90": 0.245,
+            "p95": 0.2625
+          },
+          "hit_pct": {
+            "d05": 83.3,
+            "d10": 83.3,
+            "d15": 66.7,
+            "d20": 50.0,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "30-39",
+          "n": 6,
+          "mean": 0.23,
+          "median": 0.24,
+          "stdev": 0.1017,
+          "percentiles": {
+            "p10": 0.115,
+            "p25": 0.1725,
+            "p50": 0.24,
+            "p75": 0.3225,
+            "p90": 0.335,
+            "p95": 0.3375
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 83.3,
+            "d15": 83.3,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "40-49",
+          "n": 3,
+          "mean": 0.3633,
+          "median": 0.4,
+          "stdev": 0.1132,
+          "percentiles": {
+            "p10": 0.248,
+            "p25": 0.305,
+            "p50": 0.4,
+            "p75": 0.44,
+            "p90": 0.464,
+            "p95": 0.472
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 66.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "50-59",
+          "n": 1,
+          "mean": 0.58,
+          "median": 0.58,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.58,
+            "p25": 0.58,
+            "p50": 0.58,
+            "p75": 0.58,
+            "p90": 0.58,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.37,
+          "median": 0.285,
+          "stdev": 0.1681,
+          "percentiles": {
+            "p10": 0.259,
+            "p25": 0.2725,
+            "p50": 0.285,
+            "p75": 0.3825,
+            "p90": 0.549,
+            "p95": 0.6045
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "70-79",
+          "n": 8,
+          "mean": 0.3825,
+          "median": 0.29,
+          "stdev": 0.2122,
+          "percentiles": {
+            "p10": 0.22,
+            "p25": 0.2275,
+            "p50": 0.29,
+            "p75": 0.425,
+            "p90": 0.743,
+            "p95": 0.7465
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 62.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.15,
+          "median": 0.15,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.15,
+            "p25": 0.15,
+            "p50": 0.15,
+            "p75": 0.15,
+            "p90": 0.15,
+            "p95": 0.15
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "total",
+          "decile": "90-99",
+          "n": 4,
+          "mean": 0.12,
+          "median": 0.12,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.12,
+            "p25": 0.12,
+            "p50": 0.12,
+            "p75": 0.12,
+            "p90": 0.12,
+            "p95": 0.12
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.1195,
+          "median": 0.06,
+          "stdev": 0.1977,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.15,
+            "p90": 0.222,
+            "p95": 0.4985
+          },
+          "hit_pct": {
+            "d05": 52.5,
+            "d10": 35.0,
+            "d15": 27.5,
+            "d20": 12.5,
+            "d25": 10.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 11,
+          "mean": 0.0364,
+          "median": 0.03,
+          "stdev": 0.029,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.01,
+            "p50": 0.03,
+            "p75": 0.065,
+            "p90": 0.08,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 36.4,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 6,
+          "mean": 0.115,
+          "median": 0.14,
+          "stdev": 0.0556,
+          "percentiles": {
+            "p10": 0.04,
+            "p25": 0.0775,
+            "p50": 0.14,
+            "p75": 0.1575,
+            "p90": 0.165,
+            "p95": 0.1675
+          },
+          "hit_pct": {
+            "d05": 83.3,
+            "d10": 66.7,
+            "d15": 50.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 2,
+          "mean": 0.2,
+          "median": 0.2,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.192,
+            "p25": 0.195,
+            "p50": 0.2,
+            "p75": 0.205,
+            "p90": 0.208,
+            "p95": 0.209
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 50.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 3,
+          "mean": 0.16,
+          "median": 0.0,
+          "stdev": 0.2263,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.24,
+            "p90": 0.384,
+            "p95": 0.432
+          },
+          "hit_pct": {
+            "d05": 33.3,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 3,
+          "mean": 0.1133,
+          "median": 0.01,
+          "stdev": 0.1533,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.17,
+            "p90": 0.266,
+            "p95": 0.298
+          },
+          "hit_pct": {
+            "d05": 33.3,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 1,
+          "mean": 0.08,
+          "median": 0.08,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.08,
+            "p25": 0.08,
+            "p50": 0.08,
+            "p75": 0.08,
+            "p90": 0.08,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 6,
+          "mean": 0.3233,
+          "median": 0.095,
+          "stdev": 0.3853,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.03,
+            "p50": 0.095,
+            "p75": 0.67,
+            "p90": 0.865,
+            "p95": 0.8725
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 50.0,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 8,
+          "mean": 0.0563,
+          "median": 0.005,
+          "stdev": 0.0736,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.005,
+            "p75": 0.1125,
+            "p90": 0.162,
+            "p95": 0.176
+          },
+          "hit_pct": {
+            "d05": 37.5,
+            "d10": 37.5,
+            "d15": 25.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.1195,
+          "median": 0.06,
+          "stdev": 0.1977,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.15,
+            "p90": 0.222,
+            "p95": 0.4985
+          },
+          "hit_pct": {
+            "d05": 52.5,
+            "d10": 35.0,
+            "d15": 27.5,
+            "d20": 12.5,
+            "d25": 10.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 11,
+          "mean": 0.0364,
+          "median": 0.03,
+          "stdev": 0.029,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.01,
+            "p50": 0.03,
+            "p75": 0.065,
+            "p90": 0.08,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 36.4,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 6,
+          "mean": 0.115,
+          "median": 0.14,
+          "stdev": 0.0556,
+          "percentiles": {
+            "p10": 0.04,
+            "p25": 0.0775,
+            "p50": 0.14,
+            "p75": 0.1575,
+            "p90": 0.165,
+            "p95": 0.1675
+          },
+          "hit_pct": {
+            "d05": 83.3,
+            "d10": 66.7,
+            "d15": 50.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 2,
+          "mean": 0.2,
+          "median": 0.2,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.192,
+            "p25": 0.195,
+            "p50": 0.2,
+            "p75": 0.205,
+            "p90": 0.208,
+            "p95": 0.209
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 50.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 3,
+          "mean": 0.16,
+          "median": 0.0,
+          "stdev": 0.2263,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.24,
+            "p90": 0.384,
+            "p95": 0.432
+          },
+          "hit_pct": {
+            "d05": 33.3,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 3,
+          "mean": 0.1133,
+          "median": 0.01,
+          "stdev": 0.1533,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.17,
+            "p90": 0.266,
+            "p95": 0.298
+          },
+          "hit_pct": {
+            "d05": 33.3,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 1,
+          "mean": 0.08,
+          "median": 0.08,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.08,
+            "p25": 0.08,
+            "p50": 0.08,
+            "p75": 0.08,
+            "p90": 0.08,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 6,
+          "mean": 0.3233,
+          "median": 0.095,
+          "stdev": 0.3853,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.03,
+            "p50": 0.095,
+            "p75": 0.67,
+            "p90": 0.865,
+            "p95": 0.8725
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 50.0,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "baseball",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 8,
+          "mean": 0.0563,
+          "median": 0.005,
+          "stdev": 0.0736,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.005,
+            "p75": 0.1125,
+            "p90": 0.162,
+            "p95": 0.176
+          },
+          "hit_pct": {
+            "d05": 37.5,
+            "d10": 37.5,
+            "d15": 25.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 3,
+          "mean": 0.25,
+          "median": 0.14,
+          "stdev": 0.1627,
+          "percentiles": {
+            "p10": 0.132,
+            "p25": 0.135,
+            "p50": 0.14,
+            "p75": 0.31,
+            "p90": 0.412,
+            "p95": 0.446
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 1,
+          "mean": 0.13,
+          "median": 0.13,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.13,
+            "p25": 0.13,
+            "p50": 0.13,
+            "p75": 0.13,
+            "p90": 0.13,
+            "p95": 0.13
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.48,
+          "median": 0.48,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.48,
+            "p25": 0.48,
+            "p50": 0.48,
+            "p75": 0.48,
+            "p90": 0.48,
+            "p95": 0.48
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.14,
+          "median": 0.14,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.14,
+            "p25": 0.14,
+            "p50": 0.14,
+            "p75": 0.14,
+            "p90": 0.14,
+            "p95": 0.14
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 3,
+          "mean": 0.25,
+          "median": 0.14,
+          "stdev": 0.1627,
+          "percentiles": {
+            "p10": 0.132,
+            "p25": 0.135,
+            "p50": 0.14,
+            "p75": 0.31,
+            "p90": 0.412,
+            "p95": 0.446
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 33.3
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 1,
+          "mean": 0.13,
+          "median": 0.13,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.13,
+            "p25": 0.13,
+            "p50": 0.13,
+            "p75": 0.13,
+            "p90": 0.13,
+            "p95": 0.13
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.48,
+          "median": 0.48,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.48,
+            "p25": 0.48,
+            "p50": 0.48,
+            "p75": 0.48,
+            "p90": 0.48,
+            "p95": 0.48
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "basketball",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.14,
+          "median": 0.14,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.14,
+            "p25": 0.14,
+            "p50": 0.14,
+            "p75": 0.14,
+            "p90": 0.14,
+            "p95": 0.14
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 120,
+          "mean": 0.1494,
+          "median": 0.09,
+          "stdev": 0.1777,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.09,
+            "p75": 0.2325,
+            "p90": 0.414,
+            "p95": 0.52
+          },
+          "hit_pct": {
+            "d05": 56.7,
+            "d10": 48.3,
+            "d15": 38.3,
+            "d20": 30.8,
+            "d25": 24.2
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 36,
+          "mean": 0.0214,
+          "median": 0.01,
+          "stdev": 0.0246,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.01,
+            "p75": 0.04,
+            "p90": 0.055,
+            "p95": 0.0725
+          },
+          "hit_pct": {
+            "d05": 16.7,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 17,
+          "mean": 0.1106,
+          "median": 0.12,
+          "stdev": 0.0492,
+          "percentiles": {
+            "p10": 0.048,
+            "p25": 0.09,
+            "p50": 0.12,
+            "p75": 0.14,
+            "p90": 0.164,
+            "p95": 0.172
+          },
+          "hit_pct": {
+            "d05": 88.2,
+            "d10": 70.6,
+            "d15": 23.5,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.1209,
+          "median": 0.19,
+          "stdev": 0.1126,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.19,
+            "p75": 0.21,
+            "p90": 0.24,
+            "p95": 0.26
+          },
+          "hit_pct": {
+            "d05": 54.5,
+            "d10": 54.5,
+            "d15": 54.5,
+            "d20": 45.5,
+            "d25": 9.1
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 9,
+          "mean": 0.22,
+          "median": 0.29,
+          "stdev": 0.1338,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.17,
+            "p50": 0.29,
+            "p75": 0.33,
+            "p90": 0.346,
+            "p95": 0.358
+          },
+          "hit_pct": {
+            "d05": 77.8,
+            "d10": 77.8,
+            "d15": 77.8,
+            "d20": 55.6,
+            "d25": 55.6
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 8,
+          "mean": 0.3475,
+          "median": 0.4,
+          "stdev": 0.1507,
+          "percentiles": {
+            "p10": 0.15,
+            "p25": 0.3225,
+            "p50": 0.4,
+            "p75": 0.455,
+            "p90": 0.473,
+            "p95": 0.4765
+          },
+          "hit_pct": {
+            "d05": 87.5,
+            "d10": 87.5,
+            "d15": 87.5,
+            "d20": 87.5,
+            "d25": 75.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 5,
+          "mean": 0.534,
+          "median": 0.52,
+          "stdev": 0.032,
+          "percentiles": {
+            "p10": 0.502,
+            "p25": 0.52,
+            "p50": 0.52,
+            "p75": 0.56,
+            "p90": 0.572,
+            "p95": 0.576
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 9,
+          "mean": 0.2122,
+          "median": 0.25,
+          "stdev": 0.1972,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.25,
+            "p75": 0.28,
+            "p90": 0.364,
+            "p95": 0.512
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 66.7,
+            "d15": 66.7,
+            "d20": 55.6,
+            "d25": 55.6
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 13,
+          "mean": 0.2746,
+          "median": 0.23,
+          "stdev": 0.2481,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.23,
+            "p75": 0.32,
+            "p90": 0.692,
+            "p95": 0.744
+          },
+          "hit_pct": {
+            "d05": 69.2,
+            "d10": 69.2,
+            "d15": 69.2,
+            "d20": 69.2,
+            "d25": 46.2
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 3,
+          "mean": 0.08,
+          "median": 0.09,
+          "stdev": 0.0616,
+          "percentiles": {
+            "p10": 0.018,
+            "p25": 0.045,
+            "p50": 0.09,
+            "p75": 0.12,
+            "p90": 0.138,
+            "p95": 0.144
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 9,
+          "mean": 0.0889,
+          "median": 0.12,
+          "stdev": 0.0853,
+          "percentiles": {
+            "p10": 0.008,
+            "p25": 0.01,
+            "p50": 0.12,
+            "p75": 0.12,
+            "p90": 0.152,
+            "p95": 0.216
+          },
+          "hit_pct": {
+            "d05": 55.6,
+            "d10": 55.6,
+            "d15": 11.1,
+            "d20": 11.1,
+            "d25": 11.1
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.0953,
+          "median": 0.01,
+          "stdev": 0.1491,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.01,
+            "p75": 0.15,
+            "p90": 0.333,
+            "p95": 0.3765
+          },
+          "hit_pct": {
+            "d05": 35.0,
+            "d10": 27.5,
+            "d15": 25.0,
+            "d20": 22.5,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 5,
+          "mean": 0.022,
+          "median": 0.02,
+          "stdev": 0.0204,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.02,
+            "p75": 0.04,
+            "p90": 0.046,
+            "p95": 0.048
+          },
+          "hit_pct": {
+            "d05": 20.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.0575,
+          "median": 0.045,
+          "stdev": 0.0602,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.045,
+            "p75": 0.1025,
+            "p90": 0.125,
+            "p95": 0.1325
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 25.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 6,
+          "mean": 0.04,
+          "median": 0.0,
+          "stdev": 0.0894,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.12,
+            "p95": 0.18
+          },
+          "hit_pct": {
+            "d05": 16.7,
+            "d10": 16.7,
+            "d15": 16.7,
+            "d20": 16.7,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 5,
+          "mean": 0.198,
+          "median": 0.29,
+          "stdev": 0.1636,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.29,
+            "p75": 0.33,
+            "p90": 0.354,
+            "p95": 0.362
+          },
+          "hit_pct": {
+            "d05": 60.0,
+            "d10": 60.0,
+            "d15": 60.0,
+            "d20": 60.0,
+            "d25": 60.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 2,
+          "mean": 0.185,
+          "median": 0.185,
+          "stdev": 0.175,
+          "percentiles": {
+            "p10": 0.045,
+            "p25": 0.0975,
+            "p50": 0.185,
+            "p75": 0.2725,
+            "p90": 0.325,
+            "p95": 0.3425
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 1,
+          "mean": 0.52,
+          "median": 0.52,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.52,
+            "p25": 0.52,
+            "p50": 0.52,
+            "p75": 0.52,
+            "p90": 0.52,
+            "p95": 0.52
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 5,
+          "mean": 0.086,
+          "median": 0.0,
+          "stdev": 0.1076,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.18,
+            "p90": 0.222,
+            "p95": 0.236
+          },
+          "hit_pct": {
+            "d05": 40.0,
+            "d10": 40.0,
+            "d15": 40.0,
+            "d20": 20.0,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 5,
+          "mean": 0.102,
+          "median": 0.0,
+          "stdev": 0.199,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.304,
+            "p95": 0.402
+          },
+          "hit_pct": {
+            "d05": 20.0,
+            "d10": 20.0,
+            "d15": 20.0,
+            "d20": 20.0,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 2,
+          "mean": 0.045,
+          "median": 0.045,
+          "stdev": 0.045,
+          "percentiles": {
+            "p10": 0.009,
+            "p25": 0.0225,
+            "p50": 0.045,
+            "p75": 0.0675,
+            "p90": 0.081,
+            "p95": 0.0855
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 5,
+          "mean": 0.064,
+          "median": 0.01,
+          "stdev": 0.1082,
+          "percentiles": {
+            "p10": 0.004,
+            "p25": 0.01,
+            "p50": 0.01,
+            "p75": 0.02,
+            "p90": 0.176,
+            "p95": 0.228
+          },
+          "hit_pct": {
+            "d05": 20.0,
+            "d10": 20.0,
+            "d15": 20.0,
+            "d20": 20.0,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.1373,
+          "median": 0.075,
+          "stdev": 0.168,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.075,
+            "p75": 0.1825,
+            "p90": 0.452,
+            "p95": 0.4915
+          },
+          "hit_pct": {
+            "d05": 52.5,
+            "d10": 45.0,
+            "d15": 35.0,
+            "d20": 22.5,
+            "d25": 17.5
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "0-9",
+          "n": 21,
+          "mean": 0.0171,
+          "median": 0.01,
+          "stdev": 0.0229,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.01,
+            "p75": 0.03,
+            "p90": 0.04,
+            "p95": 0.07
+          },
+          "hit_pct": {
+            "d05": 9.5,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "10-19",
+          "n": 9,
+          "mean": 0.1378,
+          "median": 0.14,
+          "stdev": 0.0282,
+          "percentiles": {
+            "p10": 0.106,
+            "p25": 0.12,
+            "p50": 0.14,
+            "p75": 0.16,
+            "p90": 0.172,
+            "p95": 0.176
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 88.9,
+            "d15": 44.4,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "20-29",
+          "n": 3,
+          "mean": 0.2,
+          "median": 0.2,
+          "stdev": 0.0082,
+          "percentiles": {
+            "p10": 0.192,
+            "p25": 0.195,
+            "p50": 0.2,
+            "p75": 0.205,
+            "p90": 0.208,
+            "p95": 0.209
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 66.7,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.43,
+          "median": 0.43,
+          "stdev": 0.0316,
+          "percentiles": {
+            "p10": 0.396,
+            "p25": 0.405,
+            "p50": 0.43,
+            "p75": 0.455,
+            "p90": 0.464,
+            "p95": 0.467
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "spread",
+          "decile": "50-59",
+          "n": 3,
+          "mean": 0.5233,
+          "median": 0.52,
+          "stdev": 0.0287,
+          "percentiles": {
+            "p10": 0.496,
+            "p25": 0.505,
+            "p50": 0.52,
+            "p75": 0.54,
+            "p90": 0.552,
+            "p95": 0.556
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.2157,
+          "median": 0.175,
+          "stdev": 0.1917,
+          "percentiles": {
+            "p10": 0.027,
+            "p25": 0.08,
+            "p50": 0.175,
+            "p75": 0.2825,
+            "p90": 0.49,
+            "p95": 0.664
+          },
+          "hit_pct": {
+            "d05": 82.5,
+            "d10": 72.5,
+            "d15": 55.0,
+            "d20": 47.5,
+            "d25": 35.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "0-9",
+          "n": 10,
+          "mean": 0.03,
+          "median": 0.035,
+          "stdev": 0.0276,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.035,
+            "p75": 0.0475,
+            "p90": 0.062,
+            "p95": 0.071
+          },
+          "hit_pct": {
+            "d05": 30.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "10-19",
+          "n": 4,
+          "mean": 0.1025,
+          "median": 0.1,
+          "stdev": 0.0179,
+          "percentiles": {
+            "p10": 0.086,
+            "p25": 0.095,
+            "p50": 0.1,
+            "p75": 0.1075,
+            "p90": 0.121,
+            "p95": 0.1255
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 75.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "20-29",
+          "n": 2,
+          "mean": 0.245,
+          "median": 0.245,
+          "stdev": 0.035,
+          "percentiles": {
+            "p10": 0.217,
+            "p25": 0.2275,
+            "p50": 0.245,
+            "p75": 0.2625,
+            "p90": 0.273,
+            "p95": 0.2765
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.2475,
+          "median": 0.24,
+          "stdev": 0.074,
+          "percentiles": {
+            "p10": 0.173,
+            "p25": 0.1775,
+            "p50": 0.24,
+            "p75": 0.31,
+            "p90": 0.328,
+            "p95": 0.334
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "40-49",
+          "n": 2,
+          "mean": 0.345,
+          "median": 0.345,
+          "stdev": 0.135,
+          "percentiles": {
+            "p10": 0.237,
+            "p25": 0.2775,
+            "p50": 0.345,
+            "p75": 0.4125,
+            "p90": 0.453,
+            "p95": 0.4665
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "50-59",
+          "n": 1,
+          "mean": 0.58,
+          "median": 0.58,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.58,
+            "p25": 0.58,
+            "p50": 0.58,
+            "p75": 0.58,
+            "p90": 0.58,
+            "p95": 0.58
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.37,
+          "median": 0.285,
+          "stdev": 0.1681,
+          "percentiles": {
+            "p10": 0.259,
+            "p25": 0.2725,
+            "p50": 0.285,
+            "p75": 0.3825,
+            "p90": 0.549,
+            "p95": 0.6045
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "70-79",
+          "n": 8,
+          "mean": 0.3825,
+          "median": 0.29,
+          "stdev": 0.2122,
+          "percentiles": {
+            "p10": 0.22,
+            "p25": 0.2275,
+            "p50": 0.29,
+            "p75": 0.425,
+            "p90": 0.743,
+            "p95": 0.7465
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 62.5
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.15,
+          "median": 0.15,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.15,
+            "p25": 0.15,
+            "p50": 0.15,
+            "p75": 0.15,
+            "p90": 0.15,
+            "p95": 0.15
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "college football",
+          "kind": "total",
+          "decile": "90-99",
+          "n": 4,
+          "mean": 0.12,
+          "median": 0.12,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.12,
+            "p25": 0.12,
+            "p50": 0.12,
+            "p75": 0.12,
+            "p90": 0.12,
+            "p95": 0.12
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 32,
+          "mean": 0.0522,
+          "median": 0.0,
+          "stdev": 0.1254,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0075,
+            "p90": 0.199,
+            "p95": 0.3945
+          },
+          "hit_pct": {
+            "d05": 15.6,
+            "d10": 15.6,
+            "d15": 12.5,
+            "d20": 12.5,
+            "d25": 9.4
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 27,
+          "mean": 0.0037,
+          "median": 0.0,
+          "stdev": 0.0106,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.012,
+            "p95": 0.03
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 1,
+          "mean": 0.1,
+          "median": 0.1,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.1,
+            "p25": 0.1,
+            "p50": 0.1,
+            "p75": 0.1,
+            "p90": 0.1,
+            "p95": 0.1
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 2,
+          "mean": 0.395,
+          "median": 0.395,
+          "stdev": 0.005,
+          "percentiles": {
+            "p10": 0.391,
+            "p25": 0.3925,
+            "p50": 0.395,
+            "p75": 0.3975,
+            "p90": 0.399,
+            "p95": 0.3995
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.21,
+          "median": 0.21,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.21,
+            "p25": 0.21,
+            "p50": 0.21,
+            "p75": 0.21,
+            "p90": 0.21,
+            "p95": 0.21
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 1,
+          "mean": 0.47,
+          "median": 0.47,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.47,
+            "p25": 0.47,
+            "p50": 0.47,
+            "p75": 0.47,
+            "p90": 0.47,
+            "p95": 0.47
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 8,
+          "mean": 0.1425,
+          "median": 0.035,
+          "stdev": 0.1793,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.035,
+            "p75": 0.255,
+            "p90": 0.414,
+            "p95": 0.442
+          },
+          "hit_pct": {
+            "d05": 37.5,
+            "d10": 37.5,
+            "d15": 37.5,
+            "d20": 37.5,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 5,
+          "mean": 0.014,
+          "median": 0.0,
+          "stdev": 0.0174,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.03,
+            "p90": 0.036,
+            "p95": 0.038
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.39,
+          "median": 0.39,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.39,
+            "p25": 0.39,
+            "p50": 0.39,
+            "p75": 0.39,
+            "p90": 0.39,
+            "p95": 0.39
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.21,
+          "median": 0.21,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.21,
+            "p25": 0.21,
+            "p50": 0.21,
+            "p75": 0.21,
+            "p90": 0.21,
+            "p95": 0.21
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 1,
+          "mean": 0.47,
+          "median": 0.47,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.47,
+            "p25": 0.47,
+            "p50": 0.47,
+            "p75": 0.47,
+            "p90": 0.47,
+            "p95": 0.47
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "spread",
+          "decile": "ALL",
+          "n": 19,
+          "mean": 0.0279,
+          "median": 0.0,
+          "stdev": 0.0906,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.044,
+            "p95": 0.13
+          },
+          "hit_pct": {
+            "d05": 10.5,
+            "d10": 10.5,
+            "d15": 5.3,
+            "d20": 5.3,
+            "d25": 5.3
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "spread",
+          "decile": "0-9",
+          "n": 17,
+          "mean": 0.0018,
+          "median": 0.0,
+          "stdev": 0.0071,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.006
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "spread",
+          "decile": "10-19",
+          "n": 1,
+          "mean": 0.1,
+          "median": 0.1,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.1,
+            "p25": 0.1,
+            "p50": 0.1,
+            "p75": 0.1,
+            "p90": 0.1,
+            "p95": 0.1
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "spread",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.4,
+          "median": 0.4,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.4,
+            "p25": 0.4,
+            "p50": 0.4,
+            "p75": 0.4,
+            "p90": 0.4,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "total",
+          "decile": "ALL",
+          "n": 5,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "hockey",
+          "kind": "total",
+          "decile": "0-9",
+          "n": 5,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 13,
+          "mean": 0.0077,
+          "median": 0.0,
+          "stdev": 0.0119,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.02,
+            "p95": 0.028
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 2,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.015,
+            "p90": 0.018,
+            "p95": 0.019
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.01,
+            "p50": 0.01,
+            "p75": 0.01,
+            "p90": 0.01,
+            "p95": 0.01
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 5,
+          "mean": 0.01,
+          "median": 0.0,
+          "stdev": 0.0155,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.028,
+            "p95": 0.034
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 2,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.015,
+            "p90": 0.018,
+            "p95": 0.019
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 13,
+          "mean": 0.0077,
+          "median": 0.0,
+          "stdev": 0.0119,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.02,
+            "p95": 0.028
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 2,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.015,
+            "p90": 0.018,
+            "p95": 0.019
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.01,
+            "p50": 0.01,
+            "p75": 0.01,
+            "p90": 0.01,
+            "p95": 0.01
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 5,
+          "mean": 0.01,
+          "median": 0.0,
+          "stdev": 0.0155,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.028,
+            "p95": 0.034
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "mma",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 2,
+          "mean": 0.01,
+          "median": 0.01,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.002,
+            "p25": 0.005,
+            "p50": 0.01,
+            "p75": 0.015,
+            "p90": 0.018,
+            "p95": 0.019
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 120,
+          "mean": 0.0822,
+          "median": 0.01,
+          "stdev": 0.1529,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.01,
+            "p75": 0.08,
+            "p90": 0.292,
+            "p95": 0.4035
+          },
+          "hit_pct": {
+            "d05": 38.3,
+            "d10": 22.5,
+            "d15": 18.3,
+            "d20": 13.3,
+            "d25": 11.7
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 81,
+          "mean": 0.0137,
+          "median": 0.0,
+          "stdev": 0.0232,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.02,
+            "p90": 0.06,
+            "p95": 0.07
+          },
+          "hit_pct": {
+            "d05": 14.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 10,
+          "mean": 0.119,
+          "median": 0.105,
+          "stdev": 0.0464,
+          "percentiles": {
+            "p10": 0.058,
+            "p25": 0.1,
+            "p50": 0.105,
+            "p75": 0.1675,
+            "p90": 0.171,
+            "p95": 0.1755
+          },
+          "hit_pct": {
+            "d05": 90.0,
+            "d10": 80.0,
+            "d15": 40.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 5,
+          "mean": 0.16,
+          "median": 0.19,
+          "stdev": 0.0775,
+          "percentiles": {
+            "p10": 0.066,
+            "p25": 0.12,
+            "p50": 0.19,
+            "p75": 0.21,
+            "p90": 0.234,
+            "p95": 0.242
+          },
+          "hit_pct": {
+            "d05": 80.0,
+            "d10": 80.0,
+            "d15": 60.0,
+            "d20": 40.0,
+            "d25": 20.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 5,
+          "mean": 0.264,
+          "median": 0.31,
+          "stdev": 0.1031,
+          "percentiles": {
+            "p10": 0.152,
+            "p25": 0.29,
+            "p50": 0.31,
+            "p75": 0.33,
+            "p90": 0.33,
+            "p95": 0.33
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 80.0,
+            "d15": 80.0,
+            "d20": 80.0,
+            "d25": 80.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 3,
+          "mean": 0.28,
+          "median": 0.39,
+          "stdev": 0.1627,
+          "percentiles": {
+            "p10": 0.118,
+            "p25": 0.22,
+            "p50": 0.39,
+            "p75": 0.395,
+            "p90": 0.398,
+            "p95": 0.399
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 66.7,
+            "d15": 66.7,
+            "d20": 66.7,
+            "d25": 66.7
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 1,
+          "mean": 0.53,
+          "median": 0.53,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.53,
+            "p25": 0.53,
+            "p50": 0.53,
+            "p75": 0.53,
+            "p90": 0.53,
+            "p95": 0.53
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.1775,
+          "median": 0.12,
+          "stdev": 0.1809,
+          "percentiles": {
+            "p10": 0.018,
+            "p25": 0.045,
+            "p50": 0.12,
+            "p75": 0.2525,
+            "p90": 0.383,
+            "p95": 0.4265
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 25.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 4,
+          "mean": 0.495,
+          "median": 0.52,
+          "stdev": 0.0634,
+          "percentiles": {
+            "p10": 0.423,
+            "p25": 0.4725,
+            "p50": 0.52,
+            "p75": 0.5425,
+            "p90": 0.547,
+            "p95": 0.5485
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.09,
+          "median": 0.09,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.09,
+            "p25": 0.09,
+            "p50": 0.09,
+            "p75": 0.09,
+            "p90": 0.09,
+            "p95": 0.09
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 6,
+          "mean": 0.215,
+          "median": 0.055,
+          "stdev": 0.3413,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0125,
+            "p50": 0.055,
+            "p75": 0.18,
+            "p90": 0.59,
+            "p95": 0.775
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.1298,
+          "median": 0.045,
+          "stdev": 0.1988,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.045,
+            "p75": 0.19,
+            "p90": 0.39,
+            "p95": 0.5015
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 30.0,
+            "d15": 30.0,
+            "d20": 25.0,
+            "d25": 22.5
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 20,
+          "mean": 0.018,
+          "median": 0.01,
+          "stdev": 0.0216,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.01,
+            "p75": 0.03,
+            "p90": 0.06,
+            "p95": 0.06
+          },
+          "hit_pct": {
+            "d05": 15.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 1,
+          "mean": 0.17,
+          "median": 0.17,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.17,
+            "p25": 0.17,
+            "p50": 0.17,
+            "p75": 0.17,
+            "p90": 0.17,
+            "p95": 0.17
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 1,
+          "mean": 0.25,
+          "median": 0.25,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.25,
+            "p25": 0.25,
+            "p50": 0.25,
+            "p75": 0.25,
+            "p90": 0.25,
+            "p95": 0.25
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 3,
+          "mean": 0.31,
+          "median": 0.31,
+          "stdev": 0.0163,
+          "percentiles": {
+            "p10": 0.294,
+            "p25": 0.3,
+            "p50": 0.31,
+            "p75": 0.32,
+            "p90": 0.326,
+            "p95": 0.328
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 2,
+          "mean": 0.22,
+          "median": 0.22,
+          "stdev": 0.17,
+          "percentiles": {
+            "p10": 0.084,
+            "p25": 0.135,
+            "p50": 0.22,
+            "p75": 0.305,
+            "p90": 0.356,
+            "p95": 0.373
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 1,
+          "mean": 0.53,
+          "median": 0.53,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.53,
+            "p25": 0.53,
+            "p50": 0.53,
+            "p75": 0.53,
+            "p90": 0.53,
+            "p95": 0.53
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 3,
+          "mean": 0.08,
+          "median": 0.06,
+          "stdev": 0.0748,
+          "percentiles": {
+            "p10": 0.012,
+            "p25": 0.03,
+            "p50": 0.06,
+            "p75": 0.12,
+            "p90": 0.156,
+            "p95": 0.168
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 2,
+          "mean": 0.445,
+          "median": 0.445,
+          "stdev": 0.055,
+          "percentiles": {
+            "p10": 0.401,
+            "p25": 0.4175,
+            "p50": 0.445,
+            "p75": 0.4725,
+            "p90": 0.489,
+            "p95": 0.4945
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 1,
+          "mean": 0.09,
+          "median": 0.09,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.09,
+            "p25": 0.09,
+            "p50": 0.09,
+            "p75": 0.09,
+            "p90": 0.09,
+            "p95": 0.09
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 6,
+          "mean": 0.215,
+          "median": 0.055,
+          "stdev": 0.3413,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0125,
+            "p50": 0.055,
+            "p75": 0.18,
+            "p90": 0.59,
+            "p95": 0.775
+          },
+          "hit_pct": {
+            "d05": 66.7,
+            "d10": 33.3,
+            "d15": 33.3,
+            "d20": 33.3,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "spread",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.0542,
+          "median": 0.0,
+          "stdev": 0.1384,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.02,
+            "p90": 0.162,
+            "p95": 0.4735
+          },
+          "hit_pct": {
+            "d05": 20.0,
+            "d10": 12.5,
+            "d15": 12.5,
+            "d20": 7.5,
+            "d25": 7.5
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "spread",
+          "decile": "0-9",
+          "n": 35,
+          "mean": 0.0077,
+          "median": 0.0,
+          "stdev": 0.0155,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.01,
+            "p90": 0.02,
+            "p95": 0.05
+          },
+          "hit_pct": {
+            "d05": 8.6,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "spread",
+          "decile": "10-19",
+          "n": 2,
+          "mean": 0.17,
+          "median": 0.17,
+          "stdev": 0.01,
+          "percentiles": {
+            "p10": 0.162,
+            "p25": 0.165,
+            "p50": 0.17,
+            "p75": 0.175,
+            "p90": 0.178,
+            "p95": 0.179
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "spread",
+          "decile": "60-69",
+          "n": 1,
+          "mean": 0.47,
+          "median": 0.47,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.47,
+            "p25": 0.47,
+            "p50": 0.47,
+            "p75": 0.47,
+            "p90": 0.47,
+            "p95": 0.47
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "spread",
+          "decile": "70-79",
+          "n": 2,
+          "mean": 0.545,
+          "median": 0.545,
+          "stdev": 0.005,
+          "percentiles": {
+            "p10": 0.541,
+            "p25": 0.5425,
+            "p50": 0.545,
+            "p75": 0.5475,
+            "p90": 0.549,
+            "p95": 0.5495
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "ALL",
+          "n": 40,
+          "mean": 0.0625,
+          "median": 0.03,
+          "stdev": 0.0895,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.03,
+            "p75": 0.085,
+            "p90": 0.172,
+            "p95": 0.216
+          },
+          "hit_pct": {
+            "d05": 45.0,
+            "d10": 25.0,
+            "d15": 12.5,
+            "d20": 7.5,
+            "d25": 5.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "0-9",
+          "n": 26,
+          "mean": 0.0185,
+          "median": 0.0,
+          "stdev": 0.0302,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.025,
+            "p90": 0.075,
+            "p95": 0.08
+          },
+          "hit_pct": {
+            "d05": 23.1,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "10-19",
+          "n": 7,
+          "mean": 0.0971,
+          "median": 0.1,
+          "stdev": 0.0381,
+          "percentiles": {
+            "p10": 0.052,
+            "p25": 0.08,
+            "p50": 0.1,
+            "p75": 0.105,
+            "p90": 0.134,
+            "p95": 0.152
+          },
+          "hit_pct": {
+            "d05": 85.7,
+            "d10": 71.4,
+            "d15": 14.3,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "20-29",
+          "n": 4,
+          "mean": 0.1375,
+          "median": 0.155,
+          "stdev": 0.0705,
+          "percentiles": {
+            "p10": 0.057,
+            "p25": 0.0975,
+            "p50": 0.155,
+            "p75": 0.195,
+            "p90": 0.204,
+            "p95": 0.207
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 25.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "30-39",
+          "n": 2,
+          "mean": 0.195,
+          "median": 0.195,
+          "stdev": 0.135,
+          "percentiles": {
+            "p10": 0.087,
+            "p25": 0.1275,
+            "p50": 0.195,
+            "p75": 0.2625,
+            "p90": 0.303,
+            "p95": 0.3165
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "pro football",
+          "kind": "total",
+          "decile": "40-49",
+          "n": 1,
+          "mean": 0.4,
+          "median": 0.4,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.4,
+            "p25": 0.4,
+            "p50": 0.4,
+            "p75": 0.4,
+            "p90": 0.4,
+            "p95": 0.4
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "soccer",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 2,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "soccer",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "soccer",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 2,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "soccer",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.0,
+          "median": 0.0,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.0,
+            "p90": 0.0,
+            "p95": 0.0
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 240,
+          "mean": 0.1695,
+          "median": 0.07,
+          "stdev": 0.2136,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.07,
+            "p75": 0.25,
+            "p90": 0.52,
+            "p95": 0.6015
+          },
+          "hit_pct": {
+            "d05": 57.5,
+            "d10": 43.8,
+            "d15": 37.9,
+            "d20": 31.7,
+            "d25": 26.2
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 24,
+          "mean": 0.0279,
+          "median": 0.02,
+          "stdev": 0.0234,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.02,
+            "p75": 0.04,
+            "p90": 0.06,
+            "p95": 0.0685
+          },
+          "hit_pct": {
+            "d05": 20.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "10-19",
+          "n": 16,
+          "mean": 0.1037,
+          "median": 0.115,
+          "stdev": 0.0591,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.08,
+            "p50": 0.115,
+            "p75": 0.15,
+            "p90": 0.16,
+            "p95": 0.1725
+          },
+          "hit_pct": {
+            "d05": 81.2,
+            "d10": 62.5,
+            "d15": 37.5,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 22,
+          "mean": 0.155,
+          "median": 0.21,
+          "stdev": 0.1069,
+          "percentiles": {
+            "p10": 0.001,
+            "p25": 0.0225,
+            "p50": 0.21,
+            "p75": 0.2375,
+            "p90": 0.269,
+            "p95": 0.2795
+          },
+          "hit_pct": {
+            "d05": 68.2,
+            "d10": 63.6,
+            "d15": 63.6,
+            "d20": 54.5,
+            "d25": 22.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 24,
+          "mean": 0.1275,
+          "median": 0.06,
+          "stdev": 0.1332,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.29,
+            "p90": 0.307,
+            "p95": 0.3525
+          },
+          "hit_pct": {
+            "d05": 58.3,
+            "d10": 45.8,
+            "d15": 37.5,
+            "d20": 29.2,
+            "d25": 29.2
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 32,
+          "mean": 0.2278,
+          "median": 0.24,
+          "stdev": 0.1834,
+          "percentiles": {
+            "p10": 0.001,
+            "p25": 0.05,
+            "p50": 0.24,
+            "p75": 0.4125,
+            "p90": 0.43,
+            "p95": 0.45
+          },
+          "hit_pct": {
+            "d05": 78.1,
+            "d10": 59.4,
+            "d15": 53.1,
+            "d20": 53.1,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 34,
+          "mean": 0.2165,
+          "median": 0.09,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0125,
+            "p50": 0.09,
+            "p75": 0.505,
+            "p90": 0.547,
+            "p95": 0.55
+          },
+          "hit_pct": {
+            "d05": 64.7,
+            "d10": 47.1,
+            "d15": 44.1,
+            "d20": 38.2,
+            "d25": 35.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 24,
+          "mean": 0.2571,
+          "median": 0.09,
+          "stdev": 0.2713,
+          "percentiles": {
+            "p10": 0.003,
+            "p25": 0.025,
+            "p50": 0.09,
+            "p75": 0.5925,
+            "p90": 0.63,
+            "p95": 0.6555
+          },
+          "hit_pct": {
+            "d05": 62.5,
+            "d10": 50.0,
+            "d15": 45.8,
+            "d20": 41.7,
+            "d25": 37.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 22,
+          "mean": 0.1955,
+          "median": 0.05,
+          "stdev": 0.251,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.05,
+            "p75": 0.3325,
+            "p90": 0.57,
+            "p95": 0.6935
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 40.9,
+            "d15": 40.9,
+            "d20": 36.4,
+            "d25": 27.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "80-89",
+          "n": 18,
+          "mean": 0.1256,
+          "median": 0.025,
+          "stdev": 0.2135,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.025,
+            "p75": 0.1325,
+            "p90": 0.346,
+            "p95": 0.6045
+          },
+          "hit_pct": {
+            "d05": 38.9,
+            "d10": 33.3,
+            "d15": 22.2,
+            "d20": 16.7,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 24,
+          "mean": 0.1871,
+          "median": 0.025,
+          "stdev": 0.3162,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.025,
+            "p75": 0.1475,
+            "p90": 0.843,
+            "p95": 0.9255
+          },
+          "hit_pct": {
+            "d05": 45.8,
+            "d10": 33.3,
+            "d15": 25.0,
+            "d20": 25.0,
+            "d25": 20.8
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 240,
+          "mean": 0.1695,
+          "median": 0.07,
+          "stdev": 0.2136,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.07,
+            "p75": 0.25,
+            "p90": 0.52,
+            "p95": 0.6015
+          },
+          "hit_pct": {
+            "d05": 57.5,
+            "d10": 43.8,
+            "d15": 37.9,
+            "d20": 31.7,
+            "d25": 26.2
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 24,
+          "mean": 0.0279,
+          "median": 0.02,
+          "stdev": 0.0234,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.02,
+            "p75": 0.04,
+            "p90": 0.06,
+            "p95": 0.0685
+          },
+          "hit_pct": {
+            "d05": 20.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "10-19",
+          "n": 16,
+          "mean": 0.1037,
+          "median": 0.115,
+          "stdev": 0.0591,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.08,
+            "p50": 0.115,
+            "p75": 0.15,
+            "p90": 0.16,
+            "p95": 0.1725
+          },
+          "hit_pct": {
+            "d05": 81.2,
+            "d10": 62.5,
+            "d15": 37.5,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 22,
+          "mean": 0.155,
+          "median": 0.21,
+          "stdev": 0.1069,
+          "percentiles": {
+            "p10": 0.001,
+            "p25": 0.0225,
+            "p50": 0.21,
+            "p75": 0.2375,
+            "p90": 0.269,
+            "p95": 0.2795
+          },
+          "hit_pct": {
+            "d05": 68.2,
+            "d10": 63.6,
+            "d15": 63.6,
+            "d20": 54.5,
+            "d25": 22.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 24,
+          "mean": 0.1275,
+          "median": 0.06,
+          "stdev": 0.1332,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.29,
+            "p90": 0.307,
+            "p95": 0.3525
+          },
+          "hit_pct": {
+            "d05": 58.3,
+            "d10": 45.8,
+            "d15": 37.5,
+            "d20": 29.2,
+            "d25": 29.2
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 32,
+          "mean": 0.2278,
+          "median": 0.24,
+          "stdev": 0.1834,
+          "percentiles": {
+            "p10": 0.001,
+            "p25": 0.05,
+            "p50": 0.24,
+            "p75": 0.4125,
+            "p90": 0.43,
+            "p95": 0.45
+          },
+          "hit_pct": {
+            "d05": 78.1,
+            "d10": 59.4,
+            "d15": 53.1,
+            "d20": 53.1,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 34,
+          "mean": 0.2165,
+          "median": 0.09,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0125,
+            "p50": 0.09,
+            "p75": 0.505,
+            "p90": 0.547,
+            "p95": 0.55
+          },
+          "hit_pct": {
+            "d05": 64.7,
+            "d10": 47.1,
+            "d15": 44.1,
+            "d20": 38.2,
+            "d25": 35.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 24,
+          "mean": 0.2571,
+          "median": 0.09,
+          "stdev": 0.2713,
+          "percentiles": {
+            "p10": 0.003,
+            "p25": 0.025,
+            "p50": 0.09,
+            "p75": 0.5925,
+            "p90": 0.63,
+            "p95": 0.6555
+          },
+          "hit_pct": {
+            "d05": 62.5,
+            "d10": 50.0,
+            "d15": 45.8,
+            "d20": 41.7,
+            "d25": 37.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 22,
+          "mean": 0.1955,
+          "median": 0.05,
+          "stdev": 0.251,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.05,
+            "p75": 0.3325,
+            "p90": 0.57,
+            "p95": 0.6935
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 40.9,
+            "d15": 40.9,
+            "d20": 36.4,
+            "d25": 27.3
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "80-89",
+          "n": 18,
+          "mean": 0.1256,
+          "median": 0.025,
+          "stdev": 0.2135,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.025,
+            "p75": 0.1325,
+            "p90": 0.346,
+            "p95": 0.6045
+          },
+          "hit_pct": {
+            "d05": 38.9,
+            "d10": 33.3,
+            "d15": 22.2,
+            "d20": 16.7,
+            "d25": 16.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 24,
+          "mean": 0.1871,
+          "median": 0.025,
+          "stdev": 0.3162,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.025,
+            "p75": 0.1475,
+            "p90": 0.843,
+            "p95": 0.9255
+          },
+          "hit_pct": {
+            "d05": 45.8,
+            "d10": 33.3,
+            "d15": 25.0,
+            "d20": 25.0,
+            "d25": 20.8
+          }
+        }
+      ],
+      "band_sides": {
+        "n_sides": 570,
+        "n_eligible": 289,
+        "eligible_pct": 50.7,
+        "n_band_hit": 196,
+        "band_hit_pct_of_eligible": 67.8,
+        "band_hit_pct_of_all": 34.4,
+        "by_band": {
+          "20-49_D05": {
+            "n": 131,
+            "required_dip": 0.05,
+            "hit_n": 92,
+            "hit_pct": 70.2,
+            "mean_max_dip": 0.1908,
+            "median_max_dip": 0.2
+          },
+          "50-89_D03": {
+            "n": 158,
+            "required_dip": 0.03,
+            "hit_n": 104,
+            "hit_pct": 65.8,
+            "mean_max_dip": 0.2188,
+            "median_max_dip": 0.09
+          }
+        },
+        "excluded_n": 281,
+        "excluded_note": "T0 < 0.20 or T0 \u2265 0.90"
+      },
+      "band_pairs": {
+        "n": 170,
+        "both_eligible_n": 109,
+        "both_eligible_pct": 64.1,
+        "band_both_hit_n": 56,
+        "band_both_hit_pct_of_all": 32.9,
+        "band_both_hit_pct_of_eligible": 51.4,
+        "uniform_both_hit": {
+          "d05": {
+            "hit_pct": 41.2,
+            "n": 70
+          },
+          "d10": {
+            "hit_pct": 20.0,
+            "n": 34
+          },
+          "d15": {
+            "hit_pct": 15.3,
+            "n": 26
+          },
+          "d20": {
+            "hit_pct": 11.2,
+            "n": 19
+          },
+          "d25": {
+            "hit_pct": 7.6,
+            "n": 13
+          }
+        },
+        "opt_cost_when_band_both": {
+          "n": 56,
+          "mean_cost": 0.9427,
+          "median_cost": 0.93,
+          "mean_edge_vs_1": 0.0573
+        }
+      },
+      "band_deciles": [
+        {
+          "decile": "0-9",
+          "n": 182,
+          "mean": 0.0168,
+          "median": 0.0,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.0,
+            "p75": 0.03,
+            "p90": 0.06,
+            "p95": 0.07
+          },
+          "hit_pct_uniform": {
+            "d05": 14.8,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        },
+        {
+          "decile": "10-19",
+          "n": 51,
+          "mean": 0.1108,
+          "median": 0.12,
+          "percentiles": {
+            "p10": 0.02,
+            "p25": 0.09,
+            "p50": 0.12,
+            "p75": 0.15,
+            "p90": 0.17,
+            "p95": 0.175
+          },
+          "hit_pct_uniform": {
+            "d05": 86.3,
+            "d10": 70.6,
+            "d15": 33.3,
+            "d20": 0.0,
+            "d25": 0.0
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        },
+        {
+          "decile": "20-29",
+          "n": 42,
+          "mean": 0.1419,
+          "median": 0.19,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.02,
+            "p50": 0.19,
+            "p75": 0.2275,
+            "p90": 0.259,
+            "p95": 0.2795
+          },
+          "hit_pct_uniform": {
+            "d05": 64.3,
+            "d10": 61.9,
+            "d15": 59.5,
+            "d20": 47.6,
+            "d25": 16.7
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 42,
+          "band_hit_n": 27,
+          "band_hit_pct": 64.3
+        },
+        {
+          "decile": "30-39",
+          "n": 39,
+          "mean": 0.1631,
+          "median": 0.16,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.16,
+            "p75": 0.3,
+            "p90": 0.332,
+            "p95": 0.361
+          },
+          "hit_pct_uniform": {
+            "d05": 66.7,
+            "d10": 56.4,
+            "d15": 51.3,
+            "d20": 41.0,
+            "d25": 41.0
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 39,
+          "band_hit_n": 26,
+          "band_hit_pct": 66.7
+        },
+        {
+          "decile": "40-49",
+          "n": 50,
+          "mean": 0.2534,
+          "median": 0.375,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.05,
+            "p50": 0.375,
+            "p75": 0.4175,
+            "p90": 0.451,
+            "p95": 0.4755
+          },
+          "hit_pct_uniform": {
+            "d05": 78.0,
+            "d10": 64.0,
+            "d15": 60.0,
+            "d20": 60.0,
+            "d25": 56.0
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 50,
+          "band_hit_n": 39,
+          "band_hit_pct": 78.0
+        },
+        {
+          "decile": "50-59",
+          "n": 48,
+          "mean": 0.2281,
+          "median": 0.09,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0075,
+            "p50": 0.09,
+            "p75": 0.5125,
+            "p90": 0.55,
+            "p95": 0.5565
+          },
+          "hit_pct_uniform": {
+            "d05": 60.4,
+            "d10": 47.9,
+            "d15": 45.8,
+            "d20": 41.7,
+            "d25": 39.6
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 48,
+          "band_hit_n": 32,
+          "band_hit_pct": 66.7
+        },
+        {
+          "decile": "60-69",
+          "n": 39,
+          "mean": 0.2308,
+          "median": 0.17,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.17,
+            "p75": 0.405,
+            "p90": 0.63,
+            "p95": 0.66
+          },
+          "hit_pct_uniform": {
+            "d05": 64.1,
+            "d10": 53.8,
+            "d15": 51.3,
+            "d20": 43.6,
+            "d25": 38.5
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 39,
+          "band_hit_n": 28,
+          "band_hit_pct": 71.8
+        },
+        {
+          "decile": "70-79",
+          "n": 42,
+          "mean": 0.2369,
+          "median": 0.175,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.175,
+            "p75": 0.4725,
+            "p90": 0.57,
+            "p95": 0.738
+          },
+          "hit_pct_uniform": {
+            "d05": 59.5,
+            "d10": 52.4,
+            "d15": 52.4,
+            "d20": 50.0,
+            "d25": 38.1
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 42,
+          "band_hit_n": 27,
+          "band_hit_pct": 64.3
+        },
+        {
+          "decile": "80-89",
+          "n": 29,
+          "mean": 0.161,
+          "median": 0.06,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.01,
+            "p50": 0.06,
+            "p75": 0.14,
+            "p90": 0.616,
+            "p95": 0.83
+          },
+          "hit_pct_uniform": {
+            "d05": 51.7,
+            "d10": 37.9,
+            "d15": 24.1,
+            "d20": 17.2,
+            "d25": 17.2
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 29,
+          "band_hit_n": 17,
+          "band_hit_pct": 58.6
+        },
+        {
+          "decile": "90-99",
+          "n": 48,
+          "mean": 0.1562,
+          "median": 0.04,
+          "percentiles": {
+            "p10": 0.0,
+            "p25": 0.0,
+            "p50": 0.04,
+            "p75": 0.1275,
+            "p90": 0.542,
+            "p95": 0.9195
+          },
+          "hit_pct_uniform": {
+            "d05": 50.0,
+            "d10": 39.6,
+            "d15": 25.0,
+            "d20": 20.8,
+            "d25": 16.7
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        }
+      ],
+      "band_tennis_ml": {
+        "sides": {
+          "n_sides": 240,
+          "n_eligible": 176,
+          "eligible_pct": 73.3,
+          "n_band_hit": 118,
+          "band_hit_pct_of_eligible": 67.0,
+          "band_hit_pct_of_all": 49.2,
+          "by_band": {
+            "20-49_D05": {
+              "n": 78,
+              "required_dip": 0.05,
+              "hit_n": 54,
+              "hit_pct": 69.2,
+              "mean_max_dip": 0.1764,
+              "median_max_dip": 0.165
+            },
+            "50-89_D03": {
+              "n": 98,
+              "required_dip": 0.03,
+              "hit_n": 64,
+              "hit_pct": 65.3,
+              "mean_max_dip": 0.205,
+              "median_max_dip": 0.07
+            }
+          },
+          "excluded_n": 64,
+          "excluded_note": "T0 < 0.20 or T0 \u2265 0.90"
+        },
+        "pairs": {
+          "n": 112,
+          "both_eligible_n": 81,
+          "both_eligible_pct": 72.3,
+          "band_both_hit_n": 44,
+          "band_both_hit_pct_of_all": 39.3,
+          "band_both_hit_pct_of_eligible": 54.3,
+          "uniform_both_hit": {
+            "d05": {
+              "hit_pct": 42.9,
+              "n": 48
+            },
+            "d10": {
+              "hit_pct": 20.5,
+              "n": 23
+            },
+            "d15": {
+              "hit_pct": 15.2,
+              "n": 17
+            },
+            "d20": {
+              "hit_pct": 10.7,
+              "n": 12
+            },
+            "d25": {
+              "hit_pct": 6.2,
+              "n": 7
+            }
+          },
+          "opt_cost_when_band_both": {
+            "n": 44,
+            "mean_cost": 0.9445,
+            "median_cost": 0.93,
+            "mean_edge_vs_1": 0.0555
+          }
+        }
+      }
+    },
+    "C_poly_clob_last_trade": {
+      "name": "C_poly_clob_last_trade",
+      "n_sides": 60,
+      "n_pairs": 21,
+      "overall": {
+        "n": 60,
+        "mean": 0.2667,
+        "median": 0.2425,
+        "stdev": 0.2105,
+        "percentiles": {
+          "p10": 0.01,
+          "p25": 0.0679,
+          "p50": 0.2425,
+          "p75": 0.4475,
+          "p90": 0.4995,
+          "p95": 0.5874
+        },
+        "hit_pct": {
+          "d05": 76.7,
+          "d10": 71.7,
+          "d15": 65.0,
+          "d20": 60.0,
+          "d25": 46.7
+        }
+      },
+      "pairs_summary": {
+        "n": 21,
+        "both_hit_pct": {
+          "d05": 57.1,
+          "d10": 42.9,
+          "d15": 33.3,
+          "d20": 33.3,
+          "d25": 0.0
+        },
+        "opt_cost_when_both": {
+          "d05": {
+            "n": 12,
+            "mean_cost": 0.9,
+            "median_cost": 0.9,
+            "mean_edge_vs_1": 0.1
+          },
+          "d10": {
+            "n": 9,
+            "mean_cost": 0.8,
+            "median_cost": 0.8,
+            "mean_edge_vs_1": 0.2
+          },
+          "d15": {
+            "n": 7,
+            "mean_cost": 0.7,
+            "median_cost": 0.7,
+            "mean_edge_vs_1": 0.3
+          },
+          "d20": {
+            "n": 7,
+            "mean_cost": 0.6,
+            "median_cost": 0.6,
+            "mean_edge_vs_1": 0.4
+          },
+          "d25": {
+            "n": 0
+          }
+        }
+      },
+      "role_overlay": {
+        "favorite": {
+          "n": 21,
+          "mean": 0.3702,
+          "median": 0.36,
+          "stdev": 0.212,
+          "percentiles": {
+            "p10": 0.0705,
+            "p25": 0.245,
+            "p50": 0.36,
+            "p75": 0.47,
+            "p90": 0.7195,
+            "p95": 0.7345
+          },
+          "hit_pct": {
+            "d05": 90.5,
+            "d10": 85.7,
+            "d15": 85.7,
+            "d20": 81.0,
+            "d25": 71.4
+          }
+        },
+        "dog": {
+          "n": 21,
+          "mean": 0.1263,
+          "median": 0.1,
+          "stdev": 0.1173,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.015,
+            "p50": 0.1,
+            "p75": 0.2245,
+            "p90": 0.25,
+            "p95": 0.275
+          },
+          "hit_pct": {
+            "d05": 61.9,
+            "d10": 52.4,
+            "d15": 38.1,
+            "d20": 38.1,
+            "d25": 14.3
+          }
+        },
+        "near_50_deciles_40_59": {
+          "n": 26,
+          "mean": 0.2752,
+          "median": 0.25,
+          "stdev": 0.2103,
+          "percentiles": {
+            "p10": 0.005,
+            "p25": 0.0289,
+            "p50": 0.25,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct": {
+            "d05": 73.1,
+            "d10": 69.2,
+            "d15": 65.4,
+            "d20": 57.7,
+            "d25": 50.0
+          }
+        },
+        "far_deciles_0_19_or_80_99": {
+          "n": 4,
+          "mean": 0.2325,
+          "median": 0.2225,
+          "stdev": 0.218,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.2225,
+            "p75": 0.44,
+            "p90": 0.458,
+            "p95": 0.464
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 50.0
+          }
+        }
+      },
+      "slices": [
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 60,
+          "mean": 0.2667,
+          "median": 0.2425,
+          "stdev": 0.2105,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0679,
+            "p50": 0.2425,
+            "p75": 0.4475,
+            "p90": 0.4995,
+            "p95": 0.5874
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 71.7,
+            "d15": 65.0,
+            "d20": 60.0,
+            "d25": 46.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.015,
+          "median": 0.015,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.015,
+            "p75": 0.015,
+            "p90": 0.015,
+            "p95": 0.015
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.123,
+          "median": 0.1,
+          "stdev": 0.0948,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0375,
+            "p50": 0.1,
+            "p75": 0.227,
+            "p90": 0.2495,
+            "p95": 0.2497
+          },
+          "hit_pct": {
+            "d05": 72.7,
+            "d10": 54.5,
+            "d15": 36.4,
+            "d20": 36.4,
+            "d25": 9.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.1537,
+          "median": 0.155,
+          "stdev": 0.0936,
+          "percentiles": {
+            "p10": 0.0525,
+            "p25": 0.0862,
+            "p50": 0.155,
+            "p75": 0.2225,
+            "p90": 0.254,
+            "p95": 0.2645
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.1636,
+          "median": 0.1125,
+          "stdev": 0.1744,
+          "percentiles": {
+            "p10": 0.0045,
+            "p25": 0.0112,
+            "p50": 0.1125,
+            "p75": 0.2649,
+            "p90": 0.3637,
+            "p95": 0.3966
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 22,
+          "mean": 0.2955,
+          "median": 0.315,
+          "stdev": 0.2099,
+          "percentiles": {
+            "p10": 0.0055,
+            "p25": 0.0866,
+            "p50": 0.315,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct": {
+            "d05": 77.3,
+            "d10": 72.7,
+            "d15": 68.2,
+            "d20": 59.1,
+            "d25": 54.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.3025,
+          "median": 0.295,
+          "stdev": 0.0999,
+          "percentiles": {
+            "p10": 0.1985,
+            "p25": 0.2188,
+            "p50": 0.295,
+            "p75": 0.3788,
+            "p90": 0.4125,
+            "p95": 0.4237
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 75.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 11,
+          "mean": 0.4308,
+          "median": 0.365,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.245,
+            "p25": 0.2825,
+            "p50": 0.365,
+            "p75": 0.6422,
+            "p90": 0.7345,
+            "p95": 0.7495
+          },
+          "hit_pct": {
+            "d05": 90.9,
+            "d10": 90.9,
+            "d15": 90.9,
+            "d20": 90.9,
+            "d25": 81.8
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 2,
+          "mean": 0.45,
+          "median": 0.45,
+          "stdev": 0.02,
+          "percentiles": {
+            "p10": 0.434,
+            "p25": 0.44,
+            "p50": 0.45,
+            "p75": 0.46,
+            "p90": 0.466,
+            "p95": 0.468
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 60,
+          "mean": 0.2667,
+          "median": 0.2425,
+          "stdev": 0.2105,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0679,
+            "p50": 0.2425,
+            "p75": 0.4475,
+            "p90": 0.4995,
+            "p95": 0.5874
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 71.7,
+            "d15": 65.0,
+            "d20": 60.0,
+            "d25": 46.7
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.015,
+          "median": 0.015,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.015,
+            "p75": 0.015,
+            "p90": 0.015,
+            "p95": 0.015
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.123,
+          "median": 0.1,
+          "stdev": 0.0948,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0375,
+            "p50": 0.1,
+            "p75": 0.227,
+            "p90": 0.2495,
+            "p95": 0.2497
+          },
+          "hit_pct": {
+            "d05": 72.7,
+            "d10": 54.5,
+            "d15": 36.4,
+            "d20": 36.4,
+            "d25": 9.1
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.1537,
+          "median": 0.155,
+          "stdev": 0.0936,
+          "percentiles": {
+            "p10": 0.0525,
+            "p25": 0.0862,
+            "p50": 0.155,
+            "p75": 0.2225,
+            "p90": 0.254,
+            "p95": 0.2645
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.1636,
+          "median": 0.1125,
+          "stdev": 0.1744,
+          "percentiles": {
+            "p10": 0.0045,
+            "p25": 0.0112,
+            "p50": 0.1125,
+            "p75": 0.2649,
+            "p90": 0.3637,
+            "p95": 0.3966
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 22,
+          "mean": 0.2955,
+          "median": 0.315,
+          "stdev": 0.2099,
+          "percentiles": {
+            "p10": 0.0055,
+            "p25": 0.0866,
+            "p50": 0.315,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct": {
+            "d05": 77.3,
+            "d10": 72.7,
+            "d15": 68.2,
+            "d20": 59.1,
+            "d25": 54.5
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.3025,
+          "median": 0.295,
+          "stdev": 0.0999,
+          "percentiles": {
+            "p10": 0.1985,
+            "p25": 0.2188,
+            "p50": 0.295,
+            "p75": 0.3788,
+            "p90": 0.4125,
+            "p95": 0.4237
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 75.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 11,
+          "mean": 0.4308,
+          "median": 0.365,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.245,
+            "p25": 0.2825,
+            "p50": 0.365,
+            "p75": 0.6422,
+            "p90": 0.7345,
+            "p95": 0.7495
+          },
+          "hit_pct": {
+            "d05": 90.9,
+            "d10": 90.9,
+            "d15": 90.9,
+            "d20": 90.9,
+            "d25": 81.8
+          }
+        },
+        {
+          "sport": "ALL",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 2,
+          "mean": 0.45,
+          "median": 0.45,
+          "stdev": 0.02,
+          "percentiles": {
+            "p10": 0.434,
+            "p25": 0.44,
+            "p50": 0.45,
+            "p75": 0.46,
+            "p90": 0.466,
+            "p95": 0.468
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "ALL",
+          "n": 60,
+          "mean": 0.2667,
+          "median": 0.2425,
+          "stdev": 0.2105,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0679,
+            "p50": 0.2425,
+            "p75": 0.4475,
+            "p90": 0.4995,
+            "p95": 0.5874
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 71.7,
+            "d15": 65.0,
+            "d20": 60.0,
+            "d25": 46.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.015,
+          "median": 0.015,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.015,
+            "p75": 0.015,
+            "p90": 0.015,
+            "p95": 0.015
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.123,
+          "median": 0.1,
+          "stdev": 0.0948,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0375,
+            "p50": 0.1,
+            "p75": 0.227,
+            "p90": 0.2495,
+            "p95": 0.2497
+          },
+          "hit_pct": {
+            "d05": 72.7,
+            "d10": 54.5,
+            "d15": 36.4,
+            "d20": 36.4,
+            "d25": 9.1
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.1537,
+          "median": 0.155,
+          "stdev": 0.0936,
+          "percentiles": {
+            "p10": 0.0525,
+            "p25": 0.0862,
+            "p50": 0.155,
+            "p75": 0.2225,
+            "p90": 0.254,
+            "p95": 0.2645
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.1636,
+          "median": 0.1125,
+          "stdev": 0.1744,
+          "percentiles": {
+            "p10": 0.0045,
+            "p25": 0.0112,
+            "p50": 0.1125,
+            "p75": 0.2649,
+            "p90": 0.3637,
+            "p95": 0.3966
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "50-59",
+          "n": 22,
+          "mean": 0.2955,
+          "median": 0.315,
+          "stdev": 0.2099,
+          "percentiles": {
+            "p10": 0.0055,
+            "p25": 0.0866,
+            "p50": 0.315,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct": {
+            "d05": 77.3,
+            "d10": 72.7,
+            "d15": 68.2,
+            "d20": 59.1,
+            "d25": 54.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.3025,
+          "median": 0.295,
+          "stdev": 0.0999,
+          "percentiles": {
+            "p10": 0.1985,
+            "p25": 0.2188,
+            "p50": 0.295,
+            "p75": 0.3788,
+            "p90": 0.4125,
+            "p95": 0.4237
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 75.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "70-79",
+          "n": 11,
+          "mean": 0.4308,
+          "median": 0.365,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.245,
+            "p25": 0.2825,
+            "p50": 0.365,
+            "p75": 0.6422,
+            "p90": 0.7345,
+            "p95": 0.7495
+          },
+          "hit_pct": {
+            "d05": 90.9,
+            "d10": 90.9,
+            "d15": 90.9,
+            "d20": 90.9,
+            "d25": 81.8
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "ALL",
+          "decile": "90-99",
+          "n": 2,
+          "mean": 0.45,
+          "median": 0.45,
+          "stdev": 0.02,
+          "percentiles": {
+            "p10": 0.434,
+            "p25": 0.44,
+            "p50": 0.45,
+            "p75": 0.46,
+            "p90": 0.466,
+            "p95": 0.468
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "ALL",
+          "n": 60,
+          "mean": 0.2667,
+          "median": 0.2425,
+          "stdev": 0.2105,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0679,
+            "p50": 0.2425,
+            "p75": 0.4475,
+            "p90": 0.4995,
+            "p95": 0.5874
+          },
+          "hit_pct": {
+            "d05": 76.7,
+            "d10": 71.7,
+            "d15": 65.0,
+            "d20": 60.0,
+            "d25": 46.7
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.015,
+          "median": 0.015,
+          "stdev": 0.0,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.015,
+            "p75": 0.015,
+            "p90": 0.015,
+            "p95": 0.015
+          },
+          "hit_pct": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.123,
+          "median": 0.1,
+          "stdev": 0.0948,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0375,
+            "p50": 0.1,
+            "p75": 0.227,
+            "p90": 0.2495,
+            "p95": 0.2497
+          },
+          "hit_pct": {
+            "d05": 72.7,
+            "d10": 54.5,
+            "d15": 36.4,
+            "d20": 36.4,
+            "d25": 9.1
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.1537,
+          "median": 0.155,
+          "stdev": 0.0936,
+          "percentiles": {
+            "p10": 0.0525,
+            "p25": 0.0862,
+            "p50": 0.155,
+            "p75": 0.2225,
+            "p90": 0.254,
+            "p95": 0.2645
+          },
+          "hit_pct": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.1636,
+          "median": 0.1125,
+          "stdev": 0.1744,
+          "percentiles": {
+            "p10": 0.0045,
+            "p25": 0.0112,
+            "p50": 0.1125,
+            "p75": 0.2649,
+            "p90": 0.3637,
+            "p95": 0.3966
+          },
+          "hit_pct": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "50-59",
+          "n": 22,
+          "mean": 0.2955,
+          "median": 0.315,
+          "stdev": 0.2099,
+          "percentiles": {
+            "p10": 0.0055,
+            "p25": 0.0866,
+            "p50": 0.315,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct": {
+            "d05": 77.3,
+            "d10": 72.7,
+            "d15": 68.2,
+            "d20": 59.1,
+            "d25": 54.5
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.3025,
+          "median": 0.295,
+          "stdev": 0.0999,
+          "percentiles": {
+            "p10": 0.1985,
+            "p25": 0.2188,
+            "p50": 0.295,
+            "p75": 0.3788,
+            "p90": 0.4125,
+            "p95": 0.4237
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 75.0,
+            "d25": 50.0
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "70-79",
+          "n": 11,
+          "mean": 0.4308,
+          "median": 0.365,
+          "stdev": 0.2255,
+          "percentiles": {
+            "p10": 0.245,
+            "p25": 0.2825,
+            "p50": 0.365,
+            "p75": 0.6422,
+            "p90": 0.7345,
+            "p95": 0.7495
+          },
+          "hit_pct": {
+            "d05": 90.9,
+            "d10": 90.9,
+            "d15": 90.9,
+            "d20": 90.9,
+            "d25": 81.8
+          }
+        },
+        {
+          "sport": "tennis",
+          "kind": "moneyline",
+          "decile": "90-99",
+          "n": 2,
+          "mean": 0.45,
+          "median": 0.45,
+          "stdev": 0.02,
+          "percentiles": {
+            "p10": 0.434,
+            "p25": 0.44,
+            "p50": 0.45,
+            "p75": 0.46,
+            "p90": 0.466,
+            "p95": 0.468
+          },
+          "hit_pct": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          }
+        }
+      ],
+      "band_sides": {
+        "n_sides": 60,
+        "n_eligible": 56,
+        "eligible_pct": 93.3,
+        "n_band_hit": 45,
+        "band_hit_pct_of_eligible": 80.4,
+        "band_hit_pct_of_all": 75.0,
+        "by_band": {
+          "20-49_D05": {
+            "n": 19,
+            "required_dip": 0.05,
+            "hit_n": 13,
+            "hit_pct": 68.4,
+            "mean_max_dip": 0.1381,
+            "median_max_dip": 0.105
+          },
+          "50-89_D03": {
+            "n": 37,
+            "required_dip": 0.03,
+            "hit_n": 32,
+            "hit_pct": 86.5,
+            "mean_max_dip": 0.3365,
+            "median_max_dip": 0.36
+          }
+        },
+        "excluded_n": 4,
+        "excluded_note": "T0 < 0.20 or T0 \u2265 0.90"
+      },
+      "band_pairs": {
+        "n": 21,
+        "both_eligible_n": 19,
+        "both_eligible_pct": 90.5,
+        "band_both_hit_n": 13,
+        "band_both_hit_pct_of_all": 61.9,
+        "band_both_hit_pct_of_eligible": 68.4,
+        "uniform_both_hit": {
+          "d05": {
+            "hit_pct": 57.1,
+            "n": 12
+          },
+          "d10": {
+            "hit_pct": 42.9,
+            "n": 9
+          },
+          "d15": {
+            "hit_pct": 33.3,
+            "n": 7
+          },
+          "d20": {
+            "hit_pct": 33.3,
+            "n": 7
+          },
+          "d25": {
+            "hit_pct": 0.0,
+            "n": 0
+          }
+        },
+        "opt_cost_when_band_both": {
+          "n": 13,
+          "mean_cost": 0.92,
+          "median_cost": 0.92,
+          "mean_edge_vs_1": 0.08
+        }
+      },
+      "band_deciles": [
+        {
+          "decile": "0-9",
+          "n": 2,
+          "mean": 0.015,
+          "median": 0.015,
+          "percentiles": {
+            "p10": 0.015,
+            "p25": 0.015,
+            "p50": 0.015,
+            "p75": 0.015,
+            "p90": 0.015,
+            "p95": 0.015
+          },
+          "hit_pct_uniform": {
+            "d05": 0.0,
+            "d10": 0.0,
+            "d15": 0.0,
+            "d20": 0.0,
+            "d25": 0.0
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        },
+        {
+          "decile": "20-29",
+          "n": 11,
+          "mean": 0.123,
+          "median": 0.1,
+          "percentiles": {
+            "p10": 0.01,
+            "p25": 0.0375,
+            "p50": 0.1,
+            "p75": 0.227,
+            "p90": 0.2495,
+            "p95": 0.2497
+          },
+          "hit_pct_uniform": {
+            "d05": 72.7,
+            "d10": 54.5,
+            "d15": 36.4,
+            "d20": 36.4,
+            "d25": 9.1
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 11,
+          "band_hit_n": 8,
+          "band_hit_pct": 72.7
+        },
+        {
+          "decile": "30-39",
+          "n": 4,
+          "mean": 0.1537,
+          "median": 0.155,
+          "percentiles": {
+            "p10": 0.0525,
+            "p25": 0.0862,
+            "p50": 0.155,
+            "p75": 0.2225,
+            "p90": 0.254,
+            "p95": 0.2645
+          },
+          "hit_pct_uniform": {
+            "d05": 75.0,
+            "d10": 75.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 4,
+          "band_hit_n": 3,
+          "band_hit_pct": 75.0
+        },
+        {
+          "decile": "40-49",
+          "n": 4,
+          "mean": 0.1636,
+          "median": 0.1125,
+          "percentiles": {
+            "p10": 0.0045,
+            "p25": 0.0112,
+            "p50": 0.1125,
+            "p75": 0.2649,
+            "p90": 0.3637,
+            "p95": 0.3966
+          },
+          "hit_pct_uniform": {
+            "d05": 50.0,
+            "d10": 50.0,
+            "d15": 50.0,
+            "d20": 50.0,
+            "d25": 25.0
+          },
+          "band_required_dip": 0.05,
+          "band_eligible_n": 4,
+          "band_hit_n": 2,
+          "band_hit_pct": 50.0
+        },
+        {
+          "decile": "50-59",
+          "n": 22,
+          "mean": 0.2955,
+          "median": 0.315,
+          "percentiles": {
+            "p10": 0.0055,
+            "p25": 0.0866,
+            "p50": 0.315,
+            "p75": 0.4995,
+            "p90": 0.4995,
+            "p95": 0.4995
+          },
+          "hit_pct_uniform": {
+            "d05": 77.3,
+            "d10": 72.7,
+            "d15": 68.2,
+            "d20": 59.1,
+            "d25": 54.5
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 22,
+          "band_hit_n": 17,
+          "band_hit_pct": 77.3
+        },
+        {
+          "decile": "60-69",
+          "n": 4,
+          "mean": 0.3025,
+          "median": 0.295,
+          "percentiles": {
+            "p10": 0.1985,
+            "p25": 0.2188,
+            "p50": 0.295,
+            "p75": 0.3788,
+            "p90": 0.4125,
+            "p95": 0.4237
+          },
+          "hit_pct_uniform": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 75.0,
+            "d25": 50.0
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 4,
+          "band_hit_n": 4,
+          "band_hit_pct": 100.0
+        },
+        {
+          "decile": "70-79",
+          "n": 11,
+          "mean": 0.4308,
+          "median": 0.365,
+          "percentiles": {
+            "p10": 0.245,
+            "p25": 0.2825,
+            "p50": 0.365,
+            "p75": 0.6422,
+            "p90": 0.7345,
+            "p95": 0.7495
+          },
+          "hit_pct_uniform": {
+            "d05": 90.9,
+            "d10": 90.9,
+            "d15": 90.9,
+            "d20": 90.9,
+            "d25": 81.8
+          },
+          "band_required_dip": 0.03,
+          "band_eligible_n": 11,
+          "band_hit_n": 11,
+          "band_hit_pct": 100.0
+        },
+        {
+          "decile": "90-99",
+          "n": 2,
+          "mean": 0.45,
+          "median": 0.45,
+          "percentiles": {
+            "p10": 0.434,
+            "p25": 0.44,
+            "p50": 0.45,
+            "p75": 0.46,
+            "p90": 0.466,
+            "p95": 0.468
+          },
+          "hit_pct_uniform": {
+            "d05": 100.0,
+            "d10": 100.0,
+            "d15": 100.0,
+            "d20": 100.0,
+            "d25": 100.0
+          },
+          "band_required_dip": null,
+          "band_eligible_n": 0,
+          "band_hit_n": 0,
+          "band_hit_pct": null
+        }
+      ],
+      "band_tennis_ml": {
+        "sides": {
+          "n_sides": 60,
+          "n_eligible": 56,
+          "eligible_pct": 93.3,
+          "n_band_hit": 45,
+          "band_hit_pct_of_eligible": 80.4,
+          "band_hit_pct_of_all": 75.0,
+          "by_band": {
+            "20-49_D05": {
+              "n": 19,
+              "required_dip": 0.05,
+              "hit_n": 13,
+              "hit_pct": 68.4,
+              "mean_max_dip": 0.1381,
+              "median_max_dip": 0.105
+            },
+            "50-89_D03": {
+              "n": 37,
+              "required_dip": 0.03,
+              "hit_n": 32,
+              "hit_pct": 86.5,
+              "mean_max_dip": 0.3365,
+              "median_max_dip": 0.36
+            }
+          },
+          "excluded_n": 4,
+          "excluded_note": "T0 < 0.20 or T0 \u2265 0.90"
+        },
+        "pairs": {
+          "n": 21,
+          "both_eligible_n": 19,
+          "both_eligible_pct": 90.5,
+          "band_both_hit_n": 13,
+          "band_both_hit_pct_of_all": 61.9,
+          "band_both_hit_pct_of_eligible": 68.4,
+          "uniform_both_hit": {
+            "d05": {
+              "hit_pct": 57.1,
+              "n": 12
+            },
+            "d10": {
+              "hit_pct": 42.9,
+              "n": 9
+            },
+            "d15": {
+              "hit_pct": 33.3,
+              "n": 7
+            },
+            "d20": {
+              "hit_pct": 33.3,
+              "n": 7
+            },
+            "d25": {
+              "hit_pct": 0.0,
+              "n": 0
+            }
+          },
+          "opt_cost_when_band_both": {
+            "n": 13,
+            "mean_cost": 0.92,
+            "median_cost": 0.92,
+            "mean_edge_vs_1": 0.08
+          }
+        }
+      }
+    }
+  },
+  "pull": {
+    "report_only": true,
+    "n_kalshi_sides": 570,
+    "n_dense_sides": 238,
+    "n_poly_sides": 60,
+    "source_jsonl": "/agent/repos/TBN_Report/local/paul_experiments/prediction_market_arb_exhaustive_20261017/hist/drop_from_t0_20261102/kalshi_sides.jsonl",
+    "dense_html": "/agent/repos/TBN_Report/docs/prediction_market/dense_inplay_yes_dip_20261021.html"
+  },
+  "comparison_verdict_seed": {
+    "dense_band_both_hit_pct": 75.6,
+    "dense_uniform_d05": 70.6,
+    "dense_uniform_d10": 46.2,
+    "dense_band_mean_edge": 0.0649,
+    "dense_band_mean_cost": 0.9351,
+    "kalshi_all_band_both_hit_pct": 32.9,
+    "kalshi_tennis_band_both_hit_pct": 39.3,
+    "kalshi_tennis_band_mean_edge": 0.0555
+  }
+}
