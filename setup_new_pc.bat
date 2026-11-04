@@ -6,8 +6,9 @@ rem   setup_new_pc.bat
 rem   setup_new_pc.bat --smoke
 rem
 rem Clone fresh (requires git on PATH):
-rem   setup_new_pc.bat --clone "C:\Users\songg\Downloads\stockresearch"
-rem   setup_new_pc.bat --clone "D:\stockresearch" --smoke
+rem   setup_new_pc.bat --clone "C:\Users\songg\code\TBN"
+rem   setup_new_pc.bat --clone "D:\TBN" --smoke
+rem   (legacy single-folder path still works; prefer code\TBN — see repo_split\README.md)
 rem
 rem Optional: copy data\ from old laptop/USB before --smoke, or run run_backfill_data_to_2010.bat after.
 setlocal EnableExtensions EnableDelayedExpansion
@@ -16,7 +17,7 @@ cd /d "%~dp0"
 set "CLONE_DIR="
 set "SMOKE=0"
 set "REPO_URL=https://github.com/pauljanderson/TBN_Report.git"
-set "RECOMMENDED_ROOT=C:\Users\songg\Downloads\stockresearch"
+set "RECOMMENDED_ROOT=C:\Users\songg\code\TBN"
 set "FAIL=0"
 
 :parse_args
@@ -39,7 +40,7 @@ if /i "%~1"=="--repo" (
   goto parse_args
 )
 echo Unknown option: %~1
-echo Usage: setup_new_pc.bat [--clone "C:\path\to\stockresearch"] [--smoke] [--repo URL]
+echo Usage: setup_new_pc.bat [--clone "C:\path\to\TBN"] [--smoke] [--repo URL]
 exit /b 1
 
 :args_done
@@ -134,7 +135,7 @@ if "!HARDCODED!"=="0" (
 ) else (
   echo [WARN] Files above embed the old laptop path.
   echo        Easiest fix: clone to %RECOMMENDED_ROOT%
-  echo        Or search/replace C:\Users\songg\Downloads\stockresearch with this folder.
+  echo        Or run repo_split\05_rewrite_paths.bat after the three-repo split.
 )
 echo.
 

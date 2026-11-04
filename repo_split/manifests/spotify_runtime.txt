@@ -1,0 +1,5 @@
+drive/spotify_year_listen
+drive/spotify_aoty_listen
+drive/spotify_upcoming_shows
+drive/spotify_library_cache
+secrets/spotify.env
