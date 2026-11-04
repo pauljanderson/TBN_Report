@@ -104,7 +104,17 @@ python repo_split\lib\rewrite_paths.py --root C:\Users\songg\code\TBN --audit-on
 - **PredictionsMarkets:** `tools\live_*` (venue), `kalshi_*`, `polymarket_*`, `novig_*`, `prediction_*`, `pm_*`, `venue_*`, kitchen writers, `docs\prediction_market\`, `.cursor\rules\paul-problem-protocol.mdc`
 - **Spotify:** `tools\sync_spotify_*`, `organize_spotify_*`, `report_spotify_*`, `spotify_*`, AOTY/stung helpers, matching `run_*spotify*.bat`
 
-Shared helper **copied** into PredictionsMarkets: `report_page_extras.py` (TBN keeps its own).
+Shared helpers (**copied** into PredictionsMarkets; TBN **keeps** its own on prune):
+
+| File | Why shared |
+|------|------------|
+| `report_page_extras.py` | HTML chrome for TBN reports + PM kitchen writers |
+| `resolve_python.bat` | Launcher helper |
+| `tools/ntfy_job_done.py` | Phone notify — TBN WPBR/RL research bats **and** PM `live_lock_orders` |
+
+`win_hidden.py` is PredictionsMarkets-only (process spawn). Spotify does not need it.
+
+Secrets: PM extract copies `secrets/` then strips `spotify*`. If you still see Spotify files under PredictionsMarkets\secrets, delete them — Spotify owns `secrets\spotify.env`.
 
 ## Manifests
 

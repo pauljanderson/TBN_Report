@@ -223,12 +223,13 @@ def main() -> int:
                 _copy_file(src_env, dest / "secrets" / "spotify.env")
                 print("  copied secrets/spotify.env")
         if kind == "predictions":
-            # Prefer venue secrets; copy whole secrets/ then remove spotify.env from PM copy
+            # Prefer venue secrets; copy whole secrets/ then strip Spotify creds
             sec = dest / "secrets"
-            spot = sec / "spotify.env"
-            if spot.exists():
-                spot.unlink()
-                print("  removed secrets/spotify.env from PredictionsMarkets copy")
+            if sec.is_dir():
+                for spot in list(sec.glob("spotify*")) + list(sec.glob("*spotify*")):
+                    if spot.is_file():
+                        spot.unlink()
+                        print(f"  removed {spot.relative_to(dest)} from PredictionsMarkets copy")
 
     print("Done.")
     return 0 if missing == 0 else 1
