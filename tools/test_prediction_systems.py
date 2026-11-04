@@ -596,8 +596,115 @@ def test_job_control_systems_help():
     assert "--tennis-t0-spread" in Path(ps.__file__).read_text(encoding="utf-8")
     assert "--soccer-t0-total" in Path(ps.__file__).read_text(encoding="utf-8")
     assert "Tennis crossover" in src
+    assert "STALE" in src
+    assert "stale" in src
     ensure_src = Path(prediction_job_control.__file__).read_text(encoding="utf-8")
     assert "if jobs.get(\"strategy_b\")" in ensure_src
+    assert "stale watch = reload" in Path(live_game_pollers.__file__).read_text(encoding="utf-8")
+
+
+def test_last_action_prefers_updated_at_heartbeat():
+    """Nov 3 autopsy: last_send Nov 1 hid whether E was alive. Heartbeat wins."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    folder = Path(tempfile.mkdtemp())
+    watch = folder / "tennis_t0_dog_watch.json"
+    fresh = datetime.now(et).isoformat(timespec="seconds")
+    old_send = (datetime.now(et) - timedelta(days=2)).isoformat(timespec="seconds")
+    watch.write_text(
+        json.dumps(
+            {
+                "updated_at": fresh,
+                "last_send": old_send,
+                "last_skip_reason": "no unique dog Yes in (0.10, 0.50)",
+            }
+        ),
+        encoding="utf-8",
+    )
+    saved = dict(ps.WATCH_FILES)
+    ps.WATCH_FILES = {**saved, "tennis_t0_dog": watch}
+    try:
+        line = ps.last_action("tennis_t0_dog")
+        assert fresh in line
+        assert "no unique dog Yes" in line
+        assert old_send not in line.split("no unique")[0]
+        assert "STALE" not in line
+        assert ps.watch_is_stale("tennis_t0_dog") is False
+    finally:
+        ps.WATCH_FILES = saved
+
+
+def test_watch_stale_and_reload_hook():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    folder = Path(tempfile.mkdtemp())
+    watch = folder / "strategy_b_watch.json"
+    stale_at = (datetime.now(et) - timedelta(minutes=20)).isoformat(timespec="seconds")
+    watch.write_text(
+        json.dumps(
+            {
+                "updated_at": stale_at,
+                "last_skip_reason": "Sara Yoshida vs. Xi Luo: no trusted clock",
+            }
+        ),
+        encoding="utf-8",
+    )
+    saved_watch = dict(ps.WATCH_FILES)
+    saved_on = ps.is_on
+    saved_pids = ps.pids_for
+    saved_reload = ps.reload_system
+    ps.WATCH_FILES = {**saved_watch, "tennis_crossover": watch}
+    ps.is_on = lambda sid: sid == "tennis_crossover"
+    ps.pids_for = lambda sid, jobs=None: [55936] if sid == "tennis_crossover" else []
+    calls = []
+    ps.reload_system = lambda sid, jobs=None: calls.append(sid) or f"reloaded {sid}"
+    try:
+        why = ps.watch_stale_reason("tennis_crossover")
+        assert "updated_at" in why and "old" in why
+        assert ps.watch_is_stale("tennis_crossover") is True
+        line = ps.last_action("tennis_crossover")
+        assert "STALE" in line
+        assert "no trusted clock" in line
+        notes = ps.reload_stale_bots(jobs={})
+        assert calls == ["tennis_crossover"]
+        assert any("tennis_crossover" in n for n in notes)
+    finally:
+        ps.WATCH_FILES = saved_watch
+        ps.is_on = saved_on
+        ps.pids_for = saved_pids
+        ps.reload_system = saved_reload
+
+
+def test_json_dump_retries_permission_error():
+    import live_strategy_b
+    import live_t0_yes
+
+    folder = Path(tempfile.mkdtemp())
+    path = folder / "watch.json"
+    hits = {"n": 0}
+    real_replace = Path.replace
+
+    def flaky(self, target):
+        hits["n"] += 1
+        if hits["n"] < 3:
+            raise PermissionError("simulated lock")
+        return real_replace(self, target)
+
+    saved = Path.replace
+    Path.replace = flaky
+    try:
+        live_strategy_b._json_dump(path, {"ok": 1})
+        assert json.loads(path.read_text(encoding="utf-8"))["ok"] == 1
+        hits["n"] = 0
+        path2 = folder / "e.json"
+        live_t0_yes._json_dump(path2, {"ok": 2})
+        assert json.loads(path2.read_text(encoding="utf-8"))["ok"] == 2
+    finally:
+        Path.replace = saved
 
 
 if __name__ == "__main__":
@@ -626,4 +733,7 @@ if __name__ == "__main__":
     test_one_leg_turns_off_lock_a_only()
     test_lock_currently_open_is_plain_count()
     test_job_control_systems_help()
+    test_last_action_prefers_updated_at_heartbeat()
+    test_watch_stale_and_reload_hook()
+    test_json_dump_retries_permission_error()
     print("ok")

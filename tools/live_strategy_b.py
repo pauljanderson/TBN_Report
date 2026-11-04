@@ -220,10 +220,25 @@ def same_game(left: str, right: str) -> bool:
 
 
 def _json_dump(path: Path, payload: dict) -> None:
+    """Atomic write with PermissionError retries (Windows AV / reader locks).
+
+    Nov 3 B logged `strategy b loop PermissionError` then froze the watch at
+    01:40 ET — a single failed replace must not leave the bot silent.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    text = json.dumps(payload, indent=2, default=str) + "\n"
+    last_exc: Exception | None = None
+    for attempt in range(6):
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(path)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.05 * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
 
 
 def empty_status() -> dict:
@@ -3638,7 +3653,7 @@ def loop() -> None:
         except KeyboardInterrupt:
             log("strategy b interrupted; continuing")
         except Exception as exc:
-            log(f"strategy b loop {type(exc).__name__}")
+            log(f"strategy b loop {type(exc).__name__}: {exc}")
         deadline = time.monotonic() + TICK_SEC
         while keep_running() and time.monotonic() < deadline:
             watching = open_cross_matches(status if isinstance(status, dict) else {})
@@ -3653,7 +3668,7 @@ def loop() -> None:
             except KeyboardInterrupt:
                 log("strategy b interrupted; continuing")
             except Exception as exc:
-                log(f"strategy b cross tick {type(exc).__name__}")
+                log(f"strategy b cross tick {type(exc).__name__}: {exc}")
     log("strategy b exit")
 
 

@@ -147,10 +147,21 @@ def _log_d_nfl_skip(titles: list[str]) -> None:
 
 
 def _json_dump(path: Path, payload: dict) -> None:
+    """Atomic write with PermissionError retries (Windows AV / reader locks)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    text = json.dumps(payload, indent=2, default=str) + "\n"
+    last_exc: Exception | None = None
+    for attempt in range(6):
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(path)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.05 * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
 
 
 def empty_status(sid: str) -> dict:
@@ -1393,7 +1404,7 @@ def loop(sid: str) -> None:
         except KeyboardInterrupt:
             log(sid, "interrupted; continuing")
         except Exception as exc:
-            log(sid, f"loop {type(exc).__name__}")
+            log(sid, f"loop {type(exc).__name__}: {exc}")
         slept = 0
         while slept < TICK_SEC and keep_running(sid):
             time.sleep(1)

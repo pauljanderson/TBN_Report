@@ -897,6 +897,59 @@ def apply_updates(
     return cfgs, notes
 
 
+# Live bots tick ~1s and stamp updated_at each save. PID-alive + stale
+# updated_at means a hung loop (Nov 3 B PermissionError / frozen watch class).
+WATCH_STALE_SEC = 5 * 60
+
+
+def parse_watch_ts(value) -> datetime | None:
+    """Parse watch timestamps (ISO with offset, or naive ET)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        got = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if got.tzinfo is None:
+        got = got.replace(tzinfo=ET)
+    return got
+
+
+def watch_blob(sid: str) -> dict:
+    if sid == "lock":
+        return {}
+    data = _load_json(WATCH_FILES.get(sid, Path()))
+    return data if isinstance(data, dict) else {}
+
+
+def watch_heartbeat_at(sid: str) -> datetime | None:
+    """Process liveness for B–G is watch updated_at, not last_send."""
+    return parse_watch_ts(watch_blob(sid).get("updated_at"))
+
+
+def watch_stale_reason(sid: str, *, now: datetime | None = None) -> str:
+    """Empty when fresh or off/no-watch. Else a short STALE reason."""
+    if sid == "lock":
+        return ""
+    if not is_on(sid):
+        return ""
+    beat = watch_heartbeat_at(sid)
+    if beat is None:
+        # No stamp yet (fresh spawn before first tick) — not stale.
+        return ""
+    moment = now or datetime.now(ET)
+    age = (moment - beat.astimezone(ET)).total_seconds()
+    if age <= WATCH_STALE_SEC:
+        return ""
+    mins = int(age // 60)
+    return f"updated_at {mins}m old (>{WATCH_STALE_SEC // 60}m)"
+
+
+def watch_is_stale(sid: str, *, now: datetime | None = None) -> bool:
+    return bool(watch_stale_reason(sid, now=now))
+
+
 def last_action(sid: str) -> str:
     if sid == "lock":
         skip = _load_json(RAW / "lock_last_skip.json")
@@ -912,11 +965,29 @@ def last_action(sid: str) -> str:
         if when or reason:
             return f"{when} {reason}".strip()
         return "-"
-    watch = _load_json(WATCH_FILES.get(sid, Path()))
-    last = str(watch.get("last_send") or watch.get("last_action") or watch.get("updated_at") or "")
-    note = str(watch.get("last_skip_reason") or watch.get("note") or "")
-    if last or note:
-        return f"{last} {note}".strip()
+    watch = watch_blob(sid)
+    # Heartbeat first. Preferring last_send hid E/D zombies behind a Nov 1 /
+    # Oct 24 fill stamp while updated_at was either fresh or also dead.
+    heartbeat = str(watch.get("updated_at") or "")
+    last_send = str(watch.get("last_send") or "")
+    note = str(
+        watch.get("last_skip_reason")
+        or watch.get("last_action")
+        or watch.get("note")
+        or ""
+    )
+    parts: list[str] = []
+    if heartbeat:
+        parts.append(heartbeat)
+    elif last_send:
+        parts.append(last_send)
+    if note:
+        parts.append(note)
+    stale_why = watch_stale_reason(sid)
+    if stale_why:
+        parts.append(f"STALE {stale_why}")
+    if parts:
+        return " ".join(parts).strip()
     return "-"
 
 
@@ -997,6 +1068,12 @@ def status_rows(jobs: dict | None = None, *, snapshot=None, positions=None) -> l
             name = f"Lock gap (cap {cap})"
         if sid == "spread_t0":
             name = "T0 spreads (on except NFL)"
+        alive = (
+            bool(pids)
+            if sid != "lock"
+            else bool(jobs.get("lock_sender") or [])
+        )
+        stale = bool(alive and sid != "lock" and watch_is_stale(sid))
         rows.append({
             "id": sid,
             "letter": LETTER[sid],
@@ -1009,11 +1086,8 @@ def status_rows(jobs: dict | None = None, *, snapshot=None, positions=None) -> l
             "pid": pid_text,
             "extra_pids": extra,
             "last": last_action(sid),
-            "alive": (
-                bool(pids)
-                if sid != "lock"
-                else bool(jobs.get("lock_sender") or [])
-            ),
+            "alive": alive,
+            "stale": stale,
         })
     return rows
 
@@ -1036,14 +1110,38 @@ def format_status_table(rows: list[dict] | None = None) -> str:
     return "\n".join(lines)
 
 
-def ensure_live_bots(jobs: dict | None = None) -> list[str]:
-    """Start C/D/E/F/G/B when on and dead. Never a second B. Does not restart lock.
+def reload_stale_bots(jobs: dict | None = None) -> list[str]:
+    """Reload on+PID-up bots whose watch updated_at is stale. Never a second B.
 
-    F stays off until Paul runs --tennis-t0-spread on. G stays off until Paul
-    runs --soccer-t0-total on. Default config is off.
+    PID-alive with a frozen watch is the Nov 3 Tennis crossover class bug
+    (PermissionError / hung tick). ensure_system alone leaves those zombies.
+    """
+    jobs = classify_jobs(jobs)
+    reloaded: list[str] = []
+    for sid in LIVE_BOT_IDS:
+        if not is_on(sid):
+            continue
+        if not pids_for(sid, jobs):
+            continue
+        if not watch_is_stale(sid):
+            continue
+        note = reload_system(sid, jobs)
+        reloaded.append(f"{sid}:{note}")
+        jobs = classify_jobs()
+    return reloaded
+
+
+def ensure_live_bots(jobs: dict | None = None) -> list[str]:
+    """Start C/D/E/F/G/B when on and dead. Reload stale watches. Never a second B.
+
+    Does not restart lock. F stays off until Paul runs --tennis-t0-spread on.
+    G stays off until Paul runs --soccer-t0-total on. Default config is off.
     """
     jobs = classify_jobs(jobs)
     started = []
+    for note in reload_stale_bots(jobs):
+        started.append(f"stale-reload:{note}")
+    jobs = classify_jobs()
     for sid in LIVE_BOT_IDS:
         if ensure_system(sid, jobs):
             started.append(sid)

@@ -1688,7 +1688,11 @@ def supervise() -> None:
 
                 started = prediction_systems.ensure_live_bots()
                 if started:
-                    log("live bots spawned " + ",".join(started) + " (no second tennis crossover)")
+                    log(
+                        "live bots spawned/reloaded "
+                        + ",".join(started)
+                        + " (no second tennis crossover; stale watch = reload)"
+                    )
             except Exception as exc:
                 log(f"live bots spawn {type(exc).__name__}")
             try:
