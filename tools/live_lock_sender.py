@@ -3,9 +3,13 @@
 Reads per-game lock hints the poller wrote, then live_lock_orders.execute_locks.
 Leftover watch lives here, not inside --poll-one and not inside the quote mux.
 Does not open platform websockets. Does not start Tennis crossover (B).
+
+Stamps raw/lock_sender_watch.json updated_at each loop so the supervisor can
+detect a PID-up / brain-dead zombie (same class as B–G STALE reload).
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -22,12 +26,52 @@ from prediction_paths import RAW_DIR as RAW  # noqa: E402
 
 HINTS = RAW / "live_lock_hints"
 PID_PATH = RAW / "live_lock_sender.pid"
+WATCH_PATH = RAW / "lock_sender_watch.json"
 SLEEP_SEC = 0.2
+
+
+def _stamp_heartbeat(pid: int, *, note: str = "") -> None:
+    """Write updated_at so STALE detection sees a living lock sender."""
+    RAW.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "system": "lock",
+        "display": "Lock gap",
+        "pid": pid,
+        "updated_at": lgp.iso_now(),
+        "role": "lock_sender",
+    }
+    if note:
+        payload["note"] = note
+    try:
+        skip = live_lock_orders.LAST_SKIP
+        if skip.exists():
+            data = json.loads(skip.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                reason = str(data.get("reason") or data.get("event") or "")
+                when = str(data.get("at") or data.get("when") or "")
+                if reason:
+                    payload["last_skip_reason"] = f"{when} {reason}".strip()
+    except Exception:
+        pass
+    tmp = WATCH_PATH.with_suffix(WATCH_PATH.suffix + ".tmp")
+    text = json.dumps(payload, indent=2, default=str) + "\n"
+    last_exc: Exception | None = None
+    for attempt in range(6):
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(WATCH_PATH)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(0.05 * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
 
 
 def run() -> None:
     me = os.getpid()
     lgp.write_json(PID_PATH, {"pid": me, "started_at": lgp.iso_now(), "role": "lock_sender"})
+    _stamp_heartbeat(me, note="start")
     lgp.log(f"lock sender start pid {me}")
     scan = lgp.load_scan()
     try:
@@ -73,7 +117,11 @@ def run() -> None:
                         scan, sport, title, game, result, [], lgp.log,
                     )
         except Exception as exc:
-            lgp.log(f"lock sender loop {type(exc).__name__}")
+            lgp.log(f"lock sender loop {type(exc).__name__}: {exc}")
+        try:
+            _stamp_heartbeat(me)
+        except Exception as exc:
+            lgp.log(f"lock sender heartbeat {type(exc).__name__}: {exc}")
         slept = 0.0
         while slept < SLEEP_SEC and lgp.keep_running():
             time.sleep(0.05)

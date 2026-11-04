@@ -829,9 +829,10 @@ def _systems_html(snap: dict) -> str:
         "Turn A back with <code>python tools/prediction_job_control.py systems --lock on</code>. "
         "Open now is the count of Positions rows by system. "
         "Max is the cap (Lock gap 3, others default 2). "
-        "Last action uses watch <code>updated_at</code> (heartbeat). "
+        "Last action uses watch <code>updated_at</code> (heartbeat), including "
+        "Lock gap A (<code>lock_sender_watch.json</code>). "
         "PID up + <code>updated_at</code> &gt; 5 minutes old = "
-        "<strong>STALE</strong> (supervisor reloads that bot; never a second B). "
+        "<strong>STALE</strong> (supervisor reloads that bot; never a second A or B). "
         "$1 ≈ 1 contract at these prices. Click column headers to sort. "
         '<a href="systems_abcd_cli_20261024.html">systems_abcd_cli_20261024.html</a> · '
         '<a href="system_e_t0_dog_20261025.html">system_e_t0_dog_20261025.html</a> · '

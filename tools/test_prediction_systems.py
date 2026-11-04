@@ -598,9 +598,15 @@ def test_job_control_systems_help():
     assert "Tennis crossover" in src
     assert "STALE" in src
     assert "stale" in src
+    assert "lock_sender_watch.json" in src
     ensure_src = Path(prediction_job_control.__file__).read_text(encoding="utf-8")
     assert "if jobs.get(\"strategy_b\")" in ensure_src
-    assert "stale watch = reload" in Path(live_game_pollers.__file__).read_text(encoding="utf-8")
+    poller_src = Path(live_game_pollers.__file__).read_text(encoding="utf-8")
+    assert "stale watch A–G = reload" in poller_src or "stale watch A" in poller_src
+    assert "reap stale lock-sender" in poller_src
+    assert "lock_sender_watch.json" in Path(__import__("live_lock_sender", fromlist=["x"]).__file__).read_text(
+        encoding="utf-8"
+    )
 
 
 def test_last_action_prefers_updated_at_heartbeat():
@@ -679,6 +685,84 @@ def test_watch_stale_and_reload_hook():
         ps.reload_system = saved_reload
 
 
+def test_lock_a_stale_heartbeat_and_reload():
+    """Lock A uses lock_sender_watch.json; STALE reloads live_lock_sender."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    folder = Path(tempfile.mkdtemp())
+    watch = folder / "lock_sender_watch.json"
+    skip = folder / "lock_last_skip.json"
+    stale_at = (datetime.now(et) - timedelta(minutes=20)).isoformat(timespec="seconds")
+    watch.write_text(
+        json.dumps({"updated_at": stale_at, "pid": 55356, "system": "lock"}),
+        encoding="utf-8",
+    )
+    skip.write_text(
+        json.dumps(
+            {
+                "at": "2026-11-02T23:25:05.106-05:00",
+                "reason": "open-book same-direction double",
+            }
+        ),
+        encoding="utf-8",
+    )
+    saved_watch = dict(ps.WATCH_FILES)
+    saved_raw = ps.RAW
+    saved_on = ps.is_on
+    saved_lock_pids = ps.lock_sender_pids
+    saved_reload = ps.reload_system
+    ps.WATCH_FILES = {**saved_watch, "lock": watch}
+    ps.RAW = folder
+    ps.is_on = lambda sid: sid == "lock"
+    ps.lock_sender_pids = lambda jobs=None: [55356]
+    calls = []
+    ps.reload_system = lambda sid, jobs=None: calls.append(sid) or f"reloaded {sid}"
+    try:
+        assert ps.watch_is_stale("lock") is True
+        line = ps.last_action("lock")
+        assert stale_at in line
+        assert "STALE" in line
+        assert "same-direction" in line
+        notes = ps.reload_stale_bots(jobs={})
+        assert calls == ["lock"]
+        assert any("lock" in n for n in notes)
+        rows = ps.status_rows(jobs={"lock_sender": [{"pid": 55356}]})
+        lock_row = next(row for row in rows if row["letter"] == "A")
+        assert lock_row["stale"] is True
+        assert "STALE" in lock_row["last"]
+    finally:
+        ps.WATCH_FILES = saved_watch
+        ps.RAW = saved_raw
+        ps.is_on = saved_on
+        ps.lock_sender_pids = saved_lock_pids
+        ps.reload_system = saved_reload
+
+
+def test_lock_sender_heartbeat_writer():
+    import live_lock_sender
+
+    folder = Path(tempfile.mkdtemp())
+    saved_raw = live_lock_sender.RAW
+    saved_watch = live_lock_sender.WATCH_PATH
+    saved_skip = live_lock_orders.LAST_SKIP
+    live_lock_sender.RAW = folder
+    live_lock_sender.WATCH_PATH = folder / "lock_sender_watch.json"
+    live_lock_orders.LAST_SKIP = folder / "lock_last_skip.json"
+    try:
+        live_lock_sender._stamp_heartbeat(42, note="start")
+        blob = json.loads(live_lock_sender.WATCH_PATH.read_text(encoding="utf-8"))
+        assert blob["pid"] == 42
+        assert blob["system"] == "lock"
+        assert blob.get("updated_at")
+        assert blob.get("note") == "start"
+    finally:
+        live_lock_sender.RAW = saved_raw
+        live_lock_sender.WATCH_PATH = saved_watch
+        live_lock_orders.LAST_SKIP = saved_skip
+
+
 def test_json_dump_retries_permission_error():
     import live_strategy_b
     import live_t0_yes
@@ -735,5 +819,7 @@ if __name__ == "__main__":
     test_job_control_systems_help()
     test_last_action_prefers_updated_at_heartbeat()
     test_watch_stale_and_reload_hook()
+    test_lock_a_stale_heartbeat_and_reload()
+    test_lock_sender_heartbeat_writer()
     test_json_dump_retries_permission_error()
     print("ok")

@@ -122,6 +122,7 @@ CONSOLE_LOGS = {
     "soccer_t0_total": RAW / "soccer_t0_total.console.log",
 }
 WATCH_FILES = {
+    "lock": RAW / "lock_sender_watch.json",
     "tennis_crossover": RAW / "strategy_b_watch.json",
     "cfb_favorite": RAW / "cfb_favorite_watch.json",
     "spread_t0": RAW / "spread_t0_watch.json",
@@ -827,10 +828,36 @@ def stop_system(sid: str, jobs: dict | None = None) -> list[int]:
     return pids
 
 
+def reload_lock_sender(jobs: dict | None = None) -> str:
+    """Kill live_lock_sender.py if listed, then start one. Never a second A."""
+    import prediction_job_control
+
+    jobs = classify_jobs(jobs)
+    was = lock_sender_pids(jobs)
+    if was:
+        prediction_job_control._stop_pids(was)
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            left = lock_sender_pids()
+            if not left:
+                break
+            time.sleep(0.4)
+    if not is_on("lock"):
+        return f"Lock gap off; stopped {was or 'none'}"
+    left = lock_sender_pids()
+    if left:
+        return (
+            f"Lock gap still listed pid {left[0]} after stop; "
+            f"did not start a second lock sender"
+        )
+    prediction_job_control.ensure_lock_sender()
+    return f"Lock gap reloaded one lock sender (was {was[0] if was else 'none'})"
+
+
 def reload_system(sid: str, jobs: dict | None = None) -> str:
-    """Stop the live pid if any, then start one. Never a second B. Does not sell."""
+    """Stop the live pid if any, then start one. Never a second B/A. Does not sell."""
     if sid == "lock":
-        return "lock lives in live_lock_sender.py; supervisor respawns it"
+        return reload_lock_sender(jobs)
     jobs = classify_jobs(jobs)
     was = pids_for(sid, jobs)
     if was:
@@ -917,21 +944,27 @@ def parse_watch_ts(value) -> datetime | None:
 
 
 def watch_blob(sid: str) -> dict:
-    if sid == "lock":
-        return {}
     data = _load_json(WATCH_FILES.get(sid, Path()))
     return data if isinstance(data, dict) else {}
 
 
 def watch_heartbeat_at(sid: str) -> datetime | None:
-    """Process liveness for B–G is watch updated_at, not last_send."""
+    """Process liveness for A–G is watch updated_at, not last_send / last skip."""
     return parse_watch_ts(watch_blob(sid).get("updated_at"))
+
+
+def lock_sender_pids(jobs: dict | None = None) -> list[int]:
+    """PIDs for live_lock_sender.py (Lock gap A). Not the supervisor."""
+    jobs = classify_jobs(jobs)
+    return [
+        int(row["pid"])
+        for row in (jobs.get("lock_sender") or [])
+        if row.get("pid")
+    ]
 
 
 def watch_stale_reason(sid: str, *, now: datetime | None = None) -> str:
     """Empty when fresh or off/no-watch. Else a short STALE reason."""
-    if sid == "lock":
-        return ""
     if not is_on(sid):
         return ""
     beat = watch_heartbeat_at(sid)
@@ -951,6 +984,17 @@ def watch_is_stale(sid: str, *, now: datetime | None = None) -> bool:
 
 
 def last_action(sid: str) -> str:
+    watch = watch_blob(sid)
+    # Heartbeat first. Preferring last_send / lock_last_skip hid zombies behind
+    # a days-old stamp while the process was dead or hung.
+    heartbeat = str(watch.get("updated_at") or "")
+    last_send = str(watch.get("last_send") or "")
+    note = str(
+        watch.get("last_skip_reason")
+        or watch.get("last_action")
+        or watch.get("note")
+        or ""
+    )
     if sid == "lock":
         skip = _load_json(RAW / "lock_last_skip.json")
         when = str(skip.get("at") or skip.get("when") or "")
@@ -962,20 +1006,10 @@ def last_action(sid: str) -> str:
                 reason = live_lock_orders.rewrite_send_line_copy(reason)
             except Exception:
                 pass
-        if when or reason:
-            return f"{when} {reason}".strip()
-        return "-"
-    watch = watch_blob(sid)
-    # Heartbeat first. Preferring last_send hid E/D zombies behind a Nov 1 /
-    # Oct 24 fill stamp while updated_at was either fresh or also dead.
-    heartbeat = str(watch.get("updated_at") or "")
-    last_send = str(watch.get("last_send") or "")
-    note = str(
-        watch.get("last_skip_reason")
-        or watch.get("last_action")
-        or watch.get("note")
-        or ""
-    )
+        if not note and (when or reason):
+            note = f"{when} {reason}".strip()
+        elif reason and reason not in note:
+            note = f"{note} | {reason}".strip(" |") if note else reason
     parts: list[str] = []
     if heartbeat:
         parts.append(heartbeat)
@@ -1073,7 +1107,7 @@ def status_rows(jobs: dict | None = None, *, snapshot=None, positions=None) -> l
             if sid != "lock"
             else bool(jobs.get("lock_sender") or [])
         )
-        stale = bool(alive and sid != "lock" and watch_is_stale(sid))
+        stale = bool(alive and watch_is_stale(sid))
         rows.append({
             "id": sid,
             "letter": LETTER[sid],
@@ -1111,17 +1145,18 @@ def format_status_table(rows: list[dict] | None = None) -> str:
 
 
 def reload_stale_bots(jobs: dict | None = None) -> list[str]:
-    """Reload on+PID-up bots whose watch updated_at is stale. Never a second B.
+    """Reload on+PID-up bots whose watch updated_at is stale. Never a second A/B.
 
-    PID-alive with a frozen watch is the Nov 3 Tennis crossover class bug
-    (PermissionError / hung tick). ensure_system alone leaves those zombies.
+    PID-alive with a frozen watch is the Nov 3 Tennis crossover / Lock A class
+    bug (hung tick). ensure_system alone leaves those zombies.
     """
     jobs = classify_jobs(jobs)
     reloaded: list[str] = []
-    for sid in LIVE_BOT_IDS:
+    for sid in ("lock", *LIVE_BOT_IDS):
         if not is_on(sid):
             continue
-        if not pids_for(sid, jobs):
+        live = lock_sender_pids(jobs) if sid == "lock" else pids_for(sid, jobs)
+        if not live:
             continue
         if not watch_is_stale(sid):
             continue
@@ -1132,10 +1167,10 @@ def reload_stale_bots(jobs: dict | None = None) -> list[str]:
 
 
 def ensure_live_bots(jobs: dict | None = None) -> list[str]:
-    """Start C/D/E/F/G/B when on and dead. Reload stale watches. Never a second B.
+    """Start C/D/E/F/G/B when on and dead. Reload stale A–G watches.
 
-    Does not restart lock. F stays off until Paul runs --tennis-t0-spread on.
-    G stays off until Paul runs --soccer-t0-total on. Default config is off.
+    Never a second B or second lock sender. F stays off until Paul runs
+    --tennis-t0-spread on. G stays off until --soccer-t0-total on.
     """
     jobs = classify_jobs(jobs)
     started = []
