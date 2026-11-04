@@ -1032,8 +1032,8 @@ def fill_types_on_rows(rows: list[dict]) -> None:
         step = str(sent.get("step") or "")
         sent_key = str(sent.get("bet_key") or "")
         if step in {"watch", "recovery"} and (
-            letter in {"C", "D", "E", "F", "G"}
-            or sent_key.startswith(("tennis-t0-dog", "tennis-t0-spread", "soccer-t0-total", "cfb-favorite", "spread-t0"))
+            letter in {"C", "D", "E", "F", "G", "H"}
+            or sent_key.startswith(("tennis-t0-dog", "tennis-t0-spread", "soccer-t0-total", "cfb-favorite", "cfb-total-movers", "cfb-spread-movers", "spread-t0"))
         ):
             row["order_type"] = order_types.TYPE_LEFTOVER
             continue

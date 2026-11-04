@@ -1,4 +1,4 @@
-"""Per-order type labels for live systems A–G. Display only. Does not send."""
+"""Per-order type labels for live systems A–H. Display only. Does not send."""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -10,11 +10,14 @@ TYPE_B_HI = "initial Hi lock"
 TYPE_B_LO = "initial low lock"
 TYPE_B_CROSS = "crossover lock"
 TYPE_B_SUB = "subsequent low lock"
-TYPE_C = "only lock 0.50 - 0.90"
+TYPE_C = "C CFB total movers"
+TYPE_C_LEGACY = "only lock 0.50 - 0.90"
 TYPE_D = "only lock 0.50 - 0.90"
 TYPE_E = "only lock underdog T0"
 TYPE_F = "only lock tennis spread T0"
 TYPE_G = "G Soccer total"
+TYPE_C_MOVER = "C CFB total movers"
+TYPE_H = "H CFB spread movers"
 TYPE_LEFTOVER = "leftover / hedge"
 
 LABELS = (
@@ -30,6 +33,7 @@ LABELS = (
     TYPE_E,
     TYPE_F,
     TYPE_G,
+    TYPE_H,
     TYPE_LEFTOVER,
 )
 LABEL_SET = set(LABELS)
@@ -39,6 +43,7 @@ SYSTEM_LETTER = {
     "a": "A",
     "tennis_crossover": "B",
     "b": "B",
+    "cfb_total_movers": "C",
     "cfb_favorite": "C",
     "c": "C",
     "spread_t0": "D",
@@ -49,6 +54,8 @@ SYSTEM_LETTER = {
     "f": "F",
     "soccer_t0_total": "G",
     "g": "G",
+    "cfb_spread_movers": "H",
+    "h": "H",
 }
 
 _A_FLAT = {"flatten", "extra-flatten"}
@@ -58,7 +65,7 @@ _B_T0 = {"b-t0", "t0"}
 _B_CROSS = {"b-cross"}
 _B_SUB = {"b-leftover-yes", "b-fav"}
 _LEFTOVER_STEPS = {"watch", "recovery"}
-_DIRECTIONAL_LETTERS = {"C", "D", "E", "F", "G"}
+_DIRECTIONAL_LETTERS = {"C", "D", "E", "F", "G", "H"}
 HALF = Decimal("0.50")
 
 
@@ -81,7 +88,7 @@ def letter_of(system_id: str | None, *, cluster_letter: str | None = None) -> st
 def cluster_letter(cluster: dict | None) -> str:
     cluster = cluster or {}
     letter = str(cluster.get("system_letter") or "").upper()
-    if letter in {"A", "B", "C", "D", "E", "F", "G"}:
+    if letter in {"A", "B", "C", "D", "E", "F", "G", "H"}:
         return letter
     kind = str(cluster.get("kind") or "").strip().lower().replace("-", "_")
     return SYSTEM_LETTER.get(kind, letter_of(str(cluster.get("system") or cluster.get("system_id") or "")))
@@ -120,6 +127,8 @@ def classify(
         return TYPE_F
     if letter == "G":
         return TYPE_G
+    if letter == "H":
+        return TYPE_H
     if letter == "A":
         return _type_a(step, ask_size, sibling_sizes)
     if letter == "B":

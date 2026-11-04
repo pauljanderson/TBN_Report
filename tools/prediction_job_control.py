@@ -72,7 +72,7 @@ def _ps_rows() -> list[dict]:
         "$_.CommandLine -like '*live_game_pollers.py*' -or "
         "$_.CommandLine -like '*overnight_scan.py*' -or "
         "$_.CommandLine -like '*live_strategy_b.py*' -or "
-        "$_.CommandLine -like '*live_cfb_favorite.py*' -or "
+        "$_.CommandLine -like '*live_cfb_total_movers.py*' -or $_.CommandLine -like '*live_cfb_favorite.py*' -or $_.CommandLine -like '*live_cfb_spread_movers.py*' -or "
         "$_.CommandLine -like '*live_spread_t0.py*' -or "
         "$_.CommandLine -like '*live_tennis_t0_dog.py*' -or "
         "$_.CommandLine -like '*live_tennis_t0_spread.py*' -or "
@@ -281,11 +281,13 @@ def classify(rows: list[dict]) -> dict:
     poll_all = []
     lock_sender = []
     strategy_b = []
+    cfb_total_movers = []
     cfb_favorite = []
     spread_t0 = []
     tennis_t0_dog = []
     tennis_t0_spread = []
     soccer_t0_total = []
+    cfb_spread_movers = []
     settle_reconcile = []
     for row in rows:
         cmd = row["cmd"].lower()
@@ -296,7 +298,10 @@ def classify(rows: list[dict]) -> dict:
         cmd = row["cmd"]
         if "live_strategy_b.py" in cmd:
             strategy_b.append(row)
+        elif "live_cfb_total_movers.py" in cmd:
+            cfb_total_movers.append(row)
         elif "live_cfb_favorite.py" in cmd:
+            cfb_total_movers.append(row)
             cfb_favorite.append(row)
         elif "live_spread_t0.py" in cmd:
             spread_t0.append(row)
@@ -306,6 +311,8 @@ def classify(rows: list[dict]) -> dict:
             tennis_t0_spread.append(row)
         elif "live_soccer_t0_total.py" in cmd:
             soccer_t0_total.append(row)
+        elif "live_cfb_spread_movers.py" in cmd:
+            cfb_spread_movers.append(row)
         elif "live_pm_settle_reconcile.py" in cmd:
             settle_reconcile.append(row)
         elif "live_lock_sender.py" in cmd:
@@ -327,11 +334,13 @@ def classify(rows: list[dict]) -> dict:
         "poll_all": poll_all,
         "lock_sender": lock_sender,
         "strategy_b": strategy_b,
+        "cfb_total_movers": cfb_total_movers,
         "cfb_favorite": cfb_favorite,
         "spread_t0": spread_t0,
         "tennis_t0_dog": tennis_t0_dog,
         "tennis_t0_spread": tennis_t0_spread,
         "soccer_t0_total": soccer_t0_total,
+        "cfb_spread_movers": cfb_spread_movers,
         "settle_reconcile": settle_reconcile,
     }
 
@@ -1031,6 +1040,8 @@ def snapshot() -> dict:
         "scan_extra": jobs["scan"][1:],
         "strategy_b": b_jobs[0] if b_jobs else None,
         "strategy_b_extra": b_jobs[1:],
+        "cfb_total_movers": (jobs.get("cfb_total_movers") or [None])[0] if jobs.get("cfb_total_movers") else None,
+        "cfb_total_movers_extra": (jobs.get("cfb_total_movers") or [])[1:],
         "cfb_favorite": (jobs.get("cfb_favorite") or [None])[0] if jobs.get("cfb_favorite") else None,
         "cfb_favorite_extra": (jobs.get("cfb_favorite") or [])[1:],
         "spread_t0": (jobs.get("spread_t0") or [None])[0] if jobs.get("spread_t0") else None,
@@ -1041,6 +1052,8 @@ def snapshot() -> dict:
         "tennis_t0_spread_extra": (jobs.get("tennis_t0_spread") or [])[1:],
         "soccer_t0_total": (jobs.get("soccer_t0_total") or [None])[0] if jobs.get("soccer_t0_total") else None,
         "soccer_t0_total_extra": (jobs.get("soccer_t0_total") or [])[1:],
+        "cfb_spread_movers": (jobs.get("cfb_spread_movers") or [None])[0] if jobs.get("cfb_spread_movers") else None,
+        "cfb_spread_movers_extra": (jobs.get("cfb_spread_movers") or [])[1:],
         "settle_reconcile": (jobs.get("settle_reconcile") or [None])[0] if jobs.get("settle_reconcile") else None,
         "settle_reconcile_extra": (jobs.get("settle_reconcile") or [])[1:],
         "systems": _systems_snapshot(jobs, snapshot=venue, positions=positions),
@@ -1639,11 +1652,13 @@ def _wait_until_clear(timeout: float = 20.0, *, include_strategy_b: bool = True,
         if include_strategy_b:
             left += jobs.get("strategy_b") or []
         if include_cd:
+            left += jobs.get("cfb_total_movers") or []
             left += jobs.get("cfb_favorite") or []
             left += jobs.get("spread_t0") or []
             left += jobs.get("tennis_t0_dog") or []
             left += jobs.get("tennis_t0_spread") or []
             left += jobs.get("soccer_t0_total") or []
+            left += jobs.get("cfb_spread_movers") or []
         if not left:
             return jobs
         time.sleep(0.5)
@@ -1719,11 +1734,12 @@ def start_missing(jobs: dict | None = None) -> int:
         import prediction_systems
 
         for sid, label in (
-            ("cfb_favorite", "CFB favorite"),
+            ("cfb_total_movers", "C CFB total movers"),
             ("spread_t0", "T0 spreads"),
             ("tennis_t0_dog", "Tennis T0 dog"),
             ("tennis_t0_spread", "F Tennis spread"),
             ("soccer_t0_total", "G Soccer total"),
+            ("cfb_spread_movers", "H CFB spread movers"),
         ):
             if prediction_systems.ensure_system(sid, jobs):
                 started.append(label)
@@ -1892,11 +1908,13 @@ def restart() -> int:
         + (jobs.get("lock_sender") or [])
         + jobs["scan"]
         + (jobs.get("strategy_b") or [])
+        + (jobs.get("cfb_total_movers") or [])
         + (jobs.get("cfb_favorite") or [])
         + (jobs.get("spread_t0") or [])
         + (jobs.get("tennis_t0_dog") or [])
         + (jobs.get("tennis_t0_spread") or [])
         + (jobs.get("soccer_t0_total") or [])
+        + (jobs.get("cfb_spread_movers") or [])
         + (jobs.get("settle_reconcile") or [])
     ]
     print(f"Stopping {len(pids)} process(es).")
@@ -1909,11 +1927,13 @@ def restart() -> int:
         + (left.get("lock_sender") or [])
         + left["scan"]
         + (left.get("strategy_b") or [])
+        + (left.get("cfb_total_movers") or [])
         + (left.get("cfb_favorite") or [])
         + (left.get("spread_t0") or [])
         + (left.get("tennis_t0_dog") or [])
         + (left.get("tennis_t0_spread") or [])
         + (left.get("soccer_t0_total") or [])
+        + (left.get("cfb_spread_movers") or [])
         + (left.get("settle_reconcile") or [])
     )
     if still:
@@ -1936,11 +1956,13 @@ def reload_one_lock_supervisor() -> dict:
         "lock_sender": [row.get("pid") for row in (jobs.get("lock_sender") or [])],
         "scan": [row.get("pid") for row in (jobs.get("scan") or [])],
         "strategy_b": [row.get("pid") for row in (jobs.get("strategy_b") or [])],
+        "cfb_total_movers": [row.get("pid") for row in (jobs.get("cfb_total_movers") or [])],
         "cfb_favorite": [row.get("pid") for row in (jobs.get("cfb_favorite") or [])],
         "spread_t0": [row.get("pid") for row in (jobs.get("spread_t0") or [])],
         "tennis_t0_dog": [row.get("pid") for row in (jobs.get("tennis_t0_dog") or [])],
         "tennis_t0_spread": [row.get("pid") for row in (jobs.get("tennis_t0_spread") or [])],
         "soccer_t0_total": [row.get("pid") for row in (jobs.get("soccer_t0_total") or [])],
+        "cfb_spread_movers": [row.get("pid") for row in (jobs.get("cfb_spread_movers") or [])],
     }
     pids = [
         row["pid"]
@@ -1974,11 +1996,13 @@ def reload_one_lock_supervisor() -> dict:
         "lock_sender": [row.get("pid") for row in (after.get("lock_sender") or [])],
         "scan": [row.get("pid") for row in (after.get("scan") or [])],
         "strategy_b": [row.get("pid") for row in (after.get("strategy_b") or [])],
+        "cfb_total_movers": [row.get("pid") for row in (after.get("cfb_total_movers") or [])],
         "cfb_favorite": [row.get("pid") for row in (after.get("cfb_favorite") or [])],
         "spread_t0": [row.get("pid") for row in (after.get("spread_t0") or [])],
         "tennis_t0_dog": [row.get("pid") for row in (after.get("tennis_t0_dog") or [])],
         "tennis_t0_spread": [row.get("pid") for row in (after.get("tennis_t0_spread") or [])],
         "soccer_t0_total": [row.get("pid") for row in (after.get("soccer_t0_total") or [])],
+        "cfb_spread_movers": [row.get("pid") for row in (after.get("cfb_spread_movers") or [])],
         "notes": "one lock supervisor reloaded; pollers respawned under it; B/C/D/E/F/G/scan left",
     }
 
@@ -2048,15 +2072,16 @@ def main(argv: list[str]) -> int:
         write_page(snap)
         print_status(snap)
         print(
-            "reload-lock: supervisor {before} -> {after}; B {b}; C {c}; D {d}; E {e}; F {f}; G {g}; scan {scan}".format(
+            "reload-lock: supervisor {before} -> {after}; B {b}; C {c}; D {d}; E {e}; F {f}; G {g}; H {h}; scan {scan}".format(
                 before=info.get("before", {}).get("supervisor") or [],
                 after=info.get("supervisor") or [],
                 b=info.get("strategy_b") or [],
-                c=info.get("cfb_favorite") or [],
+                c=info.get("cfb_total_movers") or info.get("cfb_favorite") or [],
                 d=info.get("spread_t0") or [],
                 e=info.get("tennis_t0_dog") or [],
                 f=info.get("tennis_t0_spread") or [],
                 g=info.get("soccer_t0_total") or [],
+                h=info.get("cfb_spread_movers") or [],
                 scan=info.get("scan") or [],
             )
         )

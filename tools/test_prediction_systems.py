@@ -147,17 +147,17 @@ def test_cli_parse_and_persist():
     assert updates["lock"]["on"] is True
     assert updates["lock"]["max_open"] == 3
     assert updates["tennis_crossover"]["on"] is False
-    assert updates["cfb_favorite"]["on"] is True
+    assert updates["cfb_total_movers"]["on"] is True
     assert updates["spread_t0"]["max_open"] == 2
     cfgs, notes = ps.apply_updates(updates, path=path, spawn=False)
     assert notes == []
     blob = json.loads(path.read_text(encoding="utf-8"))
     assert blob["systems"]["lock"]["max_open"] == 3
     assert blob["systems"]["tennis_crossover"]["on"] is False
-    assert blob["systems"]["cfb_favorite"]["on"] is True
+    assert blob["systems"]["cfb_total_movers"]["on"] is True
     loaded = ps.load_config(path)
     assert loaded["lock"].max_open == 3
-    assert loaded["cfb_favorite"].stake_usd == Decimal("1")
+    assert loaded["cfb_total_movers"].stake_usd == Decimal("1")
     assert "net_max" not in blob["systems"]["lock"]
     assert loaded["lock"].net_max is None
 
@@ -207,7 +207,7 @@ def test_a_b_c_d_aliases():
     ns = ps.build_parser().parse_args(["--b", "off", "--c", "on", "--d", "on", "--a", "on"])
     updates = ps.flags_touched(ns)
     assert updates["tennis_crossover"]["on"] is False
-    assert updates["cfb_favorite"]["on"] is True
+    assert updates["cfb_total_movers"]["on"] is True
     assert updates["spread_t0"]["on"] is True
     assert updates["lock"]["on"] is True
 
@@ -385,7 +385,7 @@ def test_dog_line_snapshot_band():
 def test_do_not_double_spawn_b():
     jobs = {
         "strategy_b": [{"pid": 4242, "started": "2026-10-24 12:00:00", "cmd": "python live_strategy_b.py"}],
-        "cfb_favorite": [],
+        "cfb_total_movers": [],
         "spread_t0": [],
         "tennis_t0_dog": [],
         "supervisor": [],
@@ -415,7 +415,7 @@ def test_do_not_double_spawn_b():
 def test_ensure_system_skips_when_b_alive():
     jobs = {
         "strategy_b": [{"pid": 99, "cmd": "python live_strategy_b.py"}],
-        "cfb_favorite": [],
+        "cfb_total_movers": [],
         "spread_t0": [],
         "tennis_t0_dog": [],
         "supervisor": [],
@@ -510,7 +510,7 @@ def test_market_type_team_total_before_total():
 
 def test_lock_skips_open_cd():
     folder = Path(tempfile.mkdtemp())
-    path = folder / "cfb_favorite_watch.json"
+    path = folder / "cfb_total_movers_watch.json"
     path.write_text(
         json.dumps({"matches": [{"game": "LSU vs Auburn", "stage": "filled"}]}),
         encoding="utf-8",
@@ -525,7 +525,7 @@ def test_lock_skips_open_cd():
 
 
 def test_send_blocked_cd_ignores_latch():
-    assert live_lock_orders._send_blocked({"_system": "cfb_favorite"}) == ""
+    assert live_lock_orders._send_blocked({"_system": "cfb_total_movers"}) == ""
     assert live_lock_orders._send_blocked({"_system": "spread_t0"}) == ""
     assert live_lock_orders._send_blocked({"_system": "tennis_t0_dog"}) == ""
     assert live_lock_orders._send_blocked({"_system": "soccer_t0_total"}) == ""
@@ -548,14 +548,14 @@ def test_one_leg_turns_off_lock_a_only():
         )
         loaded = ps.load_config(path)
         assert loaded["lock"].on is False
-        for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog"):
+        for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog"):
             assert loaded[sid].on is True, sid
         assert stop.is_file()
         blob = json.loads(stop.read_text(encoding="utf-8"))
         assert blob.get("scope") == "lock"
         assert blob.get("letter") == "A"
         assert live_lock_orders._send_blocked({"_strategy_b": True}) == ""
-        assert live_lock_orders._send_blocked({"_system": "cfb_favorite"}) == ""
+        assert live_lock_orders._send_blocked({"_system": "cfb_total_movers"}) == ""
         assert live_lock_orders._send_blocked({"_system": "spread_t0"}) == ""
         assert live_lock_orders._send_blocked({"_system": "tennis_t0_dog"}) == ""
         assert live_lock_orders._send_blocked({"_watch_recovery": True, "venue": "kalshi"}) == ""
@@ -563,7 +563,7 @@ def test_one_leg_turns_off_lock_a_only():
         ps.apply_updates({"lock": {"on": True}}, path=path, spawn=True)
         loaded = ps.load_config(path)
         assert loaded["lock"].on is True
-        for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog"):
+        for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog"):
             assert loaded[sid].on is True, sid
         assert not stop.exists()
         assert live_lock_orders._send_blocked({"venue": "kalshi"}) == ""
@@ -589,7 +589,8 @@ def test_lock_currently_open_is_plain_count():
 def test_job_control_systems_help():
     src = Path(prediction_job_control.__file__).read_text(encoding="utf-8")
     assert "systems" in src
-    assert "live_cfb_favorite.py" in src
+    assert "live_cfb_total_movers.py" in src
+    assert "live_cfb_spread_movers.py" in src
     assert "live_tennis_t0_dog.py" in src
     assert "live_tennis_t0_spread.py" in src
     assert "live_soccer_t0_total.py" in src

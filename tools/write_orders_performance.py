@@ -57,7 +57,9 @@ INTENT_FULL_LOCK = "intentional full-system lock"
 INTENT_INCOMPLETE_LOCK = "intentional incomplete lock"
 INTENT_B = "intentional Strategy B"
 INTENT_TENNIS = "tennis_crossover"
-INTENT_CFB = "cfb_favorite"
+INTENT_CFB = "cfb_total_movers"
+INTENT_CFB_LEGACY = "cfb_favorite"
+INTENT_SPREAD_H = "cfb_spread_movers"
 INTENT_SPREAD = "spread_t0"
 INTENT_DOG = "tennis_t0_dog"
 INTENT_SPREAD_F = "tennis_t0_spread"
@@ -72,6 +74,7 @@ D_STEPS = {"d-t0"}
 E_STEPS = {"e-t0"}
 F_STEPS = {"f-t0"}
 G_STEPS = {"g-t0"}
+H_STEPS = {"h-t0"}
 FALSE_SHSU_TIMES = ("2026-10-21T22:42:05", "2026-10-21T22:58:48")
 IS_CUT = "2024-01-01"
 MIN_DAYS_FOR_ANN = 1.0
@@ -80,11 +83,12 @@ B_ALIASES = {"b", "strategy_b", "strategy-b", "tennis_crossover", "tennis-crosso
 SYSTEM_SPECS = (
     ("A", "lock", "Lock gap", "live_lock_orders"),
     ("B", "tennis_crossover", "Tennis crossover", "live_strategy_b (was Strategy B)"),
-    ("C", "cfb_favorite", "College football favorite", "live_cfb_favorite"),
+    ("C", "cfb_total_movers", "College Football total points movers", "live_cfb_total_movers"),
     ("D", "spread_t0", "T0 spreads", "live_spread_t0"),
     ("E", "tennis_t0_dog", "Tennis T0 dog", "live_tennis_t0_dog"),
     ("F", "tennis_t0_spread", "Tennis spread", "live_tennis_t0_spread"),
     ("G", "soccer_t0_total", "Soccer total", "live_soccer_t0_total"),
+    ("H", "cfb_spread_movers", "College Football spread movers", "live_cfb_spread_movers"),
 )
 SYSTEM_BY_LETTER = {row[0]: row for row in SYSTEM_SPECS}
 
@@ -622,10 +626,29 @@ def is_strategy_b_row(row: dict) -> bool:
 
 
 def is_cfb_favorite_row(row: dict) -> bool:
+    """C CFB total movers (and legacy favorite) order rows."""
     key = str(row.get("bet_key") or "")
     step = str(row.get("step") or "")
     system = str(row.get("system") or "")
-    return system == "cfb_favorite" or key.startswith("cfb-favorite") or step in C_STEPS or step.startswith("c-")
+    return (
+        system in {"cfb_favorite", "cfb_total_movers"}
+        or key.startswith("cfb-favorite")
+        or key.startswith("cfb-total-movers")
+        or step in C_STEPS
+        or step.startswith("c-")
+    )
+
+
+def is_cfb_spread_movers_row(row: dict) -> bool:
+    key = str(row.get("bet_key") or "")
+    step = str(row.get("step") or "")
+    system = str(row.get("system") or "")
+    return (
+        system == "cfb_spread_movers"
+        or key.startswith("cfb-spread-movers")
+        or step in H_STEPS
+        or step.startswith("h-")
+    )
 
 
 def is_spread_t0_row(row: dict) -> bool:
@@ -663,7 +686,9 @@ def order_type_of(leg: dict, cluster: dict) -> str:
 
 def source_label(row: dict) -> str:
     if is_cfb_favorite_row(row):
-        return "cfb_favorite"
+        return "cfb_total_movers"
+    if is_cfb_spread_movers_row(row):
+        return "cfb_spread_movers"
     if is_spread_t0_row(row):
         return "spread_t0"
     if is_tennis_t0_dog_row(row):
@@ -724,21 +749,41 @@ def leftover_status(cluster: dict) -> str:
         return LEFTOVER_NO
     kind = str(cluster.get("kind") or "")
     intent = str(cluster.get("intent") or "")
-    if kind in {"cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"} or intent in {INTENT_CFB, INTENT_SPREAD, INTENT_DOG, INTENT_SPREAD_F, INTENT_TOTAL_G}:
+    if kind in {
+        "cfb_favorite",
+        "cfb_total_movers",
+        "cfb_spread_movers",
+        "spread_t0",
+        "tennis_t0_dog",
+        "tennis_t0_spread",
+        "soccer_t0_total",
+    } or intent in {
+        INTENT_CFB,
+        INTENT_CFB_LEGACY,
+        INTENT_SPREAD_H,
+        INTENT_SPREAD,
+        INTENT_DOG,
+        INTENT_SPREAD_F,
+        INTENT_TOTAL_G,
+    }:
         return LEFTOVER_NO
     return LEFTOVER_YES
 
 
 def system_of(cluster: dict) -> str:
-    """A lock (incl. leftover/flatten), B tennis crossover, C CFB favorite, D T0 spreads.
+    """A lock, B tennis crossover, C CFB total movers, D T0 spreads, … H CFB spreads.
 
     Lock leftover and flatten stay on A (lock-bot), not B. Older Strategy B / strategy_b
-    labels map to B Tennis crossover.
+    labels map to B Tennis crossover. Legacy cfb_favorite rows stay letter C.
     """
     kind = str(cluster.get("kind") or "")
     intent = str(cluster.get("intent") or "")
     system = str(cluster.get("system") or cluster.get("source") or "").strip().lower().replace(" ", "_")
-    if kind == "cfb_favorite" or intent == INTENT_CFB or system in {"c", "cfb_favorite", "cfb-favorite"}:
+    if (
+        kind in {"cfb_favorite", "cfb_total_movers"}
+        or intent in {INTENT_CFB, INTENT_CFB_LEGACY}
+        or system in {"c", "cfb_favorite", "cfb-favorite", "cfb_total_movers", "cfb-total-movers"}
+    ):
         return "C"
     if kind == "spread_t0" or intent == INTENT_SPREAD or system in {"d", "spread_t0", "spread-t0"}:
         return "D"
@@ -748,6 +793,12 @@ def system_of(cluster: dict) -> str:
         return "F"
     if kind == "soccer_t0_total" or intent == INTENT_TOTAL_G or system in {"g", "soccer_t0_total", "soccer-t0-total"}:
         return "G"
+    if (
+        kind == "cfb_spread_movers"
+        or intent == INTENT_SPREAD_H
+        or system in {"h", "cfb_spread_movers", "cfb-spread-movers"}
+    ):
+        return "H"
     if (
         cluster.get("is_b")
         or kind == "b"
@@ -3150,11 +3201,13 @@ def cluster_directional_attempts(orders: list[dict], watch: dict | None, *, kind
     """One cluster per C or D game. A filled Yes is the intended trade, not leftover."""
     by_key: dict[str, dict] = {}
     check = {
+        "cfb_total_movers": is_cfb_favorite_row,
         "cfb_favorite": is_cfb_favorite_row,
         "spread_t0": is_spread_t0_row,
         "tennis_t0_dog": is_tennis_t0_dog_row,
         "tennis_t0_spread": is_tennis_t0_spread_row,
         "soccer_t0_total": is_soccer_t0_total_row,
+        "cfb_spread_movers": is_cfb_spread_movers_row,
     }.get(kind) or is_spread_t0_row
     for row in orders:
         if not check(row):
@@ -3167,9 +3220,9 @@ def cluster_directional_attempts(orders: list[dict], watch: dict | None, *, kind
             {
                 "claim": {
                     "bet_key": raw_key,
-                    "sport": row.get("sport") or ("college football" if kind == "cfb_favorite" else "tennis" if kind in {"tennis_t0_dog", "tennis_t0_spread"} else "soccer" if kind == "soccer_t0_total" else ""),
+                    "sport": row.get("sport") or ("college football" if kind in {"cfb_favorite", "cfb_total_movers", "cfb_spread_movers"} else "tennis" if kind in {"tennis_t0_dog", "tennis_t0_spread"} else "soccer" if kind == "soccer_t0_total" else ""),
                     "game": row.get("game") or "",
-                    "market_type": "moneyline" if kind in {"cfb_favorite", "tennis_t0_dog"} else "total" if kind == "soccer_t0_total" else "spread",
+                    "market_type": "moneyline" if kind in {"tennis_t0_dog"} else "total" if kind in {"soccer_t0_total", "cfb_total_movers", "cfb_favorite"} else "spread",
                     "side": row.get("side_label") or "",
                 },
                 "events": [],
@@ -3419,11 +3472,13 @@ def load_watch_settlements() -> list[dict]:
     """C/D/E close-hook notes already have result=yes/no on the ticker. B postponed is not settled."""
     rows: list[dict] = []
     files = {
+        "cfb_total_movers": RAW / "cfb_total_movers_watch.json",
         "cfb_favorite": RAW / "cfb_favorite_watch.json",
         "spread_t0": RAW / "spread_t0_watch.json",
         "tennis_t0_dog": RAW / "tennis_t0_dog_watch.json",
         "tennis_t0_spread": RAW / "tennis_t0_spread_watch.json",
         "soccer_t0_total": RAW / "soccer_t0_total_watch.json",
+        "cfb_spread_movers": RAW / "cfb_spread_movers_watch.json",
         "tennis_crossover": RAW / "strategy_b_watch.json",
     }
     for kind, path in files.items():
@@ -4155,11 +4210,12 @@ def enrich_cluster(cluster: dict, by_id: dict, io_list: list[dict]) -> dict:
     key = str(claim.get("bet_key") or "")
     info = parse_key(key)
     is_b = cluster.get("kind") == "b" or key.startswith("tennis-b")
-    is_cfb = cluster.get("kind") == "cfb_favorite" or key.startswith("cfb-favorite")
+    is_cfb = cluster.get("kind") in {"cfb_favorite", "cfb_total_movers"} or key.startswith("cfb-favorite") or key.startswith("cfb-total-movers")
     is_spread = cluster.get("kind") == "spread_t0" or key.startswith("spread-t0")
     is_dog = cluster.get("kind") == "tennis_t0_dog" or key.startswith("tennis-t0-dog")
     is_f_spread = cluster.get("kind") == "tennis_t0_spread" or key.startswith("tennis-t0-spread")
     is_g_total = cluster.get("kind") == "soccer_t0_total" or key.startswith("soccer-t0-total")
+    is_h_spread = cluster.get("kind") == "cfb_spread_movers" or key.startswith("cfb-spread-movers")
     sends = [row for row in events if row.get("event") == "sent"]
     skips = [row for row in events if row.get("event") == "skip"]
     flats = [row for row in events if row.get("event") in {"flatten_filled", "flatten_miss"}]
@@ -4308,6 +4364,9 @@ def enrich_cluster(cluster: dict, by_id: dict, io_list: list[dict]) -> dict:
         leftover_stack = False
     elif is_g_total:
         intent = INTENT_TOTAL_G
+        leftover_stack = False
+    elif is_h_spread:
+        intent = INTENT_SPREAD_H
         leftover_stack = False
     elif is_b:
         intent = INTENT_TENNIS if intent == INTENT_B else intent
@@ -5318,7 +5377,9 @@ def ledger_row(cluster: dict) -> list:
         INTENT_INCOMPLETE_LOCK: "yes lock incomplete",
         INTENT_B: "yes tennis crossover",
         INTENT_TENNIS: "yes tennis crossover",
-        INTENT_CFB: "yes C cfb favorite",
+        INTENT_CFB: "yes C cfb total movers",
+        INTENT_CFB_LEGACY: "yes C cfb favorite",
+        INTENT_SPREAD_H: "yes H cfb spread movers",
         INTENT_SPREAD: "yes D T0 spread",
         INTENT_DOG: "yes E tennis T0 dog",
         INTENT_LEFTOVER: leftover_intent,
@@ -6061,7 +6122,7 @@ def changelog_events(clusters: list[dict], novig_fills: list[dict]) -> list[dict
     rows = snap.get("rows") or {}
     if updated and rows:
         bits = []
-        for sid, letter in (("lock", "A"), ("tennis_crossover", "B"), ("cfb_favorite", "C"), ("spread_t0", "D")):
+        for sid, letter in (("lock", "A"), ("tennis_crossover", "B"), ("cfb_total_movers", "C"), ("spread_t0", "D")):
             node = rows.get(sid) or {}
             bits.append(f"{letter} max_open={node.get('max_open')} on={node.get('on')}")
         events.append({
@@ -6950,9 +7011,12 @@ def main() -> int:
 
     lock_raw = cluster_lock_attempts(orders)
     b_raw = cluster_b_attempts(orders, watch)
-    cfb_watch = load_json(RAW / "cfb_favorite_watch.json") or {}
+    cfb_watch = load_json(RAW / "cfb_total_movers_watch.json") or load_json(RAW / "cfb_favorite_watch.json") or {}
     spread_watch = load_json(RAW / "spread_t0_watch.json") or {}
-    cfb_raw = cluster_directional_attempts(orders, cfb_watch, kind="cfb_favorite", prefix="cfb-favorite")
+    cfb_raw = cluster_directional_attempts(orders, cfb_watch, kind="cfb_total_movers", prefix="cfb-total-movers")
+    cfb_legacy = cluster_directional_attempts(orders, load_json(RAW / "cfb_favorite_watch.json") or {}, kind="cfb_favorite", prefix="cfb-favorite")
+    if cfb_legacy:
+        cfb_raw = list(cfb_raw) + list(cfb_legacy)
     spread_raw = cluster_directional_attempts(orders, spread_watch, kind="spread_t0", prefix="spread-t0")
     dog_watch = load_json(RAW / "tennis_t0_dog_watch.json") or {}
     dog_raw = cluster_directional_attempts(orders, dog_watch, kind="tennis_t0_dog", prefix="tennis-t0-dog")
@@ -6960,9 +7024,12 @@ def main() -> int:
     f_raw = cluster_directional_attempts(orders, f_watch, kind="tennis_t0_spread", prefix="tennis-t0-spread")
     g_watch = load_json(RAW / "soccer_t0_total_watch.json") or {}
     g_raw = cluster_directional_attempts(orders, g_watch, kind="soccer_t0_total", prefix="soccer-t0-total")
+    h_watch = load_json(RAW / "cfb_spread_movers_watch.json") or {}
+    h_raw = cluster_directional_attempts(orders, h_watch, kind="cfb_spread_movers", prefix="cfb-spread-movers")
     print(
         f"lock clusters {len(lock_raw)} B clusters {len(b_raw)} "
         f"C clusters {len(cfb_raw)} D clusters {len(spread_raw)} E clusters {len(dog_raw)} "
+        f"F clusters {len(f_raw)} G clusters {len(g_raw)} H clusters {len(h_raw)} "
         f"F clusters {len(f_raw)} G clusters {len(g_raw)}",
         flush=True,
     )
@@ -6982,7 +7049,7 @@ def main() -> int:
     for cluster in b_raw:
         enrich_cluster(cluster, by_id, io_list)
         b_enriched.extend(split_b_extras(cluster))
-    cd_enriched = [enrich_cluster(c, by_id, io_list) for c in cfb_raw + spread_raw + dog_raw + f_raw + g_raw]
+    cd_enriched = [enrich_cluster(c, by_id, io_list) for c in cfb_raw + spread_raw + dog_raw + f_raw + g_raw + h_raw]
     ghosts = ghost_clusters(lock_enriched)
     posted_lock = [c for c in lock_enriched if c.get("posted") or c.get("n_fill_legs")]
     pending = posted_lock + b_enriched + cd_enriched

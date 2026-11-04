@@ -141,7 +141,7 @@ def test_html_has_svg_sortable_no_ask_plain():
     systems = [
         {"letter": "A", "name": "Lock gap (cap 0.99)", "on": "on", "stake": "4", "max_open": "3", "open": "0", "pid": "1", "alive": True, "last": "ok"},
         {"letter": "B", "name": "Tennis crossover", "on": "on", "stake": "4", "max_open": "4", "open": "1", "pid": "2", "alive": True, "last": "ok"},
-        {"letter": "C", "name": "College football favorite", "on": "on", "stake": "4", "max_open": "4", "open": "0", "pid": "3", "alive": True, "last": "ok"},
+        {"letter": "C", "name": "College Football total points movers", "on": "on", "stake": "4", "max_open": "4", "open": "0", "pid": "3", "alive": True, "last": "ok"},
         {"letter": "D", "name": "T0 spreads (on except NFL)", "on": "on", "stake": "4", "max_open": "4", "open": "0", "pid": "4", "alive": True, "last": "ok"},
         {"letter": "E", "name": "Tennis T0 dog", "on": "on", "stake": "1", "max_open": "2", "open": "0", "pid": "5", "alive": True, "last": "ok"},
     ]

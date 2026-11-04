@@ -1685,6 +1685,121 @@ def build_flatten_spec(
     )
 
 
+def build_limit_sell_spec(
+    *,
+    venue: str,
+    instrument: str,
+    held_side: str,
+    pay: Decimal,
+    held_intent: str | None = None,
+    tif: str = "gtc",
+    qty: Decimal | int | str | None = None,
+) -> dict | None:
+    """Resting or aggressive sell of a held Yes/No at cash `pay`.
+
+    Kalshi held Yes → ask at pay. Held No → bid Yes at 1-pay (closes No).
+    Gemini / Polymarket sell the held outcome at pay. Used by C/H mover
+    take-profit GTC (paid + offset) and by aggressive market dumps.
+    """
+    venue = str(venue or "").lower()
+    held_side = str(held_side or "").lower()
+    if not instrument or held_side not in ("yes", "no"):
+        return None
+    if pay is None or pay <= 0 or pay >= 1:
+        return None
+    try:
+        count = Decimal(str(qty if qty is not None else "1"))
+    except Exception:
+        count = Decimal("1")
+    if count <= 0:
+        return None
+    count_txt = format(count.quantize(Decimal("0.01")), "f")
+    if venue == "kalshi":
+        # Held Yes → ask at pay (sell Yes). Held No → bid Yes at pay (close No).
+        if held_side == "yes":
+            price = pay.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+            side = "ask"
+        else:
+            price = pay.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+            side = "bid"
+        if price <= 0 or price >= 1:
+            return None
+        body = {
+            "ticker": instrument,
+            "client_order_id": str(uuid.uuid4()),
+            "side": side,
+            "count": count_txt,
+            "price": format(price, "f"),
+            "time_in_force": _kalshi_tif(tif),
+            "self_trade_prevention_type": "taker_at_cross",
+            "post_only": False,
+        }
+        return {
+            "venue": "kalshi",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(pay, "f"),
+            "limit": body["price"],
+            "size": count_txt,
+            "tif": tif,
+            "body": body,
+            "exit": "limit_sell",
+        }
+    if venue == "gemini":
+        price = pay.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
+        if price <= 0 or price >= 1:
+            return None
+        body = {
+            "symbol": instrument,
+            "orderType": "limit",
+            "side": "sell",
+            "quantity": format(count.quantize(Decimal("1")), "f") if count == count.to_integral_value() else count_txt,
+            "price": format(price, "f"),
+            "outcome": held_side,
+            "timeInForce": _gemini_tif(tif),
+        }
+        return {
+            "venue": "gemini",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(pay, "f"),
+            "limit": body["price"],
+            "size": body["quantity"],
+            "tif": tif,
+            "body": body,
+            "exit": "limit_sell",
+        }
+    if venue == "polymarket":
+        sell_intent = _poly_sell_intent(held_intent or "")
+        if not sell_intent:
+            return None
+        try:
+            api_price = polymarket_api_price(sell_intent, pay)
+        except ValueError:
+            return None
+        if api_price < Decimal("0.01") or api_price > Decimal("0.99"):
+            return None
+        body = polymarket_order_body(instrument, sell_intent, api_price, tif=tif)
+        if count != 1:
+            try:
+                body["quantity"] = max(1, int(count))
+            except (TypeError, ValueError):
+                pass
+        return {
+            "venue": "polymarket",
+            "instrument": instrument,
+            "outcome": held_side,
+            "pay": format(pay, "f"),
+            "limit": body["price"]["value"],
+            "size": str(body.get("quantity") or "1"),
+            "tif": tif,
+            "body": body,
+            "exit": "limit_sell",
+            "intent": sell_intent,
+        }
+    return None
+
+
 def build_market_sell_spec(
     *,
     venue: str,
@@ -1700,77 +1815,25 @@ def build_market_sell_spec(
         return None
     if venue == "kalshi":
         # Held Yes → ask low (sell Yes). Held No → bid high (buy Yes closes No).
-        if held_side == "yes":
-            price = MARKET_SELL_FLOOR.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
-            side = "ask"
-            pay = MARKET_SELL_FLOOR
-        else:
-            price = MARKET_BUY_CEILING.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
-            side = "bid"
+        pay = MARKET_SELL_FLOOR if held_side == "yes" else MARKET_BUY_CEILING
+    elif venue in {"gemini", "polymarket"}:
+        sell_intent = _poly_sell_intent(held_intent or "") if venue == "polymarket" else None
+        if venue == "polymarket" and not sell_intent:
+            return None
+        if venue == "polymarket" and sell_intent != "ORDER_INTENT_SELL_LONG":
             pay = MARKET_BUY_CEILING
-        body = {
-            "ticker": instrument,
-            "client_order_id": str(uuid.uuid4()),
-            "side": side,
-            "count": "1.00",
-            "price": format(price, "f"),
-            "time_in_force": _kalshi_tif(tif),
-            "self_trade_prevention_type": "taker_at_cross",
-            "post_only": False,
-        }
-        return {
-            "venue": "kalshi",
-            "instrument": instrument,
-            "outcome": held_side,
-            "pay": format(pay, "f"),
-            "limit": body["price"],
-            "tif": tif,
-            "body": body,
-            "exit": "market_sell",
-        }
-    if venue == "gemini":
-        price = MARKET_SELL_FLOOR.quantize(KALSHI_TICK, rounding=ROUND_DOWN)
-        body = {
-            "symbol": instrument,
-            "orderType": "limit",
-            "side": "sell",
-            "quantity": "1",
-            "price": format(price, "f"),
-            "outcome": held_side,
-            "timeInForce": _gemini_tif(tif),
-        }
-        return {
-            "venue": "gemini",
-            "instrument": instrument,
-            "outcome": held_side,
-            "pay": format(MARKET_SELL_FLOOR, "f"),
-            "limit": body["price"],
-            "tif": tif,
-            "body": body,
-            "exit": "market_sell",
-        }
-    if venue == "polymarket":
-        sell_intent = _poly_sell_intent(held_intent or "")
-        if not sell_intent:
-            return None
-        # Sell long hits bids at floor; sell short lifts asks near ceiling of long price.
-        cash_pay = MARKET_SELL_FLOOR if sell_intent == "ORDER_INTENT_SELL_LONG" else MARKET_BUY_CEILING
-        try:
-            api_price = polymarket_api_price(sell_intent, cash_pay)
-        except ValueError:
-            return None
-        body = polymarket_order_body(instrument, sell_intent, api_price, tif=tif)
-        return {
-            "venue": "polymarket",
-            "instrument": instrument,
-            "outcome": held_side,
-            "pay": format(cash_pay, "f"),
-            "limit": body["price"]["value"],
-            "tif": tif,
-            "body": body,
-            "exit": "market_sell",
-        }
-    return None
+        else:
+            pay = MARKET_SELL_FLOOR
+    else:
+        return None
+    return build_limit_sell_spec(
+        venue=venue,
+        instrument=instrument,
+        held_side=held_side,
+        pay=pay,
+        held_intent=held_intent,
+        tif=tif,
+    )
 
 
 def fee_kalshi_style(pay: Decimal) -> Decimal:

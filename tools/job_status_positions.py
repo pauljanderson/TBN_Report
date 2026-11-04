@@ -56,29 +56,34 @@ STAMP_FILE_URL = (
 )
 WATCH = {
     "tennis_crossover": RAW / "strategy_b_watch.json",
+    "cfb_total_movers": RAW / "cfb_total_movers_watch.json",
     "cfb_favorite": RAW / "cfb_favorite_watch.json",
     "spread_t0": RAW / "spread_t0_watch.json",
     "tennis_t0_dog": RAW / "tennis_t0_dog_watch.json",
     "tennis_t0_spread": RAW / "tennis_t0_spread_watch.json",
     "soccer_t0_total": RAW / "soccer_t0_total_watch.json",
+    "cfb_spread_movers": RAW / "cfb_spread_movers_watch.json",
 }
 LETTER = {
     "lock": "A",
     "tennis_crossover": "B",
+    "cfb_total_movers": "C",
     "cfb_favorite": "C",
     "spread_t0": "D",
     "tennis_t0_dog": "E",
     "tennis_t0_spread": "F",
     "soccer_t0_total": "G",
+    "cfb_spread_movers": "H",
 }
 DISPLAY = {
     "lock": "Lock gap",
     "tennis_crossover": "Tennis crossover",
-    "cfb_favorite": "College football favorite",
+    "cfb_total_movers": "College Football total points movers",
     "spread_t0": "T0 spreads",
     "tennis_t0_dog": "Tennis T0 dog",
     "tennis_t0_spread": "Tennis spread",
     "soccer_t0_total": "Soccer total",
+    "cfb_spread_movers": "College Football spread movers",
 }
 VENUE_LABEL = {
     "kalshi": "Kalshi",
@@ -316,8 +321,8 @@ def parse_ticker_game(ticker: str) -> tuple[str, str, str]:
 def system_from_bet_key(key: str) -> str:
     text = str(key or "")
     head = text.split("\t", 1)[0].strip().lower()
-    if head in {"cfb-favorite", "cfb_favorite"}:
-        return "cfb_favorite"
+    if head in {"cfb-total-movers", "cfb_total_movers", "cfb-favorite", "cfb_favorite"}:
+        return "cfb_total_movers"
     if head in {"spread-t0", "spread_t0"}:
         return "spread_t0"
     if head in {"tennis-t0-dog", "tennis_t0_dog"}:
@@ -326,6 +331,8 @@ def system_from_bet_key(key: str) -> str:
         return "tennis_t0_spread"
     if head in {"soccer-t0-total", "soccer_t0_total"}:
         return "soccer_t0_total"
+    if head in {"cfb-spread-movers", "cfb_spread_movers"}:
+        return "cfb_spread_movers"
     if head in {"tennis-b", "tennis_crossover", "tennis-crossover"}:
         return "tennis_crossover"
     if head in {"lock"}:
@@ -684,7 +691,7 @@ def attach_intent(ticket: dict, intent: dict[tuple[str, str], dict]) -> dict:
         sid = str(ticket.get("sid") or "")
         letter = str(ticket.get("letter") or _sid_letter(sid) or "unknown")
         if not sid:
-            sid = {"A": "lock", "B": "tennis_crossover", "C": "cfb_favorite", "D": "spread_t0", "E": "tennis_t0_dog", "F": "tennis_t0_spread"}.get(letter, "")
+            sid = {"A": "lock", "B": "tennis_crossover", "C": "cfb_total_movers", "D": "spread_t0", "E": "tennis_t0_dog", "F": "tennis_t0_spread", "G": "soccer_t0_total", "H": "cfb_spread_movers"}.get(letter, "")
         name = _sid_name(sid)
         sport = str(ticket.get("sport") or sport_from_ticker(ident))
         game = str(ticket.get("game") or ticket.get("title") or game_guess or ident)
@@ -1736,7 +1743,7 @@ def current_pids() -> dict:
         jobs = ps.classify_jobs()
         out = {}
         for sid, label in (
-            ("cfb_favorite", "C"),
+            ("cfb_total_movers", "C"),
             ("spread_t0", "D"),
             ("tennis_crossover", "B"),
             ("tennis_t0_dog", "E"),

@@ -50,21 +50,25 @@ JOB_STATUS = STAMP / "job_status.html"
 ORDERS = RAW / "orders.jsonl"
 WATCH = {
     "tennis_crossover": RAW / "strategy_b_watch.json",
+    "cfb_total_movers": RAW / "cfb_total_movers_watch.json",
     "cfb_favorite": RAW / "cfb_favorite_watch.json",
     "spread_t0": RAW / "spread_t0_watch.json",
     "tennis_t0_dog": RAW / "tennis_t0_dog_watch.json",
     "tennis_t0_spread": RAW / "tennis_t0_spread_watch.json",
     "soccer_t0_total": RAW / "soccer_t0_total_watch.json",
+    "cfb_spread_movers": RAW / "cfb_spread_movers_watch.json",
 }
 LOCKS = {
     "tennis_crossover": RAW / "strategy_b.lock",
+    "cfb_total_movers": RAW / "cfb_total_movers.lock",
     "cfb_favorite": RAW / "cfb_favorite.lock",
     "spread_t0": RAW / "spread_t0.lock",
     "tennis_t0_dog": RAW / "tennis_t0_dog.lock",
     "tennis_t0_spread": RAW / "tennis_t0_spread.lock",
     "soccer_t0_total": RAW / "soccer_t0_total.lock",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.lock",
 }
-CD_OPEN_STAGES = {"waiting_t0", "filled", "holding", "open"}
+CD_OPEN_STAGES = {"waiting_t0", "filled", "holding", "open", "exit_gtc_resting"}
 B_OPEN_STAGES = {
     "waiting_t0",
     "t0_filled_waiting_50_cross",
@@ -75,11 +79,13 @@ B_OPEN_STAGES = {
 }
 PHANTOM_STAGE = {
     "tennis_crossover": "done",
+    "cfb_total_movers": "settled",
     "cfb_favorite": "settled",
     "spread_t0": "settled",
     "tennis_t0_dog": "settled",
     "tennis_t0_spread": "settled",
     "soccer_t0_total": "settled",
+    "cfb_spread_movers": "settled",
 }
 FINAL_STATE_WORDS = {
     "resolved",
@@ -1162,7 +1168,7 @@ def classify_match(
         why = "no venue qty"
 
     shown = qty_held if qty_held > 0 else (evidence if real and evidence > 0 else (Decimal("1") if recent else Decimal("0")))
-    guess = {"tennis_crossover": "B", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G"}.get(sid, sid)
+    guess = {"tennis_crossover": "B", "cfb_total_movers": "C", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G", "cfb_spread_movers": "H"}.get(sid, sid)
     return {
         "sid": sid,
         "letter": guess,
@@ -1261,7 +1267,7 @@ def _ticket_from_classified(item: dict) -> dict:
     sid = str(item.get("sid") or live.get("_sid") or "")
     letter = str(
         item.get("letter")
-        or {"tennis_crossover": "B", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G"}.get(sid, "")
+        or {"tennis_crossover": "B", "cfb_total_movers": "C", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G", "cfb_spread_movers": "H"}.get(sid, "")
     )
     pay = _pay_side(tape.get("side"), live.get("pay"), last.get("side"), item.get("side"))
     return {
@@ -1338,7 +1344,7 @@ def open_set_tickets(
             add(_ticket_from_book_row(row, "polymarket"))
 
     watch_map = watches if watches is not None else {}
-    for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"):
+    for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total", "cfb_spread_movers"):
         status = watch_map.get(sid)
         if not isinstance(status, dict):
             continue
@@ -1449,7 +1455,7 @@ def sync_all(*, snapshot: dict | None = None, mutate: bool = True) -> dict:
     snap = snapshot if snapshot is not None else venue_snapshot()
     tape = load_tape_index()
     result = {"snapshot": snap, "systems": {}, "changed": []}
-    for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"):
+    for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total", "cfb_spread_movers"):
         status = load_watch(sid)
         named = house_open_named(sid, status)
         classified = classify_system(sid, status, snap, tape=tape)
@@ -1487,11 +1493,11 @@ def restore_cd_caps() -> dict:
     import prediction_systems as ps
 
     cfgs = ps.load_config()
-    before = {sid: cfgs[sid].max_open for sid in ("cfb_favorite", "spread_t0")}
-    cfgs["cfb_favorite"].max_open = 2
+    before = {sid: cfgs[sid].max_open for sid in ("cfb_total_movers", "spread_t0")}
+    cfgs["cfb_total_movers"].max_open = 2
     cfgs["spread_t0"].max_open = 2
     ps.save_config(cfgs)
-    return {"before": before, "after": {"cfb_favorite": 2, "spread_t0": 2}}
+    return {"before": before, "after": {"cfb_total_movers": 2, "spread_t0": 2}}
 
 
 def reload_bots() -> dict:
@@ -1499,7 +1505,7 @@ def reload_bots() -> dict:
     import prediction_systems as ps
 
     notes = {}
-    for sid in ("cfb_favorite", "spread_t0", "tennis_crossover"):
+    for sid in ("cfb_total_movers", "spread_t0", "tennis_crossover"):
         stopped = ps.stop_system(sid)
         notes[sid] = f"stopped {stopped or 'none'}"
         time.sleep(0.3)
@@ -1510,7 +1516,7 @@ def start_bots() -> dict:
     import prediction_systems as ps
 
     notes = {}
-    for sid in ("cfb_favorite", "spread_t0", "tennis_crossover"):
+    for sid in ("cfb_total_movers", "spread_t0", "tennis_crossover"):
         notes[sid] = ps.reload_system(sid)
         time.sleep(0.4)
     return notes
@@ -1533,7 +1539,7 @@ def venue_contracts(snapshot: dict, classified: dict) -> list[dict]:
     """Every venue book row plus system guess from house tape."""
     guess_by_ident = {}
     for sid, blob in classified.items():
-        letter = {"tennis_crossover": "B", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G"}.get(sid, sid)
+        letter = {"tennis_crossover": "B", "cfb_total_movers": "C", "cfb_favorite": "C", "spread_t0": "D", "tennis_t0_dog": "E", "tennis_t0_spread": "F", "soccer_t0_total": "G", "cfb_spread_movers": "H"}.get(sid, sid)
         for item in blob.get("classified") or []:
             if not item.get("house_open"):
                 continue
@@ -1588,13 +1594,14 @@ def write_report(bundle: dict, *, before: dict, caps: dict, reload_notes: dict, 
     labels = (
         ("lock", "A", "Lock gap"),
         ("tennis_crossover", "B", "Tennis crossover"),
-        ("cfb_favorite", "C", "College football favorite"),
+        ("cfb_total_movers", "C", "College Football total points movers"),
         ("spread_t0", "D", "T0 spreads"),
         ("tennis_t0_dog", "E", "Tennis T0 dog"),
         ("tennis_t0_spread", "F", "Tennis spread"),
         ("soccer_t0_total", "G", "Soccer total"),
+        ("cfb_spread_movers", "H", "College Football spread movers"),
     )
-    paul = {"lock": "0 / 3", "tennis_crossover": 2, "cfb_favorite": 5, "spread_t0": 2}
+    paul = {"lock": "0 / 3", "tennis_crossover": 2, "cfb_total_movers": 5, "spread_t0": 2}
     if isinstance(before, dict) and before.get("paul"):
         paul.update(before.get("paul") or {})
     for sid, letter, name in labels:
@@ -1771,12 +1778,13 @@ def current_pids() -> dict:
     jobs = ps.classify_jobs()
     out = {}
     for sid, label in (
-        ("cfb_favorite", "C"),
+        ("cfb_total_movers", "C"),
         ("spread_t0", "D"),
         ("tennis_crossover", "B"),
         ("tennis_t0_dog", "E"),
         ("tennis_t0_spread", "F"),
         ("soccer_t0_total", "G"),
+        ("cfb_spread_movers", "H"),
     ):
         pids = ps.pids_for(sid, jobs)
         out[label] = pids[0] if pids else "—"
@@ -1790,7 +1798,7 @@ def current_pids() -> dict:
 
 def capture_thought() -> dict:
     thought = {}
-    for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"):
+    for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total", "cfb_spread_movers"):
         status = load_watch(sid)
         thought[sid] = status.get("currently_open")
         if thought[sid] is None:
@@ -1801,7 +1809,7 @@ def capture_thought() -> dict:
         thought["lock"] = live_lock_orders.lock_open_line(len(live_lock_orders.open_lock_keys()))
     except Exception:
         thought["lock"] = "0 / 3"
-    thought["paul_20_04"] = {"lock": "0 / 3", "tennis_crossover": 2, "cfb_favorite": 5, "spread_t0": 2}
+    thought["paul_20_04"] = {"lock": "0 / 3", "tennis_crossover": 2, "cfb_total_movers": 5, "spread_t0": 2}
     return thought
 
 
@@ -1830,7 +1838,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"job_status write skipped {type(exc).__name__}", file=sys.stderr)
     print(f"lock {bundle.get('lock_line')}")
-    for sid in ("tennis_crossover", "cfb_favorite", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total"):
+    for sid in ("tennis_crossover", "cfb_total_movers", "spread_t0", "tennis_t0_dog", "tennis_t0_spread", "soccer_t0_total", "cfb_spread_movers"):
         blob = (bundle.get("systems") or {}).get(sid) or {}
         print(f"{sid} house={blob.get('house_n')} venue={blob.get('venue_n')}")
     print(PAGE)
