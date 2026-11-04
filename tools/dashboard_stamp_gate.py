@@ -40,12 +40,17 @@ FALSE_GIBSON_WIRE = re.compile(
     re.IGNORECASE,
 )
 CORRECTED_NOTE = "Corrected Gibson/Oliynykova lock"
-# Drive failure mode: today KPI / A Lock gap both-wins sum ≈ +$2.40.
+# Drive failure mode: today KPI / A Lock gap both-wins sum ≈ +$2.40 (pre-Gibson
+# repair) or ≈ +$2.04 (Gibson repaired, Imamura+Teichmann still both-wins).
 FALSE_TODAY_PNL = Decimal("2.40")
+FALSE_TODAY_PNL_AFTER_GIBSON = Decimal("2.04")
 # Corrected day for the three 2026-11-03 A locks ≈ +$0.07.
 EXPECTED_THREE_LOCK_PNL = Decimal("0.07")
 THREE_LOCK_TOL = Decimal("0.08")
 GIBSON_PAIR_TOL = Decimal("0.02")
+# Sum of trades-today P&L cells for the three locks must not be the both-wins
+# ~$2 class (KPI can hide it if only cluster.realized is checked).
+THREE_LOCK_LEG_SUM_MAX = Decimal("0.50")
 
 
 def writer_has_size_at_price() -> bool:
@@ -210,8 +215,8 @@ def today_kpi_pnl(html: str) -> Decimal | None:
     return _parse_money(m.group(1))
 
 
-def gibson_pair_pnl_from_trades_today(html: str) -> Decimal | None:
-    """Sum P&L if settled for Gibson rows in Trades today."""
+def _trades_today_match_pnl_sum(html: str, needles: tuple[str, ...]) -> Decimal | None:
+    """Sum P&L if settled for Trades today rows whose Match contains any needle."""
     section = _section_after_heading(html, "Trades today")
     rows = _table_rows(section)
     if len(rows) < 2:
@@ -226,7 +231,8 @@ def gibson_pair_pnl_from_trades_today(html: str) -> Decimal | None:
     for row in rows[1:]:
         if len(row) <= max(match_i, pnl_i):
             continue
-        if "gibson" not in row[match_i].lower():
+        match = row[match_i].lower()
+        if not any(needle in match for needle in needles):
             continue
         pnl = _parse_money(row[pnl_i])
         if pnl is None:
@@ -234,6 +240,18 @@ def gibson_pair_pnl_from_trades_today(html: str) -> Decimal | None:
         total += pnl
         n += 1
     return total if n else None
+
+
+def gibson_pair_pnl_from_trades_today(html: str) -> Decimal | None:
+    """Sum P&L if settled for Gibson rows in Trades today."""
+    return _trades_today_match_pnl_sum(html, ("gibson", "oliynykova"))
+
+
+def three_lock_leg_pnl_sum(html: str) -> Decimal | None:
+    """Sum trades-today leg P&L for Gibson + Imamura + Teichmann."""
+    return _trades_today_match_pnl_sum(
+        html, ("gibson", "oliynykova", "imamura", "teichmann", "garland", "leong")
+    )
 
 
 def three_lock_games_present(html: str) -> bool:
@@ -244,6 +262,16 @@ def three_lock_games_present(html: str) -> bool:
         and "imamura" in low
         and "teichmann" in low
     )
+
+
+def _is_false_both_wins_today(pnl: Decimal | None) -> bool:
+    if pnl is None:
+        return False
+    if abs(pnl - FALSE_TODAY_PNL) <= Decimal("0.02"):
+        return True
+    if abs(pnl - FALSE_TODAY_PNL_AFTER_GIBSON) <= Decimal("0.02"):
+        return True
+    return False
 
 
 def check(*, dashboard_html: Path | None = None, require_stamp: bool = False) -> dict:
@@ -285,6 +313,7 @@ def check(*, dashboard_html: Path | None = None, require_stamp: bool = False) ->
     report["today_a_pnl"] = today_a_lock_pnl(html)
     report["today_kpi_pnl"] = today_kpi_pnl(html)
     report["gibson_pair_pnl"] = gibson_pair_pnl_from_trades_today(html)
+    report["three_lock_leg_pnl"] = three_lock_leg_pnl_sum(html)
 
     if not report["stamp_size_at_price"]:
         report["ok"] = False
@@ -314,16 +343,17 @@ def check(*, dashboard_html: Path | None = None, require_stamp: bool = False) ->
     today_a = report["today_a_pnl"]
     today_kpi = report["today_kpi_pnl"]
     gibson_pair = report["gibson_pair_pnl"]
-    if today_a is not None and abs(today_a - FALSE_TODAY_PNL) <= Decimal("0.02"):
+    three_leg = report["three_lock_leg_pnl"]
+    if _is_false_both_wins_today(today_a):
         report["ok"] = False
         report["failures"].append(
-            f"Today A Lock gap with-fee P&L is {today_a} (false both-wins $2.40 class); "
+            f"Today A Lock gap with-fee P&L is {today_a} (false both-wins $2.40/$2.04 class); "
             f"expected ~+{EXPECTED_THREE_LOCK_PNL} for the three corrected locks"
         )
-    if today_kpi is not None and abs(today_kpi - FALSE_TODAY_PNL) <= Decimal("0.02"):
+    if _is_false_both_wins_today(today_kpi):
         report["ok"] = False
         report["failures"].append(
-            f"Today KPI with-fee P&L is {today_kpi} (false $2.40); "
+            f"Today KPI with-fee P&L is {today_kpi} (false $2.40/$2.04); "
             "not the corrected ~+$0.07 lock day"
         )
     if gibson_pair is not None and abs(gibson_pair) > GIBSON_PAIR_TOL:
@@ -336,13 +366,21 @@ def check(*, dashboard_html: Path | None = None, require_stamp: bool = False) ->
             )
     if three_lock_games_present(html) and today_a is not None:
         if abs(today_a - EXPECTED_THREE_LOCK_PNL) > THREE_LOCK_TOL:
-            # Only fail when clearly the false $2.40 class or large miss after Gibson present.
+            # Only fail when clearly the false $2.40/$2.04 class or large miss after Gibson present.
             if today_a >= Decimal("1.00") or today_a <= Decimal("-0.50"):
                 report["ok"] = False
                 report["failures"].append(
                     f"Today A P&L {today_a} with Gibson/Imamura/Teichmann present; "
                     f"expected ~+{EXPECTED_THREE_LOCK_PNL} (±{THREE_LOCK_TOL}) for three locks"
                 )
+    if three_lock_games_present(html) and three_leg is not None:
+        if three_leg >= THREE_LOCK_LEG_SUM_MAX:
+            report["ok"] = False
+            report["failures"].append(
+                f"Trades today Gibson/Imamura/Teichmann leg P&L sum is {three_leg} "
+                f"(both-wins class); expected ~+{EXPECTED_THREE_LOCK_PNL} pair-net "
+                f"(one win + one loss per lock, not six settled wins)"
+            )
     return report
 
 

@@ -877,8 +877,10 @@ def reload_system(sid: str, jobs: dict | None = None) -> str:
 def apply_process(sid: str, cfg: SystemCfg, jobs: dict | None = None, fields: dict | None = None) -> str:
     """Reload in place when the pid is alive. Start if on+dead. Stop if off.
 
-    Lock lives inside the pollers; on/off, max_open, and net_max are read from
-    systems.json each tick (same as D max). No lock restart.
+    Lock lives inside the pollers; on/off, max_open, size, stake_usd, and
+    net_max are read from systems.json each tick (same as D max). No lock
+    restart. --lock-size sets contracts per leg; --lock-stake is the cash
+    stake_usd cap; --lock-max is max open games/pairs (not contracts).
     Never spawn a second tennis crossover.
     """
     if sid == "lock":

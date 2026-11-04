@@ -1465,7 +1465,12 @@ def write_from_performance(
 
 
 def refresh_from_job_status(snap: dict | None) -> Path | None:
-    """Cheap live header: systems + open overlay. Does not rescore the tape. Does not ntfy."""
+    """Cheap live header: systems + open overlay. Does not rescore the tape. Does not ntfy.
+
+    Drive mtime moves when this runs, but Trades rebuilt stays on the last
+    write_orders_performance stamp. That is NOT a P&L rebuild — Paul must run
+    run_rebuild_kitchen_dashboard.bat / write_orders_performance.py for today A.
+    """
     cache = load_cache()
     if not cache:
         return None
@@ -1474,9 +1479,10 @@ def refresh_from_job_status(snap: dict | None) -> Path | None:
     if open_rows is None:
         open_rows = cache.get("open_rows") or []
     now = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
+    trades_at = cache.get("trades_at") or now
     payload = {
         "generated_at": now,
-        "trades_at": cache.get("trades_at") or now,
+        "trades_at": trades_at,
         "live_at": now,
         "day": cache.get("day") or midnight_et().strftime("%Y-%m-%d"),
         "prev_href": cache.get("prev_href") or dated_dashboard_name(midnight_et() - timedelta(days=1)),
