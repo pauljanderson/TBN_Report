@@ -790,6 +790,12 @@ def _systems_html(snap: dict) -> str:
         pid = str(item.get("pid") or "—")
         if extra:
             pid = f"{pid} extra {extra}"
+        last = item.get("last") or "—"
+        last_td = f"<td>{html.escape(str(last))}</td>"
+        if item.get("stale"):
+            last_td = (
+                f'<td class="stale">{html.escape(str(last))}</td>'
+            )
         cells = [
             item.get("letter") or "",
             item.get("name") or "",
@@ -799,9 +805,8 @@ def _systems_html(snap: dict) -> str:
             item.get("max_open") or "",
             _open_now_cell(item.get("open")),
             pid,
-            item.get("last") or "—",
         ]
-        tds = "".join(f"<td>{html.escape(str(cell))}</td>" for cell in cells)
+        tds = "".join(f"<td>{html.escape(str(cell))}</td>" for cell in cells) + last_td
         body.append(f"<tr>{tds}</tr>")
     if not body:
         body.append("<tr>" + "".join("<td></td>" for _ in headers) + "</tr>")
@@ -824,6 +829,9 @@ def _systems_html(snap: dict) -> str:
         "Turn A back with <code>python tools/prediction_job_control.py systems --lock on</code>. "
         "Open now is the count of Positions rows by system. "
         "Max is the cap (Lock gap 3, others default 2). "
+        "Last action uses watch <code>updated_at</code> (heartbeat). "
+        "PID up + <code>updated_at</code> &gt; 5 minutes old = "
+        "<strong>STALE</strong> (supervisor reloads that bot; never a second B). "
         "$1 ≈ 1 contract at these prices. Click column headers to sort. "
         '<a href="systems_abcd_cli_20261024.html">systems_abcd_cli_20261024.html</a> · '
         '<a href="system_e_t0_dog_20261025.html">system_e_t0_dog_20261025.html</a> · '
@@ -1550,6 +1558,7 @@ table.status th, table.status td {{ border: 1px solid #d8dee9; padding: 0.45rem 
 table.status th {{ width: 16rem; background: #f8fafc; }}
 .up {{ color: #166534; font-weight: 600; }}
 .down {{ color: #991b1b; font-weight: 600; }}
+.stale {{ background: #fef2f2; color: #991b1b; font-weight: 600; }}
 .updated {{ font-size: 1.1rem; margin: 0.25rem 0 1rem; }}
 __SORTABLE_TH_CSS__
 </style>
