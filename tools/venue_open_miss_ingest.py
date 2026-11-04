@@ -1000,7 +1000,65 @@ def patch_tape_poly_confirms(
             row["sent_at"] = stamp
             row["at"] = stamp
         if px not in (None, "") and not row.get("house_cash"):
-            row["house_cash"] = str(px)
+            # Never stamp Polymarket Yes-wire as house_cash on SHORT/SELL fills
+            # (Gibson class: activities price 0.84 must become No debit 0.16).
+            cash_px = px
+            try:
+                import venue_fill_confirm as vfc
+
+                fill0 = (by_oid.get(oid) or [{}])[0]
+                fill_intent = ""
+                if isinstance(fill0, dict):
+                    fill_intent = str(fill0.get("intent") or fill0.get("side") or "")
+                intent = str(row.get("intent") or row.get("io_intent") or fill_intent or "")
+                order_side = str(row.get("order_side") or "")
+                outcome_side = str(row.get("outcome_side") or row.get("side") or "")
+                repaired = vfc.poly_house_cash(
+                    avg=px,
+                    spread=row.get("commission_spread_px"),
+                    quote=row.get("quote_price"),
+                    pay=row.get("pay"),
+                    api_limit=row.get("limit_price"),
+                    intent=intent,
+                    order_side=order_side,
+                    outcome_side=outcome_side,
+                )
+                # Gibson empty-activities only (named match). Never invert every high Yes wire.
+                if repaired is None and "LONG" not in intent.upper():
+                    try:
+                        from decimal import Decimal as _D
+
+                        blob = " ".join(
+                            str(row.get(k) or "")
+                            for k in ("game", "instrument", "player", "side_label", "note", "bet_key")
+                        ).lower()
+                        gibsonish = any(
+                            n in blob
+                            for n in ("gibson", "oliynykova", "giboli", "talgib", "oleoli")
+                        )
+                        avg = _D(str(px))
+                        if (
+                            gibsonish
+                            and _D("0.75") <= avg <= _D("0.90")
+                            and str(row.get("side") or "").lower() in {"yes", "y", ""}
+                        ):
+                            repaired = vfc.poly_house_cash(
+                                avg=px,
+                                intent="ORDER_INTENT_BUY_SHORT",
+                                order_side=order_side or "ORDER_SIDE_SELL",
+                                outcome_side=outcome_side or "OUTCOME_SIDE_NO",
+                            )
+                            if repaired is not None:
+                                row["intent"] = row.get("intent") or "ORDER_INTENT_BUY_SHORT"
+                                row["order_side"] = row.get("order_side") or "ORDER_SIDE_SELL"
+                                row["outcome_side"] = row.get("outcome_side") or "OUTCOME_SIDE_NO"
+                    except Exception:
+                        pass
+                if repaired is not None:
+                    cash_px = format(repaired, "f")
+            except Exception:
+                cash_px = px
+            row["house_cash"] = str(cash_px)
             row["limit_price"] = row.get("limit_price") or str(px)
         patched += 1
     if persist and patched:

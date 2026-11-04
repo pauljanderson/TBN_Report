@@ -42,7 +42,8 @@ def test_size_at_touch_market_volume_is_labeled_not_touch():
     cell = w.size_at_touch_cell({"volume_fp": "500"})
     assert cell.startswith("500")
     assert "mkt, not touch" in cell
-    assert w.size_at_touch_cell({}) == "—"
+    assert w.size_at_touch_cell({}) == "unknown"
+    assert w.size_at_touch_cell({"size_at_touch": "—"}) == "unknown"
 
 
 def test_dashboard_today_row_shows_size_at_price():

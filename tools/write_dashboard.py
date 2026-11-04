@@ -677,7 +677,7 @@ def trade_table_rows(rows: list[dict]) -> list[list]:
             row.get("venue"),
             row.get("side"),
             row.get("wire"),
-            row.get("size_at_touch") or "—",
+            row.get("size_at_touch") or "unknown",
             row.get("fee"),
             row.get("after_fee"),
             row.get("http"),
@@ -871,14 +871,25 @@ def kpi_card(label: str, value: str, *, tone: str = "") -> str:
     )
 
 
-def kpi_strip(stats: dict) -> str:
+def kpi_strip(stats: dict, *, window: str = "today") -> str:
+    """window: today | inception — label P&L so inception cannot be read as today."""
     pnl = stats.get("pnl") or Decimal("0")
     tone = "up" if pnl > 0 else ("down" if pnl < 0 else "")
     roi = stats.get("roi")
     roi_tone = "up" if (roi is not None and roi > 0) else ("down" if (roi is not None and roi < 0) else "")
+    if str(window).lower().startswith("incept"):
+        pnl_label = "Inception with-fee P&L (all-time, NOT today)"
+        scope = "inception"
+    else:
+        pnl_label = "Today with-fee P&L (since midnight ET only)"
+        scope = "today"
     return (
+        f'<p class="window-banner" data-pnl-scope="{esc(scope)}">'
+        f'Showing: <strong>{esc(pnl_label.split("(")[0].strip())}</strong> — '
+        f'{"all-time from first fill; toggle Today for the calendar day" if scope == "inception" else "calendar day since midnight ET; toggle Inception for all-time"}'
+        f"</p>"
         '<div class="kpis">'
-        + kpi_card("With-fee P&L", money_signed(pnl), tone=tone)
+        + kpi_card(pnl_label, money_signed(pnl), tone=tone)
         + kpi_card("ROI", wop.fmt_roi(roi), tone=roi_tone)
         + kpi_card("N sent", str(stats.get("n_sent") or 0))
         + kpi_card("N filled (qty > 0)", str(stats.get("n_filled") or 0), tone="up")
@@ -1088,6 +1099,11 @@ code { font-size: 13px; }
 .toggles { display: flex; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
 .toggles button { font: inherit; padding: 6px 12px; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; cursor: pointer; }
 .toggles button.on { background: #4c1d95; color: #fff; border-color: #4c1d95; }
+.window-banner {
+  margin: 8px 0 4px; padding: 10px 12px; border: 2px solid #4c1d95;
+  background: #f5f3ff; color: #1e1b4b; font-size: 1.05rem;
+}
+.window-banner[data-pnl-scope="inception"] { border-color: #b45309; background: #fffbeb; color: #78350f; }
 .chart { width: 100%; max-width: 100%; margin: 8px 0 16px; background: #fff; }
 .sys-on { color: #166534; font-weight: 650; }
 .sys-off { color: #991b1b; font-weight: 650; }
@@ -1159,12 +1175,12 @@ code { font-size: 13px; }
 <button type="button" data-window-btn="inception" aria-pressed="false">Inception</button>
 </div>
 <div data-window="today">
-{kpi_strip(today)}
+{kpi_strip(today, window="today")}
 {by_system_today_table(today)}
 {today_charts}
 </div>
 <div data-window="inception" hidden>
-{kpi_strip(inception)}
+{kpi_strip(inception, window="inception")}
 {by_system_today_table(inception)}
 {inc_charts}
 </div>
@@ -1191,7 +1207,7 @@ code { font-size: 13px; }
 )}
 
 <h2>Trades today</h2>
-<p class="note">Each filled or missed send on {esc(day)} ET. Successful = venue-confirmed fill qty &gt; 0. Missed send = HTTP OK confirm 0 (ghost 201) — never a won/lost ticket. Lost bet = settled with-fee P&amp;L &lt; 0. <strong>Size @ price</strong> is book depth at the wire we got (tape <code>ask_size</code> / <code>quote_size</code>; else order_io; market <code>volume_fp</code>/<code>liquidity</code> only when touch size is missing, labeled mkt). Click headers to sort.</p>
+<p class="note">Each filled or missed send on {esc(day)} ET — including lock gap / system A. Successful = venue-confirmed fill qty &gt; 0. Missed send = HTTP OK confirm 0 (ghost 201) — never a won/lost ticket. Lost bet = settled with-fee P&amp;L &lt; 0. <strong>Size @ price</strong> is book depth at the wire we got (tape <code>ask_size</code> / <code>quote_size</code>; else order_io; market <code>volume_fp</code>/<code>liquidity</code> only when touch size is missing, labeled mkt). When depth is missing the cell says <strong>unknown</strong> — never omit the column for A. Click headers to sort.</p>
 {wop.table(TRADE_HEADERS, trade_table_rows(today_rows))}
 
 <h2>Full book (every posted send)</h2>
