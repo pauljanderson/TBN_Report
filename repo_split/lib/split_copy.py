@@ -143,9 +143,14 @@ def prune_from_tbn(tbn: Path, manifest_names: list[str]) -> int:
     deleted = 0
     for name in manifest_names:
         for rel in read_manifest(name):
-            # Never delete shared helpers TBN still needs from TBN prune of PM:
-            # report_page_extras stays in TBN; PM got a copy.
-            if rel in {"report_page_extras.py", "resolve_python.bat"}:
+            # Never delete shared helpers TBN still needs after PM extract.
+            # These are copied into PredictionsMarkets; TBN keeps its own copy.
+            # ntfy_job_done: used by hundreds of TBN WPBR/RL bats + PM live_lock.
+            if rel in {
+                "report_page_extras.py",
+                "resolve_python.bat",
+                "tools/ntfy_job_done.py",
+            }:
                 continue
             # TBN keeps its own git_pull after we rewrite it — do not delete via spotify.
             if name.startswith("spotify") and rel == "git_pull.bat":
