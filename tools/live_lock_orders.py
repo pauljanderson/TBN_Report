@@ -1139,7 +1139,11 @@ def whole_size(value) -> bool:
 
 
 def pair_net(scan, cand: dict) -> Decimal | None:
-    """Gross plus the documented fee on each charging leg. None when a fee is unknown."""
+    """Gross plus the documented fee on each charging leg. None when a fee is unknown.
+
+    Includes documented Kalshi taker fee (was skipped → after-fee C could sit under
+    net_max while true all-in did not). Send line must use after-fee all-in.
+    """
     yes = _dec(cand.get("yes_price"))
     no = _dec(cand.get("no_price"))
     if yes is None or no is None:
@@ -1147,6 +1151,8 @@ def pair_net(scan, cand: dict) -> Decimal | None:
     fee = Decimal("0")
     for venue, price in ((str(cand.get("yes_venue") or "").lower(), yes), (str(cand.get("no_venue") or "").lower(), no)):
         if venue == "kalshi":
+            # Documented 1-contract taker fee. Do not skip — fee can push C over net_max.
+            fee += kalshi_fee_amount(price)
             continue
         if venue == "gemini":
             fee += scan.gemini_fee(price)

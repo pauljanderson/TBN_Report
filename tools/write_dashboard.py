@@ -224,6 +224,8 @@ def trade_row(leg: dict, cluster: dict) -> dict:
         "side": wop.kitchen_side_label(leg, cluster),
         "order_type": wop.order_types.TYPE_LEFTOVER if leftover_hedge else wop.order_type_of(leg, cluster),
         "wire": wop.money4(leg.get("cash") or leg.get("limit")) if filled or leg.get("cash") not in (None, "") else wop.money4(leg.get("limit")),
+        "size_at_touch": wop.size_at_touch_cell(leg),
+        "size_at_touch_source": (leg.get("size_at_touch_source") or wop.size_at_touch_of(leg)[1] or ""),
         "fee": fee_txt,
         "after_fee": after_txt,
         "http": str(leg.get("http_line") or leg.get("http") or ""),
@@ -652,6 +654,7 @@ TRADE_HEADERS = [
     ("Venue", "text"),
     ("Side", "text"),
     ("Wire", "num"),
+    ("Size @ price", "text"),
     ("Fee", "text"),
     ("After-fee", "text"),
     ("HTTP", "text"),
@@ -674,6 +677,7 @@ def trade_table_rows(rows: list[dict]) -> list[list]:
             row.get("venue"),
             row.get("side"),
             row.get("wire"),
+            row.get("size_at_touch") or "—",
             row.get("fee"),
             row.get("after_fee"),
             row.get("http"),
@@ -1187,11 +1191,11 @@ code { font-size: 13px; }
 )}
 
 <h2>Trades today</h2>
-<p class="note">Each filled or missed send on {esc(day)} ET. Successful = venue-confirmed fill qty &gt; 0. Missed send = HTTP OK confirm 0 (ghost 201) — never a won/lost ticket. Lost bet = settled with-fee P&amp;L &lt; 0. Click headers to sort.</p>
+<p class="note">Each filled or missed send on {esc(day)} ET. Successful = venue-confirmed fill qty &gt; 0. Missed send = HTTP OK confirm 0 (ghost 201) — never a won/lost ticket. Lost bet = settled with-fee P&amp;L &lt; 0. <strong>Size @ price</strong> is book depth at the wire we got (tape <code>ask_size</code> / <code>quote_size</code>; else order_io; market <code>volume_fp</code>/<code>liquidity</code> only when touch size is missing, labeled mkt). Click headers to sort.</p>
 {wop.table(TRADE_HEADERS, trade_table_rows(today_rows))}
 
 <h2>Full book (every posted send)</h2>
-<p class="note">Same columns for the whole tape. Not a second P&amp;L formula. After-fee is wire plus documented taker fee; missing fee says fee unknown, not 0.</p>
+<p class="note">Same columns for the whole tape. Not a second P&amp;L formula. After-fee is wire plus documented taker fee; missing fee says fee unknown, not 0. Size @ price same source as Trades today.</p>
 {wop.table(TRADE_HEADERS, trade_table_rows(all_rows))}
 
 <h2>Local venue cash slip</h2>

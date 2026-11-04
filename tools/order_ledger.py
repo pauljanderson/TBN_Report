@@ -389,6 +389,8 @@ def polymarket_fill(payload, *, quote=None, pay=None, api_limit=None) -> dict:
         "filled": False,
         "intent": "",
         "outcome_name": "",
+        "order_side": "",
+        "outcome_side": "",
     }
 
     def walk(value) -> None:
@@ -400,14 +402,25 @@ def polymarket_fill(payload, *, quote=None, pay=None, api_limit=None) -> dict:
             outcome = str(value.get("outcomeSide") or "")
             if outcome == "OUTCOME_SIDE_NO":
                 found["side"] = "no"
+                found["outcome_side"] = outcome
             elif outcome == "OUTCOME_SIDE_YES":
                 found["side"] = "yes"
+                if not found["outcome_side"]:
+                    found["outcome_side"] = outcome
             intent = str(value.get("intent") or "")
             if "SHORT" in intent:
                 found["side"] = "no"
                 found["intent"] = intent
+                order_side = str(value.get("side") or "")
+                if order_side:
+                    found["order_side"] = order_side
+                if outcome:
+                    found["outcome_side"] = outcome
             elif "LONG" in intent:
                 found["intent"] = intent
+                order_side = str(value.get("side") or "")
+                if order_side:
+                    found["order_side"] = order_side
                 if not found["side"]:
                     found["side"] = "yes"
             meta = value.get("marketMetadata")
@@ -447,6 +460,8 @@ def polymarket_fill(payload, *, quote=None, pay=None, api_limit=None) -> dict:
             pay=pay,
             api_limit=api_limit,
             intent=found.get("intent") or "",
+            order_side=found.get("order_side") or "",
+            outcome_side=found.get("outcome_side") or found.get("side") or "",
         )
         if cash is not None:
             found["cash"] = format(cash, "f")

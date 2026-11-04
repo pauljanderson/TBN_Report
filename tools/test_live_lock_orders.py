@@ -29,8 +29,9 @@ def _pair(**extra):
         "number": "3.5",
         "yes_venue": "kalshi",
         "no_venue": "polymarket",
+        # 0.40 + 0.51 + Kalshi fee(0.40)=0.0168 + Poly fee 0.02 = 0.9468 ≤ 0.95
         "yes_price": "0.40",
-        "no_price": "0.53",
+        "no_price": "0.51",
         "yes_size": "2",
         "no_size": "2",
         "kalshi_ticker": "KX-TEST",
@@ -46,13 +47,31 @@ def _pair(**extra):
 def test_net_at_095_qualifies():
     ok, reason = live_lock_orders.qualifies(Scan(), _pair(), "Some Game", {})
     assert ok, reason
-    assert "0.95" in reason
+    assert "0.95" in reason or "0.9468" in reason
 
 
 def test_net_above_095_stays_alert_only():
-    ok, reason = live_lock_orders.qualifies(Scan(), _pair(no_price="0.54"), "Some Game", {})
+    # 0.40 + 0.52 + Kalshi 0.0168 + Poly 0.02 = 0.9568 > 0.95
+    ok, reason = live_lock_orders.qualifies(Scan(), _pair(no_price="0.52"), "Some Game", {})
     assert not ok
     assert "above 0.95" in reason
+
+
+def test_pair_net_includes_kalshi_fee_so_after_fee_over_cap_cannot_qualify():
+    """pair_net used to skip Kalshi fees — gross ≤ net_max while after-fee C was not.
+
+    Wire 0.40+0.52+Poly0.02 = 0.94 ≤ 0.95, but Kalshi fee on 0.40 is 0.0168 →
+    after-fee 0.9568 > net_max. Must not qualify.
+    """
+    cand = _pair(no_price="0.52")
+    net = live_lock_orders.pair_net(Scan(), cand)
+    assert net is not None
+    assert net > live_lock_orders.effective_net_max()
+    wire_only = Decimal(cand["yes_price"]) + Decimal(cand["no_price"]) + Decimal(cand["polymarket_fee"])
+    assert wire_only <= live_lock_orders.effective_net_max()
+    ok, reason = live_lock_orders.qualifies(Scan(), cand, "Some Game", {})
+    assert not ok
+    assert "above" in reason
 
 
 def test_size_cap_needs_one_whole_contract():
