@@ -3,13 +3,19 @@ rem Pull the latest main from GitHub onto this PC.
 rem Double-click after the cloud agent pushes, or any time you want to sync.
 rem The agent cannot pull on your machine — this is the one-click local step.
 rem
+rem ALWAYS run this BEFORE any new run_*.bat the agent just named. Merging a
+rem PR on GitHub does not put new bats on disk — only git pull does. If Windows
+rem says a bat is "not recognized", you skipped this step.
+rem
 rem IMPORTANT: git pull updates Python writers only. Drive dashboard.html /
 rem orders_performance.html are generated stamps — they do NOT refresh until
 rem write_orders_performance runs (fill/close debounce, or this bat's rebuild).
+rem Fallback after pull: python tools\write_orders_performance.py
 setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo === git pull origin main ===
+echo New bats from a merged PR are NOT on disk until this pull finishes.
 echo.
 
 git checkout main
