@@ -214,6 +214,8 @@ tools/kalshi_same_direction.py
 tools/kalshi_ticker_decode.py
 tools/kalshi_venue_kitchen_check.py
 tools/live_cfb_favorite.py
+tools/live_cfb_spread_movers.py
+tools/live_cfb_total_movers.py
 tools/live_game_pollers.py
 tools/live_lock_orders.py
 tools/live_lock_sender.py
@@ -234,6 +236,7 @@ tools/nfl_t0_spread_buckets_20261025.py
 tools/nfl_t0_spread_buckets_all_tracked_20261025.py
 tools/nfl_t0_type_a_collect.py
 tools/novig_live.py
+tools/ntfy_job_done.py
 tools/odds_cross_no_roi_60_70_20261020.py
 tools/odds_cross_no_roi_70plus_20261020.py
 tools/odds_cross_winrate_20261020.py
@@ -278,6 +281,7 @@ tools/test_kalshi_poly_combined_t0_decile_20261030.py
 tools/test_kalshi_private.py
 tools/test_kalshi_same_direction.py
 tools/test_kalshi_ticker_decode.py
+tools/test_live_cfb_movers.py
 tools/test_live_game_pollers.py
 tools/test_live_lock_orders.py
 tools/test_live_pm_settle_reconcile.py
@@ -321,6 +325,7 @@ tools/test_venue_fill_history_helpers.py
 tools/test_venue_open_miss_ingest.py
 tools/test_venue_pace.py
 tools/test_venue_truth_platforms.py
+tools/test_win_hidden.py
 tools/test_write_dashboard.py
 tools/test_write_orders_performance.py
 tools/test_write_t0_band_from_stay_above.py
@@ -329,6 +334,7 @@ tools/venue_cash_local.py
 tools/venue_fill_confirm.py
 tools/venue_open_miss_ingest.py
 tools/venue_pace.py
+tools/win_hidden.py
 tools/write_dashboard.py
 tools/write_orders_performance.py
 tools/write_t0_all_games_stats.py
