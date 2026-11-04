@@ -164,7 +164,7 @@ def test_new_sent_rows_label_a_through_e():
     assert by_id["b-1"][order_ledger.COL["System"]] == "B Tennis crossover"
     assert by_id["b-1"][order_ledger.COL["Game"]] == "Rodriguez Taverna vs Bueno"
     assert by_id["b-1"][order_ledger.COL["Pair limit price"]] == "not sent"
-    assert by_id["c-1"][order_ledger.COL["System"]] == "C CFB favorite"
+    assert by_id["c-1"][order_ledger.COL["System"]] == "C CFB total movers"
     assert by_id["c-1"][order_ledger.COL["Game"]] == "NAVY vs UNT"
     assert by_id["d-1"][order_ledger.COL["System"]] == "D T0 spreads"
     assert "spread" in by_id["d-1"][order_ledger.COL["Market"]]

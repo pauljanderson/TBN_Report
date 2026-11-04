@@ -1,8 +1,8 @@
-"""Paul-facing on/off + sizing for live prediction systems A–G.
+"""Paul-facing on/off + sizing for live prediction systems A–H.
 
-Does not print secrets. Does not sell tickets. Does not wire GTC.
-Does not start a second live_strategy_b.py. Config lives under local raw,
-not Drive. Lock leftover / flatten stay in live_lock_orders.
+Does not print secrets. Does not start a second live_strategy_b.py.
+Config lives under local raw, not Drive. Lock leftover / flatten stay in
+live_lock_orders. C/H rest a take-profit GTC after the T0 Yes fill.
 """
 from __future__ import annotations
 
@@ -38,47 +38,58 @@ SPREAD_F_LO = Decimal("0.20")
 SPREAD_F_HI = Decimal("0.50")
 TOTAL_G_LO = Decimal("0.20")
 TOTAL_G_HI = Decimal("0.50")
+# C/H CFB movers: T0 Yes in 0–19¢ inclusive, combined Yes+opposite Yes ≤ 1.05.
+MOVER_LO = Decimal("0")
+MOVER_HI = Decimal("0.19")
+MOVER_PAIR_MAX = Decimal("1.05")
+GTC_OFFSET_C = Decimal("0.15")
+GTC_OFFSET_H = Decimal("0.10")
 VENUE_RANK = ("kalshi", "gemini", "polymarket", "novig")
 # Send allowlist follows venue module flags (Gemini GEMINI_ORDERS_ENABLED /
 # systems.json "gemini_orders"; Novig NOVIG_ORDERS_ENABLED). Quotes stay in
 # VENUE_RANK for compare / favorite truth. for_send=True pickers skip soft-disabled
-# venues so C/D/E/F/G never POST there. Flip gemini_orders in systems.json to
+# venues so C/D/E/F/G/H never POST there. Flip gemini_orders in systems.json to
 # re-enable Gemini sends without hunting every bot.
 
 SYSTEM_IDS = (
     "lock",
     "tennis_crossover",
-    "cfb_favorite",
+    "cfb_total_movers",
     "spread_t0",
     "tennis_t0_dog",
     "tennis_t0_spread",
     "soccer_t0_total",
+    "cfb_spread_movers",
 )
 LIVE_BOT_IDS = (
     "tennis_crossover",
-    "cfb_favorite",
+    "cfb_total_movers",
     "spread_t0",
     "tennis_t0_dog",
     "tennis_t0_spread",
     "soccer_t0_total",
+    "cfb_spread_movers",
 )
 LETTER = {
     "lock": "A",
     "tennis_crossover": "B",
-    "cfb_favorite": "C",
+    "cfb_total_movers": "C",
+    "cfb_favorite": "C",  # legacy id → letter C
     "spread_t0": "D",
     "tennis_t0_dog": "E",
     "tennis_t0_spread": "F",
     "soccer_t0_total": "G",
+    "cfb_spread_movers": "H",
 }
 DISPLAY = {
     "lock": "Lock gap",
     "tennis_crossover": "Tennis crossover",
-    "cfb_favorite": "College football favorite",
+    "cfb_total_movers": "College Football total points movers",
     "spread_t0": "T0 spreads",
     "tennis_t0_dog": "Tennis T0 dog",
     "tennis_t0_spread": "Tennis spread",
     "soccer_t0_total": "Soccer total",
+    "cfb_spread_movers": "College Football spread movers",
 }
 ALIASES = {
     "lock": "lock",
@@ -88,9 +99,11 @@ ALIASES = {
     "b": "tennis_crossover",
     "strategy-b": "tennis_crossover",
     "strategy_b": "tennis_crossover",
-    "cfb-favorite": "cfb_favorite",
-    "cfb_favorite": "cfb_favorite",
-    "c": "cfb_favorite",
+    "cfb-total-movers": "cfb_total_movers",
+    "cfb_total_movers": "cfb_total_movers",
+    "cfb-favorite": "cfb_total_movers",
+    "cfb_favorite": "cfb_total_movers",
+    "c": "cfb_total_movers",
     "spread-t0": "spread_t0",
     "spread_t0": "spread_t0",
     "d": "spread_t0",
@@ -104,47 +117,55 @@ ALIASES = {
     "soccer-t0-total": "soccer_t0_total",
     "soccer_t0_total": "soccer_t0_total",
     "g": "soccer_t0_total",
+    "cfb-spread-movers": "cfb_spread_movers",
+    "cfb_spread_movers": "cfb_spread_movers",
+    "h": "cfb_spread_movers",
 }
 SCRIPTS = {
     "tennis_crossover": ROOT / "tools" / "live_strategy_b.py",
-    "cfb_favorite": ROOT / "tools" / "live_cfb_favorite.py",
+    "cfb_total_movers": ROOT / "tools" / "live_cfb_total_movers.py",
     "spread_t0": ROOT / "tools" / "live_spread_t0.py",
     "tennis_t0_dog": ROOT / "tools" / "live_tennis_t0_dog.py",
     "tennis_t0_spread": ROOT / "tools" / "live_tennis_t0_spread.py",
     "soccer_t0_total": ROOT / "tools" / "live_soccer_t0_total.py",
+    "cfb_spread_movers": ROOT / "tools" / "live_cfb_spread_movers.py",
 }
 CONSOLE_LOGS = {
     "tennis_crossover": RAW / "strategy_b.console.log",
-    "cfb_favorite": RAW / "cfb_favorite.console.log",
+    "cfb_total_movers": RAW / "cfb_total_movers.console.log",
     "spread_t0": RAW / "spread_t0.console.log",
     "tennis_t0_dog": RAW / "tennis_t0_dog.console.log",
     "tennis_t0_spread": RAW / "tennis_t0_spread.console.log",
     "soccer_t0_total": RAW / "soccer_t0_total.console.log",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.console.log",
 }
 WATCH_FILES = {
     "lock": RAW / "lock_sender_watch.json",
     "tennis_crossover": RAW / "strategy_b_watch.json",
-    "cfb_favorite": RAW / "cfb_favorite_watch.json",
+    "cfb_total_movers": RAW / "cfb_total_movers_watch.json",
     "spread_t0": RAW / "spread_t0_watch.json",
     "tennis_t0_dog": RAW / "tennis_t0_dog_watch.json",
     "tennis_t0_spread": RAW / "tennis_t0_spread_watch.json",
     "soccer_t0_total": RAW / "soccer_t0_total_watch.json",
+    "cfb_spread_movers": RAW / "cfb_spread_movers_watch.json",
 }
 CLASSIFY_KEY = {
     "tennis_crossover": "strategy_b",
-    "cfb_favorite": "cfb_favorite",
+    "cfb_total_movers": "cfb_total_movers",
     "spread_t0": "spread_t0",
     "tennis_t0_dog": "tennis_t0_dog",
     "tennis_t0_spread": "tennis_t0_spread",
     "soccer_t0_total": "soccer_t0_total",
+    "cfb_spread_movers": "cfb_spread_movers",
 }
 NEEDLE = {
     "tennis_crossover": "live_strategy_b.py",
-    "cfb_favorite": "live_cfb_favorite.py",
+    "cfb_total_movers": "live_cfb_total_movers.py",
     "spread_t0": "live_spread_t0.py",
     "tennis_t0_dog": "live_tennis_t0_dog.py",
     "tennis_t0_spread": "live_tennis_t0_spread.py",
     "soccer_t0_total": "live_soccer_t0_total.py",
+    "cfb_spread_movers": "live_cfb_spread_movers.py",
 }
 
 
@@ -215,6 +236,157 @@ def in_g_total_band_sens(ask) -> bool:
     if px is None:
         return False
     return DOG_LO <= px < TOTAL_G_HI
+
+
+def in_mover_band(ask) -> bool:
+    """True when T0 Yes is in 0–19¢ inclusive ([0.00, 0.19])."""
+    px = _dec(ask)
+    if px is None:
+        return False
+    return MOVER_LO <= px <= MOVER_HI
+
+
+def mover_pair_ok(buy_ask, opposite_ask) -> bool:
+    """True when buy Yes + opposite Yes ≤ 1.05."""
+    a = _dec(buy_ask)
+    b = _dec(opposite_ask)
+    if a is None or b is None:
+        return False
+    return (a + b) <= MOVER_PAIR_MAX
+
+
+def gtc_exit_pay(paid, offset) -> Decimal | None:
+    """GTC sell limit = paid + offset, capped below $1."""
+    px = _dec(paid)
+    off = _dec(offset)
+    if px is None or off is None or px <= 0:
+        return None
+    out = px + off
+    if out <= 0 or out >= 1:
+        return None
+    return out.quantize(Decimal("0.0001"))
+
+
+def gtc_offset_for(sid: str) -> Decimal:
+    if sid in {"cfb_spread_movers", "h"}:
+        return GTC_OFFSET_H
+    return GTC_OFFSET_C
+
+
+def _ask_of(row: dict | None):
+    row = row if isinstance(row, dict) else {}
+    return _dec(row.get("yes") if row.get("yes") is not None else row.get("ask"))
+
+
+def _side_of(row: dict | None) -> str:
+    row = row if isinstance(row, dict) else {}
+    return str(row.get("side") or row.get("team") or "")
+
+
+def _total_polarity(side: str) -> str:
+    text = " ".join(str(side or "").lower().split())
+    if "over" in text:
+        return "over"
+    if "under" in text:
+        return "under"
+    return ""
+
+
+def is_opposite_side(left: str, right: str, *, kind: str) -> bool:
+    """True when left/right are the two sides of one total or spread line.
+
+    Totals use Over vs Under (same_side would false-match on the shared
+    line number token like '45.5'). Spreads use distinct team labels.
+    """
+    kind = str(kind or "").strip().lower()
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if not a or not b:
+        return False
+    if kind == "total":
+        pa, pb = _total_polarity(a), _total_polarity(b)
+        return bool(pa and pb and pa != pb)
+    if same_side(a, b):
+        return False
+    return _norm_side(a) != _norm_side(b)
+
+
+def opposite_yes_ask(quotes: list[dict], buy: dict, *, same_venue: bool = True) -> Decimal | None:
+    """Cheapest Yes ask on the opposite side of the same line.
+
+    Prefer same venue as the buy quote (vig check). Falls back to any venue.
+    """
+    if not isinstance(buy, dict):
+        return None
+    kind = str(buy.get("kind") or "").strip().lower()
+    number = str(buy.get("number") or "")
+    buy_side = _side_of(buy)
+    buy_venue = str(buy.get("venue") or "").strip().lower()
+    if not kind or not buy_side:
+        return None
+
+    def collect(venue_filter: str | None) -> list[Decimal]:
+        out: list[Decimal] = []
+        for row in quotes or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("kind") or "").strip().lower() != kind:
+                continue
+            if str(row.get("number") or "") != number:
+                continue
+            if venue_filter and str(row.get("venue") or "").strip().lower() != venue_filter:
+                continue
+            if not is_opposite_side(buy_side, _side_of(row), kind=kind):
+                continue
+            px = _ask_of(row)
+            if px is not None:
+                out.append(px)
+        return out
+
+    same = collect(buy_venue) if same_venue and buy_venue else []
+    if same:
+        return min(same)
+    any_side = collect(None)
+    return min(any_side) if any_side else None
+
+
+def pick_mover_yes(
+    quotes: list[dict],
+    *,
+    kind: str,
+    for_send: bool = False,
+) -> dict | None:
+    """Cheapest CFB mover Yes in 0–19¢ with Yes+opposite ≤ 1.05.
+
+    kind is 'total' (system C) or 'spread' (system H). Same venue rank as F/G.
+    """
+    want = str(kind or "").strip().lower()
+    if want not in {"total", "spread"}:
+        return None
+    ranked = []
+    for row in quotes or []:
+        if str(row.get("kind") or "").strip().lower() != want:
+            continue
+        if want == "total" and not total_quote_fee_ok(row):
+            continue
+        px = _ask_of(row)
+        if px is None or not in_mover_band(px):
+            continue
+        venue = str(row.get("venue") or "").lower()
+        if for_send and not venue_sendable(venue):
+            continue
+        opp = opposite_yes_ask(quotes, row, same_venue=True)
+        if opp is None or not mover_pair_ok(px, opp):
+            continue
+        rank = VENUE_RANK.index(venue) if venue in VENUE_RANK else 9
+        enriched = dict(row)
+        enriched["opposite_yes"] = opp
+        enriched["pair_sum"] = px + opp
+        ranked.append((px, rank, venue, str(row.get("number") or ""), enriched))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    return ranked[0][4]
 
 
 def total_quote_fee_ok(row: dict | None) -> bool:
@@ -569,6 +741,10 @@ def load_config(path: Path | None = None) -> dict[str, SystemCfg]:
     rows = blob.get("systems") if isinstance(blob.get("systems"), dict) else blob
     if not isinstance(rows, dict):
         return base
+    # Legacy C key: systems.json still saying cfb_favorite → cfb_total_movers.
+    if "cfb_total_movers" not in rows and isinstance(rows.get("cfb_favorite"), dict):
+        rows = dict(rows)
+        rows["cfb_total_movers"] = rows["cfb_favorite"]
     for sid, cfg in base.items():
         raw = rows.get(sid)
         if not isinstance(raw, dict):
@@ -645,18 +821,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--lock", "--a", dest="lock", metavar="on|off")
     p.add_argument("--tennis-crossover", "--b", dest="tennis_crossover", metavar="on|off")
-    p.add_argument("--cfb-favorite", "--c", dest="cfb_favorite", metavar="on|off")
+    p.add_argument("--cfb-total-movers", "--cfb-favorite", "--c", dest="cfb_total_movers", metavar="on|off")
     p.add_argument("--spread-t0", "--d", dest="spread_t0", metavar="on|off")
     p.add_argument("--tennis-t0-dog", "--e", dest="tennis_t0_dog", metavar="on|off")
     p.add_argument("--tennis-t0-spread", "--f", dest="tennis_t0_spread", metavar="on|off")
     p.add_argument("--soccer-t0-total", "--g", dest="soccer_t0_total", metavar="on|off")
+    p.add_argument("--cfb-spread-movers", "--h", dest="cfb_spread_movers", metavar="on|off")
     p.add_argument("--lock-max", "--a-max", dest="lock_max", type=int)
     p.add_argument("--tennis-crossover-max", "--b-max", dest="tennis_crossover_max", type=int)
-    p.add_argument("--cfb-favorite-max", "--c-max", dest="cfb_favorite_max", type=int)
+    p.add_argument("--cfb-total-movers-max", "--cfb-favorite-max", "--c-max", dest="cfb_total_movers_max", type=int)
     p.add_argument("--spread-t0-max", "--d-max", dest="spread_t0_max", type=int)
     p.add_argument("--tennis-t0-dog-max", "--e-max", dest="tennis_t0_dog_max", type=int)
     p.add_argument("--tennis-t0-spread-max", "--f-max", dest="tennis_t0_spread_max", type=int)
     p.add_argument("--soccer-t0-total-max", "--g-max", dest="soccer_t0_total_max", type=int)
+    p.add_argument("--cfb-spread-movers-max", "--h-max", dest="cfb_spread_movers_max", type=int)
     p.add_argument(
         "--lock-net-max",
         "--lock-gap",
@@ -671,18 +849,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--lock-stake", "--lock-stake-usd", "--a-stake", dest="lock_stake", type=str)
     p.add_argument("--tennis-crossover-stake", "--b-stake", dest="tennis_crossover_stake", type=str)
-    p.add_argument("--cfb-favorite-stake", "--c-stake", dest="cfb_favorite_stake", type=str)
+    p.add_argument("--cfb-total-movers-stake", "--cfb-favorite-stake", "--c-stake", dest="cfb_total_movers_stake", type=str)
     p.add_argument("--spread-t0-stake", "--d-stake", dest="spread_t0_stake", type=str)
     p.add_argument("--tennis-t0-dog-stake", "--e-stake", dest="tennis_t0_dog_stake", type=str)
     p.add_argument("--tennis-t0-spread-stake", "--f-stake", dest="tennis_t0_spread_stake", type=str)
     p.add_argument("--soccer-t0-total-stake", "--g-stake", dest="soccer_t0_total_stake", type=str)
+    p.add_argument("--cfb-spread-movers-stake", "--h-stake", dest="cfb_spread_movers_stake", type=str)
     p.add_argument("--lock-size", "--a-size", dest="lock_size", type=int)
     p.add_argument("--tennis-crossover-size", "--b-size", dest="tennis_crossover_size", type=int)
-    p.add_argument("--cfb-favorite-size", "--c-size", dest="cfb_favorite_size", type=int)
+    p.add_argument("--cfb-total-movers-size", "--cfb-favorite-size", "--c-size", dest="cfb_total_movers_size", type=int)
     p.add_argument("--spread-t0-size", "--d-size", dest="spread_t0_size", type=int)
     p.add_argument("--tennis-t0-dog-size", "--e-size", dest="tennis_t0_dog_size", type=int)
     p.add_argument("--tennis-t0-spread-size", "--f-size", dest="tennis_t0_spread_size", type=int)
     p.add_argument("--soccer-t0-total-size", "--g-size", dest="soccer_t0_total_size", type=int)
+    p.add_argument("--cfb-spread-movers-size", "--h-size", dest="cfb_spread_movers_size", type=int)
     p.add_argument(
         "--d-all-lines",
         action="store_true",
@@ -703,11 +883,12 @@ def flags_touched(ns: argparse.Namespace) -> dict[str, dict]:
     mapping = (
         ("lock", "lock"),
         ("tennis_crossover", "tennis_crossover"),
-        ("cfb_favorite", "cfb_favorite"),
+        ("cfb_total_movers", "cfb_total_movers"),
         ("spread_t0", "spread_t0"),
         ("tennis_t0_dog", "tennis_t0_dog"),
         ("tennis_t0_spread", "tennis_t0_spread"),
         ("soccer_t0_total", "soccer_t0_total"),
+        ("cfb_spread_movers", "cfb_spread_movers"),
     )
     for attr, sid in mapping:
         val = getattr(ns, attr, None)

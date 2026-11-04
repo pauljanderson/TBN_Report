@@ -51,7 +51,9 @@ def test_system_of_maps_lock_leftover_to_a_and_old_b_to_tennis():
     assert w.system_of({"intent": w.INTENT_LEFTOVER, "is_b": True}) == "B"
     assert w.system_of({"intent": w.INTENT_B, "is_b": True}) == "B"
     assert w.system_of({"intent": w.INTENT_TENNIS, "is_b": True}) == "B"
-    assert w.system_of({"intent": w.INTENT_CFB, "kind": "cfb_favorite"}) == "C"
+    assert w.system_of({"intent": w.INTENT_CFB, "kind": "cfb_total_movers"}) == "C"
+    assert w.system_of({"intent": w.INTENT_CFB_LEGACY, "kind": "cfb_favorite"}) == "C"
+    assert w.system_of({"intent": w.INTENT_SPREAD_H, "kind": "cfb_spread_movers"}) == "H"
     assert w.system_of({"intent": w.INTENT_SPREAD, "kind": "spread_t0"}) == "D"
     assigned = w.assign_system({"intent": w.INTENT_B, "is_b": True, "b_t0_both": True})
     assert assigned["intent"] == w.INTENT_TENNIS

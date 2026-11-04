@@ -1,14 +1,15 @@
-"""Shared T0 directional-Yes send for systems C, D, E, F, and G.
+"""Shared T0 directional-Yes send for systems C, D, E, F, G, and H.
 
-College football moneyline favorite (C), one traditional spread per game (D),
-tennis moneyline T0 dog (E), tennis spread T0 cheapest Yes in [0.20, 0.50) (F),
-soccer Points Total T0 cheapest Yes in [0.20, 0.50) (G).
-D does not stack extra lines or totals on the same kickoff. Directional Yes.
-Hold to settlement. No Strategy B 50-cross, no dip, no NET_MAX 0.984 gate.
-One contract IOC unless stake-usd covers more whole contracts. REST recheck
-before every send. Venue fill-history confirm is truth. Poly FOK.
+C CFB Points Total movers (0–19¢ + pair ≤ 1.05, GTC sell paid+15¢),
+D one traditional spread per game, E tennis moneyline T0 dog,
+F tennis spread T0 cheapest Yes in [0.20, 0.50), G soccer Points Total
+T0 cheapest Yes in [0.20, 0.50), H CFB spread movers (0–19¢ + pair ≤ 1.05,
+GTC sell paid+10¢). D does not stack extra lines or totals on the same
+kickoff. Directional Yes. No Strategy B 50-cross, no dip, no NET_MAX 0.984
+gate. One contract IOC unless stake-usd covers more whole contracts. REST
+recheck before every send. Venue fill-history confirm is truth. Poly FOK.
 
-Does not start live_strategy_b.py. Does not sell. Does not wire GTC.
+C/H rest a take-profit GTC after the buy fill. Does not start live_strategy_b.py.
 """
 from __future__ import annotations
 
@@ -40,8 +41,8 @@ ET = ZoneInfo("America/New_York")
 T0_LEAD_SEC = 15
 T0_GRACE_SEC = 300
 TICK_SEC = 1
-OPEN_STAGES = {"waiting_t0", "filled", "holding", "open"}
-DONE_STAGES = {"skipped", "missed", "settled", "abandoned", "window_passed"}
+OPEN_STAGES = {"waiting_t0", "filled", "holding", "open", "exit_gtc_resting"}
+DONE_STAGES = {"skipped", "missed", "settled", "abandoned", "window_passed", "exit_gtc_filled"}
 VENUE_LABEL = {
     "kalshi": "kalshi",
     "gemini": "gemini",
@@ -50,47 +51,56 @@ VENUE_LABEL = {
 }
 
 WATCH = {
-    "cfb_favorite": RAW / "cfb_favorite_watch.json",
+    "cfb_total_movers": RAW / "cfb_total_movers_watch.json",
+    "cfb_favorite": RAW / "cfb_favorite_watch.json",  # legacy read alias
     "spread_t0": RAW / "spread_t0_watch.json",
     "tennis_t0_dog": RAW / "tennis_t0_dog_watch.json",
     "tennis_t0_spread": RAW / "tennis_t0_spread_watch.json",
     "soccer_t0_total": RAW / "soccer_t0_total_watch.json",
+    "cfb_spread_movers": RAW / "cfb_spread_movers_watch.json",
 }
 LOCK = {
-    "cfb_favorite": RAW / "cfb_favorite.lock",
+    "cfb_total_movers": RAW / "cfb_total_movers.lock",
     "spread_t0": RAW / "spread_t0.lock",
     "tennis_t0_dog": RAW / "tennis_t0_dog.lock",
     "tennis_t0_spread": RAW / "tennis_t0_spread.lock",
     "soccer_t0_total": RAW / "soccer_t0_total.lock",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.lock",
 }
 PID_FILE = {
-    "cfb_favorite": RAW / "cfb_favorite.pid",
+    "cfb_total_movers": RAW / "cfb_total_movers.pid",
     "spread_t0": RAW / "spread_t0.pid",
     "tennis_t0_dog": RAW / "tennis_t0_dog.pid",
     "tennis_t0_spread": RAW / "tennis_t0_spread.pid",
     "soccer_t0_total": RAW / "soccer_t0_total.pid",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.pid",
 }
 LOG = {
-    "cfb_favorite": RAW / "cfb_favorite.log",
+    "cfb_total_movers": RAW / "cfb_total_movers.log",
     "spread_t0": RAW / "spread_t0.log",
     "tennis_t0_dog": RAW / "tennis_t0_dog.log",
     "tennis_t0_spread": RAW / "tennis_t0_spread.log",
     "soccer_t0_total": RAW / "soccer_t0_total.log",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.log",
 }
 STOP = {
-    "cfb_favorite": RAW / "cfb_favorite.stop",
+    "cfb_total_movers": RAW / "cfb_total_movers.stop",
     "spread_t0": RAW / "spread_t0.stop",
     "tennis_t0_dog": RAW / "tennis_t0_dog.stop",
     "tennis_t0_spread": RAW / "tennis_t0_spread.stop",
     "soccer_t0_total": RAW / "soccer_t0_total.stop",
+    "cfb_spread_movers": RAW / "cfb_spread_movers.stop",
 }
 STEP = {
-    "cfb_favorite": "c-t0",
+    "cfb_total_movers": "c-t0",
     "spread_t0": "d-t0",
     "tennis_t0_dog": "e-t0",
     "tennis_t0_spread": "f-t0",
     "soccer_t0_total": "g-t0",
+    "cfb_spread_movers": "h-t0",
 }
+MOVER_SIDS = {"cfb_total_movers", "cfb_spread_movers"}
+EXIT_GTC_STAGES = {"exit_gtc_resting", "filled", "holding", "open"}
 _VS_SPLIT = re.compile(r"\s+(?:vs\.?|@)\s+", re.I)
 _ROUND_JUNK = re.compile(
     r"\b(round of \d+|r16|r32|qf|sf|finals?|semifinals?|quarterfinals?)\b",
@@ -100,11 +110,12 @@ _E_DOG_LOCK = threading.Lock()
 _E_HELD_DOGS: set[tuple] = set()
 E_FILL_STAGES = {"filled", "holding", "open", "settled", "missed"}
 BET_PREFIX = {
-    "cfb_favorite": "cfb-favorite",
+    "cfb_total_movers": "cfb-total-movers",
     "spread_t0": "spread-t0",
     "tennis_t0_dog": "tennis-t0-dog",
     "tennis_t0_spread": "tennis-t0-spread",
     "soccer_t0_total": "soccer-t0-total",
+    "cfb_spread_movers": "cfb-spread-movers",
 }
 NFL_SPORTS = {"pro football", "nfl"}
 D_SKIP_NFL_TOKEN = "d_skip_nfl_gathering"
@@ -242,7 +253,12 @@ def open_matches(data: dict) -> list[dict]:
 def filled_matches(data: dict) -> list[dict]:
     out = []
     for row in data.get("matches") or []:
-        if isinstance(row, dict) and str(row.get("stage") or "") in {"filled", "holding", "open"}:
+        if isinstance(row, dict) and str(row.get("stage") or "") in {
+            "filled",
+            "holding",
+            "open",
+            "exit_gtc_resting",
+        }:
             out.append(row)
     return out
 
@@ -651,6 +667,8 @@ def _in_send_band(sid: str, ask) -> bool:
         return systems.in_f_spread_band(ask)
     if sid == "soccer_t0_total":
         return systems.in_g_total_band(ask)
+    if sid in MOVER_SIDS:
+        return systems.in_mover_band(ask)
     return systems.in_fav_band(ask)
 
 
@@ -661,6 +679,8 @@ def _band_note(sid: str, ask) -> str:
         return f"ask {ask} not in [0.20, 0.50)"
     if sid == "soccer_t0_total":
         return f"ask {ask} not in [0.20, 0.50)"
+    if sid in MOVER_SIDS:
+        return f"ask {ask} not in 0-19"
     return f"ask {ask} not in (0.50, 0.90)"
 
 
@@ -757,6 +777,36 @@ def cheapest_total_snapshot(rows: list[dict]) -> dict | None:
     }
 
 
+def mover_snapshot(rows: list[dict], *, kind: str, sid: str) -> dict | None:
+    """C/H: cheapest CFB mover Yes in 0–19¢ with Yes+opposite ≤ 1.05."""
+    best = systems.pick_mover_yes(rows, kind=kind, for_send=True)
+    if best is None:
+        return None
+    px = live_lock_orders._dec(best.get("yes") if best.get("yes") is not None else best.get("ask"))
+    if px is None or not systems.in_mover_band(px):
+        return None
+    opp = live_lock_orders._dec(best.get("opposite_yes"))
+    if opp is None or not systems.mover_pair_ok(px, opp):
+        return None
+    side = str(best.get("side") or best.get("team") or "")
+    offset = systems.gtc_offset_for(sid)
+    return {
+        "dog": side,
+        "fav": side,
+        "fav_ask": px,
+        "dog_ask": px,
+        "opposite_yes": opp,
+        "pair_sum": px + opp,
+        "why": f"CFB {kind} mover 0-19 pair<=1.05",
+        "two_sided": True,
+        "best": best,
+        "kind": kind,
+        "number": str(best.get("number") or ""),
+        "gtc_offset": offset,
+        "gtc_exit_pay": systems.gtc_exit_pay(px, offset),
+    }
+
+
 def choose_favorite(rows: list[dict]) -> tuple[str | None, str]:
     primary = primary_side_asks(rows)
     fav = systems.pick_favorite_primary(primary) if len(primary) >= 2 else None
@@ -830,6 +880,8 @@ def send_yes(spec: dict, pay: Decimal, step: str, bet_key: str, system: str, log
                     "e" if system == "tennis_t0_dog"
                     else "f" if system == "tennis_t0_spread"
                     else "g" if system == "soccer_t0_total"
+                    else "c" if system == "cfb_total_movers"
+                    else "h" if system == "cfb_spread_movers"
                     else system
                 ),
                 "action": "skip",
@@ -895,6 +947,175 @@ def _maybe_perf(result: dict) -> None:
         pass
 
 
+def rest_exit_gtc(sid: str, buy_result: dict, snap: dict, log_fn) -> dict | None:
+    """After a C/H buy fill, rest a GTC sell at paid + offset. Returns send result."""
+    paid = live_lock_orders._dec(buy_result.get("fill_px") or buy_result.get("pay"))
+    offset = systems.gtc_offset_for(sid)
+    exit_pay = systems.gtc_exit_pay(paid, offset)
+    if exit_pay is None:
+        log_fn(f"{sid} exit GTC skip bad pay={paid} offset={offset}")
+        return {
+            "filled": False,
+            "posted": False,
+            "note": f"bad exit pay from {paid}+{offset}",
+            "pay": "",
+        }
+    buy_spec = buy_result.get("spec") if isinstance(buy_result.get("spec"), dict) else {}
+    venue = str(buy_spec.get("venue") or "").lower()
+    instrument = str(buy_spec.get("instrument") or "")
+    held_side = str(buy_spec.get("outcome") or "yes").lower() or "yes"
+    held_intent = str(buy_spec.get("intent") or "")
+    qty = live_lock_orders._dec(buy_result.get("fill_qty") or buy_result.get("confirm_qty") or "1") or Decimal("1")
+    built = live_lock_orders.build_limit_sell_spec(
+        venue=venue,
+        instrument=instrument,
+        held_side=held_side,
+        pay=exit_pay,
+        held_intent=held_intent,
+        tif="gtc",
+        qty=qty,
+    )
+    blank = {
+        "filled": False,
+        "posted": False,
+        "payload": None,
+        "status": 0,
+        "note": "exit GTC not sendable",
+        "pay": _money(exit_pay),
+        "spec": built or {},
+        "order_id": "",
+        "fill_qty": "0",
+        "sent_at": "",
+        "tif": "gtc",
+    }
+    if built is None:
+        log_fn(f"{sid} exit GTC skip unbuildable venue={venue} pay={exit_pay}")
+        return blank
+    # Mirror Strategy B: force venue GTC TIF strings on the body.
+    import live_strategy_b
+
+    ok, tif = live_strategy_b.apply_gtc_body(built)
+    if not ok:
+        blank["note"] = tif
+        log_fn(f"{sid} exit GTC skip {tif}")
+        return blank
+    built["_system"] = sid
+    built["_tif"] = "gtc"
+    built["_step"] = f"{STEP[sid]}-exit-gtc"
+    built["_bet_key"] = f"{BET_PREFIX[sid]}\texit-gtc\t{snap.get('dog') or snap.get('fav') or ''}"
+    built["game"] = buy_spec.get("game") or ""
+    built["sport"] = buy_spec.get("sport") or ""
+    built["player"] = buy_spec.get("player") or snap.get("dog") or snap.get("fav") or ""
+    funds = live_lock_orders._funds_block(built)
+    if funds:
+        named = live_lock_orders._balance_deny_from_funds(funds)
+        blank["note"] = named
+        log_fn(f"{sid} exit GTC skip funds {named}")
+        return blank
+    status, payload, note = live_lock_orders._post_same_limit(
+        log_fn,
+        built["_bet_key"],
+        built,
+        built["_step"],
+        live_lock_orders._send,
+        exit_pay,
+        None,
+        None,
+    )
+    filled_qty = live_lock_orders.filled_contracts(payload) if payload is not None else Decimal("0")
+    if status not in (200, 201) and not live_lock_orders.venue_confirm_known(payload):
+        filled_qty = Decimal("0")
+    fill_px = live_lock_orders._actual_fill_cash(built, payload) if filled_qty > 0 else None
+    posted = status != 0
+    log_fn(
+        f"{sid} exit GTC venue={venue} pay={exit_pay} http={status} "
+        f"filled={filled_qty} note={note}"
+    )
+    return {
+        "filled": filled_qty >= 1,
+        "posted": posted,
+        "payload": payload,
+        "status": status,
+        "note": note,
+        "pay": built.get("pay") or _money(exit_pay),
+        "spec": built,
+        "order_id": live_lock_orders._order_id(payload),
+        "fill_qty": _money(filled_qty),
+        "fill_px": _money(fill_px) if fill_px is not None else "",
+        "sent_at": built.get("sent_at") or iso_now() if posted else "",
+        "http": status,
+        "tif": tif,
+    }
+
+
+def poll_exit_gtc(match: dict) -> bool:
+    """True when resting exit GTC has filled (>=1)."""
+    if match.get("exit_gtc_filled"):
+        return True
+    spec = match.get("exit_gtc_spec")
+    if not isinstance(spec, dict):
+        return False
+    payload = match.get("exit_gtc_payload")
+    try:
+        import venue_fill_confirm
+
+        confirm = venue_fill_confirm.confirm_order(
+            str(spec.get("venue") or match.get("venue") or ""),
+            payload,
+            spec,
+            tries=1,
+            timeout=1.5,
+            sleep_sec=0,
+        )
+        payload = venue_fill_confirm.attach(payload, confirm)
+    except Exception:
+        return False
+    match["exit_gtc_payload"] = payload
+    qty = live_lock_orders.filled_contracts(payload) if payload is not None else Decimal("0")
+    if qty < 1:
+        return False
+    fill_px = live_lock_orders._actual_fill_cash(spec, payload)
+    match["exit_gtc_filled"] = True
+    match["exit_gtc_fill_qty"] = _money(qty)
+    match["exit_gtc_fill_px"] = _money(fill_px) if fill_px is not None else ""
+    match["stage"] = "exit_gtc_filled"
+    match["note"] = f"exit GTC filled qty={qty} @ {match['exit_gtc_fill_px']}"
+    return True
+
+
+def cancel_exit_gtc(match: dict, why: str, log_fn=None) -> None:
+    if match.get("exit_gtc_filled") or match.get("exit_gtc_cancelled"):
+        return
+    spec = match.get("exit_gtc_spec")
+    payload = match.get("exit_gtc_payload")
+    order_id = str(match.get("exit_gtc_order_id") or "")
+    if not isinstance(spec, dict):
+        return
+    try:
+        status, note = live_lock_orders._cancel(spec, payload if isinstance(payload, dict) else {"id": order_id})
+    except Exception as exc:
+        status, note = 0, type(exc).__name__
+    match["exit_gtc_cancelled"] = True
+    match["exit_gtc_cancel_why"] = why
+    match["exit_gtc_cancel_http"] = status
+    match["exit_gtc_cancel_note"] = str(note or "")
+    if log_fn:
+        log_fn(f"exit GTC cancel why={why} http={status} {note}")
+
+
+def remember_exit_gtc(match: dict, gtc: dict | None) -> None:
+    if not isinstance(match, dict) or not isinstance(gtc, dict):
+        return
+    match["exit_gtc_spec"] = gtc.get("spec") or {}
+    match["exit_gtc_payload"] = gtc.get("payload")
+    match["exit_gtc_order_id"] = str(gtc.get("order_id") or "")
+    match["exit_gtc_pay"] = str(gtc.get("pay") or "")
+    match["exit_gtc_sent_at"] = str(gtc.get("sent_at") or "")
+    match["exit_gtc_tif"] = str(gtc.get("tif") or "gtc")
+    if gtc.get("filled"):
+        match["exit_gtc_filled"] = True
+
+
 def fire(sid: str, spec_row: dict, snap: dict, cfg: systems.SystemCfg, log_fn) -> dict:
     best = snap.get("best") or {}
     send_spec = dict(best.get("spec") or {})
@@ -938,11 +1159,30 @@ def fire(sid: str, spec_row: dict, snap: dict, cfg: systems.SystemCfg, log_fn) -
         else:
             break
     if filled_any:
-        return {
-            "stage": "filled",
-            "note": f"filled {snap.get('dog') or snap.get('fav')} {last.get('fill_qty') if last else ''} @ {last.get('fill_px') if last else ''}",
+        stage = "filled"
+        note = (
+            f"filled {snap.get('dog') or snap.get('fav')} "
+            f"{last.get('fill_qty') if last else ''} @ {last.get('fill_px') if last else ''}"
+        )
+        gtc = None
+        if sid in MOVER_SIDS and last:
+            gtc = rest_exit_gtc(sid, last, snap, log_fn)
+            if gtc and gtc.get("posted") and not gtc.get("filled"):
+                stage = "exit_gtc_resting"
+                note = f"{note}; exit GTC @ {gtc.get('pay')}"
+            elif gtc and gtc.get("filled"):
+                stage = "exit_gtc_filled"
+                note = f"{note}; exit GTC filled @ {gtc.get('fill_px') or gtc.get('pay')}"
+            elif gtc:
+                note = f"{note}; exit GTC miss {gtc.get('note') or ''}"
+        out = {
+            "stage": stage,
+            "note": note,
             "last_order": last or {},
         }
+        if gtc:
+            out["exit_gtc"] = gtc
+        return out
     return {
         "stage": "missed",
         "note": (last or {}).get("note") or "no fill",
@@ -965,8 +1205,12 @@ def consider_game(sid: str, scan, spec: dict, status: dict, cfg: systems.SystemC
     sport = str(spec.get("sport") or "")
     title = str(spec.get("title") or "")
     key = str(spec.get("key") or "")
-    if sid == "cfb_favorite":
-        kind = "moneyline"
+    if sid == "cfb_total_movers":
+        kind = "total"
+        if sport.strip().lower() != "college football":
+            return "not college football"
+    elif sid == "cfb_spread_movers":
+        kind = "spread"
         if sport.strip().lower() != "college football":
             return "not college football"
     elif sid == "tennis_t0_dog":
@@ -1061,9 +1305,17 @@ def consider_game(sid: str, scan, spec: dict, status: dict, cfg: systems.SystemC
     )
     ready, why = t0_window(clock)
     bags = group_lines(quotes, kind)
-    if sid == "cfb_favorite":
-        rows = bags.get(("moneyline", ""), [])
-        snap = line_snapshot(rows)
+    if sid == "cfb_total_movers":
+        total_rows = []
+        for _key, rows in bags.items():
+            total_rows.extend(rows)
+        snap = mover_snapshot(total_rows, kind="total", sid=sid)
+        snaps = [snap] if snap else []
+    elif sid == "cfb_spread_movers":
+        spread_rows = []
+        for _key, rows in bags.items():
+            spread_rows.extend(rows)
+        snap = mover_snapshot(spread_rows, kind="spread", sid=sid)
         snaps = [snap] if snap else []
     elif sid == "tennis_t0_dog":
         rows = bags.get(("moneyline", ""), [])
@@ -1132,6 +1384,10 @@ def consider_game(sid: str, scan, spec: dict, status: dict, cfg: systems.SystemC
             existing["note"] = "no tennis spread Yes in [0.20, 0.50)"
         elif sid == "soccer_t0_total":
             existing["note"] = "no soccer Points Total Yes in [0.20, 0.50)"
+        elif sid == "cfb_total_movers":
+            existing["note"] = "no CFB Points Total Yes in 0-19 with pair <= 1.05"
+        elif sid == "cfb_spread_movers":
+            existing["note"] = "no CFB spread Yes in 0-19 with pair <= 1.05"
         else:
             existing["note"] = f"no qualifying {kind} in (0.50, 0.90)"
         existing["stage"] = "skipped"
@@ -1165,6 +1421,24 @@ def consider_game(sid: str, scan, spec: dict, status: dict, cfg: systems.SystemC
     existing["venue"] = (shot.get("best") or {}).get("venue")
     existing["number"] = shot.get("number") or ""
     existing["t0_src"] = clock_src
+    if sid in MOVER_SIDS:
+        existing["opposite_yes"] = _money(shot.get("opposite_yes"))
+        existing["pair_sum"] = _money(shot.get("pair_sum"))
+        existing["gtc_offset"] = _money(shot.get("gtc_offset"))
+        existing["gtc_exit_pay"] = _money(shot.get("gtc_exit_pay"))
+        if sid == "cfb_total_movers":
+            import live_cfb_total_movers
+
+            why_dup = live_cfb_total_movers.already_filled_match(status, title)
+        else:
+            import live_cfb_spread_movers
+
+            why_dup = live_cfb_spread_movers.already_filled_match(status, title)
+        if why_dup:
+            existing["stage"] = "skipped"
+            existing["note"] = why_dup
+            status["last_skip_reason"] = f"{title}: {why_dup}"
+            return why_dup
     if sid == "tennis_t0_dog":
         dog = str(shot.get("dog") or existing.get("dog") or "")
         inst = str((shot.get("best") or {}).get("instrument") or existing.get("instrument") or "")
@@ -1195,6 +1469,7 @@ def consider_game(sid: str, scan, spec: dict, status: dict, cfg: systems.SystemC
         result = fire(sid, spec, shot, cfg, lambda m: log(sid, m))
     existing["stage"] = result.get("stage") or existing.get("stage")
     existing["note"] = result.get("note") or ""
+    remember_exit_gtc(existing, result.get("exit_gtc") if isinstance(result, dict) else None)
     last = result.get("last_order") or {}
     if last:
         spec_used = last.get("spec") if isinstance(last.get("spec"), dict) else {}
@@ -1237,7 +1512,7 @@ def slate_near_t0(scan, sid: str) -> list[dict]:
     skip_tennis = False
     skip_nfl = sid == "spread_t0"
     skipped_nfl: list[str] = []
-    if sid == "cfb_favorite":
+    if sid in MOVER_SIDS:
         want_sport = "college football"
     elif sid == "soccer_t0_total":
         want_sport = "soccer"
@@ -1330,7 +1605,7 @@ def note_settled_holds(sid: str, status: dict, snapshot=None) -> int:
         if not isinstance(row, dict):
             continue
         stage = str(row.get("stage") or "")
-        if stage not in {"filled", "holding", "open"}:
+        if stage not in {"filled", "holding", "open", "exit_gtc_resting"}:
             continue
         try:
             item = open_count_sync.classify_match(sid, row, snap)
@@ -1338,11 +1613,38 @@ def note_settled_holds(sid: str, status: dict, snapshot=None) -> int:
             continue
         if not orders_performance_refresh.classified_is_venue_close(item, snapshot=snap):
             continue
+        if stage == "exit_gtc_resting":
+            cancel_exit_gtc(row, "venue_settled", lambda m: log(sid, m))
         row["stage"] = "settled"
         row["settled_at"] = iso_now()
         row["note"] = str(item.get("why") or "venue settled/expired/final/void")
         if orders_performance_refresh.maybe_after_classified(item, snapshot=snap):
             n += 1
+    return n
+
+
+def note_exit_gtc_fills(sid: str, status: dict) -> int:
+    """Advance C/H exit GTC resting → filled. Returns count filled this tick."""
+    if sid not in MOVER_SIDS or not isinstance(status, dict):
+        return 0
+    n = 0
+    for row in status.get("matches") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("stage") or "") != "exit_gtc_resting":
+            continue
+        if poll_exit_gtc(row):
+            n += 1
+            log(sid, f"exit GTC filled game={row.get('game')} pay={row.get('exit_gtc_pay')}")
+            try:
+                import orders_performance_refresh
+
+                orders_performance_refresh.maybe_after_order(
+                    row.get("exit_gtc_payload"),
+                    status=200,
+                )
+            except Exception:
+                pass
     return n
 
 
@@ -1359,6 +1661,11 @@ def tick(sid: str) -> dict:
     if sid == "spread_t0":
         status["d_skip_nfl_gathering"] = True
         status["note"] = "D on except NFL (d_skip_nfl_gathering)"
+    if sid in MOVER_SIDS:
+        try:
+            note_exit_gtc_fills(sid, status)
+        except Exception as exc:
+            log(sid, f"exit gtc poll {type(exc).__name__}")
     scan = live_game_pollers.load_scan()
     live = slate_near_t0(scan, sid)
     for spec in live:

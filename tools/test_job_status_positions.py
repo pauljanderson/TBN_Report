@@ -53,9 +53,9 @@ C_D = [
 
 INTENT = {
     ("kalshi", "KXNCAAFGAME-26OCT24BSUWSU-BSU"): {
-        "sid": "cfb_favorite",
+        "sid": "cfb_total_movers",
         "letter": "C",
-        "name": "College football favorite",
+        "name": "College Football total points movers",
         "sport": "college football",
         "game": "BSU vs WSU",
         "kind": "moneyline",
@@ -66,9 +66,9 @@ INTENT = {
         "opened_at": "2026-10-24T17:59:50-04:00",
     },
     ("kalshi", "KXNCAAFGAME-26OCT24SDSUCSU-CSU"): {
-        "sid": "cfb_favorite",
+        "sid": "cfb_total_movers",
         "letter": "C",
-        "name": "College football favorite",
+        "name": "College Football total points movers",
         "sport": "college football",
         "game": "CSU vs SDSU",
         "kind": "moneyline",
@@ -79,9 +79,9 @@ INTENT = {
         "opened_at": "2026-10-24T18:31:21-04:00",
     },
     ("kalshi", "KXNCAAFGAME-26OCT24GASTARST-GAST"): {
-        "sid": "cfb_favorite",
+        "sid": "cfb_total_movers",
         "letter": "C",
-        "name": "College football favorite",
+        "name": "College Football total points movers",
         "sport": "college football",
         "game": "ARST vs GAST",
         "kind": "moneyline",
@@ -171,9 +171,9 @@ def test_ledger_only_is_not_a_row():
     snap = _snap(C_D[:1])
     extra_intent = dict(INTENT)
     extra_intent[("kalshi", "KXNCAAFGAME-26OCT24UNTNAVY-UNT")] = {
-        "sid": "cfb_favorite",
+        "sid": "cfb_total_movers",
         "letter": "C",
-        "name": "College football favorite",
+        "name": "College Football total points movers",
         "sport": "college football",
         "game": "NAVY vs UNT",
         "kind": "moneyline",
@@ -468,7 +468,7 @@ def test_open_now_counts_match_positions_letters():
     counts = jsp.open_now_from_rows(bundle["rows"])
     assert counts == {"A": 0, "B": 1, "C": 3, "D": 1, "E": 0}
     assert counts == bundle["open_now"]
-    for sid, letter in (("lock", "A"), ("tennis_crossover", "B"), ("cfb_favorite", "C"), ("spread_t0", "D")):
+    for sid, letter in (("lock", "A"), ("tennis_crossover", "B"), ("cfb_total_movers", "C"), ("spread_t0", "D")):
         assert ps.currently_open(sid, snapshot=snap, positions=bundle) == str(counts[letter])
 
 

@@ -144,7 +144,7 @@ def test_slate_skips_nfl_keeps_cfb_and_other():
         assert "college football" in sports
         assert "pro baseball" in sports
         assert any(D_SKIP_NFL_TOKEN in msg for _, msg in logged)
-        c_rows = live_t0_yes.slate_near_t0(scan, "cfb_favorite")
+        c_rows = live_t0_yes.slate_near_t0(scan, "cfb_total_movers")
         assert {row["sport"] for row in c_rows} == {"college football"}
     finally:
         live_t0_yes.log = saved_log
