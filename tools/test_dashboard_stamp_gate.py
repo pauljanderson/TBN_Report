@@ -1,4 +1,4 @@
-"""dashboard_stamp_gate: Size @ price on writer + living HTML; no stale Gibson 0.84."""
+"""dashboard_stamp_gate: Size @ price on A today; no Gibson 0.84; no $2.40 today."""
 from __future__ import annotations
 
 import sys
@@ -27,6 +27,112 @@ FRESH_GIBSON_SNIPPET = """
 </tr></table>
 """
 
+# Drive failure mode: Size @ price header exists globally, but Trades today A rows
+# show em-dash / blank, Gibson still 0.84, today A P&L +$2.40.
+DRIVE_FAIL_HTML = """
+<html><body>
+<th>Size @ price</th>
+<h2>Today</h2>
+<div data-window="today">
+<div class="kpi"><div class="kpi-label">With-fee P&amp;L</div><div class="kpi-value">+$2.40</div></div>
+<table>
+<tr><th>System</th><th>N sent</th><th>With-fee P&amp;L</th></tr>
+<tr><td>A Lock gap</td><td>6</td><td>+$2.40</td></tr>
+</table>
+</div>
+<div data-window="inception" hidden>
+<div class="kpi"><div class="kpi-label">With-fee P&amp;L</div><div class="kpi-value">+$16.67</div></div>
+</div>
+<h2>Trades today</h2>
+<table>
+<tr>
+<th>When ET</th><th>System</th><th>Type</th><th>Match</th><th>League</th>
+<th>Venue</th><th>Side</th><th>Wire</th><th>Size @ price</th><th>Fee</th>
+<th>After-fee</th><th>HTTP</th><th>Filled</th><th>Outcome</th>
+<th>Failure kind</th><th>P&amp;L if settled</th>
+</tr>
+<tr>
+<td>2026-11-03 01:32:15 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Gibson vs Oliynykova</td><td>WTA</td><td>polymarket</td>
+<td>Yes Oleksandra Oliynykova</td><td class="num">0.8400</td><td>—</td>
+<td>0.0000</td><td>0.8400</td><td>HTTP</td><td>yes</td><td>settled win</td>
+<td>—</td><td>+$0.16</td></tr>
+<tr>
+<td>2026-11-03 01:32:15 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Gibson vs Oliynykova</td><td>WTA</td><td>kalshi</td>
+<td>No Oleksandra Oliynykova</td><td class="num">0.8200</td><td>—</td>
+<td>0.0104</td><td>0.8304</td><td>HTTP</td><td>yes</td><td>settled win</td>
+<td>—</td><td>+$0.17</td></tr>
+<tr>
+<td>2026-11-03 01:28:18 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Imamura vs Leong</td><td>ATP</td><td>polymarket</td>
+<td>Yes Leong</td><td>0.4800</td><td>—</td><td>0</td><td>0.4800</td>
+<td>HTTP</td><td>yes</td><td>settled win</td><td>—</td><td>+$0.52</td></tr>
+<tr>
+<td>2026-11-03 01:28:17 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Imamura vs Leong</td><td>ATP</td><td>kalshi</td>
+<td>No Leong</td><td>0.4500</td><td>—</td><td>0.0174</td><td>0.4674</td>
+<td>HTTP</td><td>yes</td><td>settled win</td><td>—</td><td>+$0.53</td></tr>
+<tr>
+<td>2026-11-03 01:15:07 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Teichmann vs Garland</td><td>WTA</td><td>polymarket</td>
+<td>Yes Garland</td><td>0.3300</td><td>—</td><td>0</td><td>0.3300</td>
+<td>HTTP</td><td>yes</td><td>settled win</td><td>—</td><td>+$0.67</td></tr>
+<tr>
+<td>2026-11-03 01:15:06 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Teichmann vs Garland</td><td>WTA</td><td>kalshi</td>
+<td>Yes Garland</td><td>0.6400</td><td>—</td><td>0.0162</td><td>0.6562</td>
+<td>HTTP</td><td>yes</td><td>settled win</td><td>—</td><td>+$0.34</td></tr>
+</table>
+<h2>Full book (every posted send)</h2>
+<table><tr><th>Size @ price</th></tr></table>
+</body></html>
+"""
+
+DRIVE_FIXED_HTML = """
+<html><body>
+<h2>Today</h2>
+<div data-window="today">
+<p class="window-banner" data-pnl-scope="today">Showing: <strong>Today with-fee P&amp;L</strong></p>
+<div class="kpi"><div class="kpi-label">Today with-fee P&amp;L (since midnight ET only)</div>
+<div class="kpi-value">+$0.07</div></div>
+<table>
+<tr><th>System</th><th>N sent</th><th>With-fee P&amp;L</th></tr>
+<tr><td>A Lock gap</td><td>6</td><td>+$0.07</td></tr>
+</table>
+</div>
+<div data-window="inception" hidden>
+<p class="window-banner" data-pnl-scope="inception">Showing: <strong>Inception with-fee P&amp;L</strong></p>
+<div class="kpi"><div class="kpi-label">Inception with-fee P&amp;L (all-time, NOT today)</div>
+<div class="kpi-value">+$16.67</div></div>
+</div>
+<h2>Trades today</h2>
+<table>
+<tr>
+<th>When ET</th><th>System</th><th>Type</th><th>Match</th><th>League</th>
+<th>Venue</th><th>Side</th><th>Wire</th><th>Size @ price</th><th>Fee</th>
+<th>After-fee</th><th>HTTP</th><th>Filled</th><th>Outcome</th>
+<th>Failure kind</th><th>P&amp;L if settled</th>
+</tr>
+<tr>
+<td>2026-11-03 01:32:15 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Gibson vs Oliynykova</td><td>WTA</td><td>polymarket</td>
+<td>No Oleksandra Oliynykova</td><td class="num">0.1600</td><td>unknown</td>
+<td>0.0000</td><td>0.1600</td><td>HTTP</td><td>yes</td><td>settled loss</td>
+<td>—</td><td>−$0.16</td></tr>
+<tr>
+<td>2026-11-03 01:32:15 ET</td><td>A Lock gap</td><td>initial lock</td>
+<td>Gibson vs Oliynykova</td><td>WTA</td><td>kalshi</td>
+<td>No Oleksandra Oliynykova</td><td class="num">0.8200</td><td>8.0000</td>
+<td>0.0104</td><td>0.8304</td><td>HTTP</td><td>yes</td><td>settled win</td>
+<td>—</td><td>+$0.17</td></tr>
+</table>
+<p>Corrected Gibson/Oliynykova lock (+$0.01), not a 1.67 mistake.</p>
+<h2>Full book (every posted send)</h2>
+<table><tr><th>Size @ price</th></tr></table>
+</body></html>
+"""
+
 
 def test_writer_trade_headers_include_size_at_price():
     assert any(h[0] == "Size @ price" for h in d.TRADE_HEADERS)
@@ -46,7 +152,39 @@ def test_stamp_with_size_at_price_passes_marker():
 
 def test_stale_gibson_poly_wire_detected():
     assert gate.stamp_has_stale_gibson_poly_wire(STALE_GIBSON_SNIPPET) is True
+    # Note alone no longer clears a living 0.84 wire.
+    assert gate.stamp_has_stale_gibson_poly_wire(
+        STALE_GIBSON_SNIPPET + "<p>Corrected Gibson/Oliynykova lock</p>"
+    ) is True
     assert gate.stamp_has_stale_gibson_poly_wire(FRESH_GIBSON_SNIPPET) is False
+
+
+def test_drive_failure_mode_fails_gate():
+    """The exact Drive stamp Paul saw must FAIL — prior gate wrongly passed Size @ price."""
+    path = Path("/tmp/dashboard_stamp_gate_drive_fail.html")
+    path.write_text(DRIVE_FAIL_HTML, encoding="utf-8")
+    report = gate.check(dashboard_html=path, require_stamp=True)
+    assert report["ok"] is False
+    assert report["stamp_size_at_price"] is True  # string present — old gate stopped here
+    assert report["trades_today_size_at_price"] is True
+    assert report["lock_gap_size_cells_ok"] is False
+    assert report["stamp_stale_gibson_wire"] is True
+    blob = " ".join(report["failures"])
+    assert "Size @ price" in blob
+    assert "Gibson" in blob or "0.84" in blob or "2.40" in blob or "2.4" in blob
+
+
+def test_drive_fixed_stamp_passes_gate():
+    from decimal import Decimal
+
+    path = Path("/tmp/dashboard_stamp_gate_drive_fixed.html")
+    path.write_text(DRIVE_FIXED_HTML, encoding="utf-8")
+    report = gate.check(dashboard_html=path, require_stamp=True)
+    assert report["ok"] is True, report["failures"]
+    assert report["lock_gap_size_cells_ok"] is True
+    assert report["stamp_stale_gibson_wire"] is False
+    assert report["gibson_pair_pnl"] is not None
+    assert abs(report["gibson_pair_pnl"] - Decimal("0.01")) <= Decimal("0.02")
 
 
 def test_check_writer_only_ok_when_no_stamp(tmp_path: Path | None = None):
@@ -85,12 +223,9 @@ def test_check_stale_stamp_fails(tmp_path=None):
 
 def test_check_fresh_stamp_passes():
     path = Path("/tmp/dashboard_stamp_gate_fresh.html")
-    path.write_text(
-        "<html><th>Size @ price</th>" + FRESH_GIBSON_SNIPPET + "</html>",
-        encoding="utf-8",
-    )
+    path.write_text(DRIVE_FIXED_HTML, encoding="utf-8")
     report = gate.check(dashboard_html=path, require_stamp=True)
-    assert report["ok"] is True
+    assert report["ok"] is True, report["failures"]
     assert report["stamp_size_at_price"] is True
     assert report["stamp_stale_gibson_wire"] is False
 
@@ -100,6 +235,8 @@ if __name__ == "__main__":
     test_stamp_missing_size_at_price_fails()
     test_stamp_with_size_at_price_passes_marker()
     test_stale_gibson_poly_wire_detected()
+    test_drive_failure_mode_fails_gate()
+    test_drive_fixed_stamp_passes_gate()
     test_check_writer_only_ok_when_no_stamp()
     test_check_require_stamp_fails_when_missing()
     test_check_stale_stamp_fails()
