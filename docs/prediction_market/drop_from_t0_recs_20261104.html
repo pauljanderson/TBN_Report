@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Drop from T0 — band dips findings &amp; recs (4 Nov 2026)</title>
+<style>
+body { font-family: Georgia, 'Times New Roman', serif; margin: 1.5rem; color: #1a1a1a;
+  background: linear-gradient(#f7f4ef, #efe8dc); min-height: 100vh; }
+h1,h2,h3 { font-family: 'Segoe UI', system-ui, sans-serif; }
+.muted { color: #555; }
+.note { max-width: 54rem; line-height: 1.45; }
+.card { background: #fff; border: 1px solid #d8d0c2; border-radius: 6px;
+  padding: 0.9rem 1.1rem; margin: 0.8rem 0; max-width: 54rem; }
+.rec { border-left: 4px solid #2f6f4e; }
+.hold { border-left: 4px solid #8a6d3b; }
+.skip { border-left: 4px solid #8a3b3b; }
+.warn { border-left: 4px solid #8a6d3b; }
+table { border-collapse: collapse; width: 100%; background: #fff; font-size: 0.88rem; }
+th, td { border: 1px solid #ccc; padding: 0.35rem 0.45rem; text-align: left; }
+th { background: #ebe4d8; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.kpi { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0 1rem; }
+.kpi div { background: #fff; border: 1px solid #d8d0c2; border-radius: 6px;
+  padding: 0.65rem 0.9rem; min-width: 8.5rem; }
+.kpi strong { display: block; font-size: 1.35rem; font-family: 'Segoe UI', system-ui, sans-serif; }
+.swipe { overflow-x: auto; }
+code { background: #f0ebe3; padding: 0.05rem 0.3rem; border-radius: 3px; }
+a { color: #1f4d7a; }
+</style>
+
+th.sortable-th { pointer-events: auto; touch-action: manipulation; cursor: pointer; }
+.sort-ind { display:inline-block; width:0.9em; margin-left:4px; color:#94a3b8; font-size:10px; }
+th.sort-asc .sort-ind::after { content:"\25B2"; color:#4c1d95; }
+th.sort-desc .sort-ind::after { content:"\25BC"; color:#4c1d95; }
+
+/* report-table-responsive */
+.table-wrap, .scroll, .wrap {
+  overflow: auto;
+  max-height: calc(100vh - 8rem);
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.swipe-note { font-size: 12px; color: #64748b; margin: 4px 0 10px; }
+table.sortable {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.sortable th,
+table.sortable td {
+  border: 1px solid #d8dee9;
+  padding: 6px 8px;
+}
+table.sortable thead th,
+table.sortable > thead > tr > th.sortable-th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 2;
+}
+table.sortable th[data-sort="num"] { text-align: right; }
+table.sortable > tbody > tr > td:first-child,
+table.sortable > tbody > tr > th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 2px 0 0 rgba(0, 0, 0, 0.06);
+}
+table.sortable > thead > tr > th:first-child,
+table.sortable > thead > tr > th.sortable-th:first-child {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  background: #f8fafc;
+}
+table.sortable tr.total-row > td:first-child,
+table.sortable tr.total-row > th:first-child,
+table.sortable tr.table-total > td:first-child,
+table.sortable tr.table-total > th:first-child {
+  z-index: 2;
+  background: #f8fafc;
+}
+table.sortable tbody tr:hover td,
+table.sortable tbody tr:hover th {
+  background: #f1f5f9;
+}
+@media (max-width: 800px) {
+  .table-wrap table.sortable,
+  .scroll table.sortable,
+  .wrap table.sortable {
+    width: max-content;
+    min-width: 100%;
+  }
+  .table-wrap th, .table-wrap td,
+  .scroll th, .scroll td,
+  .wrap th, .wrap td {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+}
+
+</head>
+<body>
+<h1>Band-specific drop from T0 — findings &amp; what to try</h1>
+<p class="muted">Written 2026-11-03 23:19 EST. Source rebuild 2026-11-03 23:19 EST.
+Research only. Not gold. Not DailyRun. Did not retune live A–E.</p>
+
+<div class="note">
+<p><strong>Rule under test:</strong> required dip D = <strong>5¢</strong> when that side’s
+T0 Yes is in <strong>20–49</strong>; D = <strong>3¢</strong> when T0 Yes is in
+<strong>50–89</strong> (exactly 0.50 → 3¢). T0 &lt; 20¢ or ≥ 90¢ excluded from the
+band rule. Same books as the 2 Nov uniform-dip report.</p>
+</div>
+
+<div class="kpi">
+  <div><strong>75.6%</strong>Dense both band-hit</div>
+  <div><strong>46.2%</strong>Dense both ≥10¢ (uniform)</div>
+  <div><strong>6.5¢</strong>Band mean optimistic edge</div>
+  <div><strong>18.2¢</strong>Prior ≥10¢ mean edge</div>
+  <div><strong>39.3%</strong>Kalshi tennis band both-hit</div>
+</div>
+
+<h2>Verdict in one paragraph</h2>
+<div class="note card">
+<p>On dense tennis, 5¢@20–49 / 3¢@50–89 is <strong>higher frequency</strong>
+than the uniform −10¢ System G sketch (75.6% both-hit vs
+46.2% both ≥10¢; also vs 70.6% both ≥5¢), but the optimistic
+lock edge is <strong>thinner</strong>
+(6.5¢ mean edge / mean cost 93.5¢
+vs prior −10¢ mean edge 18.2¢). Single-side band hits are
+common (20–49 hit 91.7%; 50–89 hit
+88.0%). Kalshi ask tape is colder: tennis ML band both-hit
+only 39.3%, mean edge
+5.5¢ — fees (~2¢) eat most of that.
+<strong>Net:</strong> better fill frequency than −10¢ dual-dip, worse edge per fill;
+paper as a high-frequency thin-gap sleeve, not a replacement for the −10¢ near-50
+lock candidate until a realistic fill+fee replay is green.</p>
+</div>
+
+<h2>Recommendations</h2>
+
+<div class="card rec">
+<h3>1. TRY (paper): System G′ — band-D dual dip (5¢/3¢)</h3>
+<p><strong>Rule sketch:</strong> Tennis moneyline. At T0, require <em>each</em> Yes in
+20–89¢ (skip &lt;20 / ≥90). Rest / watch for side A fill ≤ T0A − D(A) and side B
+≤ T0B − D(B), with D=5¢ on 20–49 and D=3¢ on 50–89. When both marked filled, hold
+Yes+Yes to settlement (or define flatten).</p>
+<p><strong>Why:</strong> Dense both-hit 75.6% of 119 pairs
+(78.9% of both-eligible). Much more
+often than −10¢ (46.2%). Mean optimistic edge
+6.5¢ before fees.</p>
+<p><strong>Gate before live:</strong> Same as 2 Nov — realistic ask+fee fill model,
+IS/OOS on larger Kalshi in-play book. Do <strong>not</strong> wire beside B until that
+page is green. Expect fees to wipe ~2¢ of the ~6.5¢ edge.</p>
+<p><strong>A/B vs G:</strong> Keep uniform T=10¢ (25–75 band) as control; G′ is the
+band-D variant. Compare realized fill rate, all-in cost, and with-fee EV — not just
+max-dip hit rates.</p>
+</div>
+
+<div class="card warn">
+<h3>2. HOLD / do not prefer G′ over G on edge</h3>
+<p>Band dips win on <em>frequency</em>, lose on <em>edge thickness</em>. Prior uniform
+−10¢ optimistic mean edge was 18.2¢; band rule is
+6.5¢. If the kitchen needs ~10¢+ theoretical lock after fees,
+stay with near-50 −10¢ (or −8/−12 A/B) rather than 3–5¢ band D.</p>
+</div>
+
+<div class="card rec">
+<h3>3. TRY (research): One-side band dump add</h3>
+<p>Buy one Yes the first time that side clears its band D (5¢ or 3¢), without waiting
+for the other leg. Dense single-side band-hit of eligible =
+89.7%. Directional — needs with-fee EV by
+band and fav/dog before any stake.</p>
+</div>
+
+<div class="card hold">
+<h3>4. HOLD live A–E as-is</h3>
+<ul>
+<li>This page does not retune B’s post-cross fav D=0.25 or C/D/E T0 freezes.</li>
+<li>Still skip 90/10 dual-dip locks; band rule already excludes ≥90 and &lt;20.</li>
+</ul>
+</div>
+
+<div class="card skip">
+<h3>5. SKIP</h3>
+<ul>
+<li><strong>Treating Kalshi ask both-hit like dense tape.</strong> Kalshi tennis band
+both-hit 39.3% vs dense
+75.6% — different book microstructure.</li>
+<li><strong>Assuming 3¢ fav dips clear fees.</strong> Mean band edge on dense is only
+6.5¢; on Kalshi tennis 5.5¢.</li>
+</ul>
+</div>
+
+<h2>Comparison table (band vs uniform)</h2>
+<div class="swipe">
+<table class="sortable">
+<thead><tr>
+<th>Book</th><th class="num">N pairs</th>
+<th class="num">Band both-hit%</th>
+<th class="num">Uniform ≥5¢%</th><th class="num">Uniform ≥10¢%</th>
+<th class="num">Band mean edge</th><th class="num">Band mean cost</th>
+<th class="num">Prior ≥10¢%</th><th class="num">Prior ≥10¢ edge</th>
+</tr></thead>
+<tbody>
+<tr><td>Dense tennis live tape</td><td class='num'>119</td><td class='num'>75.6%</td><td class='num'>70.6%</td><td class='num'>46.2%</td><td class='num'>6.5¢</td><td class='num'>93.5¢</td><td class='num'>46.2%</td><td class='num'>18.2¢</td></tr><tr><td>Kalshi all-sports pairs</td><td class='num'>170</td><td class='num'>32.9%</td><td class='num'>41.2%</td><td class='num'>20.0%</td><td class='num'>5.7¢</td><td class='num'>94.3¢</td><td class='num'>20.0%</td><td class='num'>17.8¢</td></tr><tr><td>Kalshi tennis ML pairs</td><td class='num'>112</td><td class='num'>39.3%</td><td class='num'>42.9%</td><td class='num'>20.5%</td><td class='num'>5.5¢</td><td class='num'>94.5¢</td><td class='num'>20.0%</td><td class='num'>17.8¢</td></tr><tr><td>Poly CLOB last-trade</td><td class='num'>21</td><td class='num'>61.9%</td><td class='num'>57.1%</td><td class='num'>42.9%</td><td class='num'>8.0¢</td><td class='num'>92.0¢</td><td class='num'>42.9%</td><td class='num'>20.0¢</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Dense tennis — max dip by T0 decile + band D</h2>
+<p class="muted">Band hit% only for deciles inside 20–89 (excl. = outside rule).
+Uniform ≥5¢ / ≥10¢ shown for comparison.</p>
+<div class="swipe">
+<table class="sortable">
+<thead><tr>
+<th>T0 decile</th><th class="num">N</th><th class="num">Mean</th><th class="num">Median</th>
+<th class="num">p75</th><th class="num">Band D</th><th class="num">Band hit%</th>
+<th class="num">≥5¢</th><th class="num">≥10¢</th>
+</tr></thead>
+<tbody>
+<tr><td>10-19</td><td class='num'>4</td><td class='num'>8.0¢</td><td class='num'>8.2¢</td><td class='num'>9.4¢</td><td class='num'>excl.</td><td class='num'>—</td><td class='num'>75.0%</td><td class='num'>25.0%</td></tr><tr><td>20-29</td><td class='num'>28</td><td class='num'>15.0¢</td><td class='num'>15.0¢</td><td class='num'>19.2¢</td><td class='num'>5¢</td><td class='num'>92.9%</td><td class='num'>92.9%</td><td class='num'>85.7%</td></tr><tr><td>30-39</td><td class='num'>35</td><td class='num'>19.2¢</td><td class='num'>23.0¢</td><td class='num'>26.5¢</td><td class='num'>5¢</td><td class='num'>88.6%</td><td class='num'>88.6%</td><td class='num'>74.3%</td></tr><tr><td>40-49</td><td class='num'>46</td><td class='num'>25.2¢</td><td class='num'>30.8¢</td><td class='num'>36.0¢</td><td class='num'>5¢</td><td class='num'>93.3%</td><td class='num'>93.5%</td><td class='num'>78.3%</td></tr><tr><td>50-59</td><td class='num'>42</td><td class='num'>29.4¢</td><td class='num'>35.8¢</td><td class='num'>46.0¢</td><td class='num'>3¢</td><td class='num'>88.1%</td><td class='num'>85.7%</td><td class='num'>71.4%</td></tr><tr><td>60-69</td><td class='num'>42</td><td class='num'>32.2¢</td><td class='num'>34.0¢</td><td class='num'>54.1¢</td><td class='num'>3¢</td><td class='num'>88.1%</td><td class='num'>76.2%</td><td class='num'>71.4%</td></tr><tr><td>70-79</td><td class='num'>30</td><td class='num'>28.1¢</td><td class='num'>19.5¢</td><td class='num'>49.2¢</td><td class='num'>3¢</td><td class='num'>90.0%</td><td class='num'>76.7%</td><td class='num'>63.3%</td></tr><tr><td>80-89</td><td class='num'>11</td><td class='num'>14.4¢</td><td class='num'>14.0¢</td><td class='num'>21.8¢</td><td class='num'>3¢</td><td class='num'>81.8%</td><td class='num'>81.8%</td><td class='num'>63.6%</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Band composition (dense)</h2>
+<ul>
+<li>Eligible sides: 233 / 238
+(97.9%); excluded 5.</li>
+<li>20–49 / D=5¢: N=108, hit 91.7%,
+median max dip 20.5¢.</li>
+<li>50–89 / D=3¢: N=125, hit 88.0%,
+median max dip 27.5¢.</li>
+<li>Poly last-trade both band-hit 61.9%,
+mean edge 8.0¢ (small N=21).</li>
+</ul>
+
+<h2>How this was measured</h2>
+<div class="note">
+<ul>
+<li>Same methodology as
+<code>docs/prediction_market/drop_from_t0_by_decile_20261102.html</code>.</li>
+<li>Band machine table:
+<code>docs/prediction_market/drop_from_t0_band_dips_20261104.html</code></li>
+<li>Rebuild:
+<code>python -u tools/pm_drop_from_t0_band_dips_20261104.py --report-only</code>
+then
+<code>python -u tools/_write_drop_from_t0_recs_20261104.py</code></li>
+</ul>
+<p class="muted">Optimistic both-side fills at exactly T0−D ignore queue, ask/trade gap, and fees. Band edge is thinner than uniform −10¢ (System G sketch) because D is only 3–5¢. Same source books as 2026-11-02; default rebuild is report-only from cached Kalshi/Poly jsonl + dense Oct 21 HTML. Local price_memory is not on this cloud VM.</p>
+<p class="muted">Seed: {&quot;dense_band_both_hit_pct&quot;: 75.6, &quot;dense_uniform_d05&quot;: 70.6, &quot;dense_uniform_d10&quot;: 46.2, &quot;dense_band_mean_edge&quot;: 0.0649, &quot;dense_band_mean_cost&quot;: 0.9351, &quot;kalshi_all_band_both_hit_pct&quot;: 32.9, &quot;kalshi_tennis_band_both_hit_pct&quot;: 39.3, &quot;kalshi_tennis_band_mean_edge&quot;: 0.0555}</p>
+</div>
+
+<p class="muted">Local file URL on Paul’s PC: <a href="file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/prediction_market_arb_exhaustive_20261017/drop_from_t0_recs_20261104.html">file:///C:/Users/songg/Downloads/stockresearch/drive/paul_experiments/prediction_market_arb_exhaustive_20261017/drop_from_t0_recs_20261104.html</a></p>
+
+<script>
+(function () {
+
+  function ensureTableWraps() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var parent = table.parentElement;
+      if (!parent || !parent.classList) return;
+      var cls = parent.classList;
+      if (cls.contains("table-wrap") || cls.contains("scroll") || cls.contains("wrap")) return;
+      var div = document.createElement("div");
+      div.className = "table-wrap";
+      parent.insertBefore(div, table);
+      div.appendChild(table);
+    });
+  }
+  function alignNumericColumns() {
+    document.querySelectorAll("table.sortable").forEach(function (table) {
+      var headRow = table.tHead && table.tHead.rows[0];
+      if (!headRow || !table.tBodies[0]) return;
+      var idx = [];
+      for (var i = 0; i < headRow.cells.length; i++) {
+        if (headRow.cells[i].getAttribute("data-sort") === "num") idx.push(i);
+      }
+      if (!idx.length) return;
+      Array.prototype.forEach.call(table.tBodies[0].rows, function (tr) {
+        idx.forEach(function (i) {
+          if (tr.cells[i]) tr.cells[i].style.textAlign = "right";
+        });
+      });
+    });
+  }
+  function bootTables() {
+    ensureTableWraps();
+    alignNumericColumns();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootTables);
+  } else {
+    bootTables();
+  }
+
+  var MONTHS = {
+    january:1, february:2, march:3, april:4, may:5, june:6,
+    july:7, august:8, september:9, october:10, november:11, december:12
+  };
+  function parseSortValue(text, type) {
+    var s = String(text || "").trim();
+    if (!s || s === "—" || s === "-") return type === "text" ? "" : 0;
+    if (type === "text") return s.toUpperCase();
+    if (type === "month") {
+      var key = s.toLowerCase().split(/\s/)[0];
+      return MONTHS[key] || 0;
+    }
+    if (type === "date") {
+      var iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return parseInt(iso[1] + iso[2] + iso[3], 10);
+      // Compact YYYYMMDD (VZ TRIGGER_DATE, RS/BRT DATE, RSI ASOF_DATE, etc.)
+      var ymd = s.match(/^(\d{8})$/);
+      if (ymd) return parseInt(ymd[1], 10);
+      var mdy = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (mdy) return parseInt(mdy[3] + mdy[1].padStart(2, "0") + mdy[2].padStart(2, "0"), 10);
+      return 0;
+    }
+    var n = s.replace(/[$,%+]/g, "").replace(/,/g, "");
+    var v = parseFloat(n);
+    return Number.isFinite(v) ? v : 0;
+  }
+  function sortTable(table, col, type, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    var pinned = rows.filter(function (r) {
+      return r.classList.contains("total-row") || r.classList.contains("table-total");
+    });
+    var movable = rows.filter(function (r) {
+      return !r.classList.contains("total-row") && !r.classList.contains("table-total");
+    });
+    movable.sort(function (a, b) {
+      var av = parseSortValue(a.cells[col] && a.cells[col].textContent, type);
+      var bv = parseSortValue(b.cells[col] && b.cells[col].textContent, type);
+      if (typeof av === "string" || typeof bv === "string") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      return dir * (av - bv);
+    });
+    movable.concat(pinned).forEach(function (r) { tbody.appendChild(r); });
+    var wrap = table.closest(".table-wrap, .scroll, .wrap");
+    if (wrap) wrap.scrollTop = 0;
+  }
+  function headerCol(th) {
+    if (typeof th.cellIndex === "number" && th.cellIndex >= 0) return th.cellIndex;
+    var tr = th.parentElement;
+    if (!tr) return 0;
+    return Array.prototype.indexOf.call(tr.children, th);
+  }
+  var lastAt = 0;
+  var lastTh = null;
+  function onActivate(th) {
+    var table = th.closest("table.sortable");
+    if (!table) return;
+    var now = Date.now();
+    if (lastTh === th && now - lastAt < 400) return;
+    lastTh = th;
+    lastAt = now;
+    var col = headerCol(th);
+    var type = th.getAttribute("data-sort") || "text";
+    var dir = th.getAttribute("data-dir") === "asc" ? -1 : 1;
+    table.querySelectorAll("th.sortable-th").forEach(function (h) {
+      h.setAttribute("data-dir", "");
+      h.classList.remove("sort-asc", "sort-desc");
+      h.setAttribute("aria-sort", "none");
+    });
+    th.setAttribute("data-dir", dir === 1 ? "asc" : "desc");
+    th.classList.add(dir === 1 ? "sort-asc" : "sort-desc");
+    th.setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+    sortTable(table, col, type, dir);
+  }
+  function headerFromEvent(e) {
+    var t = e.target;
+    if (t && t.closest) {
+      var direct = t.closest("th.sortable-th");
+      if (direct) return direct;
+    }
+    if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
+    var best = null;
+    var bestZ = -Infinity;
+    var bestArea = Infinity;
+    var list = document.querySelectorAll("table.sortable th.sortable-th");
+    for (var i = 0; i < list.length; i++) {
+      var th = list[i];
+      var r = th.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+      var z = parseInt(window.getComputedStyle(th).zIndex, 10);
+      if (!isFinite(z)) z = 0;
+      var area = r.width * r.height;
+      if (!best || z > bestZ || (z === bestZ && area < bestArea)) {
+        best = th;
+        bestZ = z;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+  document.addEventListener("click", function (e) {
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("pointerup", function (e) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    var th = headerFromEvent(e);
+    if (!th) return;
+    onActivate(th);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var th = headerFromEvent(e);
+    if (!th) return;
+    e.preventDefault();
+    onActivate(th);
+  });
+})();
+</script>
+
+</body>
+</html>
