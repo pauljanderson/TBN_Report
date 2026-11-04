@@ -1,5 +1,6 @@
 @echo off
 rem Live stop/target for active systems. IND is deprecated and excluded from scheduled targets.
+rem Empty gettarget_positions.csv (nothing held) exits 0 after clearing getTarget_output.csv.
 rem Systems: RL, BRT, YH, MTS, WPBR, RS, SB (StockBee), CS (CAN SLIM), VZ, RSI.
 rem RSI: implied what-if closes (Target=RSI>=70, Stop=roll8). Fill still next open.
 rem   House freeze lives in getTarget.py RsiProfile (ob=70 os=30 exit=70 max_trigger=60

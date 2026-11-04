@@ -12,6 +12,8 @@ or RSI (Relative Strength Index 14 — implied what-if closes for RSI≥70 and r
 Edit gettarget_positions.csv (symbol, purchase_date, entry_price, system).
   That is the input book — DailyRun/publish must not drop rows you added.
   getTarget writes getTarget_output.csv only (never overwrites the positions file).
+  An empty positions file (flat book / nothing held) is OK: clears getTarget_output.csv
+  and exits 0 so DailyRun / run_gettarget.bat can finish.
   entry_price may be blank to use CSV Open on the entry date.
   system is RL, BRT, IND, YH, MTS, WPBR, RS, SB, MVCP (retired), CS, WRL, VZ, or RSI (case-insensitive).
   Aliases: PBR→WPBR, STOCKBEE→SB, MINERVINI/VCP→MVCP, CANSLIM/CAN_SLIM→CS,
@@ -377,11 +379,8 @@ def load_positions(
             system=_normalize_system(str(system).strip().upper() or ds),
         )
 
-    if not out:
-        raise FileNotFoundError(
-            f"No positions loaded. Edit {DEFAULT_POSITIONS_CSV} or pass --positions-csv."
-        )
-
+    # Empty book is valid for DailyRun (flat / no holdings). Callers clear
+    # getTarget_output.csv and exit 0 — do not raise.
     return out
 
 
@@ -2104,17 +2103,23 @@ def main() -> None:
             f"[getTarget] Skipping {len(skipped)} position(s) for excluded system(s): "
             f"{', '.join(sorted(excluded_systems))}"
         )
-        if not positions:
-            out_path = Path(args.out_csv)
-            columns = ["Symbol", "System", "PurchaseDate", "TargetPrice", "LimitPrice"]
-            if out_path.exists():
-                try:
-                    columns = list(pd.read_csv(out_path, nrows=0).columns) or columns
-                except Exception:
-                    pass
-            pd.DataFrame(columns=columns).to_csv(out_path, index=False)
-            print(f"No active-system positions; cleared live target rows in {out_path.resolve()}")
-            return
+
+    def _clear_live_targets(reason: str) -> None:
+        """Write an empty getTarget_output.csv (keep prior columns) and exit cleanly."""
+        out_path = Path(args.out_csv)
+        columns = ["Symbol", "System", "PurchaseDate", "TargetPrice", "LimitPrice"]
+        if out_path.exists():
+            try:
+                columns = list(pd.read_csv(out_path, nrows=0).columns) or columns
+            except Exception:
+                pass
+        pd.DataFrame(columns=columns).to_csv(out_path, index=False)
+        print(f"{reason}; cleared live target rows in {out_path.resolve()}")
+
+    if not positions:
+        # Flat book / empty gettarget_positions.csv — DailyRun must not fail.
+        _clear_live_targets("No open positions")
+        return
 
     def _atr_from_args(px: str) -> AtrProfile:
         return AtrProfile(
