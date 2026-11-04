@@ -18,9 +18,23 @@ echo === git pull origin main ===
 echo New bats from a merged PR are NOT on disk until this pull finishes.
 echo.
 
+rem Dirty tree blocks "git checkout main". Stash first, restore after pull.
+set "DID_STASH=0"
+git status --porcelain | findstr /r "." >nul
+if not errorlevel 1 (
+  echo Local edits detected — stashing before checkout main...
+  git stash push -u -m "git_pull auto-stash before checkout main"
+  if errorlevel 1 (
+    echo Stash failed. Commit manually, then retry.
+    goto :done
+  )
+  set "DID_STASH=1"
+)
+
 git checkout main
 if errorlevel 1 (
   echo Could not switch to main.
+  if "%DID_STASH%"=="1" git stash pop
   goto :done
 )
 
@@ -29,7 +43,21 @@ if errorlevel 1 (
   echo.
   echo Pull failed. If you have local edits, commit or stash them first,
   echo or run git_checkin.bat then try this again.
+  if "%DID_STASH%"=="1" (
+    echo Restoring your stash...
+    git stash pop
+  )
   goto :done
+)
+
+if "%DID_STASH%"=="1" (
+  echo.
+  echo Restoring stashed local edits onto updated main...
+  git stash pop
+  if errorlevel 1 (
+    echo Stash pop had conflicts — fix them, then git add / commit.
+    goto :done
+  )
 )
 
 echo.

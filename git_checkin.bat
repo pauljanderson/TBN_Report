@@ -44,15 +44,40 @@ echo === Git check-in: staging source code ===
 echo.
 
 echo Pulling origin/main first so this PC is not behind the agent...
+rem Dirty tree blocks "git checkout main". Stash -> checkout -> pull -> pop,
+rem then stage/commit on up-to-date main (keeps local WIP).
+set "DID_STASH=0"
+git status --porcelain | findstr /r "." >nul
+if not errorlevel 1 (
+  echo Local edits detected — stashing before checkout main...
+  git stash push -u -m "git_checkin auto-stash before checkout main"
+  if errorlevel 1 (
+    echo Stash failed. Commit or stash manually, then retry.
+    exit /b 1
+  )
+  set "DID_STASH=1"
+)
+
 git checkout main
 if errorlevel 1 (
   echo Could not switch to main.
+  if "!DID_STASH!"=="1" git stash pop
   exit /b 1
 )
 git pull origin main
 if errorlevel 1 (
   echo git pull failed. Fix conflicts or uncommitted edits, then retry.
+  if "!DID_STASH!"=="1" git stash pop
   exit /b 1
+)
+
+if "!DID_STASH!"=="1" (
+  echo Restoring stashed local edits onto updated main...
+  git stash pop
+  if errorlevel 1 (
+    echo Stash pop had conflicts — fix them, then re-run git_checkin.bat.
+    exit /b 1
+  )
 )
 echo.
 
