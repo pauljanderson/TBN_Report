@@ -48,9 +48,28 @@ if "%HTML%"=="" if "%SETTLED%"=="" if "%PMDUMP%"=="" if "%KDUMP%"=="" (
 )
 
 if not defined PY call "%~dp0resolve_python.bat"
-if errorlevel 1 (
+if defined PY (
+  "%PY%" -u tools\pm_venue_kitchen_check.py %ARGS%
+) else (
   python -u tools\pm_venue_kitchen_check.py %ARGS%
-  exit /b %ERRORLEVEL%
 )
-"%PY%" -u tools\pm_venue_kitchen_check.py %ARGS%
-exit /b %ERRORLEVEL%
+set ERR=%ERRORLEVEL%
+
+rem Class gate: living dashboard.html must carry Size @ price after writer merges.
+rem Missing stamp on this PC is skipped; trading PC with Drive sync must pass.
+set DASH=
+if exist "drive\paul_experiments\prediction_market_arb_exhaustive_20261017\dashboard.html" (
+  set "DASH=drive\paul_experiments\prediction_market_arb_exhaustive_20261017\dashboard.html"
+)
+if not "%DASH%"=="" (
+  echo.
+  echo === dashboard stamp gate ===
+  if defined PY (
+    "%PY%" -u tools\dashboard_stamp_gate.py --dashboard-html "%DASH%" --require-stamp
+  ) else (
+    python -u tools\dashboard_stamp_gate.py --dashboard-html "%DASH%" --require-stamp
+  )
+  if errorlevel 1 set ERR=1
+)
+
+exit /b %ERR%

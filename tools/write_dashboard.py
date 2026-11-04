@@ -1214,7 +1214,7 @@ code { font-size: 13px; }
 <p><strong>Leftover-watch:</strong> after a lock send, if one side fills and the other misses, A watches and buys the missing side or flattens so we are not naked. That is lock-bot cleanup, not System E. A comment already said not to leftover-watch a directional dog; the skip list never included E, so tennis T0 dog fills were registered by accident. Those hedge posts are Type leftover / hedge (A leftover) — not E Tennis T0 dog — so 55¢ Djokovic and 51¢ No Musetti are not underdog tickets.</p>
 <p>On/off snapshot: {esc(sys_on)}. Did not sell, start a second B, bump stake, wire D NFL, leftover GTC, or retune C=1.05.</p>
 </div>
-<p class="note">Data: orders.jsonl, order_io.jsonl, systems.json, job_status Positions overlay, fill-history truth, venue_cash_local.json. Rebuilds with orders_performance.html after a confirmed fill or a closed trade (background; does not sit on A hard-then-easy IOC). Job status refreshes systems / open about once a minute. Manual: <code>python tools/write_orders_performance.py</code> then this page. {esc(FILE_URL)}</p>
+<p class="note">Data: orders.jsonl, order_io.jsonl, systems.json, job_status Positions overlay, fill-history truth, venue_cash_local.json. Rebuilds with orders_performance.html after a confirmed fill or a closed trade (background; does not sit on A hard-then-easy IOC). Job status refreshes systems / open about once a minute. <strong>git pull alone does not rewrite this HTML</strong> — after merging writer fixes, run <code>run_rebuild_kitchen_dashboard.bat</code> or <code>python tools/write_orders_performance.py</code> (also writes this page). Gate: <code>run_dashboard_stamp_gate.bat</code>. {esc(FILE_URL)}</p>
 {dashboard_script()}
 </body>
 </html>
