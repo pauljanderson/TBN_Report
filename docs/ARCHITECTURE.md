@@ -319,11 +319,11 @@ Prioritized for health of DailyRun and docs truthfulness.
 
 ### P0 — stop dual-running / path drift
 
-1. **Own local `data/` + real `drive/` under `code\TBN`.** Do not junction
-   `drive` to `Downloads\stockresearch\drive` (2026-11-06: shared stamp said
-   fresh while TBN `data/` ended 2026-11-04). Materialize `drive` with
-   robocopy, remove the junction, point every Task Scheduler “Start in” at
-   `C:\Users\songg\code\TBN`, then archive the Downloads twin. Freshness now
+1. **Own local `data/` + real `drive/` under `code\TBN`.** (Done 2026-11-06:
+   junction removed; ~82GB robocopy materialize; warehouse synced to 11-06.)
+   Still required once (elevated): `tools\fix_tbn_task_scheduler_startin.ps1`
+   so Task Scheduler “Start in” is `C:\Users\songg\code\TBN` (was Downloads —
+   access denied without admin). Then archive the Downloads twin. Freshness
    compares SPY.csv + ohlcv.duckdb max dates to the expected session and
    requires `stamp.data_root` to match this tree (`tools/data_update_freshness.py`).
 2. **Finish hardcoded-path cleanup.** Repo-relative now (2026-11-06):
