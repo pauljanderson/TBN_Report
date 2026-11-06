@@ -4,13 +4,16 @@
 2026-11-06: drive/ was a junction to Downloads\\stockresearch\\drive. A morning
 update wrote a fresh stamp (and updated Downloads data/) while TBN data/ still
 ended 2026-11-04. DailyRun skipped pygetallMore and ran on stale bars.
+
+Also: a stamp rewritten after the close over bars fetched before the close
+(16:27 ok_at, 10:50 bars_fetched_at) must still require a post-close update.
 """
 from __future__ import annotations
 
 import json
 import sys
 import tempfile
-from datetime import date, datetime, time
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,8 +28,6 @@ ET = ZoneInfo("America/New_York")
 def _write_spy(path: Path, last: date) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = ["Date,Open,High,Low,Close,Volume"]
-    d = date(last.year, last.month, 1) if last.day > 1 else last
-    # Keep it simple: three trailing calendar days ending at last.
     for i in range(2, -1, -1):
         day = date.fromordinal(last.toordinal() - i)
         rows.append(f"{day.isoformat()},1,1,1,1,1")
@@ -56,6 +57,7 @@ def _stamp(
     *,
     ok_at: datetime,
     data_root: str | None,
+    bars_fetched_at: datetime | None = None,
     updated: int = 100,
     total: int = 100,
 ) -> dict:
@@ -68,7 +70,10 @@ def _stamp(
         "skipped": 0,
         "total": total,
         "full_backfill_count": 0,
+        "writer": "pygetallMore",
     }
+    if bars_fetched_at is not None:
+        payload["bars_fetched_at"] = bars_fetched_at.isoformat()
     if data_root is not None:
         payload["data_root"] = data_root
     (drive / fresh.STAMP_NAME).write_text(json.dumps(payload), encoding="utf-8")
@@ -86,6 +91,7 @@ def test_fresh_stamp_stale_warehouse_needs_update() -> None:
         stamp = _stamp(
             root,
             ok_at=datetime(2026, 11, 6, 10, 50, tzinfo=ET),
+            bars_fetched_at=datetime(2026, 11, 6, 10, 50, tzinfo=ET),
             data_root=str(fresh.data_root(root).resolve()),
         )
         needs, reason = fresh.needs_data_update(stamp, now_et=now, root=root)
@@ -103,6 +109,7 @@ def test_stamp_other_data_root_needs_update() -> None:
         stamp = _stamp(
             root,
             ok_at=datetime(2026, 11, 6, 10, 50, tzinfo=ET),
+            bars_fetched_at=datetime(2026, 11, 6, 10, 50, tzinfo=ET),
             data_root=r"C:\Users\songg\Downloads\stockresearch\data",
         )
         needs, reason = fresh.needs_data_update(stamp, now_et=now, root=root)
@@ -120,17 +127,53 @@ def test_matching_warehouse_and_stamp_can_skip() -> None:
         stamp = _stamp(
             root,
             ok_at=datetime(2026, 11, 6, 16, 10, tzinfo=ET),
+            bars_fetched_at=datetime(2026, 11, 6, 16, 10, tzinfo=ET),
             data_root=str(fresh.data_root(root).resolve()),
         )
         needs, reason = fresh.needs_data_update(stamp, now_et=now, root=root)
         assert not needs, reason
 
 
+def test_post_close_stamp_over_pre_close_bars_needs_update() -> None:
+    """2026-11-06: ok_at 16:27 over bars_fetched_at 10:50 must not skip evening pull."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        last = date(2026, 11, 6)
+        _write_spy(fresh.spy_csv_path(root), last)
+        _write_duckdb(fresh.ohlcv_duckdb_path(root), last)
+        now = datetime(2026, 11, 6, 18, 30, tzinfo=ET)
+        stamp = _stamp(
+            root,
+            ok_at=datetime(2026, 11, 6, 16, 27, tzinfo=ET),
+            bars_fetched_at=datetime(2026, 11, 6, 10, 50, tzinfo=ET),
+            data_root=str(fresh.data_root(root).resolve()),
+        )
+        needs, reason = fresh.needs_data_update(stamp, now_et=now, root=root)
+        assert needs, reason
+        assert "post-close" in reason or "bars_fetched_at" in reason, reason
+
+
+def test_missing_bars_fetched_at_needs_update() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        last = date(2026, 11, 6)
+        _write_spy(fresh.spy_csv_path(root), last)
+        _write_duckdb(fresh.ohlcv_duckdb_path(root), last)
+        now = datetime(2026, 11, 6, 17, 30, tzinfo=ET)
+        stamp = _stamp(
+            root,
+            ok_at=datetime(2026, 11, 6, 16, 10, tzinfo=ET),
+            bars_fetched_at=None,
+            data_root=str(fresh.data_root(root).resolve()),
+        )
+        needs, reason = fresh.needs_data_update(stamp, now_et=now, root=root)
+        assert needs, reason
+        assert "bars_fetched_at" in reason, reason
+
+
 def test_expected_last_session_before_close() -> None:
-    # Thursday 2026-11-05 10:00 ET → expect Wed 2026-11-04
     now = datetime(2026, 11, 5, 10, 0, tzinfo=ET)
     assert fresh.expected_last_session_date(now) == date(2026, 11, 4)
-    # Thursday after close → expect Thursday
     now2 = datetime(2026, 11, 5, 16, 5, tzinfo=ET)
     assert fresh.expected_last_session_date(now2) == date(2026, 11, 5)
 
@@ -140,6 +183,8 @@ def main() -> int:
         test_fresh_stamp_stale_warehouse_needs_update,
         test_stamp_other_data_root_needs_update,
         test_matching_warehouse_and_stamp_can_skip,
+        test_post_close_stamp_over_pre_close_bars_needs_update,
+        test_missing_bars_fetched_at_needs_update,
         test_expected_last_session_before_close,
     ]
     failed = 0

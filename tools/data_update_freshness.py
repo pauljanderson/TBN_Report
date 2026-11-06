@@ -8,14 +8,18 @@ Exit codes (--check):
 Designed for ~3 DailyRun invocations per day:
   - First run of the ET calendar day fetches bars.
   - Later same-day runs skip once today's update succeeded.
-  - After 4:00 PM ET on a weekday, one post-close refresh runs if the
-    last success was before the close (so an evening run picks up the close).
+  - After 4:00 PM ET on a weekday, one post-close refresh runs if
+    bars_fetched_at was before the close (ok_at alone is not enough —
+    a late stamp rewrite over morning bars must not skip the evening pull).
 
 P0 (2026-11-06): do not trust the stamp alone. A shared drive/ junction can
 carry a fresh stamp while this tree's data/ is still on older bars. Always
 compare max(date) in data/ohlcv.duckdb and data/newdata/data/SPY.csv to the
 expected last US equity session, and require stamp.data_root to match this
 repo's data root.
+
+Sole writer of the stamp file: stock_analysis/pygetallMore.py. Never hand-write
+or rebind drive/data_update_last_ok.json.
 """
 
 from __future__ import annotations
@@ -271,11 +275,18 @@ def needs_data_update(
     if ok_at is None:
         return True, "stamp missing or invalid ok_at"
 
+    bars_at = _parse_ok_at(str(stamp.get("bars_fetched_at") or ""))
+    if bars_at is None:
+        return True, "stamp missing bars_fetched_at — refresh via pygetallMore (do not hand-write stamp)"
+
     updated = int(stamp.get("updated") or 0)
     skipped = int(stamp.get("skipped") or 0)
     total = int(stamp.get("total") or (updated + skipped))
     full_backfill = int(stamp.get("full_backfill_count") or 0)
-    summary = f"last ok {ok_at.strftime('%Y-%m-%d %H:%M')} ET ({updated}/{total} updated"
+    summary = (
+        f"last ok {ok_at.strftime('%Y-%m-%d %H:%M')} ET, "
+        f"bars {bars_at.strftime('%Y-%m-%d %H:%M')} ET ({updated}/{total} updated"
+    )
     if full_backfill:
         summary += f", {full_backfill} full backfill"
     summary += f"); {wh_detail}"
@@ -287,12 +298,17 @@ def needs_data_update(
         if ratio < min_updated_ratio:
             return True, f"last run only updated {updated}/{total} symbols — retry"
 
-    if ok_at.date() < now.date():
+    if bars_at.date() < now.date():
         return True, f"{summary}; need bars for {now.date().isoformat()}"
 
-    # Same ET calendar day.
-    if _is_weekday(now) and now.time() >= MARKET_CLOSE_ET and ok_at.time() < MARKET_CLOSE_ET:
-        return True, f"{summary}; post-close run needs today's close"
+    # Same ET calendar day: post-close needs bars fetched at/after the close.
+    # ok_at alone is wrong — a 16:27 stamp rewrite over 10:50 bars must not skip.
+    if (
+        _is_weekday(now)
+        and now.time() >= MARKET_CLOSE_ET
+        and bars_at.time() < MARKET_CLOSE_ET
+    ):
+        return True, f"{summary}; post-close run needs today's close (bars_fetched_at before 16:00 ET)"
 
     return False, summary
 

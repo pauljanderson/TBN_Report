@@ -1532,23 +1532,31 @@ def _write_update_stamp(
     ok: bool = True,
     data_dir: str | None = None,
     db_path: str | None = None,
+    bars_fetched_at: datetime | None = None,
 ) -> None:
-    """Record last successful pygetallMore run for DailyRun auto SKIP_GET.
+    """Record last successful pygetallMore OHLC run for DailyRun auto SKIP_GET.
 
-    Always embeds ``data_root`` so freshness checks can reject a stamp written
-    for a twin tree (shared drive/ junction) while this repo's data/ is stale.
+    Sole writer of drive/data_update_last_ok.json — do not hand-edit or rebind.
+    ``ok_at`` = stamp write time; ``bars_fetched_at`` = when yfinance bars landed
+    (post-close freshness uses bars_fetched_at, not ok_at).
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     stamp_dir = os.path.join(repo_root, "drive")
     os.makedirs(stamp_dir, exist_ok=True)
     path = os.path.join(stamp_dir, "data_update_last_ok.json")
     now_et = datetime.now(ZoneInfo("America/New_York"))
+    fetched = bars_fetched_at or now_et
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=ZoneInfo("America/New_York"))
+    else:
+        fetched = fetched.astimezone(ZoneInfo("America/New_York"))
     abs_data_dir = os.path.abspath(data_dir or DATA_DIR)
     # Standard layout: <repo>/data/newdata/data → data_root = <repo>/data
     data_root = os.path.dirname(os.path.dirname(abs_data_dir))
     payload = {
         "ok": bool(ok),
         "ok_at": now_et.isoformat(),
+        "bars_fetched_at": fetched.isoformat(),
         "updated": int(updated),
         "skipped": int(skipped),
         "total": int(total),
@@ -1556,6 +1564,7 @@ def _write_update_stamp(
         "data_root": os.path.abspath(data_root),
         "data_dir": abs_data_dir,
         "db_path": os.path.abspath(db_path or DEFAULT_DB_PATH),
+        "writer": "pygetallMore",
     }
     # Best-effort warehouse max dates for operators reading the stamp.
     try:
@@ -1720,6 +1729,8 @@ def main():
             multi_level_index=False,
             auto_adjust=False,
         )
+    # Wall clock when Yahoo bars landed — distinct from stamp write time (ok_at).
+    bars_fetched_at = datetime.now(ZoneInfo("America/New_York"))
 
     if (not full_symbols or data_full is None or data_full.empty) and (not incremental_symbols or data_inc is None or data_inc.empty):
         print("No data returned from yfinance.")
@@ -1810,6 +1821,7 @@ def main():
         ok=stamp_ok,
         data_dir=args.data_dir,
         db_path=args.db_path,
+        bars_fetched_at=bars_fetched_at,
     )
     print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}{fund_msg}")
 

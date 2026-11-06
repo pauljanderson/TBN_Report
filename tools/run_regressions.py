@@ -6,6 +6,9 @@ Covers:
   - Pages push survives origin/main moving mid-run
   - Data freshness refuses a fresh stamp over a stale warehouse
   - No new Downloads\\stockresearch hardcodes in live/critical paths
+
+Fails if the whole suite (or --max-seconds wall) exceeds the time budget so a
+path-audit hang cannot stall DailyRun for minutes.
 """
 from __future__ import annotations
 
@@ -13,13 +16,13 @@ import argparse
 import fnmatch
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 _TOOLS = _REPO / "tools"
+_DEFAULT_MAX_SECONDS = 60.0
 
-# Live / DailyRun surfaces that must stay free of Downloads\\stockresearch.
-# (Exclude tools/test_*.py and repo_split/ — tests/docs may name the twin path.)
 _CRITICAL_PATTERNS = (
     "DailyRun.bat",
     "GetDaily.bat",
@@ -85,12 +88,15 @@ def _path_audit_critical() -> int:
     if not rewrite.is_file():
         print("SKIP rewrite_paths.py missing")
         return 0
+    t0 = time.perf_counter()
     proc = subprocess.run(
         [sys.executable, str(rewrite), "--audit-only", "--root", str(_REPO)],
         cwd=str(_REPO),
         text=True,
         capture_output=True,
     )
+    elapsed = time.perf_counter() - t0
+    print(f"[path audit] {elapsed:.1f}s")
     out = (proc.stdout or "") + (proc.stderr or "")
     critical_hits: list[str] = []
     other = 0
@@ -98,7 +104,6 @@ def _path_audit_critical() -> int:
         line = line.strip()
         if not line or not line[0].isdigit():
             continue
-        # "  12  relative/path"
         parts = line.split()
         if len(parts) < 2:
             continue
@@ -123,7 +128,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip Downloads\\stockresearch critical-path audit.",
     )
+    p.add_argument(
+        "--max-seconds",
+        type=float,
+        default=_DEFAULT_MAX_SECONDS,
+        help=f"Fail if the suite wall time exceeds this (default {_DEFAULT_MAX_SECONDS:.0f}s).",
+    )
     ns = p.parse_args(argv)
+    t0 = time.perf_counter()
     failed = 0
     for name in _TESTS:
         rc = _run_script(name)
@@ -132,11 +144,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {name} exit={rc}")
         else:
             print(f"PASS {name}")
+        if time.perf_counter() - t0 > ns.max_seconds:
+            print(f"FAIL suite exceeded --max-seconds={ns.max_seconds:.0f} during {name}")
+            return 1
     if not ns.skip_path_audit:
         if _path_audit_critical() != 0:
             failed += 1
+    elapsed = time.perf_counter() - t0
+    if elapsed > ns.max_seconds:
+        print(f"FAIL suite wall {elapsed:.1f}s > --max-seconds={ns.max_seconds:.0f}")
+        return 1
     total = len(_TESTS) + (0 if ns.skip_path_audit else 1)
-    print(f"\n{total - failed}/{total} checks passed (failed={failed})")
+    print(f"\n{total - failed}/{total} checks passed (failed={failed}, {elapsed:.1f}s)")
     return 1 if failed else 0
 
 

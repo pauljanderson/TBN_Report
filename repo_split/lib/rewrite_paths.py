@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,28 +37,31 @@ SKIP_DIR_NAMES = {
 }
 
 
-def _skip_dir(path: Path) -> bool:
-    for part in path.parts:
-        if part in SKIP_DIR_NAMES:
-            return True
-        # Experiment / scratch trees (tmp_wpbr_*, etc.)
-        if part.startswith("tmp_") or part.startswith("_tmp_"):
-            return True
+def _prune_dir_name(name: str) -> bool:
+    if name in SKIP_DIR_NAMES:
+        return True
+    if name.startswith("tmp_") or name.startswith("_tmp_"):
+        return True
     return False
 
 
 def iter_text_files(root: Path):
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if _skip_dir(path):
-            continue
-        if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in {
-            "Dockerfile",
-            "Makefile",
-        }:
-            continue
-        yield path
+    """Yield text files under root, pruning heavy trees before descent.
+
+    Uses os.walk (not Path.rglob) so drive/ and data/ (~hundreds of thousands of
+    files) are never entered.
+    """
+    root = root.resolve()
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = [d for d in dirnames if not _prune_dir_name(d)]
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in {
+                "Dockerfile",
+                "Makefile",
+            }:
+                continue
+            yield path
 
 
 def audit(root: Path) -> list[tuple[Path, int]]:
