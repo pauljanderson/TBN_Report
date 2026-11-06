@@ -1,9 +1,9 @@
 @echo off
 rem WRL — Weekly Range / Swing demand-zone breakout
 rem DailyRun sleeve [10d/13] — official 6-sys mix. Not gold.
-rem Lives at the development root (same folder as DailyRun.bat / run_wpbr.bat / run_vz.bat):
-rem   C:\Users\songg\Downloads\stockresearch\run_wrl.bat
-rem Double-click or:  cd /d C:\Users\songg\Downloads\stockresearch  &  run_wrl.bat
+rem Lives at the repo root (same folder as DailyRun.bat / run_wpbr.bat / run_vz.bat).
+rem Preferred: C:\Users\songg\code\TBN\run_wrl.bat
+rem Double-click or:  cd /d "%~dp0"  &  run_wrl.bat
 rem Engine: rocket_tbn.py + rocket_wrl.py  (-v wrl_mode=true)
 rem Outputs: drive\WRL_*_<ts>.csv (Closed / Open / Watchlist / Scanner / Summary / Audit / Equity)
 rem Docs: drive\systems\wrl.html  (git/Pages copy: docs\systems\wrl.html)
