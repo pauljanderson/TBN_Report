@@ -614,15 +614,8 @@ def git_push_docs(repo_root: Path, docs_dir: Path, message: str) -> None:
             err = _git_err(proc)
             raise RuntimeError(f"git {' '.join(step)} failed: {err}")
 
-    if branch == "main":
-        # Fast path: push the branch itself (same tip as HEAD:main).
-        proc = _git(["push", "origin", "main"], repo_root)
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout).strip()
-            raise RuntimeError(f"git push origin main failed: {err}")
-        print("[pages] Pushed origin/main. Pages may take 1-2 minutes to update.")
-        return
-
+    # Always fetch/integrate first — a bare `git push origin main` after commit
+    # fails when origin/main moved mid-DailyRun (2026-10-28 fast-path regression).
     push_origin_main(repo_root, branch)
 
 

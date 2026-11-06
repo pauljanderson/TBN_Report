@@ -1,6 +1,8 @@
-# New PC setup (stockresearch)
+# New PC setup (TBN)
 
-Move from laptop to desktop with **git for code** and **Google Drive for run outputs**. This guide matches the repo layout as of 2026.
+Move from laptop to desktop with **git for code** and **Google Drive for run outputs**. This guide matches the repo layout as of **2026-11-06**.
+
+Canonical architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Before shutting down the laptop
 
@@ -42,15 +44,16 @@ See `repo_split\README.md`. `DailyRun.bat` now uses `cd /d "%~dp0"`, so TBN can 
    ```bat
    winget install -e --id Python.Python.3.10 --scope user
    ```
-3. Clone and run setup:
+3. Clone and run setup (preferred root = `code\TBN`):
    ```bat
-   setup_new_pc.bat --clone "C:\Users\songg\Downloads\stockresearch" --smoke
+   setup_new_pc.bat --clone "C:\Users\songg\code\TBN" --smoke
    ```
-   Or if you already cloned manually:
+   Or if you already cloned / copied via `repo_split`:
    ```bat
-   cd C:\Users\songg\Downloads\stockresearch
+   cd C:\Users\songg\code\TBN
    setup_new_pc.bat --smoke
    ```
+   Legacy monorepo path `Downloads\stockresearch` still works until you archive it — do **not** leave Task Scheduler pointed at both.
 4. Restore **`data\`** from USB/old laptop into the repo root (or re-download):
    ```bat
    run_backfill_data_to_2010.bat
@@ -82,19 +85,28 @@ Remote: `https://github.com/pauljanderson/TBN_Report.git`
 
 ## Task Scheduler (DailyRun)
 
-Recreate the nightly job:
+Recreate the nightly job on the **TBN** tree only:
 
 | Setting | Value |
 |---------|--------|
-| Program | `C:\Users\songg\Downloads\stockresearch\DailyRun.bat` |
-| Start in | `C:\Users\songg\Downloads\stockresearch` |
+| Program | `C:\Users\songg\code\TBN\DailyRun.bat` |
+| Start in | `C:\Users\songg\code\TBN` |
 | Run whether user is logged on or not | Yes |
 | Python | Must be python.org under `%LOCALAPPDATA%\Programs\Python\Python310\` |
 
-DailyRun steps (for reference): update data → optional IND cache warm → AWK RL + Python RL + compare → BRT → (IND skipped) → YH → MTS → WPBR → RS → copy latest → getTarget → publish GitHub Pages.
+DailyRun steps (for reference — details in `docs/ARCHITECTURE.md`):
+
+1. Update OHLC / DuckDB (auto-skip if fresh) → 1b fund scorecard  
+2. Optional IND indicator cache warm (`WARM_IND=1`)  
+3. AWK RL + Python RL + parity compare  
+4–10d. Wave (≤8): BRT, YH, MTS, WPBR, RS, SB, VZ, RSI, WRL — IND permanently skipped  
+11. Copy LatestRun → 12 reconcile gate → 13 getTarget → 14 publish GitHub Pages (`--push`)
+
+Empty `gettarget_positions.csv` is OK (getTarget clears output and exits 0).
 
 Test manually first:
 ```bat
+cd /d C:\Users\songg\code\TBN
 DailyRun.bat
 ```
 Check `logs\DailyRun_*.log` if anything fails.
@@ -157,7 +169,7 @@ publish_github_pages.bat
 ## Cursor IDE
 
 1. Install Cursor
-2. Open folder: `C:\Users\songg\Downloads\stockresearch`
+2. Open folder: `C:\Users\songg\code\TBN` (PredictionsMarkets / Spotify are separate repos)
 3. Copy old `%USERPROFILE%\.cursor\skills-cursor\` and rules if desired
 
 ## Troubleshooting

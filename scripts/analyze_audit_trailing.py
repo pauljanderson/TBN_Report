@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 
-DRIVE = Path(r"C:\Users\songg\Downloads\stockresearch\Drive")
+_REPO = Path(__file__).resolve().parent.parent
+DRIVE = _REPO / "drive"
+if not DRIVE.is_dir():
+    DRIVE = _REPO / "Drive"
 TRAIL_PARAMS = {
     "trailing_stop_increment",
     "atr_progress",

@@ -30,9 +30,11 @@ import threading
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 AWK_SCRIPT = os.path.join(SCRIPT_DIR, "portfolio_audit.awk")
 # Paths passed to AWK; each quoted for safe shell use
+_REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+_DATA_DIR = os.path.join(_REPO_ROOT, "data", "newdata", "data")
 DATA_PATHS = [
-    r"C:\Users\songg\Downloads\stockresearch\data\newdata\data\SPY.csv",
-    r"C:\Users\songg\Downloads\stockresearch\data\newdata\data\*.csv",
+    os.path.join(_DATA_DIR, "SPY.csv"),
+    os.path.join(_DATA_DIR, "*.csv"),
 ]
 TEMP_RESULT = "temp_run.csv" # Temporary file for the current test
 MASTER_LOG = "Optimization_Master_Log.csv" # PERSISTENT: All winners go here

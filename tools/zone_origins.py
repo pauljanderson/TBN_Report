@@ -4,7 +4,7 @@ from pathlib import Path
 import collections
 import numpy as np
 
-_REPO = Path(r"C:\Users\songg\Downloads\stockresearch")
+_REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "stock_analysis"))
 import rocket_brt as rb
 

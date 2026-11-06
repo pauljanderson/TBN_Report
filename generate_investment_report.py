@@ -132,7 +132,7 @@ CLOSED_LOG_COLUMNS = (
     "purchase_value",
     "recorded_at",
 )
-DEFAULT_OHLCV_DATA_DIR = Path(r"C:\Users\songg\Downloads\stockresearch\data\newdata\data")
+DEFAULT_OHLCV_DATA_DIR = ROOT / "data" / "newdata" / "data"
 CLOSED_SINCE = date(2026, 5, 25)
 # Match rocket_brt rl_cash / brt_cash (47500); 50k excluded normal RL fills (~47–48k).
 MIN_POSITION_VALUE = 47_500.0

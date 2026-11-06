@@ -1,6 +1,10 @@
 from pathlib import Path
 
-gt = Path(r"C:\Users\songg\Downloads\stockresearch\nvda_active_zones_unlimited.tsv").read_text().splitlines()
+_REPO = Path(__file__).resolve().parent.parent
+_TSV = _REPO / "nvda_active_zones_unlimited.tsv"
+if not _TSV.is_file():
+    raise SystemExit(f"missing {_TSV} (optional local sheet export)")
+gt = _TSV.read_text(encoding="utf-8").splitlines()
 dk = set()
 for ln in gt[1:]:
     f = ln.split("\t")

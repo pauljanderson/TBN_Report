@@ -1,5 +1,7 @@
 # TBN vs BRT
 
+Full platform map: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 | Name | Meaning |
 |------|---------|
 | **TBN** (Twin Beacon Networks) | Shared multi-system **engine / platform** (`stock_analysis/rocket_tbn.py`) |

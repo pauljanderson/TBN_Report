@@ -41,9 +41,10 @@ from typing import Any, Optional
 
 import pandas as pd
 
-DEFAULT_DATA_DIR = Path(r"C:\Users\songg\Downloads\stockresearch\data\newdata\data")
+_REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = _REPO_ROOT / "data" / "newdata" / "data"
 # User-editable positions live here (not in this .py file — avoids accidental overwrites).
-DEFAULT_POSITIONS_CSV = Path(__file__).resolve().parent / "gettarget_positions.csv"
+DEFAULT_POSITIONS_CSV = _REPO_ROOT / "gettarget_positions.csv"
 
 # Optional overrides only (normally leave empty). CSV is the source of truth.
 POSITIONS: dict[str, tuple[str, str | float, str]] = {}

@@ -2,8 +2,13 @@
 data/
 Drive/
 drive/
+drive
 local/
 logs/
+# Materialize scratch / twin backups (never commit)
+drive_real_materialize/
+drive_robocopy_backup/
+tmp_*/
 *.duckdb
 *.pkl
 __pycache__/

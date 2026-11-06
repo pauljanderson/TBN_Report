@@ -6,14 +6,14 @@ This document explains how stops, targets, and “trailing” behavior work acro
 
 ## 1. Executive summary
 
-| System | Engine | Trailing style | Typical DailyRun |
+| System | Engine | Trailing style | Typical DailyRun (see `docs/ARCHITECTURE.md`) |
 |--------|--------|----------------|------------------|
-| **Rocket Launcher (RL)** | `portfolio_audit.awk` | **Profit-gated lock-in** (arm trail after % gain, then fixed stop level) | Step 2 `run_audit.ps1` |
+| **Rocket Launcher (RL)** | `portfolio_audit.awk` | **Profit-gated lock-in** (arm trail after % gain, then fixed stop level) | Step 3a `run_audit` (+ 3b Python RL + 3c compare) |
 | **Rocket Launcher 100 (RL100)** | Same AWK | Same pattern, separate params | Same (if `RL100_TOGGLE` on) |
 | **Dive Bomber (DB)** | Same AWK | **No trailing** — fixed stop above entry | Off by default |
-| **BRT whitelist** | TBN (`rocket_tbn.py`) | **Optional gain-based ratchet** (`trailing_stop_increment`); DailyRun **off** | Step 3 — percent stop/target |
-| **IND full universe** | TBN (`rocket_tbn.py`) | Same exit engine as BRT system; DailyRun uses **ATR** stops/targets + **ATR schedule**, trailing **off** | Step 4 |
-| **Live open positions** | `gettarget.py` | Mirrors **BRT** math (`atr_increment`, `atr_progress`, floors) | Step 6 DailyRun |
+| **BRT whitelist** | TBN (`rocket_tbn.py`) | **Optional gain-based ratchet** (`trailing_stop_increment`); DailyRun **off** | Step 4 wave — percent stop/target |
+| **IND full universe** | TBN (`rocket_tbn.py`) | Same exit engine as BRT; ATR exits when run manually | Step 5 **permanently skipped** (deprecated) |
+| **Live open positions** | `getTarget.py` | Per-system floors (`atr_increment`, `atr_progress`, percent knobs in `run_gettarget.bat`) | Step 13 `run_gettarget` |
 
 **Important:** “Trailing” means different things in RL vs BRT/IND. RL trails by **jumping the stop to a fixed % of entry** after a profit milestone. BRT/IND trail by **adding 1% of entry per N% of peak gain** (when `trailing_stop_increment > 0`).
 
@@ -128,19 +128,19 @@ Set at entry (next bar open). Resolution order for **initial** levels:
    - Long stop: `entry × stop_pct` (multiplier mode) or `entry × (1 - stop_pct)` (fraction mode).
    - Short: `short_target_pct` / `short_stop_pct` symmetric formulas.
 
-**DailyRun step 3 (BRT whitelist)** — percent mode, no ATR exits:
+**DailyRun step 4 (BRT whitelist)** — percent mode, no ATR exits:
 
 - `stop_pct=0.903`, `target_pct=1.21` (via defaults / not all repeated on CLI)
 - `trailing_stop_increment=0` (default)
 - `atr_progress=0`, `atr_days=0`
 - `atr_progress_incremental_stop=false`
 
-**DailyRun step 4 (IND)** — ATR exit mode:
+**IND (manual `run_ind.bat` only — not DailyRun)** — historical ATR exit mode:
 
 - `atr_target=2.4`, `atr_stop=1.1`
 - `atr_progress=0.9`, `atr_days=6`
 - `trailing_stop_increment=0`
-- Optional: `sell_ind_diff_below`, `exit_ind_diff_only` (not in DailyRun.bat today)
+- Optional: `sell_ind_diff_below`, `exit_ind_diff_only`
 
 ### 3.2 Gain-based trailing (`trailing_stop_increment`)
 
@@ -273,7 +273,7 @@ Computes **recommended** stop/target per open position. Each symbol has a **syst
 "META": ("2026-05-11", 599.97, "RL"),   # date, entry price, system
 ```
 
-CLI defaults are **per system** (DailyRun step 6):
+CLI defaults are **per system** (DailyRun step 13 / `run_gettarget.bat`):
 
 ```text
 --brt-atr-target=8 --brt-atr-stop=3 --brt-atr-increment=12 ...
@@ -317,8 +317,8 @@ CLI defaults are **per system** (DailyRun step 6):
 
 ### 5.2 Typical stop/target anchors
 
-| | Rocket Launcher | BRT (step 3) | IND (step 4) |
-|---|-----------------|--------------|--------------|
+| | Rocket Launcher | BRT (step 4) | IND (manual only) |
+|---|-----------------|--------------|-------------------|
 | **Stop** | Signal-day low × 0.934 | Entry × 0.903 | ATR-based (~1.1 × ATR%) |
 | **Target** | SMA50 × 1.20 | Entry × 1.21 | ATR-based (~2.4 × ATR%) |
 | **Extra** | Trail tiers, timed exit | Zone/pivot entries | IND_DIFF optional, ATR inaction @ 6d |
@@ -330,9 +330,9 @@ CLI defaults are **per system** (DailyRun step 6):
 | 3 RL (AWK + Python + compare) | AWK trail params unless passed in `run_audit.ps1` | RL percent + SMA target |
 | 4 BRT | **Off** | Percent stop/target |
 | 5 IND | skipped (deprecated) | — |
-| 6–8 YH / MTS / WPBR | **Off** | Percent stop/target (system bats) |
-| 9 RS | **Off** (`atr_days=0`) | Percent 1.25 / 0.88 (`run_rs.bat`) |
-| 11 gettarget | floors as configured | Percent/ATR per system (incl. RS 1.25/0.88) |
+| 6–9 YH / MTS / WPBR / RS | **Off** | Percent stop/target (system bats; RS 1.25 / 0.88) |
+| 10 / 10b–d SB / VZ / RSI / WRL | **Off** (system freezes) | See `run_*.bat` / system write-ups |
+| 13 getTarget | floors as configured in `run_gettarget.bat` | Percent/ATR per system |
 
 ---
 
@@ -383,8 +383,8 @@ python gettarget.py --atr-stop=3 --atr-target=8 --atr-increment=12 --atr-progres
 | `stock_analysis/portfolio_audit.awk` | Rocket Launcher, RL100, Dive Bomber exits |
 | `run_audit.ps1` | Runs audit; passes `RL_TRAIL_*` overrides |
 | `stock_analysis/rocket_tbn.py` | TBN engine — BRT + IND backtest exits (shim: `rocket_brt.py`) |
-| `DailyRun.bat` | Steps 2–4 and 6 orchestration |
-| `gettarget.py` | Live stop/target/trailing for open positions |
+| `DailyRun.bat` | Full nightly orchestration (see `docs/ARCHITECTURE.md`) |
+| `getTarget.py` | Live stop/target/trailing for open positions |
 | `Copy-LatestRunOutputs.ps1` | Copies latest `RL_*`, `BRT_*`, `IND_*` CSVs |
 
 ---
@@ -398,4 +398,4 @@ python gettarget.py --atr-stop=3 --atr-target=8 --atr-increment=12 --atr-progres
 
 ---
 
-*Last aligned to codebase: `DailyRun.bat`, `rocket_tbn.py` (shim `rocket_brt.py`), `portfolio_audit.awk`, `gettarget.py`.*
+*Last aligned to codebase: 2026-11-06 — `DailyRun.bat`, `rocket_tbn.py` (shim `rocket_brt.py`), `portfolio_audit.awk`, `getTarget.py`, `docs/ARCHITECTURE.md`.*

@@ -48,6 +48,19 @@ def _clone(origin: Path, dest: Path) -> Path:
     return dest
 
 
+def _rmtree(path: Path) -> None:
+    """Windows often locks .git object files briefly after a push."""
+
+    def _onerror(func, p, _exc_info):  # type: ignore[no-untyped-def]
+        try:
+            Path(p).chmod(0o666)
+            func(p)
+        except OSError:
+            pass
+
+    shutil.rmtree(path, onerror=_onerror)
+
+
 def _seed_origin(tmp: Path) -> Path:
     origin = tmp / "origin.git"
     origin.mkdir()
@@ -60,7 +73,7 @@ def _seed_origin(tmp: Path) -> Path:
     _git(["add", "docs/investment.html"], seed)
     _git(["commit", "-m", "Update reports 2026-08-12 17:27"], seed)
     _git(["push", "-u", "origin", "main"], seed)
-    shutil.rmtree(seed)
+    _rmtree(seed)
     return origin
 
 
@@ -159,6 +172,6 @@ if __name__ == "__main__":
             print(f"FAIL {fn.__name__}: {e}")
             raise
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            _rmtree(tmp)
     print(f"{len(tests) - failed}/{len(tests)} passed")
     raise SystemExit(failed)

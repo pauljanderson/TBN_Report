@@ -1,36 +1,64 @@
-# DuckDB OHLCV Setup
+# DuckDB OHLCV setup
 
-This project now includes a local DuckDB store for OHLCV data.
+Local DuckDB mirror of daily OHLCV for fast engine loads. Canonical CSVs remain
+under `data/newdata/data/`. Architecture context: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## 1) Build the database
+## 1) Build / rebuild
 
-```bash
-python scripts/build_ohlcv_duckdb.py --data-dir data/newdata/data --db-path data/ohlcv.duckdb --replace
+```bat
+python scripts\build_ohlcv_duckdb.py --data-dir data\newdata\data --db-path data\ohlcv.duckdb --replace
 ```
 
-What this creates:
-- DuckDB file: `data/ohlcv.duckdb`
+Creates:
+
+- File: `data/ohlcv.duckdb`
 - Table: `prices`
 - Index: `(symbol, date)`
+
+Nightly `pygetallMore` (via `run_update_data.bat`) upserts CSVs and keeps the DB
+in sync when wired; rebuild after bulk backfills.
 
 ## 2) Query from Python
 
 Use `stock_analysis/ohlcv_store.py`:
+
 - `list_symbols(...)`
 - `load_symbol_df("AAPL", ...)`
 - `load_all_tickers(...)`
 
-The returned DataFrame shape matches the existing CSV loader:
+Returned DataFrame shape matches the CSV loader:
+
 - Index: `Date`
 - Columns: `Open`, `High`, `Low`, `Close`, `Volume`
 
-## 3) Current status
+Default DB path is **repo-relative**:
+`Path(__file__).parent.parent / "data" / "ohlcv.duckdb"`.
 
-Built in this workspace with:
-- Rows: 2,686,323
-- Symbols: 1,084 (including `SPY`)
-- Date range: 2016-01-04 to 2026-04-24
+## 3) Engine integration (current)
 
-## 4) Next integration step
+`stock_analysis/rocket_tbn.py` loads via DuckDB when requested / discovered
+(`--use-duckdb` / nearby `ohlcv.duckdb` with a `prices` table). YH/WPBR and other
+wave jobs often open the DB **read-only**.
 
-Wire `rocket_brt.py` so it can load from DuckDB via a flag (while keeping CSV fallback).
+**Windows lock:** only one writer (or exclusive connection) at a time. Do not run
+two DuckDB-writing jobs in parallel. DailyRun’s wave assumes read-only opens for
+price DBs; see `ohlcv_store._duckdb_lock_help`.
+
+## 4) Status note
+
+Row/symbol counts change after every data update — do not treat a fixed count in
+docs as authoritative. Inspect locally:
+
+```bat
+python -c "import duckdb; c=duckdb.connect('data/ohlcv.duckdb', read_only=True); print(c.execute('select count(*), count(distinct symbol), min(date), max(date) from prices').fetchone())"
+```
+
+## 5) Path debt
+
+`pygetallMore.py` and `ohlcv_store.py` both default to repo-relative
+`data/ohlcv.duckdb` (fixed 2026-11-06). Research one-offs under `tools/` may
+still hardcode the old Downloads path — audit:
+
+```bat
+python repo_split\lib\rewrite_paths.py --root C:\Users\songg\code\TBN --audit-only
+```

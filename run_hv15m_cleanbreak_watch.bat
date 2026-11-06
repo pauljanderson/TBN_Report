@@ -16,9 +16,9 @@ rem no new buy does not notify. If the phone post fails, the next pass tries
 rem that buy again.
 rem
 rem Task Scheduler (weekdays), action:
-rem   Program:  C:\Users\songg\Downloads\stockresearch\run_hv15m_cleanbreak_watch.bat
+rem   Program:  C:\Users\songg\code\TBN\run_hv15m_cleanbreak_watch.bat
 rem   Args:     loop
-rem   Start in: C:\Users\songg\Downloads\stockresearch
+rem   Start in: C:\Users\songg\code\TBN
 rem   Trigger:  9:38am weekdays. The window runs at 9:40 and stays through 11:10.
 
 setlocal EnableExtensions

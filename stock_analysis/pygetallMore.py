@@ -2,10 +2,14 @@ import argparse
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
+
+# Repo root = parent of stock_analysis/ (works for code\TBN or any clone path).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import duckdb
@@ -39,7 +43,7 @@ except ImportError:
         _fund_yfinance_disabled = None
 
 # --- CONFIGURATION ---
-DATA_DIR = "C:\\Users\\songg\\Downloads\\stockresearch\\data\\newdata\\data"
+DATA_DIR = str(_REPO_ROOT / "data" / "newdata" / "data")
 # Start date for full-history downloads and automatic backfill detection.
 START_DATE = "2010-01-01"
 # First US equity session in 2010 was 2010-01-04 (Jan 1 holiday). Without slack,
@@ -50,7 +54,7 @@ BACKFILL_MIN_ROWS_LATE_START = 200
 
 # End date is today+1 so yfinance includes latest close
 END_DATE = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-DEFAULT_DB_PATH = "C:\\Users\\songg\\Downloads\\stockresearch\\data\\ohlcv.duckdb"
+DEFAULT_DB_PATH = str(_REPO_ROOT / "data" / "ohlcv.duckdb")
 DEFAULT_DB_TABLE = "prices"
 DEFAULT_MODE = "incremental"
 DEFAULT_INCREMENTAL_DAYS = 7
@@ -1526,13 +1530,22 @@ def _write_update_stamp(
     total: int,
     full_backfill_count: int,
     ok: bool = True,
+    data_dir: str | None = None,
+    db_path: str | None = None,
 ) -> None:
-    """Record last successful pygetallMore run for DailyRun auto SKIP_GET."""
+    """Record last successful pygetallMore run for DailyRun auto SKIP_GET.
+
+    Always embeds ``data_root`` so freshness checks can reject a stamp written
+    for a twin tree (shared drive/ junction) while this repo's data/ is stale.
+    """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     stamp_dir = os.path.join(repo_root, "drive")
     os.makedirs(stamp_dir, exist_ok=True)
     path = os.path.join(stamp_dir, "data_update_last_ok.json")
     now_et = datetime.now(ZoneInfo("America/New_York"))
+    abs_data_dir = os.path.abspath(data_dir or DATA_DIR)
+    # Standard layout: <repo>/data/newdata/data → data_root = <repo>/data
+    data_root = os.path.dirname(os.path.dirname(abs_data_dir))
     payload = {
         "ok": bool(ok),
         "ok_at": now_et.isoformat(),
@@ -1540,10 +1553,34 @@ def _write_update_stamp(
         "skipped": int(skipped),
         "total": int(total),
         "full_backfill_count": int(full_backfill_count),
+        "data_root": os.path.abspath(data_root),
+        "data_dir": abs_data_dir,
+        "db_path": os.path.abspath(db_path or DEFAULT_DB_PATH),
     }
+    # Best-effort warehouse max dates for operators reading the stamp.
+    try:
+        spy_csv = os.path.join(payload["data_dir"], "SPY.csv")
+        if os.path.isfile(spy_csv):
+            spy_df = pd.read_csv(spy_csv, usecols=["Date"], parse_dates=["Date"])
+            if not spy_df.empty:
+                payload["spy_csv_max"] = pd.to_datetime(spy_df["Date"]).max().date().isoformat()
+    except Exception:
+        pass
+    try:
+        db = payload["db_path"]
+        if duckdb is not None and os.path.isfile(db):
+            con = duckdb.connect(db, read_only=True)
+            try:
+                row = con.execute("SELECT max(date) FROM prices").fetchone()
+            finally:
+                con.close()
+            if row and row[0] is not None:
+                payload["ohlcv_duckdb_max"] = str(row[0])[:10]
+    except Exception:
+        pass
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
-    print(f"[stamp] wrote {path}")
+    print(f"[stamp] wrote {path} data_root={payload['data_root']}")
 
 
 def _merge_with_existing_csv(output_file: str, fresh_df: pd.DataFrame) -> pd.DataFrame:
@@ -1771,6 +1808,8 @@ def main():
         total=total,
         full_backfill_count=len(full_symbols),
         ok=stamp_ok,
+        data_dir=args.data_dir,
+        db_path=args.db_path,
     )
     print(f"Update Complete. Updated={updated}, Skipped={skipped}, DB={'on' if use_db else 'off'}{fund_msg}")
 

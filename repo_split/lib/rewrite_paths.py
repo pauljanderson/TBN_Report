@@ -26,20 +26,32 @@ SKIP_DIR_NAMES = {
     "node_modules",
     "data",
     "local",
+    "drive",
+    "Drive",
+    "drive_real_materialize",
+    "drive_robocopy_backup",
+    "logs",
+    "secrets",
     ".cursor",
 }
+
+
+def _skip_dir(path: Path) -> bool:
+    for part in path.parts:
+        if part in SKIP_DIR_NAMES:
+            return True
+        # Experiment / scratch trees (tmp_wpbr_*, etc.)
+        if part.startswith("tmp_") or part.startswith("_tmp_"):
+            return True
+    return False
 
 
 def iter_text_files(root: Path):
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in SKIP_DIR_NAMES for part in path.parts):
-            # still allow .cursor/rules under root if present — skip heavy trees only
-            if "data" in path.parts or "local" in path.parts or ".git" in path.parts:
-                continue
-            if ".venv" in path.parts or "venv" in path.parts:
-                continue
+        if _skip_dir(path):
+            continue
         if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in {
             "Dockerfile",
             "Makefile",

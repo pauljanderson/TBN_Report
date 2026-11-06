@@ -131,7 +131,8 @@ echo   -w N runs independent systems together and gives each engine N workers.
 echo   At most 8 system engines at once. If CPU load is above 90%%, the next start waits.
 echo   Omit -w to keep each run_*.bat worker default. Systems with no worker flag are unchanged.
 echo   No worker flag: audit, update_data, fund scorecard, rl_compare, copy_latest,
-echo   reconcile, gettarget, trendlines, trendlines_tos, publish.
+echo   reconcile, gettarget, publish.
+echo   Trendlines / TOS are standalone ^(run_trendlines_daily.bat / run_trendlines_tos_daily.bat^) — not DailyRun.
 exit /b 0
 
 :usage_fail
@@ -204,6 +205,16 @@ if errorlevel 1 (
     exit /b 1
   )
   echo Python packages OK after pip install.>>"%LOG%"
+)
+
+rem --- 0) Regression preflight (empty-book getTarget, Pages push, freshness, path audit) ---
+rem Skip: set SKIP_REGRESSIONS=1
+if /i "%SKIP_REGRESSIONS%"=="1" (
+  echo [0/14] SKIPPED - run_regressions ^(SKIP_REGRESSIONS=1^)>>"%LOG%"
+) else (
+  echo [0/14] tools\run_regressions.py>>"%LOG%"
+  "%PY%" "%~dp0tools\run_regressions.py" >>"%LOG%" 2>&1
+  if errorlevel 1 goto :fail
 )
 
 rem --- DailyRun system status session (investment report RUN/SKIPPED/STALE banner) ---
@@ -313,13 +324,14 @@ if errorlevel 1 goto :fail
 rem --- Wave: independent system runs (read warehouse, write their own PREFIX files) ---
 rem Stay sequential before this: price download (writes ohlcv.duckdb), fund scorecard,
 rem optional indicator warmup, AWK RL then Python RL then compare (shared RL files).
-rem Stay sequential after: copy_latest, reconcile, gettarget, trendlines, publish.
+rem Stay sequential after: copy_latest, reconcile, gettarget, publish.
+rem Trendlines are standalone (not wired here) — see docs\ARCHITECTURE.md.
 rem YH and WPBR open data\ohlcv.duckdb read-only. Timing duckdb is per system
 rem (TBN_INSTRUMENT_DB). Shared last_run_ts.txt is not written inside the wave.
 rem Each wave engine already takes rocket_tbn -w. -w on DailyRun sets that count.
 rem The wave starts at most 8 of these engines at once and does not kill a running one.
 rem If CPU LoadPercentage is above 90, the next system waits and retries.
-rem copy_latest, reconcile, gettarget, trendlines, and publish have no worker flag.
+rem copy_latest, reconcile, gettarget, and publish have no worker flag.
 set "WAVEFILE=%TEMP%\DailyRun_wave_%STAMP%.txt"
 if exist "%WAVEFILE%" del "%WAVEFILE%"
 

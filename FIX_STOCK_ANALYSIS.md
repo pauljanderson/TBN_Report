@@ -6,17 +6,19 @@ GitHub has `stock_analysis` as a nested-repo pointer, not real files. Clones get
 ## On OLD machine (has the real files)
 
 ```bat
-cd C:\Users\songg\Downloads\stockresearch
+cd C:\Users\songg\code\TBN
 git pull
 fix_stock_analysis_gitlink.bat
 git commit -m "Track stock_analysis source files instead of nested gitlink"
 git push
 ```
 
+(If you are still on the pre-split tree, substitute `Downloads\stockresearch`.)
+
 ## On NEW machine (after old machine pushed)
 
 ```bat
-cd C:\Users\songg\Downloads\stockresearch
+cd C:\Users\songg\code\TBN
 git pull
 setup_new_pc.bat --smoke
 run_backfill_data_to_2010.bat

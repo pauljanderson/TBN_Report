@@ -1,6 +1,8 @@
 # Rocket Launcher (RL) → TBN engine (`rocket_tbn.py`) Integration Plan
 
 > **Naming:** **TBN** = Twin Beacon Networks (shared engine). **BRT** = Break and ReTest *system* only. See `docs/TBN_VS_BRT.md`. Legacy shim: `rocket_brt.py` → `rocket_tbn`.
+>
+> **Platform map:** [`ARCHITECTURE.md`](ARCHITECTURE.md). As of 2026-11, DailyRun still runs **AWK RL + Python RL + compare**; AWK remains math authority until an explicit soft-compare → Python-only cutover (listed under recommended changes).
 
 Engineering deep-dive and implementation roadmap. **Gold standard:** `Drive/RL_LatestRun_*` from run **`260629143410`** (2026-06-29 14:34:10 ET).
 
