@@ -263,6 +263,38 @@ convergence / performance / live-style pages into `docs/` and can `--push` to
 
 ---
 
+## 8b. Research honesty, portfolio risk, governance (added 2026-11-12)
+
+Three layers added after the 2026-11-11 review (live May–Nov 2026: −$219K on 158
+trades; edges decayed after every freeze).
+
+**Honest backtest harness** — `tools/honest_bt/`
+
+| File | Role |
+|------|------|
+| `fetch_pit_daily.py` | Survivor-free daily OHLCV from Alpaca (active + delisted, 2016+) → `data/pit_daily/` |
+| `pit_universe.py` | Mechanical point-in-time universe: 60-bar median close ≥ $5, $vol ≥ $10M, ≥200 bars, decided on the prior month's last bar |
+| `run_honest.py` | Runs each production `run_*.bat` unchanged on ALL symbols with `TBN_DATA_DIR` / `TBN_OUT_DIR` / `TBN_NO_DUCKDB=1`; outputs only under `drive/honest_bt/<stamp>/`; preflight + drive-root guard refuse/abort if production files would be touched |
+| `score.py` | Same yardstick for every variant: entries ≥ 2019, 10 bps/side, month-clustered t, multiple-testing bar √(2 ln trials) → `scorecard.csv/json` |
+
+The `run_*.bat` launchers default `TBN_DATA_DIR=data\newdata\data`, `TBN_OUT_DIR=drive`
+(production command lines verified byte-identical, 2026-11-12).
+
+**Portfolio risk** — `stock_analysis/portfolio_risk.py` (freeze `portfolio_risk_v1_20261112`).
+One view across every system: heat (loss if every stop hits) ≤ 5% of equity, −2% day /
+−6% month-to-date halts, average correlation / effective bets. Feeds
+`allot_scan_buys(risk_halt_reason=, max_new_buys=)`: a breach turns every new trigger into
+`NONE (risk halt)`. Fails closed. Panel on investment.html; `drive/portfolio_risk_latest.json`.
+
+**Governance** — `governance/production_lock.json` + `governance/ADOPTIONS.csv` (tracked).
+Every production knob (wired launchers, their universes, per-symbol JSON, sizing + risk limits)
+is fingerprinted (CRLF-insensitive). An unadopted change halts **new buys** (DailyRun still
+runs, stops still publish). The only way to move the lock is `tools/adopt.py`: requires a PIT
+`PASS` from the harness and fits the budget (1 change/system/quarter, 3 total) or a recorded
+`--override`. `python tools/adopt.py --check` shows drift.
+
+---
+
 ## 9. Reports and docs map
 
 ### Operator / architecture (keep current)
@@ -337,7 +369,7 @@ Prioritized for health of DailyRun and docs truthfulness.
    human hub until a deliberate landing redesign.
 4. **Finish prune of Predictions / Spotify leftovers** in this tree (orphaned
    `tools/test_*poly*`, `docs/prediction_market/` HTML, deleted bats still in
-   git status). Treat `run_all.bat` as **legacy** — not DailyRun SOT.
+   git status). `run_all.bat` (legacy) moved to `archive/root_oneoffs/` 2026-11-12.
 
 ### P1 — pipeline honesty
 
@@ -377,8 +409,11 @@ Prioritized for health of DailyRun and docs truthfulness.
 | TD-01 | Dual trees (`code\TBN` ↔ `Downloads\stockresearch`) | Nightly job hits stale code (e.g. empty-book raise) | Single Task Scheduler root; delete/archive twin |
 | TD-02 | Hardcoded absolute paths (engines mostly fixed; many `tools/` one-offs remain) | Wrong data root on new PC / dual tree | Relative paths + audit script in smoke |
 | TD-03 | Nested `stock_analysis` gitlink history (`.git_nested_backup`) | Empty clone of engines | Keep `FIX_STOCK_ANALYSIS.md`; ensure remote tracks files |
-| TD-04 | ~34 `tmp_wpbr_*` (and similar) experiment dirs in repo root | Disk noise; confuse agents | Move under `drive/paul_experiments/` or delete; gitignore `tmp_*` |
-| TD-05 | `tools/` sprawl (700+ files, many one-off A/Bs + leftover PM tests) | Hard to find gold tools | Namespace `tools/archive/`, prune PM after split verify |
+| TD-04 | ~34 `tmp_wpbr_*` (and similar) experiment dirs in repo root | Disk noise; confuse agents | 2026-11-12: 30 unreferenced root one-offs moved to `archive/root_oneoffs/` (git mv) |
+| TD-05 | `tools/` sprawl (700+ files, many one-off A/Bs + leftover PM tests) | Hard to find gold tools | 2026-11-12: 104 unreferenced `tools/_*.py` → `tools/archive/oneoffs/`, 4 PM tests → `tools/archive/pm_leftovers/` |
+| TD-15 | Survivorship + in-sample universes (warehouse = today's survivors; RSI/VZ/BRT/SB lists picked on IS results) | Backtests overstate edge | Judge only on `tools/honest_bt` PIT scorecard; adopt via `tools/adopt.py` |
+| TD-16 | `rocket_tbn.py` monolith (22.8k lines, 504-field config, 3.7k-line `run_brt_backtest`) | Every idea is another flag | Split per system, one verified slice at a time (identical trade outputs). Slice 1 done 2026-11-12: `BRTConfig` -> `stock_analysis/tbn_config.py` (re-exported; 40-symbol before/after on 9 systems, all Closed/Open/Watchlist/Pivots identical) |
+| TD-17 | Equity curve / EquityMeta / Correlation / ImproveHints differ run-to-run on identical inputs (trade rows arrive in parallel-completion order; same-day ordering feeds the portfolio sim) | Reported CAGR/DD wobble ~0.5pt between identical runs; refactor checks must compare trade files, not these | Stable-sort trades by (entry date, symbol) before the equity sim |
 | TD-06 | AWK + Python RL dual stack | Double runtime; compare flakes | Soft-compare → Python-only |
 | TD-07 | DailyRun step labels vs reality (trendlines comments, 13/14 mix) | Operators mis-debug | Fix bat comments + this doc |
 | TD-08 | Stale operator docs (Task Scheduler path, DailyRun step list, WRL “not DailyRun”, TRAILING_STOPS steps) | Bad setups | Updated 2026-11-06 — keep in sync with bat |
