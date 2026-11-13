@@ -807,6 +807,32 @@ def wpbr_zone_trace_enabled(debug_symbol: Optional[str]) -> bool:
     return bool(target) and target == str(debug_symbol).strip().upper()
 
 
+def _apply_wpbr_placebo(spec: str, pivots: list[int], wh: np.ndarray, cl: np.ndarray, pre_bars: int):
+    """Placebo zones for the honest harness. Keeps every downstream rule; changes only zone origin.
+
+    random_week:<seed>  same count of zones, anchored on uniformly random weekly highs (no pivot test)
+    shift_level:<seed>  real pivot weeks, zone level x U(0.85..0.95 or 1.05..1.15)
+    Seed is mixed with the symbol's own prices so each symbol draws independently but reproducibly.
+    """
+    mode, _, seed = spec.partition(":")
+    sym_key = int(abs(float(np.nansum(cl[:20]))) * 1000) % (2**31)
+    rng = np.random.default_rng([int(seed or 0), sym_key, len(cl)])
+    mode = mode.strip().lower()
+    if mode == "random_week":
+        lo_w, hi_w = max(0, pre_bars), len(wh)
+        valid = [w for w in range(lo_w, hi_w) if np.isfinite(wh[w]) and wh[w] > 0]
+        k = min(len(pivots), len(valid))
+        picked = sorted(rng.choice(valid, size=k, replace=False).tolist()) if k else []
+        return [int(w) for w in picked], {}
+    if mode == "shift_level":
+        mult = {}
+        for w in pivots:
+            m = rng.uniform(0.05, 0.15)
+            mult[int(w)] = 1.0 + m if rng.random() < 0.5 else 1.0 - m
+        return list(pivots), mult
+    raise ValueError(f"unknown WPBR_PLACEBO mode {spec!r}")
+
+
 def compute_wpbr_touch_stream(
     df: pd.DataFrame,
     *,
@@ -1007,6 +1033,11 @@ def compute_wpbr_touch_stream(
         post_pct_atr=post_atr_m,
         atr_at_week=atr_at_week,
     )
+    # Research-only placebo (tools/honest_bt): WPBR_PLACEBO=<mode>:<seed>. Unset = production.
+    _placebo = str(os.environ.get("WPBR_PLACEBO", "") or "").strip()
+    _placebo_mult: dict[int, float] = {}
+    if _placebo:
+        pivots, _placebo_mult = _apply_wpbr_placebo(_placebo, pivots, wh, cl, int(strong_pre_pivot_bars))
 
     dec = max(0, int(zone_price_round_decimals))
     bo_conf = max(0.0, float(breakout_confirmation))
@@ -1037,7 +1068,7 @@ def compute_wpbr_touch_stream(
 
     candidates: list[dict] = []
     for wi in pivots:
-        pivot_high = float(wh[wi])
+        pivot_high = float(wh[wi]) * _placebo_mult.get(int(wi), 1.0)
         pivot_week_end_ts = w_index[wi]
         pivot_monday = _week_monday(pivot_week_end_ts)
         # start_date / entry_start_date: exclude pre-window pivots from the ledger entirely

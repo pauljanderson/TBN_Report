@@ -788,6 +788,25 @@ def _vz_cfg_from_dict(d: dict[str, Any]) -> VzConfig:
     return VzConfig(**{k: v for k, v in d.items() if k in known})
 
 
+def _placebo_shift_zones(zones: list, df: pd.DataFrame) -> list:
+    """Research-only (tools/honest_bt): TBN_ZONE_PLACEBO=shift_level:<seed> moves each max-volume
+    zone by a random +/-5..15% (same move for its OC and HL boxes, width kept). Mirrors
+    rocket_tbn._zone_placebo_mult so every zone system gets the same placebo."""
+    spec = os.environ.get("TBN_ZONE_PLACEBO", "")
+    mode, _, seed = spec.partition(":")
+    if mode.strip().lower() != "shift_level":
+        raise ValueError(f"unknown TBN_ZONE_PLACEBO mode {spec!r}")
+    cl = df["Close"].to_numpy(dtype=np.float64)
+    sym_key = int(abs(float(np.nansum(cl[:20]))) * 1000) % (2**31)
+    out = []
+    for z in zones:
+        rng = np.random.default_rng([int(seed or 0), sym_key, len(cl), int(z.max_vol_idx)])
+        m = rng.uniform(0.05, 0.15)
+        f = 1.0 + m if rng.random() < 0.5 else 1.0 - m
+        out.append(replace(z, lo=float(z.lo) * f, hi=float(z.hi) * f))
+    return out
+
+
 def _process_one_symbol(
     sym: str,
     data_dir: Path,
@@ -813,6 +832,8 @@ def _process_one_symbol(
         df = load_ohlcv(csv_path)
         atr = atr14(df)
         zones = build_zones(df, params.lookback_days)
+        if os.environ.get("TBN_ZONE_PLACEBO"):
+            zones = _placebo_shift_zones(zones, df)
         sigs, _, _ = run_symbol_with_params(sym, df, zones, atr, params)
         # HVN is gated inside generate_signals (params.require_hvn_overlap). Do not
         # post-filter here: a second drop would be redundant under first_retest_only
