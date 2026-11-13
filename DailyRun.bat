@@ -147,11 +147,17 @@ if not exist "%~dp0drive" mkdir "%~dp0drive"
 
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "STAMP=%%i"
 set "LOG=%LOGDIR%\DailyRun_%STAMP%.log"
+rem yyMMddHHmmss for RL stamp freshness (STAMP is yyyyMMdd_HHmmss)
+set "DAILYRUN_START_TS=%STAMP:~2,6%%STAMP:~9,6%"
+> "%~dp0drive\DailyRun_start_ts.txt" echo %DAILYRUN_START_TS%
+> "%~dp0drive\DailyRun.in_progress" echo %STAMP%
+echo DailyRun.in_progress stamped %STAMP% — do not git commit until this file is cleared.
 
 echo ============================================================>>"%LOG%"
 echo DailyRun started: %date% %time%>>"%LOG%"
 echo CD=%CD%>>"%LOG%"
 echo USER=%USERNAME% COMPUTER=%COMPUTERNAME% SESSION=%SESSIONNAME%>>"%LOG%"
+echo DAILYRUN_START_TS=%DAILYRUN_START_TS%>>"%LOG%"
 if defined DAILYRUN_WORKERS echo DAILYRUN_WORKERS=%DAILYRUN_WORKERS%>>"%LOG%"
 
 rem --- Python: prefer python.org (%%LOCALAPPDATA%%\Programs\Python\...) ---
@@ -297,9 +303,12 @@ rem AWK audit has no -w / --workers flag. DAILYRUN_WORKERS is not passed here.
 echo [3/13] run_audit (AWK RL)>>"%LOG%"
 call "%~dp0run_audit.bat" -AllowRegression >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
-for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_AWK_TS=%%a"
+rem Prefer the AWK pin written by run_audit.ps1 (Python RL overwrites last_run_ts.txt).
+set "RL_AWK_TS="
+if exist "drive\RL_AWK_last_run_ts.txt" for /f "usebackq delims=" %%a in ("drive\RL_AWK_last_run_ts.txt") do set "RL_AWK_TS=%%a"
+if not defined RL_AWK_TS for /f "usebackq delims=" %%a in ("drive\last_run_ts.txt") do set "RL_AWK_TS=%%a"
 if not defined RL_AWK_TS (
-  echo ERROR: drive\last_run_ts.txt missing after run_audit>>"%LOG%"
+  echo ERROR: drive\RL_AWK_last_run_ts.txt / last_run_ts.txt missing after run_audit>>"%LOG%"
   goto :fail
 )
 echo [3/13] AWK RL timestamp: %RL_AWK_TS%>>"%LOG%"
@@ -316,9 +325,9 @@ if not defined RL_PY_TS (
 echo [3/13] Python RL timestamp: %RL_PY_TS%>>"%LOG%"
 
 rem --- 3c) AWK vs Python RL output parity ---
-rem run_rl_compare has no worker flag.
+rem run_rl_compare has no worker flag. Pass DailyRun start so stale stamps fail clearly.
 echo [3/13] run_rl_compare>>"%LOG%"
-call "%~dp0run_rl_compare.bat" %RL_AWK_TS% %RL_PY_TS% >>"%LOG%" 2>&1
+call "%~dp0run_rl_compare.bat" %RL_AWK_TS% %RL_PY_TS% %DAILYRUN_START_TS% >>"%LOG%" 2>&1
 if errorlevel 1 goto :fail
 
 rem --- Wave: independent system runs (read warehouse, write their own PREFIX files) ---
@@ -471,9 +480,11 @@ rem Run at a different time of day: run_options_chain.bat
 
 echo DailyRun finished OK: %date% %time%>>"%LOG%"
 echo Log: %LOG%
+del "%~dp0drive\DailyRun.in_progress" 2>nul
 exit /b 0
 
 :fail
 echo DailyRun FAILED (errorlevel=%errorlevel%): %date% %time%>>"%LOG%"
 echo Log: %LOG%
+del "%~dp0drive\DailyRun.in_progress" 2>nul
 exit /b 1

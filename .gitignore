@@ -68,3 +68,7 @@ stock_analysis/Per_Symbol_All_Runs_*
 stock_analysis/Per_Symbol_WF_Folds_*
 stock_analysis/Per_Symbol_Param_Value_Counts_*
 stock_analysis/MTS_optimizer_progress.json
+
+# Governance lock + adoption ledger are tracked (tools/adopt.py)
+!governance/
+!governance/**

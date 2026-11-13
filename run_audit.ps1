@@ -287,6 +287,17 @@ if ($useInputManifest) {
 
 $awkArgList = [System.Collections.Generic.List[string]]::new()
 [void]$awkArgList.Add('-v'); [void]$awkArgList.Add('SMA_QUAL=1')
+# Always pin AWK I/O to this repo (forward slashes — Git/MSYS2 gawk treats \ as escapes).
+# Empty -v used to fall back to the old Downloads twin tree and silently wrote the wrong place.
+$outputDirUnix = ConvertTo-UnixPath $DriveDir
+$pythonScriptDirUnix = ConvertTo-UnixPath (Join-Path $RepoRoot 'stock_analysis')
+$dataDirUnix = ConvertTo-UnixPath (Join-Path $RepoRoot 'data\newdata\data')
+[void]$awkArgList.Add('-v'); [void]$awkArgList.Add("OUTPUT_DIR=$outputDirUnix")
+[void]$awkArgList.Add('-v'); [void]$awkArgList.Add("PYTHON_SCRIPT_DIR=$pythonScriptDirUnix")
+[void]$awkArgList.Add('-v'); [void]$awkArgList.Add("DATA_DIR=$dataDirUnix")
+Write-Host "  OUTPUT_DIR=$outputDirUnix" -ForegroundColor Gray
+Write-Host "  PYTHON_SCRIPT_DIR=$pythonScriptDirUnix" -ForegroundColor Gray
+Write-Host "  DATA_DIR=$dataDirUnix" -ForegroundColor Gray
 # Optional RL gate overrides from env (run_audit.bat sets these to match run_rl.bat production).
 # Unset/empty => portfolio_audit.awk defaults (ATR ~2.44-8.48%, slope 0.0643, too_high 0).
 if (-not [string]::IsNullOrEmpty($env:RL_ATR_LOW)) { [void]$awkArgList.Add('-v'); [void]$awkArgList.Add("RL_ATR_LOW=$($env:RL_ATR_LOW)") }
@@ -382,6 +393,21 @@ if ($awkExit -ne 0) {
 Write-Host ""
 Write-Host "Audit completed successfully." -ForegroundColor Green
 Write-Host ""
+
+# Pin this AWK run's timestamp under TBN drive (never "newest RL_Closed_* in the folder").
+$lastRunTsPath = Join-Path $DriveDir "last_run_ts.txt"
+$awkTsPinPath = Join-Path $DriveDir "RL_AWK_last_run_ts.txt"
+if (-not (Test-Path -LiteralPath $lastRunTsPath)) {
+    Write-Host "ERROR: AWK did not write $lastRunTsPath (OUTPUT_DIR mis-pointed?)." -ForegroundColor Red
+    exit 1
+}
+$awkTs = (Get-Content -LiteralPath $lastRunTsPath -Raw).Trim()
+if ($awkTs -notmatch '^\d{12}') {
+    Write-Host "ERROR: last_run_ts.txt is not a 12-digit yyMMddHHmmss: '$awkTs'" -ForegroundColor Red
+    exit 1
+}
+Set-Content -LiteralPath $awkTsPinPath -Value $awkTs -NoNewline -Encoding ascii
+Write-Host "  AWK last_run_ts: $awkTs (-> drive\RL_AWK_last_run_ts.txt)" -ForegroundColor Gray
 
 # Python for rl_emit_brt_mirror (see docs in .DESCRIPTION).
 # Microsoft places BOTH (a) broken Store *stubs* python.exe / python3.exe and (b) the working

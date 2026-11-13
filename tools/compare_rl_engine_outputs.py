@@ -199,14 +199,60 @@ def _compare_table(
     return errors
 
 
-def compare_rl_runs(output_dir: Path, awk_ts: str, python_ts: str) -> tuple[bool, list[str]]:
-    awk_ts = awk_ts.strip()
-    python_ts = python_ts.strip()
-    messages: list[str] = []
-    ok = True
+_TS12_RE = re.compile(r"^\d{12}$")
 
+
+def _normalize_ts12(raw: str) -> str:
+    return (raw or "").strip()
+
+
+def check_stale_inputs(
+    awk_ts: str,
+    python_ts: str,
+    not_before: str,
+) -> list[str]:
+    """Return error lines if either run stamp is older than DailyRun start.
+
+    Timestamps are yyMMddHHmmss (lexicographic == chronological within a century).
+    """
+    nb = _normalize_ts12(not_before)
+    if not nb:
+        return []
+    if not _TS12_RE.match(nb):
+        return [f"stale input: --not-before must be 12-digit yyMMddHHmmss, got {nb!r}"]
+    errors: list[str] = []
+    for label, ts in (("AWK", _normalize_ts12(awk_ts)), ("Python", _normalize_ts12(python_ts))):
+        if not _TS12_RE.match(ts):
+            errors.append(f"stale input: {label} timestamp invalid: {ts!r}")
+            continue
+        if ts < nb:
+            errors.append(
+                f"stale input: {label} timestamp {ts} is older than DailyRun start {nb} "
+                f"(refusing parity diff — re-run audit/rl in this DailyRun)"
+            )
+    return errors
+
+
+def compare_rl_runs(
+    output_dir: Path,
+    awk_ts: str,
+    python_ts: str,
+    *,
+    not_before: str = "",
+) -> tuple[bool, list[str]]:
+    awk_ts = _normalize_ts12(awk_ts)
+    python_ts = _normalize_ts12(python_ts)
+    messages: list[str] = []
+
+    stale = check_stale_inputs(awk_ts, python_ts, not_before)
+    if stale:
+        return False, stale
+
+    ok = True
     messages.append(f"AWK run:    {awk_ts}")
     messages.append(f"Python run: {python_ts}")
+    if not_before:
+        messages.append(f"Not before: {_normalize_ts12(not_before)}")
     messages.append("")
 
     for base in RL_FILE_BASES:
@@ -268,14 +314,27 @@ def main() -> int:
     ap.add_argument("--output-dir", type=Path, default=ROOT / "drive")
     ap.add_argument("--awk-ts", required=True, help="Timestamp from legacy run_audit / AWK")
     ap.add_argument("--python-ts", required=True, help="Timestamp from rocket_brt rl_mode=true")
+    ap.add_argument(
+        "--not-before",
+        default="",
+        help="DailyRun start as yyMMddHHmmss; fail with 'stale input' if either ts is older",
+    )
     args = ap.parse_args()
 
     out_dir = args.output_dir.resolve()
-    ok, lines = compare_rl_runs(out_dir, args.awk_ts, args.python_ts)
+    ok, lines = compare_rl_runs(
+        out_dir,
+        args.awk_ts,
+        args.python_ts,
+        not_before=args.not_before or "",
+    )
     print("\n".join(lines))
     if ok:
         print("\nPASS: AWK and Python RL outputs match.")
         return 0
+    if any(line.startswith("stale input") for line in lines):
+        print("\nFAIL: stale RL input (not a parity mismatch).", file=sys.stderr)
+        return 2
     print("\nFAIL: AWK vs Python RL output mismatch.", file=sys.stderr)
     return 1
 

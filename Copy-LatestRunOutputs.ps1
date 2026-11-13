@@ -343,7 +343,17 @@ function Copy-RunCsv {
     $src = Join-Path $Dir $srcName
     $dest = Join-Path $Dir $destName
     if (-not (Test-Path -LiteralPath $src)) {
-        Write-Warning "Missing $srcName (skipped)."
+        # A missing stamped file (e.g. no Scanner rows this run) must NOT leave an older
+        # run's alias in place: readers such as generate_system_convergence_report.py
+        # prefer *_LatestRun_<stem>.csv and would publish stale rows as current.
+        if (Test-Path -LiteralPath $dest) {
+            if ($PSCmdlet.ShouldProcess($dest, "Remove stale alias (no $srcName this run)")) {
+                Remove-Item -LiteralPath $dest -Force
+                Write-Warning "Missing $srcName; removed stale $destName."
+            }
+        } else {
+            Write-Warning "Missing $srcName (skipped)."
+        }
         return
     }
     if ($PSCmdlet.ShouldProcess($src, "Copy -> $destName")) {
