@@ -5,15 +5,17 @@ Covers:
   - getTarget empty book (DailyRun must not die on a flat book)
   - Pages push survives origin/main moving mid-run
   - Data freshness refuses a fresh stamp over a stale warehouse
-  - No new Downloads\\stockresearch hardcodes in live/critical paths
+  - RL compare refuses stamps older than DailyRun start
+  - Path audit: deny-by-default for .py/.bat/.ps1/.awk (no twin-tree hardcodes)
 
 Fails if the whole suite (or --max-seconds wall) exceeds the time budget so a
 path-audit hang cannot stall DailyRun for minutes.
+
+Do not git commit while drive/DailyRun.in_progress exists (DailyRun mid-run).
 """
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import subprocess
 import sys
 import time
@@ -23,38 +25,28 @@ _REPO = Path(__file__).resolve().parent.parent
 _TOOLS = _REPO / "tools"
 _DEFAULT_MAX_SECONDS = 60.0
 
-_CRITICAL_PATTERNS = (
-    "DailyRun.bat",
-    "GetDaily.bat",
-    "run_*.bat",
-    "publish_github_pages.bat",
-    "resolve_python.bat",
-    "getTarget.py",
-    "generate_investment_report.py",
-    "generate_monthly_system_report.py",
-    "generate_system_performance_report.py",
-    "generate_system_convergence_report.py",
-    "generate_sell_report.py",
-    "generate_scanner_open_report.py",
-    "scripts/publish_github_pages.py",
-    "scripts/build_ohlcv_duckdb.py",
-    "scripts/analyze_audit_trailing.py",
-    "stock_analysis/pygetallMore.py",
-    "stock_analysis/RocketOptimizer.py",
-    "stock_analysis/rocket_tbn.py",
-    "stock_analysis/live_style_sizing.py",
-    "stock_analysis/ohlcv_store.py",
-    "tools/data_update_freshness.py",
-    "tools/check_phantoms.py",
-    "tools/zone_origins.py",
-    "runmts.bat",
-)
+_CRITICAL_EXTS = {".py", ".bat", ".ps1", ".awk"}
 
-_TESTS = (
-    "test_gettarget_empty_book.py",
-    "test_publish_pages_push.py",
-    "test_data_update_freshness.py",
-)
+# Explicit leftovers that still mention the old twin-tree path, with a reason.
+# Prefer fixing live defaults; allowlist only frozen one-offs / intentional docs.
+_PATH_AUDIT_ALLOWLIST: dict[str, str] = {
+    # Frozen dated AB / experiment scripts (not DailyRun; historical URLs/paths).
+    "tools/hv15m_day_zone_forward_short_20260928.py": "frozen 2026-09-28 experiment; file:// report link only",
+    "tools/meta_yh_probe.py": "one-off META OHLC probe; not wired to DailyRun",
+    "tools/risk1pct_size_ab_20260915.py": "frozen AB HTML link to old tree; not live",
+    "tools/rl_lookleft_resistance_20260930.py": "frozen 2026-09-30 research ROOT pin",
+    "tools/shannon_mtf_lines_post_ab_20260930.py": "frozen AB prose with old file:// path",
+    "tools/thorp_timestop_and_chain_scan_20261001.py": "frozen 2026-10-01 research path pin",
+    "tools/vwr_system_20261001.py": "frozen 2026-10-01 experiment file:// link",
+    "tools/wpbr_improve_priority_ab_20261002.py": "frozen 2026-10-02 AB path pin",
+    # stock_analysis one-off debug / sheet dumps (underscore or dated; not engines).
+    "stock_analysis/_compare_nvda_sheet.py": "one-off NVDA sheet compare; not DailyRun",
+    "stock_analysis/compare_nvda_sheet_vs_python.py": "one-off sheet-vs-python dump",
+    "stock_analysis/compute_asof_age_debug.py": "debug as-of age; not wired",
+    "stock_analysis/debug_ak_reason_for_date.py": "debug AK reason; not wired",
+    "stock_analysis/dump_ar_diff_dates.py": "one-off AR diff dump",
+    "stock_analysis/dump_ar_diff_de_df_dg_latest.py": "one-off AR mismatch dump paths",
+}
 
 
 def _run_script(name: str) -> int:
@@ -64,61 +56,82 @@ def _run_script(name: str) -> int:
     return int(proc.returncode)
 
 
-def _is_critical(rel: str) -> bool:
-    rel_n = rel.replace("\\", "/")
-    if rel_n.startswith("repo_split/") or "/repo_split/" in rel_n:
-        return False
-    if rel_n.startswith("tools/test_") or "/tools/test_" in rel_n:
-        return False
-    if "run_regressions.py" in rel_n:
-        return False
+def _is_exempt(rel_n: str) -> bool:
+    """Non-critical: tools/_*, docs/, repo_split/, tmp_*, or non-script extensions."""
     name = Path(rel_n).name
-    for pat in _CRITICAL_PATTERNS:
-        if "/" in pat:
-            if fnmatch.fnmatch(rel_n, pat):
-                return True
-        elif fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel_n, pat):
-            return True
+    if name.startswith("tmp_"):
+        return True
+    if rel_n.startswith("docs/") or rel_n.startswith("repo_split/"):
+        return True
+    if rel_n.startswith("tools/") and name.startswith("_"):
+        return True
+    if Path(rel_n).suffix.lower() not in _CRITICAL_EXTS:
+        return True
     return False
 
 
+def _is_critical(rel: str) -> bool:
+    """Deny-by-default: every .py/.bat/.ps1/.awk is critical unless exempt or allowlisted."""
+    rel_n = rel.replace("\\", "/")
+    if _is_exempt(rel_n):
+        return False
+    if rel_n in _PATH_AUDIT_ALLOWLIST:
+        return False
+    return True
+
+
 def _path_audit_critical() -> int:
-    print("\n=== path audit (critical surfaces) ===")
-    rewrite = _REPO / "repo_split" / "lib" / "rewrite_paths.py"
-    if not rewrite.is_file():
+    print("\n=== path audit (deny-by-default critical surfaces) ===")
+    rewrite_dir = _REPO / "repo_split" / "lib"
+    if not (rewrite_dir / "rewrite_paths.py").is_file():
         print("SKIP rewrite_paths.py missing")
         return 0
+    # Call audit() directly — --audit-only CLI only prints the top 80 by count
+    # and previously hid critical singles (e.g. portfolio_audit.awk).
+    if str(rewrite_dir) not in sys.path:
+        sys.path.insert(0, str(rewrite_dir))
+    from rewrite_paths import audit  # noqa: E402
+
     t0 = time.perf_counter()
-    proc = subprocess.run(
-        [sys.executable, str(rewrite), "--audit-only", "--root", str(_REPO)],
-        cwd=str(_REPO),
-        text=True,
-        capture_output=True,
-    )
+    hits = audit(_REPO)
     elapsed = time.perf_counter() - t0
-    print(f"[path audit] {elapsed:.1f}s")
-    out = (proc.stdout or "") + (proc.stderr or "")
+    print(f"[path audit] {elapsed:.1f}s ({len(hits)} files with hits)")
     critical_hits: list[str] = []
+    allowlisted: list[str] = []
     other = 0
-    for line in out.splitlines():
-        line = line.strip()
-        if not line or not line[0].isdigit():
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        rel = parts[-1].replace("\\", "/")
+    for path, count in sorted(hits, key=lambda x: str(x[0])):
+        rel = path.relative_to(_REPO).as_posix()
+        line = f"{count:4d}  {rel}"
         if _is_critical(rel):
             critical_hits.append(line)
+        elif rel in _PATH_AUDIT_ALLOWLIST:
+            allowlisted.append(f"{rel} — {_PATH_AUDIT_ALLOWLIST[rel]}")
         else:
             other += 1
     if critical_hits:
-        print("FAIL critical paths still hardcode Downloads\\stockresearch:")
+        print("FAIL critical paths still hardcode the old Downloads twin-tree root:")
         for h in critical_hits:
             print(f"  {h}")
         return 1
-    print(f"OK  critical surfaces clean ({other} non-critical leftovers under tools/_*/docs OK for now)")
+    if allowlisted:
+        print(f"OK  allowlisted leftovers ({len(allowlisted)}):")
+        for a in sorted(set(allowlisted)):
+            print(f"  {a}")
+    print(f"OK  critical surfaces clean ({other} exempt leftovers under tools/_*/docs/repo_split/non-scripts)")
     return 0
+
+
+_TESTS = (
+    "test_gettarget_empty_book.py",
+    "test_publish_pages_push.py",
+    "test_data_update_freshness.py",
+    "test_compare_rl_stale_input.py",
+    "test_copy_latest_no_stale_alias.py",
+    "test_portfolio_risk.py",
+    "test_governance.py",
+    "test_live_risk_mult.py",
+    "test_truncation_compare.py",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--skip-path-audit",
         action="store_true",
-        help="Skip Downloads\\stockresearch critical-path audit.",
+        help="Skip twin-tree critical-path audit.",
     )
     p.add_argument(
         "--max-seconds",
@@ -135,6 +148,13 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Fail if the suite wall time exceeds this (default {_DEFAULT_MAX_SECONDS:.0f}s).",
     )
     ns = p.parse_args(argv)
+    lock = _REPO / "drive" / "DailyRun.in_progress"
+    if lock.is_file():
+        stamp = lock.read_text(encoding="utf-8", errors="ignore").strip() or "?"
+        print(
+            f"NOTE: DailyRun.in_progress present (stamp={stamp}). "
+            "Do not git commit until DailyRun finishes and clears the lock."
+        )
     t0 = time.perf_counter()
     failed = 0
     for name in _TESTS:

@@ -54,6 +54,11 @@ rem   run_rs.bat -v "sell_breakdown=breakdown_plus"
 rem Sweep/results: drive\paul_experiments\rs_oneil_filters\
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -75,8 +80,8 @@ rem Neutralize BRT zone defaults that are NOT RS rules (RS already requires SPY_
 rem   min_spy_compare_1y_at_trigger=50 would wrongly cut ~1001 curated trades down to ~369.
 rem   too_high_multiplier=1.058 is a BRT gap gate; experiment/RS baseline has it off.
 if "%RS_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RS_WORKERS! --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% -s "!RS_SYMBOLS!" !RS_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !RS_WORKERS! --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% -s "!RS_SYMBOLS!" !RS_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RS_WORKERS! --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% !RS_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !RS_WORKERS! --no-regression --aggressive --relative-strength -v rs_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v target_pct=%RS_TARGET% -v stop_pct=%RS_STOP% -v stop_pct_is_multiplier=true -v use_indicators=true -v indicator_buy=off -v rs_require_tc_strong=true -v growth_filter_enabled=false -v min_spy_compare_1y_at_trigger=0 -v atr_days=0 -v too_high_multiplier=0 -v rs_max_pct_below_52w_high=0 -v rs_spy_int_tc_not_weak=true -v symbol_reentry_cooldown_days=60 -v time_stop_days=%RS_TIME_STOP% !RS_FORWARD!
 )
 exit /b %errorlevel%

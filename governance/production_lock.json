@@ -1,0 +1,33 @@
+{
+  "digest": "1cd01036579a",
+  "fingerprint": {
+    "BRT:drive/universes/BRT_universe.csv": "71ba7e8c22a6de51",
+    "BRT:run_brt.bat": "b97a81d130b7604e",
+    "BRT:stock_analysis/Per_Symbol_Optimized_Settings_Approved_Latest.json": "44136fa355b3678a",
+    "DAILYRUN:DailyRun.bat": "7b93ab2cc339e727",
+    "MTS:drive/universes/MTS_universe.csv": "bbc5c569fcf68266",
+    "MTS:run_mts.bat": "c7c51f8550829326",
+    "RL:drive/universes/RL_universe.csv": "219087ac6dd4f2d8",
+    "RL:run_audit.bat": "4dcc7b78b82d6925",
+    "RL:run_audit.ps1": "d12582187b13c91f",
+    "RL:run_rl.bat": "e6f630993592a9ca",
+    "RS:drive/universes/RS_universe.csv": "cddcdff7c42bb026",
+    "RS:run_rs.bat": "cc869375de60e187",
+    "RSI:drive/universes/rsi_universe.csv": "1c9730ed05d27a95",
+    "RSI:run_rsi.bat": "921e3bb4f0c51d63",
+    "SB:drive/universes/SB_universe.csv": "40ea373088afcaad",
+    "SB:run_sb.bat": "5a508ed34215ee5f",
+    "SB:run_stockbee_burst.bat": "b3971063b1f3b82d",
+    "SIZING:knobs": "87644af2d474a5e4",
+    "VZ:drive/universes/VZ_universe.csv": "c8a3991b64d68f70",
+    "VZ:run_vz.bat": "0323094c084d5c60",
+    "WPBR:drive/universes/WPBR_universe.csv": "f27fb3b232a4827c",
+    "WPBR:run_wpbr.bat": "713a3e3c971c86d5",
+    "WRL:drive/universes/WRL_universe.csv": "fe509dad324e497d",
+    "WRL:run_wrl.bat": "9d87df3fae2606e5",
+    "YH:drive/universes/YH_universe.csv": "ca7986f0e2a6fa07",
+    "YH:run_yh.bat": "85d02d9db09ee8b7"
+  },
+  "note": "WPBR moved to paper: LIVE_RISK_MULT emptied, every system paper-only. WPBR PASS rested on a look-ahead in the overhead skip; fair rule gives +0.77%/trade t 2.0 WEAK.",
+  "written": "2026-11-13"
+}

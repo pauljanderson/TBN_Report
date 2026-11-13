@@ -42,6 +42,11 @@ rem DailyRun: official TBN sleeve step [10c/13] behind SKIP_RSI=1 (not walk-forw
 
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -81,8 +86,8 @@ if /i "%RSI_UNIVERSE_SRC%"=="missing" (
 rem Neutralize peer systems; RSI owns entry path via rsi_mode.
 rem One-line invokes (like run_vz.bat): blank lines after ^ break CMD continuation.
 if "%RSI_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %RSI_WORKERS% --no-regression %RSI_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v rsi_mode=true -v vz_mode=false -v wrl_mode=false -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v rsi_ob=%RSI_OB% -v rsi_os=%RSI_OS% -v rsi_exit=%RSI_EXIT% -v rsi_max_trigger=%RSI_MAX_TRIGGER% -v rsi_min_atr_pct=%RSI_MIN_ATR_PCT% -v rsi_time_stop_days=%RSI_TIME_STOP_DAYS% -v rsi_roll_from_max=%RSI_ROLL_FROM_MAX% -v rsi_entry_on=%RSI_ENTRY_ON% -v rsi_sheet_notional=%RSI_SHEET_NOTIONAL% -v rsi_min_dist_to_52w_high_pct_at_trigger=%RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER% -s "!RSI_SYMBOLS!" !RSI_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %RSI_WORKERS% --no-regression %RSI_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v rsi_mode=true -v vz_mode=false -v wrl_mode=false -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v rsi_ob=%RSI_OB% -v rsi_os=%RSI_OS% -v rsi_exit=%RSI_EXIT% -v rsi_max_trigger=%RSI_MAX_TRIGGER% -v rsi_min_atr_pct=%RSI_MIN_ATR_PCT% -v rsi_time_stop_days=%RSI_TIME_STOP_DAYS% -v rsi_roll_from_max=%RSI_ROLL_FROM_MAX% -v rsi_entry_on=%RSI_ENTRY_ON% -v rsi_sheet_notional=%RSI_SHEET_NOTIONAL% -v rsi_min_dist_to_52w_high_pct_at_trigger=%RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER% -s "!RSI_SYMBOLS!" !RSI_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %RSI_WORKERS% --no-regression %RSI_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v rsi_mode=true -v vz_mode=false -v wrl_mode=false -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v rsi_ob=%RSI_OB% -v rsi_os=%RSI_OS% -v rsi_exit=%RSI_EXIT% -v rsi_max_trigger=%RSI_MAX_TRIGGER% -v rsi_min_atr_pct=%RSI_MIN_ATR_PCT% -v rsi_time_stop_days=%RSI_TIME_STOP_DAYS% -v rsi_roll_from_max=%RSI_ROLL_FROM_MAX% -v rsi_entry_on=%RSI_ENTRY_ON% -v rsi_sheet_notional=%RSI_SHEET_NOTIONAL% -v rsi_min_dist_to_52w_high_pct_at_trigger=%RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER% !RSI_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %RSI_WORKERS% --no-regression %RSI_AGG_FLAG% --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 -v rsi_mode=true -v vz_mode=false -v wrl_mode=false -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v sb_mode=false -v qull_mode=false -v indicator_buy=off -v rsi_ob=%RSI_OB% -v rsi_os=%RSI_OS% -v rsi_exit=%RSI_EXIT% -v rsi_max_trigger=%RSI_MAX_TRIGGER% -v rsi_min_atr_pct=%RSI_MIN_ATR_PCT% -v rsi_time_stop_days=%RSI_TIME_STOP_DAYS% -v rsi_roll_from_max=%RSI_ROLL_FROM_MAX% -v rsi_entry_on=%RSI_ENTRY_ON% -v rsi_sheet_notional=%RSI_SHEET_NOTIONAL% -v rsi_min_dist_to_52w_high_pct_at_trigger=%RSI_MIN_DIST_TO_52W_HIGH_PCT_AT_TRIGGER% !RSI_FORWARD!
 )
 exit /b %errorlevel%

@@ -99,6 +99,13 @@ except ImportError:
         risk_dollar as _live_style_risk_dollar,
     )
 
+try:
+    import portfolio_risk as _portfolio_risk  # type: ignore
+    import governance as _governance  # type: ignore
+except ImportError:
+    from stock_analysis import portfolio_risk as _portfolio_risk  # type: ignore
+    from stock_analysis import governance as _governance  # type: ignore
+
 DOWNLOADS = Path(r"C:\Users\songg\Downloads")
 DRIVE = ROOT / "Drive"
 LOGO_FILENAME = "TBN_Logo.png"
@@ -4620,14 +4627,62 @@ def build_report(
             data_dir=DEFAULT_OHLCV_DATA_DIR,
             asof=_live_scan_asof,
         )
+    # Portfolio-level risk across every system (heat to stops, day/month loss halts,
+    # overlap). Fails CLOSED: if the check itself breaks, no new buys are suggested.
+    _risk_halt_reason = ""
+    _risk_max_new = None
+    try:
+        _risk_positions = _portfolio_risk.build_positions(
+            _open_lots_for_size,
+            _portfolio_risk.stops_from_gettarget(),
+            asof=_live_scan_asof,
+            data_dir=DEFAULT_OHLCV_DATA_DIR,
+        )
+        _risk_report = _portfolio_risk.evaluate(
+            _risk_positions,
+            equity=live_acct.current_equity,
+            asof=_live_scan_asof,
+            realized_today=_portfolio_risk.realized_on(_live_scan_asof, DEFAULT_CLOSED_LOG),
+            realized_month=_portfolio_risk.realized_mtd(_live_scan_asof, DEFAULT_CLOSED_LOG),
+            data_dir=DEFAULT_OHLCV_DATA_DIR,
+        )
+        _risk_halt_reason = "; ".join(_risk_report.halt_reasons)
+        # Unadopted production change (governance lock drift) also halts new buys.
+        try:
+            _gov_drift = _governance.drift()
+        except Exception as _gov_exc:  # fail closed
+            _gov_drift = [f"governance check failed: {_gov_exc}"]
+        if _gov_drift:
+            _gov_msg = ("unadopted production change: " + ", ".join(_gov_drift[:6])
+                        + (" ..." if len(_gov_drift) > 6 else "") + " (run tools/adopt.py --check)")
+            _risk_report.halt_new_buys = True
+            _risk_report.halt_reasons.append(_gov_msg)
+            _risk_report.max_new_buys = 0
+            _risk_halt_reason = "; ".join(_risk_report.halt_reasons)
+        _risk_max_new = _risk_report.max_new_buys
+        risk_html = _portfolio_risk.format_risk_html(_risk_report)
+        try:
+            (ROOT / "drive" / "portfolio_risk_latest.json").write_text(
+                json.dumps(_risk_report.to_dict(), indent=2, default=str), encoding="utf-8"
+            )
+        except OSError:
+            pass
+    except Exception as _risk_exc:  # fail closed
+        _risk_halt_reason = f"portfolio risk check failed: {_risk_exc}"
+        risk_html = (
+            '<div class="portfolio-risk" style="border:1px solid #b42318;border-radius:8px;padding:10px 14px;margin:12px 0">'
+            f'<b style="color:#b42318">Portfolio risk: HALT — check failed ({html_mod.escape(str(_risk_exc))}). No new buys.</b></div>'
+        )
     _scan_enrich, allot_summary = _allot_scan_buys(
         _scan_enrich,
         open_symbols=open_symbols,
         open_gross_notional=open_gross_notional,
         current_equity=live_acct.current_equity,
         max_open_names=_MAX_OPEN_NAMES,
+        risk_halt_reason=_risk_halt_reason,
+        max_new_buys=_risk_max_new,
     )
-    allotment_html = _format_allotment_html(allot_summary)
+    allotment_html = risk_html + _format_allotment_html(allot_summary)
     ind_scan = _scan_enrich["IND"]
     brt_scan = _scan_enrich["BRT"]
     rl_scan = _scan_enrich["RL"]

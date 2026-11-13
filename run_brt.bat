@@ -24,6 +24,11 @@ rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped;
 rem   run_brt.bat -v brt_like_wpbr=true
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -43,8 +48,8 @@ set "PS_ARGS="
 if exist "%~dp0%PER_SYMBOL_SETTINGS%" set "PS_ARGS=--per-symbol-settings %PER_SYMBOL_SETTINGS%"
 
 if "%BRT_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% -s "!BRT_SYMBOLS!" !BRT_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% -s "!BRT_SYMBOLS!" !BRT_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% !BRT_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !BRT_WORKERS! --no-regression --aggressive --print-zones -v stop_pct=0.934 -v target_pct=1.21 -v too_high_multiplier=0 -v band_pct=0.0154 -v strong_pre_pivot_pct=0.1 -v strong_post_pivot_pct=0.1 -v strong_pre_pivot_bars=7 -v strong_post_pivot_bars=7 -v breakout_bars=100 -v tight_range_threshold_pct=0.35 -v tight_range_lookback=105 -v sheet_breakout_scan_start_row_delta=2 -v brt_sheet_touch=true -v min_spy_compare_1y_at_trigger=-1000 -v sheet_red_to_green_entry_enabled=true -v sheet_dw_countif_include_prior_bar_date=false -v growth_filter_enabled=true -v min_ind_score=-1 -v compute_beta=true -v brt_zones=true -v yh_zones=false -v min_pivot_run_h_before_entry=0 -v min_beta_at_trigger=0 -v max_market_cap=0 -v min_market_cap=0 %PS_ARGS% !BRT_FORWARD!
 )
 exit /b %errorlevel%

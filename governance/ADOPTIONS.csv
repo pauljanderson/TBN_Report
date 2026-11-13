@@ -1,0 +1,5 @@
+date,system,change,evidence,honest_verdict,trials,override_reason,lock_digest
+2026-11-12,ALL,initial production lock,drive/honest_bt/20261112,n/a,,baseline,6aa9846e5175
+2026-11-12,SIZING,Live allocation: WPBR at 0.5x risk; all other systems paper-only incl. WRL. Review WPBR at 20 live trades or 2027-03-31.,drive/honest_bt/20261112,n/a,0,,ac81a47dd4b0
+2026-11-12,SIZING,"Live buys gated to the honest-test liquidity rule (200 bars, median close >= $5, median $vol >= $10M over 60 bars).",drive/honest_bt/20261112,n/a,0,"Same-day completion of the WPBR allocation: first live suggestion (DNBBY, $1.2M/day) was outside the tested universe.",859d5f8e286c
+2026-11-13,SIZING,"WPBR moved to paper: LIVE_RISK_MULT emptied, every system paper-only. WPBR PASS rested on a look-ahead in the overhead skip; fair rule gives +0.77%/trade t 2.0 WEAK.",drive/honest_bt/20261113/overhead_lookahead,n/a,0,Risk reduction: the only live system's backtest edge came from a look-ahead (Paul approved 2026-11-13).,1cd01036579a

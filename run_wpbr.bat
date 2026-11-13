@@ -19,6 +19,13 @@ rem Extra CLI: trailing %* forwarded to rocket_tbn (leading .csv / ALL stripped;
 rem   run_wpbr.bat -v wpbr_merge_overlapping_zones=true
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
+set "TBN_DUCKDB_FLAG=--use-duckdb"
+if "%TBN_NO_DUCKDB%"=="1" set "TBN_DUCKDB_FLAG="
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -54,8 +61,8 @@ rem Optional (OFF by default): -v wpbr_merge_overlapping_zones=true
 rem   merges overlapping WPBR bands; Closed/Open ZONE_STRENGTH = member count (1=unmerged).
 rem max_market_cap=0 / min_market_cap=0: disable post-enrich cap filter (same AMD-wipe class of bug).
 if "%WPBR_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !WPBR_WORKERS! --aggressive --use-duckdb --no-regression --print-zones -v wpbr_zones=true -v brt_zones=false -v yh_zones=false -v vec_zones=false -v band_pct=0.015 -v strong_pre_pivot_bars=3 -v strong_pre_pivot_pct=0.10 -v strong_post_pivot_bars=3 -v strong_post_pivot_pct=0.10 -v strong_pivot_mode=either -v wpbr_breakout_confirmation=0.03 -v wpbr_max_days_after_retest=2 -v wpbr_second_chance_after_win=true -v growth_filter_enabled=false -v growth_bars=756 -v growth_history_slack_bars=0 -v min_history_bars=0 -v growth_filter_strict_gt=false -v growth_min_pct=0 -v wpbr_overhead_band_pct=0.22 -v min_spy_compare_1y_at_trigger=-1000 -v ind_score_weights_path="" -v too_high_multiplier=0 -v target_pct=1.20 -v stop_pct=0.92 -v sheet_no_entry_same_bar_after_exit=false -v use_indicators=false -v max_market_cap=0 -v min_market_cap=0 -s "!WPBR_SYMBOLS!" !WPBR_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !WPBR_WORKERS! --aggressive %TBN_DUCKDB_FLAG% --no-regression --print-zones -v wpbr_zones=true -v brt_zones=false -v yh_zones=false -v vec_zones=false -v band_pct=0.015 -v strong_pre_pivot_bars=3 -v strong_pre_pivot_pct=0.10 -v strong_post_pivot_bars=3 -v strong_post_pivot_pct=0.10 -v strong_pivot_mode=either -v wpbr_breakout_confirmation=0.03 -v wpbr_max_days_after_retest=2 -v wpbr_second_chance_after_win=true -v growth_filter_enabled=false -v growth_bars=756 -v growth_history_slack_bars=0 -v min_history_bars=0 -v growth_filter_strict_gt=false -v growth_min_pct=0 -v wpbr_overhead_band_pct=0.22 -v min_spy_compare_1y_at_trigger=-1000 -v ind_score_weights_path="" -v too_high_multiplier=0 -v target_pct=1.20 -v stop_pct=0.92 -v sheet_no_entry_same_bar_after_exit=false -v use_indicators=false -v max_market_cap=0 -v min_market_cap=0 -s "!WPBR_SYMBOLS!" !WPBR_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !WPBR_WORKERS! --aggressive --use-duckdb --no-regression --print-zones -v wpbr_zones=true -v brt_zones=false -v yh_zones=false -v vec_zones=false -v band_pct=0.015 -v strong_pre_pivot_bars=3 -v strong_pre_pivot_pct=0.10 -v strong_post_pivot_bars=3 -v strong_post_pivot_pct=0.10 -v strong_pivot_mode=either -v wpbr_breakout_confirmation=0.03 -v wpbr_max_days_after_retest=2 -v wpbr_second_chance_after_win=true -v growth_filter_enabled=false -v growth_bars=756 -v growth_history_slack_bars=0 -v min_history_bars=0 -v growth_filter_strict_gt=false -v growth_min_pct=0 -v wpbr_overhead_band_pct=0.22 -v min_spy_compare_1y_at_trigger=-1000 -v ind_score_weights_path="" -v too_high_multiplier=0 -v target_pct=1.20 -v stop_pct=0.92 -v sheet_no_entry_same_bar_after_exit=false -v use_indicators=false -v max_market_cap=0 -v min_market_cap=0 !WPBR_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !WPBR_WORKERS! --aggressive %TBN_DUCKDB_FLAG% --no-regression --print-zones -v wpbr_zones=true -v brt_zones=false -v yh_zones=false -v vec_zones=false -v band_pct=0.015 -v strong_pre_pivot_bars=3 -v strong_pre_pivot_pct=0.10 -v strong_post_pivot_bars=3 -v strong_post_pivot_pct=0.10 -v strong_pivot_mode=either -v wpbr_breakout_confirmation=0.03 -v wpbr_max_days_after_retest=2 -v wpbr_second_chance_after_win=true -v growth_filter_enabled=false -v growth_bars=756 -v growth_history_slack_bars=0 -v min_history_bars=0 -v growth_filter_strict_gt=false -v growth_min_pct=0 -v wpbr_overhead_band_pct=0.22 -v min_spy_compare_1y_at_trigger=-1000 -v ind_score_weights_path="" -v too_high_multiplier=0 -v target_pct=1.20 -v stop_pct=0.92 -v sheet_no_entry_same_bar_after_exit=false -v use_indicators=false -v max_market_cap=0 -v min_market_cap=0 !WPBR_FORWARD!
 )
 exit /b %errorlevel%

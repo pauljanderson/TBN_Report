@@ -17,6 +17,11 @@ rem Note: data\rl_gold_universe.txt is the short optimizer/parity list, not the 
 rem IND_TC_*: not on RL_Closed yet (separate writer; indicators only for mandatory/exclude gates).
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -46,8 +51,8 @@ rem No time clock. No SMA50 envelope target. Ladder 0.20:0.80:0.
 rem Cheap analysis (ONE_LINER / FIT / ImproveHints) emits automatically after the run.
 rem Charts + CRWD-style HTML (NOT in DailyRun): python stock_analysis\rl_post_run_analysis.py --stamp <ts> --charts
 if "%RL_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% -s "!RL_SYMBOLS!" !RL_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% -s "!RL_SYMBOLS!" !RL_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% !RL_FORWARD!
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w !RL_WORKERS! --aggressive --no-regression -v rl_mode=true -v brt_zones=false -v yh_zones=false -v indicator_buy=off -v rl_sma_qual=1 -v ATR_LOW=off -v ATR_HIGH=off -v rl_slope_threshold=0 -v rl_too_high=0 -v rl_dip_pct=1.055 -v rl_cut_the_losers=1000 -v rl_sma_target_off=1 -v rl_exit_percent=0 -v rl_exit_days=0 -v rl_exit_calendar_days=0 -v rl_scale_ladder=0.20:0.80:0 -v rl_entry_target_pct=0.40 %PS_ARGS% !RL_FORWARD!
 )
 exit /b %errorlevel%

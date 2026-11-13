@@ -22,6 +22,11 @@ rem Full universe: run_wrl.bat ALL
 rem Extra CLI: trailing %* forwarded to rocket_tbn ( -v wrl_target_mode=range|swing|scale )
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 if not defined WRL_TARGET_MODE set "WRL_TARGET_MODE=swing"
@@ -50,7 +55,7 @@ if /i "%WRL_UNIVERSE_SRC%"=="missing" (
 echo [WRL] Universe src=%WRL_UNIVERSE_SRC% pass_s=%WRL_PASS_SYMBOLS% target_mode=%WRL_TARGET_MODE%
 
 if "%WRL_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %WRL_WORKERS% --no-regression %WRL_AGG_FLAG% ^
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %WRL_WORKERS% --no-regression %WRL_AGG_FLAG% ^
     --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 ^
     -v wrl_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v vec_zones=false ^
     -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^
@@ -61,7 +66,7 @@ if "%WRL_PASS_SYMBOLS%"=="1" (
     -s "!WRL_SYMBOLS!" ^
     !WRL_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %WRL_WORKERS% --no-regression %WRL_AGG_FLAG% ^
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %WRL_WORKERS% --no-regression %WRL_AGG_FLAG% ^
     --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 ^
     -v wrl_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v vec_zones=false ^
     -v rl_mode=false -v relative_strength_enabled=false -v rs_mode=false -v indicator_buy=off ^

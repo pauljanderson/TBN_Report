@@ -49,6 +49,11 @@ rem (CMD splits on '='; build_cli_forward rejoins -v KEY VALUE → KEY=VALUE.)
 
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+rem --- Data/output roots. Defaults = production. The honest backtest harness
+rem     (tools\honest_bt) sets TBN_DATA_DIR / TBN_OUT_DIR / TBN_NO_DUCKDB=1 so its runs
+rem     never touch data\newdata\data, data\ohlcv.duckdb or drive\*_LatestRun_*.
+if not defined TBN_DATA_DIR set "TBN_DATA_DIR=data\newdata\data"
+if not defined TBN_OUT_DIR set "TBN_OUT_DIR=drive"
 if not defined PY call "%~dp0resolve_python.bat"
 if errorlevel 1 exit /b 1
 
@@ -111,7 +116,7 @@ if "%SB_PASS_SYMBOLS%"=="1" (
 
 rem Neutralize peer systems; SB owns entry path via sb_mode.
 if "%SB_PASS_SYMBOLS%"=="1" (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %SB_WORKERS% --no-regression %SB_AGG_FLAG% ^
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %SB_WORKERS% --no-regression %SB_AGG_FLAG% ^
     --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 ^
     -v sb_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false ^
     -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v indicator_buy=off ^
@@ -133,7 +138,7 @@ if "%SB_PASS_SYMBOLS%"=="1" (
     -s "!SB_SYMBOLS!" ^
     !SB_FORWARD!
 ) else (
-  "%PY%" stock_analysis\rocket_tbn.py data\newdata\data -o drive -w %SB_WORKERS% --no-regression %SB_AGG_FLAG% ^
+  "%PY%" stock_analysis\rocket_tbn.py "%TBN_DATA_DIR%" -o "%TBN_OUT_DIR%" -w %SB_WORKERS% --no-regression %SB_AGG_FLAG% ^
     --initial-capital 500000 --aggressive-max-multiple 2.0 --margin-utilization 0.6 ^
     -v sb_mode=true -v brt_zones=false -v yh_zones=false -v wpbr_zones=false -v rl_mode=false ^
     -v relative_strength_enabled=false -v rs_mode=false -v mvcp_mode=false -v indicator_buy=off ^

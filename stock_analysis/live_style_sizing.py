@@ -62,6 +62,19 @@ LEVERAGE = 2.0
 MAX_NOTIONAL_PER_TRADE = 25_000.0
 MAX_OPEN_NAMES = 8
 MAX_GROSS_LONG_FRAC = 1.0
+# --- Live allocation (2026-11-13) ---
+# Fraction of the normal risk budget each system may take on a NEW buy. Systems not listed
+# are paper-only: signals still publish, Suggested shares stay blank (SIZE_LID=paper_only).
+# Empty = every system on paper. WPBR was at 0.5x (2026-11-12) until its PASS turned out to rest
+# on a look-ahead in the overhead skip (pivots counted before they are confirmed); without it
+# WPBR is WEAK (+0.77%/trade, t 2.0). Evidence: drive/honest_bt/20261113. Governed via tools/adopt.py.
+LIVE_RISK_MULT: dict[str, float] = {}
+# Live buys only in names the honest test covered (tools/honest_bt/pit_universe.py rule):
+# >= 200 bars, 60-bar median close >= $5 and median dollar volume >= $10M.
+TESTED_MIN_HISTORY_BARS = 200
+TESTED_MIN_PRICE = 5.0
+TESTED_MIN_DOLLAR_VOL = 10_000_000.0
+TESTED_WINDOW = 60
 # Fill-order preference when ranking surplus triggers (official wallet first).
 ALLOT_SYSTEM_RANK = (
     "RL",
@@ -238,6 +251,28 @@ def _load_ohlc(symbol: str, data_dir: Path = OHLCV_DIR) -> Optional[pd.DataFrame
     df = df.dropna(subset=["Date"]).sort_values("Date")
     _OHLC_CACHE[key] = df
     return df
+
+
+def tested_liquidity(
+    symbol: str, asof: Optional[date] = None, data_dir: Path = OHLCV_DIR
+) -> tuple[bool, str]:
+    """(ok, detail): does the symbol pass the honest-test universe rule on its last bar <= asof?"""
+    df = _load_ohlc(symbol, data_dir)
+    if df is None or df.empty or "Close" not in df.columns:
+        return False, "no data"
+    if asof is not None:
+        df = df[df["Date"] <= pd.Timestamp(asof)]
+    if len(df) < TESTED_MIN_HISTORY_BARS:
+        return False, f"{len(df)} bars < {TESTED_MIN_HISTORY_BARS}"
+    tail = df.tail(TESTED_WINDOW)
+    close = pd.to_numeric(tail["Close"], errors="coerce")
+    dv = float((close * pd.to_numeric(tail["Volume"], errors="coerce")).median())
+    px = float(close.median())
+    if not (px >= TESTED_MIN_PRICE):
+        return False, f"median close ${px:.2f} < ${TESTED_MIN_PRICE:g}"
+    if not (dv >= TESTED_MIN_DOLLAR_VOL):
+        return False, f"median $vol ${dv / 1e6:.1f}M < ${TESTED_MIN_DOLLAR_VOL / 1e6:g}M"
+    return True, f"median $vol ${dv / 1e6:.0f}M"
 
 
 def lookup_adv20(
@@ -494,7 +529,8 @@ def size_trade(
     """Compute suggested shares under the locked live-style freeze."""
     sym = str(symbol).strip().upper()
     sys_u = str(system).strip().upper()
-    rd = risk_dollar(bom_equity)
+    risk_mult = float(LIVE_RISK_MULT.get(sys_u, 0.0))
+    rd = risk_dollar(bom_equity) * risk_mult
     base = SizeResult(
         symbol=sym,
         system=sys_u,
@@ -510,10 +546,19 @@ def size_trade(
         binding_lid="",
         sized=False,
     )
+    base.details["risk_mult"] = risk_mult
+    if risk_mult <= 0:
+        base.skip_reason = "paper_only"
+        return base
     if entry is None or not math.isfinite(float(entry)) or float(entry) <= 0:
         base.skip_reason = "bad_entry"
         return base
     entry_f = float(entry)
+    liq_ok, liq_detail = tested_liquidity(sym, asof=asof, data_dir=data_dir)
+    base.details["tested_liquidity"] = liq_detail
+    if not liq_ok:
+        base.skip_reason = "untested_liquidity"
+        return base
 
     # 1) Risk / RSI slot → raw shares
     if sys_u == "RSI":
@@ -580,7 +625,7 @@ def size_trade(
     elif float(bom_equity) * RISK_FRAC >= MAX_RISK_DOLLAR - 1e-6:
         lid = "risk_50k"
     else:
-        lid = "risk_1pct"
+        lid = "risk_1pct" if risk_mult >= 1.0 else f"risk_{risk_mult:g}x1pct"
 
     notional = shares * entry_f
     base.shares = shares
@@ -810,8 +855,15 @@ def allot_scan_buys(
     current_equity: float,
     max_open_names: int = MAX_OPEN_NAMES,
     max_gross_frac: float = MAX_GROSS_LONG_FRAC,
+    risk_halt_reason: str = "",
+    max_new_buys: Optional[int] = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
     """Rank surplus scanner triggers into TAKE / SKIP / NONE under book-guard capacity.
+
+    Portfolio risk (stock_analysis/portfolio_risk.py) can tighten this further:
+    ``risk_halt_reason`` non-empty -> every new trigger is NONE (risk halt);
+    ``max_new_buys`` caps TAKEs to what the remaining heat budget allows.
+    Defaults reproduce the plain book-guard behaviour.
 
     Returns copies of each scan frame with BUY_REC set. Non-TAKE sized rows have
     Suggested shares cleared. When the book is already at max names or gross long,
@@ -821,7 +873,11 @@ def allot_scan_buys(
     slots_left = max(0, int(max_open_names) - len(open_syms))
     gross_cap = max_gross_frac * max(float(current_equity), 0.0)
     gross_room = max(0.0, gross_cap - max(float(open_gross_notional), 0.0))
-    book_full = slots_left <= 0 or gross_room < MIN_DEPLOY
+    if max_new_buys is not None:
+        slots_left = min(slots_left, max(0, int(max_new_buys)))
+    risk_halt = bool(str(risk_halt_reason or "").strip())
+    book_full = risk_halt or slots_left <= 0 or gross_room < MIN_DEPLOY
+    full_rec = "NONE (risk halt)" if risk_halt else "NONE (book full)"
 
     out: dict[str, pd.DataFrame] = {}
     # (rank_key, system, idx, symbol, notional, shares_txt)
@@ -846,7 +902,7 @@ def allot_scan_buys(
                 continue
             if book_full:
                 _clear_suggested(
-                    work, idx, rec="NONE (book full)", lid="book_full"
+                    work, idx, rec=full_rec, lid="risk_halt" if risk_halt else "book_full"
                 )
                 continue
             notion = _parse_notional_mid(row.get("SUGGESTED_NOTIONAL"))
@@ -941,6 +997,9 @@ def allot_scan_buys(
         "gross_cap": float(gross_cap),
         "gross_room": float(gross_room),
         "book_full": bool(book_full),
+        "risk_halt": bool(risk_halt),
+        "risk_halt_reason": str(risk_halt_reason or ""),
+        "max_new_buys": None if max_new_buys is None else int(max_new_buys),
         "max_notional_per_trade": float(MAX_NOTIONAL_PER_TRADE),
         "take": take_list,
         "skip": skip_list,
