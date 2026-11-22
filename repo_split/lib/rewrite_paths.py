@@ -53,9 +53,15 @@ def iter_text_files(root: Path):
     """
     root = root.resolve()
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        current_dir = Path(dirpath)
+        # A nested checkout has its own .git directory or worktree pointer.
+        # Audit it separately when it is explicitly selected as the root.
+        if current_dir != root and (".git" in dirnames or ".git" in filenames):
+            dirnames.clear()
+            continue
         dirnames[:] = [d for d in dirnames if not _prune_dir_name(d)]
         for name in filenames:
-            path = Path(dirpath) / name
+            path = current_dir / name
             if path.suffix.lower() not in TEXT_SUFFIXES and path.name not in {
                 "Dockerfile",
                 "Makefile",

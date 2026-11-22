@@ -131,6 +131,7 @@ _TESTS = (
     "test_governance.py",
     "test_live_risk_mult.py",
     "test_truncation_compare.py",
+    "test_path_audit_nested_checkouts.py",
 )
 
 
